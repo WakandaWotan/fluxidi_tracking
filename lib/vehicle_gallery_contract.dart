@@ -1,8 +1,31 @@
 // Shared vehicle gallery capacity and public URL ordering.
 // Applies to every vehicle editor. Public projections emit HTTPS only.
 
+import 'dart:math';
+
 const int kVehicleGalleryMaxPhotos = 10;
 const int kVehicleGalleryRecommendedPhotos = 5;
+
+/// Object-path identity: `?v=` / fragments do not create a second photo.
+String publicMediaObjectIdentity(String raw) {
+  var text = raw.trim();
+  final hash = text.indexOf('#');
+  if (hash >= 0) text = text.substring(0, hash);
+  final query = text.indexOf('?');
+  if (query >= 0) text = text.substring(0, query);
+  return text;
+}
+
+String newVehicleGalleryMediaId() {
+  final random = Random.secure();
+  final buffer = StringBuffer('m');
+  buffer.write(DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(36));
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  for (var i = 0; i < 10; i++) {
+    buffer.write(alphabet[random.nextInt(alphabet.length)]);
+  }
+  return buffer.toString();
+}
 
 /// Ordered public gallery: primary first, no duplicates, HTTPS only, max 10.
 List<String> orderPublicVehicleGalleryUrls({
@@ -15,7 +38,8 @@ List<String> orderPublicVehicleGalleryUrls({
   void add(String raw) {
     final url = raw.trim();
     if (!url.toLowerCase().startsWith('https://')) return;
-    if (!seen.add(url)) return;
+    final identity = publicMediaObjectIdentity(url);
+    if (identity.isEmpty || !seen.add(identity)) return;
     if (out.length >= max) return;
     out.add(url);
   }

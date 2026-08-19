@@ -84,6 +84,20 @@ const LocalizedText kLimousineShowroomBook = LocalizedText(
   es: 'Reservar esta limusina',
 );
 
+const LocalizedText kLimousineShowroomQuoteComingSoon = LocalizedText(
+  nl: 'Offerteaanvragen binnenkort beschikbaar',
+  en: 'Quote requests coming soon',
+  fr: 'Demandes de devis bientôt disponibles',
+  es: 'Solicitudes de presupuesto disponibles pronto',
+);
+
+const LocalizedText kLimousineShowroomBookComingSoon = LocalizedText(
+  nl: 'Boeken binnenkort beschikbaar',
+  en: 'Booking coming soon',
+  fr: 'Réservation bientôt disponible',
+  es: 'Reservas disponibles pronto',
+);
+
 const LocalizedText kLimousineShowroomClassDisclosure = LocalizedText(
   nl: 'Het uiteindelijk toegewezen voertuig komt overeen met deze serviceklasse.',
   en: 'The assigned vehicle will match this service class.',

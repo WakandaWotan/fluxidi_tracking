@@ -496,7 +496,8 @@ class _LimousineVehicleDetailPageState
     final included = limousineIncludedServicesLabel(offer, _lang);
     final generic =
         title.trim().toLowerCase() == 'limousine' ||
-        description.trim().toLowerCase() == 'limousine / arrangementen / limousine';
+        description.trim().toLowerCase() ==
+            'limousine / arrangementen / limousine';
     final cta = limousineDetailCtaFor(offer);
     final isBook = cta == LimousineShowroomCta.book;
     final summaryId = widget.vehicle.primaryOffer?.offerId ?? '';
@@ -557,7 +558,10 @@ class _LimousineVehicleDetailPageState
             ],
             if (included.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(included, style: TextStyle(color: tokens.onSurface, height: 1.35)),
+              Text(
+                included,
+                style: TextStyle(color: tokens.onSurface, height: 1.35),
+              ),
             ],
             if (cta != LimousineShowroomCta.none) ...[
               const SizedBox(height: 12),
@@ -571,14 +575,24 @@ class _LimousineVehicleDetailPageState
                       : ValueKey<String>(
                           'limousine_vehicle_detail_cta_${offer.offerId}',
                         ),
-                  onPressed: () => _handleCta(offer, isBook),
+                  onPressed: (isBook ? _bookOn : _quotesOn)
+                      ? () => _handleCta(offer, isBook)
+                      : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: tokens.gold,
                     foregroundColor: const Color(0xFF1A1408),
+                    disabledBackgroundColor: tokens.gold.withOpacity(0.28),
+                    disabledForegroundColor: tokens.muted,
                     minimumSize: const Size.fromHeight(46),
                   ),
                   child: Text(
-                    isBook ? _t(kLimousineDetailBookCta) : _t(kLimousineDetailQuoteCta),
+                    isBook
+                        ? (_bookOn
+                              ? _t(kLimousineDetailBookCta)
+                              : _t(kLimousineDetailBookComingSoon))
+                        : (_quotesOn
+                              ? _t(kLimousineDetailQuoteCta)
+                              : _t(kLimousineDetailQuoteComingSoon)),
                   ),
                 ),
               ),
@@ -597,7 +611,10 @@ class _LimousineVehicleDetailPageState
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: tokens.border),
       ),
-      child: Text(text, style: TextStyle(color: tokens.onSurface, fontSize: 13.5)),
+      child: Text(
+        text,
+        style: TextStyle(color: tokens.onSurface, fontSize: 13.5),
+      ),
     );
   }
 
@@ -617,7 +634,7 @@ class _LimousineVehicleDetailPageState
         publicPartnerId: widget.partnerId,
         offer: offer,
         companyName: widget.companyName,
-        entryEnabled: true,
+        entryEnabled: _quotesOn,
       );
       return;
     }
@@ -635,7 +652,7 @@ class _LimousineVehicleDetailPageState
       publicPartnerId: widget.partnerId,
       offer: offer,
       companyName: widget.companyName,
-      entryEnabled: true,
+      entryEnabled: _quotesOn,
     );
   }
 }

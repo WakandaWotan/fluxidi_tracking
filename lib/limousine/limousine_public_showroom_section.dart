@@ -6,6 +6,7 @@ import '../customer_theme_palette.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_page.dart';
 import 'limousine_offers.dart';
+import 'limousine_provider_showroom.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
@@ -284,14 +285,26 @@ class _LimousinePublicShowroomSectionState
               if (cta == LimousineShowroomCta.requestQuote)
                 FilledButton(
                   key: limousineShowroomQuoteCtaKey(offer.offerId),
-                  onPressed: () => _openQuote(offer),
-                  child: Text(_t(kLimousineShowroomRequestQuote)),
+                  onPressed: limousineCustomerQuoteCtaEnabled()
+                      ? () => _openQuote(offer)
+                      : null,
+                  child: Text(
+                    limousineCustomerQuoteCtaEnabled()
+                        ? _t(kLimousineShowroomRequestQuote)
+                        : _t(kLimousineShowroomQuoteComingSoon),
+                  ),
                 ),
               if (cta == LimousineShowroomCta.book)
                 FilledButton(
                   key: limousineShowroomBookCtaKey(offer.offerId),
-                  onPressed: () => _openQuote(offer),
-                  child: Text(_t(kLimousineShowroomBook)),
+                  onPressed: limousineCustomerBookCtaEnabled()
+                      ? () => _openQuote(offer)
+                      : null,
+                  child: Text(
+                    limousineCustomerBookCtaEnabled()
+                        ? _t(kLimousineShowroomBook)
+                        : _t(kLimousineShowroomBookComingSoon),
+                  ),
                 ),
             ],
           ),
@@ -335,6 +348,11 @@ class _LimousinePublicShowroomSectionState
   }
 
   void _openQuote(LimousinePublishedOffer offer) {
+    final bookCta = limousineShowroomCtaFor(offer) == LimousineShowroomCta.book;
+    final allowed = bookCta
+        ? limousineCustomerBookCtaEnabled()
+        : limousineCustomerQuoteCtaEnabled();
+    if (!allowed) return;
     final onOpen = widget.onOpenQuote;
     if (onOpen != null) {
       onOpen(offer);
@@ -345,7 +363,7 @@ class _LimousinePublicShowroomSectionState
       publicPartnerId: widget.partnerId,
       offer: offer,
       companyName: widget.companyName,
-      entryEnabled: true,
+      entryEnabled: limousineCustomerQuoteCtaEnabled(),
     );
   }
 }

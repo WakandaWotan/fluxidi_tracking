@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 
 /// Previous stacked-card banner that center-cropped limousines on SM-X400.
 const double kFleetCardOldPortraitBannerHeight = 176;
@@ -16,8 +17,8 @@ const double kFleetCardOldTabletLandscapeBannerHeight = 168;
 const double kFleetCardOldPhoneLandscapeBannerHeight = 130;
 
 const double kFleetCardMediaAspect = 16 / 9;
-const double kFleetCardTabletPortraitMinHeight = 300;
-const double kFleetCardTabletPortraitMaxHeight = 420;
+const double kFleetCardTabletPortraitMinHeight = 168;
+const double kFleetCardTabletPortraitMaxHeight = 240;
 const double kFleetCardPhonePortraitMinHeight = 200;
 const double kFleetCardPhonePortraitMaxHeight = 280;
 
@@ -48,8 +49,8 @@ int fleetVehicleExtraPhotoCount({
 }) {
   final seen = <String>{};
   void add(String raw) {
-    final value = raw.trim();
-    if (value.isNotEmpty) seen.add(value);
+    final identity = publicMediaObjectIdentity(raw);
+    if (identity.isNotEmpty) seen.add(identity);
   }
 
   add(primaryPhotoRef);
@@ -92,18 +93,37 @@ double fleetCardMediaHeight({
   }
 
   var height = fromAspect.clamp(minHeight, maxHeight);
-  final capFraction = landscape ? 0.46 : 0.38;
+  final capFraction = landscape ? 0.46 : (tablet ? 0.22 : 0.38);
   final viewportCap = viewport.height * capFraction;
   if (viewportCap >= minHeight) {
     height = height.clamp(minHeight, math.min(maxHeight, viewportCap));
   } else {
     final relaxedMin = minHeight * 0.72;
-    height = fromAspect.clamp(
-      relaxedMin,
-      math.max(relaxedMin, viewportCap),
-    );
+    height = fromAspect.clamp(relaxedMin, math.max(relaxedMin, viewportCap));
   }
   return height;
+}
+
+bool fleetCardMediaIsTabletPortrait(Size viewport) {
+  return viewport.shortestSide >= 600 && viewport.height >= viewport.width;
+}
+
+Size fleetCardMediaBox({
+  required double availableWidth,
+  required Size viewport,
+  FleetCardMediaLayout layout = FleetCardMediaLayout.stacked,
+}) {
+  final height = fleetCardMediaHeight(
+    availableWidth: availableWidth,
+    viewport: viewport,
+    layout: layout,
+  );
+  if (layout == FleetCardMediaLayout.stacked &&
+      fleetCardMediaIsTabletPortrait(viewport)) {
+    final width = math.min(availableWidth, height * kFleetCardMediaAspect);
+    return Size(width, width / kFleetCardMediaAspect);
+  }
+  return Size(availableWidth, height);
 }
 
 bool fleetCardMediaUsesContainStrategy({
@@ -111,12 +131,10 @@ bool fleetCardMediaUsesContainStrategy({
   required double height,
   required Size viewport,
 }) {
-  final tabletPortrait =
-      viewport.shortestSide >= 600 && viewport.height >= viewport.width;
-  final minExpected = tabletPortrait
+  final minExpected = fleetCardMediaIsTabletPortrait(viewport)
       ? kFleetCardTabletPortraitMinHeight
       : kFleetCardPhonePortraitMinHeight;
-  return sharpFit == BoxFit.contain && height >= minExpected;
+  return sharpFit == BoxFit.contain && height >= minExpected * 0.72;
 }
 
 class FleetVehicleCardMedia extends StatelessWidget {
@@ -153,13 +171,16 @@ class FleetVehicleCardMedia extends StatelessWidget {
         final width = constraints.maxWidth.isFinite && constraints.maxWidth > 0
             ? constraints.maxWidth
             : viewport.width;
-        final height = fleetCardMediaHeight(
+        final box = fleetCardMediaBox(
           availableWidth: width,
           viewport: viewport,
           layout: layout,
         );
+        final tabletPortrait =
+            layout == FleetCardMediaLayout.stacked &&
+            fleetCardMediaIsTabletPortrait(viewport);
         final dpr = MediaQuery.devicePixelRatioOf(context);
-        final cacheWidth = (width * dpr).round().clamp(240, 1400);
+        final cacheWidth = (box.width * dpr).round().clamp(240, 1400);
         final image =
             imageOverride ??
             _providerFor(photoRef) ??
@@ -167,15 +188,19 @@ class FleetVehicleCardMedia extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            FleetVehicleCardPhotoFrame(
-              height: height,
-              width: width,
-              background: background,
-              gold: gold,
-              placeholderText: placeholderText,
-              image: image,
-              cacheWidth: cacheWidth,
-              onOpen: onOpen,
+            Align(
+              alignment: Alignment.center,
+              child: FleetVehicleCardPhotoFrame(
+                height: box.height,
+                width: box.width,
+                background: background,
+                gold: gold,
+                placeholderText: placeholderText,
+                image: image,
+                cacheWidth: cacheWidth,
+                onOpen: onOpen,
+                letterboxFill: !tabletPortrait,
+              ),
             ),
             if (extraPhotoCount > 0) ...[
               const SizedBox(height: 6),
@@ -210,6 +235,7 @@ class FleetVehicleCardPhotoFrame extends StatelessWidget {
     this.cacheWidth,
     this.onOpen,
     this.borderRadius = 10,
+    this.letterboxFill = true,
   });
 
   final double height;
@@ -221,6 +247,7 @@ class FleetVehicleCardPhotoFrame extends StatelessWidget {
   final int? cacheWidth;
   final VoidCallback? onOpen;
   final double borderRadius;
+  final bool letterboxFill;
 
   @override
   Widget build(BuildContext context) {
@@ -249,22 +276,23 @@ class FleetVehicleCardPhotoFrame extends StatelessWidget {
                       return Stack(
                         fit: StackFit.expand,
                         children: [
-                          ColorFiltered(
-                            colorFilter: ColorFilter.mode(
-                              Colors.black.withOpacity(0.46),
-                              BlendMode.darken,
+                          if (letterboxFill)
+                            ColorFiltered(
+                              colorFilter: ColorFilter.mode(
+                                Colors.black.withOpacity(0.46),
+                                BlendMode.darken,
+                              ),
+                              child: Image(
+                                key: kFleetVehicleCardFillImageKey,
+                                image: decoded,
+                                fit: kFleetVehicleCardFillPhotoFit,
+                                alignment: Alignment.center,
+                                filterQuality: FilterQuality.low,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              ),
                             ),
-                            child: Image(
-                              key: kFleetVehicleCardFillImageKey,
-                              image: decoded,
-                              fit: kFleetVehicleCardFillPhotoFit,
-                              alignment: Alignment.center,
-                              filterQuality: FilterQuality.low,
-                              gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
-                            ),
-                          ),
                           Image(
                             key: kFleetVehicleCardContainImageKey,
                             image: decoded,
@@ -293,21 +321,14 @@ class FleetVehicleCardPhotoFrame extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.directions_car_filled_outlined,
-                color: gold,
-                size: 28,
-              ),
+              Icon(Icons.directions_car_filled_outlined, color: gold, size: 28),
               const SizedBox(height: 6),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Text(
                   placeholderText,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: gold.withOpacity(0.86),
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: gold.withOpacity(0.86), fontSize: 12),
                 ),
               ),
             ],

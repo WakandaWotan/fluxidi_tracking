@@ -90,7 +90,8 @@ Map<String, dynamic> _profile({
     'hero_photo_url': 'https://cdn.example/taxi-cover.jpg',
     'limousine_available': true,
     if (hero != null) 'limousine_hero_url': hero,
-    'vehicles': vehicles ??
+    'vehicles':
+        vehicles ??
         <Map<String, dynamic>>[
           _vehicle(
             id: 'vh_party',
@@ -104,7 +105,8 @@ Map<String, dynamic> _profile({
             serviceClass: 'suv_stretch',
           ),
         ],
-    'limousine_offers': offers ??
+    'limousine_offers':
+        offers ??
         <Map<String, dynamic>>[
           _offer(
             id: 'off_party',
@@ -229,7 +231,9 @@ void main() {
   ) async {
     final profile = _profile(hero: 'https://cdn.example/limousine-hero.jpg');
     await tester.pumpWidget(
-      _app(LimousineProviderShowroomPage(partnerId: 'limo_1', profile: profile)),
+      _app(
+        LimousineProviderShowroomPage(partnerId: 'limo_1', profile: profile),
+      ),
     );
     await tester.pump();
     expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsWidgets);
@@ -262,59 +266,72 @@ void main() {
     );
     await tester.pump();
     expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsWidgets);
-    final logo = File('lib/limousine/limousine_brand_logo.dart').readAsStringSync();
+    final logo = File(
+      'lib/limousine/limousine_brand_logo.dart',
+    ).readAsStringSync();
     expect(logo.contains('BoxFit.contain'), isTrue);
     expect(logo.contains('BoxFit.fill'), isFalse);
   });
 
-  test('7-12 Party and Hummer keep distinct bindings, shared and all-selected work', () {
-    final data = buildLimousineProviderShowroomData(profile: _profile());
-    final party = data.vehicles.firstWhere((v) => v.vehicleId == 'vh_party');
-    final hummer = data.vehicles.firstWhere((v) => v.vehicleId == 'vh_hummer');
-    expect(party.offers.single.offerId, 'off_party');
-    expect(hummer.offers.single.offerId, 'off_hummer');
-    expect(party.offers.any((o) => o.offerId == 'off_hummer'), isFalse);
-    expect(hummer.offers.any((o) => o.offerId == 'off_party'), isFalse);
-    expect(
-      limousineFormatPublishedOfferPrice(party.offers.single, AppLanguage.nl),
-      contains('Vanaf'),
-    );
-    expect(
-      limousineFormatPublishedOfferPrice(hummer.offers.single, AppLanguage.nl),
-      isNot(contains('Vanaf')),
-    );
+  test(
+    '7-12 Party and Hummer keep distinct bindings, shared and all-selected work',
+    () {
+      final data = buildLimousineProviderShowroomData(profile: _profile());
+      final party = data.vehicles.firstWhere((v) => v.vehicleId == 'vh_party');
+      final hummer = data.vehicles.firstWhere(
+        (v) => v.vehicleId == 'vh_hummer',
+      );
+      expect(party.offers.single.offerId, 'off_party');
+      expect(hummer.offers.single.offerId, 'off_hummer');
+      expect(party.offers.any((o) => o.offerId == 'off_hummer'), isFalse);
+      expect(hummer.offers.any((o) => o.offerId == 'off_party'), isFalse);
+      expect(
+        limousineFormatPublishedOfferPrice(party.offers.single, AppLanguage.nl),
+        contains('Vanaf'),
+      );
+      expect(
+        limousineFormatPublishedOfferPrice(
+          hummer.offers.single,
+          AppLanguage.nl,
+        ),
+        isNot(contains('Vanaf')),
+      );
 
-    final shared = buildLimousineProviderShowroomData(
-      profile: _profile(
-        offers: <Map<String, dynamic>>[
-          _offer(
-            id: 'off_both',
-            presentation: LimousinePricePresentation.quoteRequired,
-            vehicleIds: const <String>['vh_party', 'vh_hummer'],
-            title: 'Beide',
-          ),
-        ],
-      ),
-    );
-    expect(shared.vehicles.every((v) => v.offers.single.offerId == 'off_both'), isTrue);
+      final shared = buildLimousineProviderShowroomData(
+        profile: _profile(
+          offers: <Map<String, dynamic>>[
+            _offer(
+              id: 'off_both',
+              presentation: LimousinePricePresentation.quoteRequired,
+              vehicleIds: const <String>['vh_party', 'vh_hummer'],
+              title: 'Beide',
+            ),
+          ],
+        ),
+      );
+      expect(
+        shared.vehicles.every((v) => v.offers.single.offerId == 'off_both'),
+        isTrue,
+      );
 
-    final allSelected = buildLimousineProviderShowroomData(
-      profile: _profile(
-        offers: <Map<String, dynamic>>[
-          _offer(
-            id: 'off_all',
-            presentation: LimousinePricePresentation.quoteRequired,
-            appliesToAll: true,
-            title: 'Alle',
-          ),
-        ],
-      ),
-    );
-    expect(
-      allSelected.vehicles.every((v) => v.offers.single.offerId == 'off_all'),
-      isTrue,
-    );
-  });
+      final allSelected = buildLimousineProviderShowroomData(
+        profile: _profile(
+          offers: <Map<String, dynamic>>[
+            _offer(
+              id: 'off_all',
+              presentation: LimousinePricePresentation.quoteRequired,
+              appliesToAll: true,
+              title: 'Alle',
+            ),
+          ],
+        ),
+      );
+      expect(
+        allSelected.vehicles.every((v) => v.offers.single.offerId == 'off_all'),
+        isTrue,
+      );
+    },
+  );
 
   test('13 legacy unbound offers stay compatible as all selected', () {
     final legacy = <String, dynamic>{
@@ -325,7 +342,12 @@ void main() {
       'service_class_id': 'party_stretch',
       'price_presentation': LimousinePricePresentation.quoteRequired,
       'currency': 'EUR',
-      'title': <String, String>{'nl': 'Legacy', 'en': 'Legacy', 'fr': '', 'es': ''},
+      'title': <String, String>{
+        'nl': 'Legacy',
+        'en': 'Legacy',
+        'fr': '',
+        'es': '',
+      },
     };
     final scope = limousineOfferScopeOf(legacy);
     expect(scope.legacyUnbound, isTrue);
@@ -333,7 +355,10 @@ void main() {
     final data = buildLimousineProviderShowroomData(
       profile: _profile(offers: <Map<String, dynamic>>[legacy]),
     );
-    expect(data.vehicles.every((v) => v.offers.single.offerId == 'off_legacy'), isTrue);
+    expect(
+      data.vehicles.every((v) => v.offers.single.offerId == 'off_legacy'),
+      isTrue,
+    );
     final saved = limousineWriteOfferScope(
       legacy,
       appliesToAllSelected: true,
@@ -382,29 +407,52 @@ void main() {
       amount: 25000,
       title: 'Standaard',
     );
-    expect(limousineOfferDisplayKindOf(from), LimousineOfferDisplayKind.fromPrice);
+    expect(
+      limousineOfferDisplayKindOf(from),
+      LimousineOfferDisplayKind.fromPrice,
+    );
     expect(limousineOfferDisplayKindOf(fixed), LimousineOfferDisplayKind.fixed);
-    expect(limousineOfferDisplayKindOf(hourly), LimousineOfferDisplayKind.hourly);
-    expect(limousineOfferDisplayKindOf(package), LimousineOfferDisplayKind.package);
+    expect(
+      limousineOfferDisplayKindOf(hourly),
+      LimousineOfferDisplayKind.hourly,
+    );
+    expect(
+      limousineOfferDisplayKindOf(package),
+      LimousineOfferDisplayKind.package,
+    );
     final data = buildLimousineProviderShowroomData(
-      profile: _profile(offers: <Map<String, dynamic>>[from, fixed, hourly, package]),
+      profile: _profile(
+        offers: <Map<String, dynamic>>[from, fixed, hourly, package],
+      ),
     );
     final party = data.vehicles.firstWhere((v) => v.vehicleId == 'vh_party');
     expect(party.offers, hasLength(4));
     expect(
-      limousineFormatPublishedOfferPrice(party.offers.firstWhere((o) => o.offerId == 'off_from'), AppLanguage.nl),
+      limousineFormatPublishedOfferPrice(
+        party.offers.firstWhere((o) => o.offerId == 'off_from'),
+        AppLanguage.nl,
+      ),
       contains('Vanaf'),
     );
     expect(
-      limousineFormatPublishedOfferPrice(party.offers.firstWhere((o) => o.offerId == 'off_fixed'), AppLanguage.nl),
+      limousineFormatPublishedOfferPrice(
+        party.offers.firstWhere((o) => o.offerId == 'off_fixed'),
+        AppLanguage.nl,
+      ),
       isNot(contains('Vanaf')),
     );
     expect(
-      limousineFormatPublishedOfferPrice(party.offers.firstWhere((o) => o.offerId == 'off_pkg'), AppLanguage.nl),
+      limousineFormatPublishedOfferPrice(
+        party.offers.firstWhere((o) => o.offerId == 'off_pkg'),
+        AppLanguage.nl,
+      ),
       allOf(contains('Trouwarrangement'), isNot(contains('Vanaf'))),
     );
     expect(
-      limousineFormatPublishedOfferPrice(party.offers.firstWhere((o) => o.offerId == 'off_hour'), AppLanguage.nl),
+      limousineFormatPublishedOfferPrice(
+        party.offers.firstWhere((o) => o.offerId == 'off_hour'),
+        AppLanguage.nl,
+      ),
       contains('per uur'),
     );
   });
@@ -475,11 +523,13 @@ void main() {
     expect(find.byKey(kLimousineDetailPricesSectionKey), findsOneWidget);
     expect(find.text('Prijzen en arrangementen'), findsOneWidget);
     await tester.ensureVisible(find.byKey(kLimousineDetailQuoteCtaKey));
-    await tester.tap(find.byKey(kLimousineDetailQuoteCtaKey));
-    await tester.pump();
+    final quoteButton = tester.widget<ButtonStyleButton>(
+      find.byKey(kLimousineDetailQuoteCtaKey),
+    );
+    expect(quoteButton.onPressed, isNull);
     expect(quotes, 0);
     expect(books, 0);
-    expect(find.byKey(kLimousineDetailGateOffBannerKey), findsOneWidget);
+    expect(find.byKey(kLimousineDetailGateOffBannerKey), findsNothing);
   });
 
   test('20 save/reopen keeps hero, vehicles and offer bindings', () {

@@ -477,8 +477,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed &&
-        _awaitingExtraVehicleActivation) {
+    if (state == AppLifecycleState.resumed && _awaitingExtraVehicleActivation) {
       unawaited(_completeExtraVehicleActivationIfReady());
     }
   }
@@ -516,10 +515,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
       }
     }
     if (match == null) return;
-    await _openVehicleEditor(
-      existing: match,
-      focusGallery: widget.openGallery,
-    );
+    await _openVehicleEditor(existing: match, focusGallery: widget.openGallery);
   }
 
   Future<void> _ensureVehicleDocumentsLoaded({bool refreshUi = false}) async {
@@ -882,6 +878,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
         companyId: scopeId,
         mediaType: 'vehicle_photo',
         entityId: vehicleId,
+        mediaId: newVehicleGalleryMediaId(),
         filePath: localPrimary,
       );
       final url = (uploaded['url'] ?? '').toString().trim();
@@ -907,26 +904,34 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     required List<String> galleryPhotoRefs,
   }) async {
     final out = <String>[];
+    final seen = <String>{};
+    bool remember(String value) {
+      final identity = publicMediaObjectIdentity(value);
+      if (identity.isEmpty || !seen.add(identity)) return false;
+      out.add(value);
+      return true;
+    }
+
     for (final raw in galleryPhotoRefs) {
       final ref = raw.trim();
       if (ref.isEmpty) continue;
       final https = resolvePublicHttpsMediaUrl(ref);
       if (https.isNotEmpty) {
-        if (!out.contains(https)) out.add(https);
+        remember(https);
         continue;
       }
       if (_isAssetRef(ref) || kIsWeb || !isLocalOrPrivateMediaRef(ref)) {
-        if (!out.contains(ref)) out.add(ref);
+        remember(ref);
         continue;
       }
       final scopeId = _vehicleMediaScopeId(existing);
       if (scopeId == null) {
-        if (!out.contains(ref)) out.add(ref);
+        remember(ref);
         continue;
       }
       final source = File(ref);
       if (!await source.exists()) {
-        if (!out.contains(ref)) out.add(ref);
+        remember(ref);
         continue;
       }
       try {
@@ -935,17 +940,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           companyId: scopeId,
           mediaType: 'vehicle_photo',
           entityId: vehicleId,
+          mediaId: newVehicleGalleryMediaId(),
           filePath: ref,
         );
         final url = resolvePublicHttpsMediaUrl(
           (uploaded['url'] ?? '').toString(),
         );
         if (url.isNotEmpty) {
-          if (!out.contains(url)) out.add(url);
+          remember(url);
           continue;
         }
       } catch (_) {}
-      if (!out.contains(ref)) out.add(ref);
+      remember(ref);
     }
     return out.take(_maxPhotosPerVehicle).toList(growable: false);
   }
@@ -1032,6 +1038,16 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
       );
       return;
     }
+    if (_isPublicHttpsUrl(clean)) {
+      await _persistVehiclePublicPhotoAfterUpload(
+        vehicleId: vehicleId,
+        existing: existing,
+        publicPhotoUrl: clean,
+        publicPhotoUrlCtrl: publicPhotoUrlCtrl,
+        setLocalState: setLocalState,
+      );
+      return;
+    }
     final source = File(clean);
     if (!await source.exists()) {
       if (!mounted) return;
@@ -1062,6 +1078,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
         companyId: scopeId,
         mediaType: 'vehicle_photo',
         entityId: vehicleId,
+        mediaId: newVehicleGalleryMediaId(),
         filePath: clean,
       );
       final url = (uploaded['url'] ?? '').toString().trim();
@@ -2038,7 +2055,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
   SubscriptionFiscalVerdict _vehicleFiscalVerdict({
     SubscriptionDisplayQuotes? quotes,
   }) {
-    var productTreatment = quotes?.products['extra_vehicle']?.taxTreatment ?? '';
+    var productTreatment =
+        quotes?.products['extra_vehicle']?.taxTreatment ?? '';
     if (knownSubscriptionTaxTreatment(productTreatment) == null &&
         quotes != null) {
       for (final quote in quotes.products.values) {
@@ -2158,7 +2176,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(extraVehicleCapacityLine(languageCode: language, preview: preview)),
+            Text(
+              extraVehicleCapacityLine(
+                languageCode: language,
+                preview: preview,
+              ),
+            ),
             const SizedBox(height: 6),
             Text(
               extraVehicleAdditionalSlotLine(
@@ -2168,7 +2191,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
             ),
             const SizedBox(height: 6),
             Text(
-              extraVehicleUnitPriceLine(languageCode: language, preview: preview),
+              extraVehicleUnitPriceLine(
+                languageCode: language,
+                preview: preview,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -2241,7 +2267,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
       fiscal: fiscal,
     );
     _extraVehiclePurchaseSession = session;
-    if (session.beginConfirmation() == ExtraVehiclePurchasePhase.blockedFiscal) {
+    if (session.beginConfirmation() ==
+        ExtraVehiclePurchasePhase.blockedFiscal) {
       await _showVehicleFiscalBlocked(fiscal);
       return false;
     }
@@ -3520,37 +3547,37 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                       KeyedSubtree(
                         key: gallerySectionKey,
                         child: _photoPreviewBox(
-                        photoRef: primaryPhotoRef,
-                        height: 120,
-                        onTap: () async {
-                          await _pickVehiclePhoto(
-                            currentRef: primaryPhotoRef,
-                            onPicked: (ref) => setLocalState(() {
-                              primaryPhotoRef = ref;
-                              if (ref.trim().isNotEmpty &&
-                                  !galleryPhotoRefs.contains(ref)) {
-                                galleryPhotoRefs =
-                                    <String>[ref, ...galleryPhotoRefs]
-                                        .where((e) => e.trim().isNotEmpty)
-                                        .toSet()
+                          photoRef: primaryPhotoRef,
+                          height: 120,
+                          onTap: () async {
+                            await _pickVehiclePhoto(
+                              currentRef: primaryPhotoRef,
+                              onPicked: (ref) => setLocalState(() {
+                                primaryPhotoRef = ref;
+                                if (ref.trim().isNotEmpty &&
+                                    !galleryPhotoRefs.contains(ref)) {
+                                  galleryPhotoRefs =
+                                      <String>[ref, ...galleryPhotoRefs]
+                                          .where((e) => e.trim().isNotEmpty)
+                                          .toSet()
+                                          .toList(growable: false);
+                                  if (galleryPhotoRefs.length >
+                                      _maxPhotosPerVehicle) {
+                                    galleryPhotoRefs = galleryPhotoRefs
+                                        .take(_maxPhotosPerVehicle)
                                         .toList(growable: false);
-                                if (galleryPhotoRefs.length >
-                                    _maxPhotosPerVehicle) {
-                                  galleryPhotoRefs = galleryPhotoRefs
-                                      .take(_maxPhotosPerVehicle)
-                                      .toList(growable: false);
+                                  }
                                 }
-                              }
-                            }),
-                          );
-                        },
-                        placeholderText: _t(
-                          nl: 'Geen foto ingesteld',
-                          en: 'No photo set',
-                          fr: 'Aucune photo définie',
-                          es: 'Sin foto configurada',
+                              }),
+                            );
+                          },
+                          placeholderText: _t(
+                            nl: 'Geen foto ingesteld',
+                            en: 'No photo set',
+                            fr: 'Aucune photo définie',
+                            es: 'Sin foto configurada',
+                          ),
                         ),
-                      ),
                       ),
                       const SizedBox(height: 8),
                       OutlinedButton.icon(
@@ -3966,6 +3993,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                         companyId: scopeId,
                                         mediaType: 'vehicle_photo',
                                         entityId: vehicleId,
+                                        mediaId: newVehicleGalleryMediaId(),
                                         filePath: kIsWeb ? null : picked.path,
                                         fileBytes: bytes,
                                         filename: picked.name,
@@ -4495,10 +4523,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _fleetListPhoto(
-                  v,
-                  layout: FleetCardMediaLayout.sideColumn,
-                ),
+                _fleetListPhoto(v, layout: FleetCardMediaLayout.sideColumn),
                 SizedBox(height: statusOffset),
                 Container(
                   padding: EdgeInsets.symmetric(

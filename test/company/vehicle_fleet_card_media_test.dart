@@ -7,29 +7,83 @@ import 'package:fluxidi_tracking/vehicle_fleet_card_media.dart';
 
 /// 1x1 PNG so widget tests do not depend on network or assets.
 final Uint8List _kTinyPng = Uint8List.fromList(const <int>[
-  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
 ]);
 
-Widget _host({
-  required Size size,
-  required Widget child,
-  double? maxWidth,
-}) {
+Widget _host({required Size size, required Widget child, double? maxWidth}) {
   return MaterialApp(
     home: MediaQuery(
       data: MediaQueryData(size: size),
       child: Scaffold(
         body: Align(
           alignment: Alignment.topCenter,
-          child: SizedBox(
-            width: maxWidth ?? size.width,
-            child: child,
-          ),
+          child: SizedBox(width: maxWidth ?? size.width, child: child),
         ),
       ),
     ),
@@ -59,28 +113,29 @@ FleetVehicleCardMedia _card({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('1 tablet portrait uses the full available card width', () {
+  test('1 tablet portrait uses a bounded 16:9 photo box', () {
     const viewport = Size(800, 1280);
     const cardWidth = 800.0 - 24 - 20;
-    final height = fleetCardMediaHeight(
+    final box = fleetCardMediaBox(
       availableWidth: cardWidth,
       viewport: viewport,
     );
     expect(cardWidth, greaterThan(740));
-    expect(height, inInclusiveRange(300, 420));
-    expect(height, greaterThan(kFleetCardOldPortraitBannerHeight));
+    expect(box.height, lessThanOrEqualTo(kFleetCardTabletPortraitMaxHeight));
+    expect(box.height / box.width, closeTo(9 / 16, 0.02));
+    expect(box.width, lessThan(cardWidth));
   });
 
-  test('2 tablet frame is taller than the old 176 cover banner', () {
-    final height = fleetCardMediaHeight(
+  test('2 tablet portrait stays contain-only and not extremely tall', () {
+    final box = fleetCardMediaBox(
       availableWidth: 756,
       viewport: const Size(800, 1280),
     );
-    expect(height, greaterThan(kFleetCardOldPortraitBannerHeight));
+    expect(box.height, lessThanOrEqualTo(kFleetCardTabletPortraitMaxHeight));
     expect(
       fleetCardMediaUsesContainStrategy(
         sharpFit: kFleetVehicleCardSharpPhotoFit,
-        height: height,
+        height: box.height,
         viewport: const Size(800, 1280),
       ),
       isTrue,
@@ -107,11 +162,15 @@ void main() {
       viewport: const Size(390, 844),
     );
     expect(portrait, inInclusiveRange(200, 280));
-    final ultraWide = fleetCardMediaHeight(
+    final ultraWide = fleetCardMediaBox(
       availableWidth: 756,
       viewport: const Size(800, 1280),
     );
-    expect(ultraWide, greaterThan(kFleetCardOldPortraitBannerHeight));
+    expect(
+      ultraWide.height,
+      lessThanOrEqualTo(kFleetCardTabletPortraitMaxHeight),
+    );
+    expect(ultraWide.height / ultraWide.width, closeTo(9 / 16, 0.02));
   });
 
   test('7 no distortion constants remain', () {
@@ -133,12 +192,15 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byKey(kFleetVehicleCardMediaFrameKey), findsOneWidget);
     final frame = tester.getSize(find.byKey(kFleetVehicleCardMediaFrameKey));
-    expect(frame.width, closeTo(756, 0.5));
-    expect(frame.height, greaterThan(kFleetCardOldPortraitBannerHeight));
-    expect(frame.height, lessThanOrEqualTo(420));
+    expect(frame.height, lessThanOrEqualTo(kFleetCardTabletPortraitMaxHeight));
+    expect(frame.height / frame.width, closeTo(9 / 16, 0.03));
+    expect(find.byKey(kFleetVehicleCardFillImageKey), findsNothing);
+    expect(find.byKey(kFleetVehicleCardContainImageKey), findsOneWidget);
   });
 
-  testWidgets('9 no overflow in tablet landscape / split-screen', (tester) async {
+  testWidgets('9 no overflow in tablet landscape / split-screen', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -213,7 +275,9 @@ void main() {
     final photoBottom = tester.getBottomLeft(
       find.byKey(kFleetVehicleCardMediaFrameKey),
     );
-    final labelTop = tester.getTopLeft(find.byKey(kFleetVehicleCardExtraPhotosKey));
+    final labelTop = tester.getTopLeft(
+      find.byKey(kFleetVehicleCardExtraPhotosKey),
+    );
     expect(labelTop.dy, greaterThanOrEqualTo(photoBottom.dy));
   });
 
@@ -236,9 +300,21 @@ void main() {
       ),
       0,
     );
+    expect(
+      fleetVehicleExtraPhotoCount(
+        primaryPhotoRef: 'https://cdn.example/photo.jpg?v=1',
+        galleryPhotoRefs: const <String>[
+          'https://cdn.example/photo.jpg?v=2',
+          'https://cdn.example/photo.jpg?v=3',
+        ],
+      ),
+      0,
+    );
   });
 
-  testWidgets('3 contain image is present when a photo decodes', (tester) async {
+  testWidgets('3 tablet portrait has one contain photo and no fill layer', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _host(
         size: const Size(800, 1280),
@@ -250,11 +326,32 @@ void main() {
       find.byKey(kFleetVehicleCardContainImageKey),
     );
     expect(contain.fit, BoxFit.contain);
-    final fill = tester.widget<Image>(find.byKey(kFleetVehicleCardFillImageKey));
-    expect(fill.fit, BoxFit.cover);
+    expect(find.byKey(kFleetVehicleCardFillImageKey), findsNothing);
   });
 
-  testWidgets('13 media tap opens without changing the photo ref', (tester) async {
+  testWidgets('landscape keeps the compact fill-plus-contain column', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _host(
+        size: const Size(1280, 800),
+        maxWidth: 420,
+        child: _card(
+          layout: FleetCardMediaLayout.sideColumn,
+          image: MemoryImage(_kTinyPng),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(kFleetVehicleCardFillImageKey), findsOneWidget);
+    expect(find.byKey(kFleetVehicleCardContainImageKey), findsOneWidget);
+  });
+
+  testWidgets('13 media tap opens without changing the photo ref', (
+    tester,
+  ) async {
     var opens = 0;
     await tester.pumpWidget(
       _host(
@@ -279,10 +376,16 @@ void main() {
     expect(page.contains("nl: 'Bewerken'"), isTrue);
     expect(page.contains("nl: 'Verwijderen'"), isTrue);
     expect(page.contains('deleteVehicle(v.id)'), isTrue);
-    expect(page.contains('Gekoppelde chauffeur') || page.contains('chauffeur'), isTrue);
+    expect(
+      page.contains('Gekoppelde chauffeur') || page.contains('chauffeur'),
+      isTrue,
+    );
     expect(page.contains('_openVehicleEditor(existing: v)'), isTrue);
     expect(page.contains('focusGallery: true'), isTrue);
     expect(page.contains('height: isCompactLandscape ? 110 : 176'), isFalse);
-    expect(page.contains('final photoHeight = tablet ? 168.0 : 130.0'), isFalse);
+    expect(
+      page.contains('final photoHeight = tablet ? 168.0 : 130.0'),
+      isFalse,
+    );
   });
 }

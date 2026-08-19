@@ -130,7 +130,10 @@ Map<String, dynamic> _profile() {
 
 Widget _app(Widget child, {Size size = kLimousinePhonePortrait}) {
   return MaterialApp(
-    home: MediaQuery(data: MediaQueryData(size: size), child: child),
+    home: MediaQuery(
+      data: MediaQueryData(size: size),
+      child: child,
+    ),
   );
 }
 
@@ -160,15 +163,12 @@ void main() {
       isFalse,
     );
     expect(
-      tryParseLimousineShowroomVehicle(
-        <String, dynamic>{
-          'category': 'Premium',
-          'service_category': 'taxi',
-          'name': 'Taxi Van',
-          'is_active': true,
-        },
-        index: 0,
-      ),
+      tryParseLimousineShowroomVehicle(<String, dynamic>{
+        'category': 'Premium',
+        'service_category': 'taxi',
+        'name': 'Taxi Van',
+        'is_active': true,
+      }, index: 0),
       isNull,
     );
   });
@@ -192,10 +192,7 @@ void main() {
     expect(kLimousineCustomerBookGateEnabled, isFalse);
     expect(limousineCustomerQuoteCtaEnabled(), isFalse);
     expect(limousineCustomerBookCtaEnabled(), isFalse);
-    expect(
-      limousineCustomerQuoteCtaEnabled(quoteGate: true),
-      isTrue,
-    );
+    expect(limousineCustomerQuoteCtaEnabled(quoteGate: true), isTrue);
   });
 
   test('vehicle media contract keeps contain and a usable height', () {
@@ -248,7 +245,9 @@ void main() {
     expect(data.showroom.heroPhotoUrl, 'https://cdn.example/limo.jpg');
     expect(data.showroom.heroPhotoUrl.contains('taxi-cover'), isFalse);
     expect(
-      data.showroom.vehicles.any((vehicle) => vehicle.displayName == 'Taxi Van'),
+      data.showroom.vehicles.any(
+        (vehicle) => vehicle.displayName == 'Taxi Van',
+      ),
       isFalse,
     );
     expect(data.hasPublicRating, isTrue);
@@ -256,9 +255,7 @@ void main() {
     expect(data.serviceRegion, 'Oost-Vlaanderen');
   });
 
-  testWidgets('discovery card has two distinct limousine CTAs', (
-    tester,
-  ) async {
+  testWidgets('discovery card has two distinct limousine CTAs', (tester) async {
     final gateway = MemoryLimousineDiscoveryGateway(
       searchHandler: (_) async => LimousineDiscoveryPageData(
         listingMode: 'test_preview',
@@ -319,10 +316,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     tester
-            .widget<ButtonStyleButton>(
-              find.byKey(limousineDiscoveryOffersCtaKey('limo_1')),
-            )
-            .onPressed!();
+        .widget<ButtonStyleButton>(
+          find.byKey(limousineDiscoveryOffersCtaKey('limo_1')),
+        )
+        .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineProviderShowroomPageKey), findsOneWidget);
     expect(find.byType(LimousineProviderShowroomPage), findsOneWidget);
@@ -363,10 +360,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     tester
-            .widget<ButtonStyleButton>(
-              find.byKey(limousineDiscoveryProfileCtaKey('limo_1')),
-            )
-            .onPressed!();
+        .widget<ButtonStyleButton>(
+          find.byKey(limousineDiscoveryProfileCtaKey('limo_1')),
+        )
+        .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousinePublicProfilePageKey), findsOneWidget);
     expect(find.byType(LimousinePublicProfilePage), findsOneWidget);
@@ -391,18 +388,15 @@ void main() {
   ) async {
     await tester.pumpWidget(
       _app(
-        LimousinePublicProfilePage(
-          partnerId: 'limo_1',
-          profile: _profile(),
-        ),
+        LimousinePublicProfilePage(partnerId: 'limo_1', profile: _profile()),
       ),
     );
     await tester.pumpAndSettle();
     tester
-            .widget<ButtonStyleButton>(
-              find.byKey(kLimousinePublicProfileOffersCtaKey),
-            )
-            .onPressed!();
+        .widget<ButtonStyleButton>(
+          find.byKey(kLimousinePublicProfileOffersCtaKey),
+        )
+        .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byType(LimousineProviderShowroomPage), findsOneWidget);
     expect(find.byType(LimousinePublicProfilePage), findsNothing);
@@ -416,18 +410,15 @@ void main() {
   ) async {
     await tester.pumpWidget(
       _app(
-        LimousineProviderShowroomPage(
-          partnerId: 'limo_1',
-          profile: _profile(),
-        ),
+        LimousineProviderShowroomPage(partnerId: 'limo_1', profile: _profile()),
       ),
     );
     await tester.pumpAndSettle();
     tester
-            .widget<ButtonStyleButton>(
-              find.byKey(kLimousineShowroomCompanyProfileCtaKey),
-            )
-            .onPressed!();
+        .widget<ButtonStyleButton>(
+          find.byKey(kLimousineShowroomCompanyProfileCtaKey),
+        )
+        .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byType(LimousinePublicProfilePage), findsOneWidget);
     expect(find.byType(LimousineProviderShowroomPage), findsNothing);
@@ -457,8 +448,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(kLimousineDiscoveryTabletPortraitLayoutKey), findsOneWidget);
-    final card = tester.getSize(find.byKey(limousineDiscoveryCardKey('limo_1')));
+    expect(
+      find.byKey(kLimousineDiscoveryTabletPortraitLayoutKey),
+      findsOneWidget,
+    );
+    final card = tester.getSize(
+      find.byKey(limousineDiscoveryCardKey('limo_1')),
+    );
     expect(card.width, greaterThan(1000));
     expect(card.height, greaterThan(220));
   });
@@ -493,26 +489,26 @@ void main() {
   ) async {
     await tester.pumpWidget(
       _app(
-        LimousineProviderShowroomPage(
-          partnerId: 'limo_1',
-          profile: _profile(),
-        ),
+        LimousineProviderShowroomPage(partnerId: 'limo_1', profile: _profile()),
       ),
     );
     await tester.pumpAndSettle();
     tester
-            .widget<ButtonStyleButton>(
-              find.byKey(limousineShowroomMoreInfoCtaKey('veh_1')),
-            )
-            .onPressed!();
+        .widget<ButtonStyleButton>(
+          find.byKey(limousineShowroomMoreInfoCtaKey('veh_1')),
+        )
+        .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineVehicleDetailPageKey), findsOneWidget);
     expect(find.text('S-Class'), findsWidgets);
-    expect(find.text('Vraag offerte aan'), findsOneWidget);
+    expect(find.text(kLimousineDetailQuoteComingSoon.nl), findsOneWidget);
+    expect(find.text('Vraag offerte aan'), findsNothing);
     expect(find.text('Boek nu'), findsNothing);
   });
 
-  testWidgets('detail quote CTA stays local when gates are off', (tester) async {
+  testWidgets('detail quote CTA stays local when gates are off', (
+    tester,
+  ) async {
     var quotes = 0;
     var books = 0;
     final data = buildLimousineProviderShowroomData(profile: _profile());
@@ -531,15 +527,14 @@ void main() {
       ),
     );
     await tester.pump();
-    tester.widget<ButtonStyleButton>(find.byKey(kLimousineDetailQuoteCtaKey)).onPressed!();
-    await tester.pump();
+    final quoteButton = tester.widget<ButtonStyleButton>(
+      find.byKey(kLimousineDetailQuoteCtaKey),
+    );
+    expect(quoteButton.onPressed, isNull);
+    expect(find.text(kLimousineDetailQuoteComingSoon.nl), findsOneWidget);
     expect(quotes, 0);
     expect(books, 0);
-    expect(find.byKey(kLimousineDetailGateOffBannerKey), findsOneWidget);
-    expect(
-      find.text(kLimousineDetailQuotesInactive.nl),
-      findsOneWidget,
-    );
+    expect(find.byKey(kLimousineDetailGateOffBannerKey), findsNothing);
   });
 
   testWidgets('bookable offer shows Book now and stays gated off', (
@@ -552,7 +547,10 @@ void main() {
     (profile['limousine_offers'] as List).first['display_amount_cents'] = 45000;
     (profile['limousine_offers'] as List).first['currency'] = 'EUR';
     final data = buildLimousineProviderShowroomData(profile: profile);
-    expect(limousineDetailCtaFor(data.vehicles.single.primaryOffer), LimousineShowroomCta.book);
+    expect(
+      limousineDetailCtaFor(data.vehicles.single.primaryOffer),
+      LimousineShowroomCta.book,
+    );
     await tester.pumpWidget(
       _app(
         LimousineVehicleDetailPage(
@@ -565,11 +563,13 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Boek nu'), findsOneWidget);
-    tester.widget<ButtonStyleButton>(find.byKey(kLimousineDetailBookCtaKey)).onPressed!();
-    await tester.pump();
+    expect(find.text(kLimousineDetailBookComingSoon.nl), findsOneWidget);
+    expect(find.text('Boek nu'), findsNothing);
+    final bookButton = tester.widget<ButtonStyleButton>(
+      find.byKey(kLimousineDetailBookCtaKey),
+    );
+    expect(bookButton.onPressed, isNull);
     expect(books, 0);
-    expect(find.text(kLimousineDetailBookingsInactive.nl), findsOneWidget);
   });
 
   testWidgets('missing photo and specs stay safe', (tester) async {

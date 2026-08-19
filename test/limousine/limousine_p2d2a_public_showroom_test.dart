@@ -439,11 +439,11 @@ void main() {
     );
     final quoteCta = find.byKey(limousineShowroomQuoteCtaKey('off_veh'));
     await tester.ensureVisible(quoteCta);
-    await tester.tap(quoteCta);
-    await tester.pump();
-    expect(opened, isTrue);
+    final quoteButton = tester.widget<ButtonStyleButton>(quoteCta);
+    expect(quoteButton.onPressed, isNull);
+    expect(find.text(kLimousineShowroomQuoteComingSoon.en), findsOneWidget);
+    expect(opened, isFalse);
     expect(gateway.createCalls, 0);
-    expect(controller.draft.offerId, 'off_veh');
     controller.dispose();
   });
 

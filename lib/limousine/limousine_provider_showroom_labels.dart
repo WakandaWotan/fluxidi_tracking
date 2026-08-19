@@ -35,6 +35,20 @@ const LocalizedText kLimousineDetailBookCta = LocalizedText(
   es: 'Reservar ahora',
 );
 
+const LocalizedText kLimousineDetailQuoteComingSoon = LocalizedText(
+  nl: 'Offerteaanvragen binnenkort beschikbaar',
+  en: 'Quote requests coming soon',
+  fr: 'Demandes de devis bientôt disponibles',
+  es: 'Solicitudes de presupuesto disponibles pronto',
+);
+
+const LocalizedText kLimousineDetailBookComingSoon = LocalizedText(
+  nl: 'Boeken binnenkort beschikbaar',
+  en: 'Booking coming soon',
+  fr: 'Réservation bientôt disponible',
+  es: 'Reservas disponibles pronto',
+);
+
 const LocalizedText kLimousineDetailQuotesInactive = LocalizedText(
   nl: 'Limousineoffertes zijn nog niet actief in deze testomgeving.',
   en: 'Limousine quotes are not active in this test environment yet.',

@@ -19,6 +19,7 @@ import 'limousine_customer_quote_labels.dart';
 import 'limousine_customer_status_page.dart';
 import 'limousine_customer_wizard_chrome.dart';
 import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_provider_showroom.dart';
 import 'limousine_p2d4c1c_journey.dart';
 import 'limousine_quote_inbox.dart';
 
@@ -1019,6 +1020,11 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         _controller.goTo(LimousineCustomerQuoteStep.reviewRequest);
         break;
       case LimousineRequestWizardStep.review:
+        if (!limousineCustomerQuoteCtaEnabled() &&
+            widget.controller == null &&
+            widget.gateway == null) {
+          return;
+        }
         if (!limousineRequestWizardAllowsHttp(
           step: LimousineRequestWizardStep.review,
           draft: _syncedDraft(),

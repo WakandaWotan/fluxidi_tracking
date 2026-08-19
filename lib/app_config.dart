@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
 import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
@@ -5501,9 +5502,12 @@ String? _sanitizeOutboundFleetMediaRef(String raw) {
 
 List<String> _sanitizeOutboundFleetMediaRefs(Iterable<String> refs) {
   final out = <String>[];
+  final seen = <String>{};
   for (final ref in refs) {
     final sanitized = _sanitizeOutboundFleetMediaRef(ref);
-    if (sanitized == null || out.contains(sanitized)) continue;
+    if (sanitized == null) continue;
+    final identity = publicMediaObjectIdentity(sanitized);
+    if (identity.isEmpty || !seen.add(identity)) continue;
     out.add(sanitized);
   }
   return out;
@@ -10235,6 +10239,7 @@ Future<Map<String, dynamic>> uploadPublicPartnerMedia({
   String? tenantId,
   String? companyId,
   String? entityId,
+  String? mediaId,
   String? filePath,
   Uint8List? fileBytes,
   String? filename,
@@ -10293,6 +10298,12 @@ Future<Map<String, dynamic>> uploadPublicPartnerMedia({
   final trimmedEntityId = (entityId ?? '').trim();
   if (trimmedEntityId.isNotEmpty) {
     request.fields['entity_id'] = trimmedEntityId;
+  }
+  final trimmedMediaId = (mediaId ?? '').trim();
+  if (trimmedMediaId.isNotEmpty) {
+    request.fields['media_id'] = trimmedMediaId;
+  } else if (normalizedType == 'vehicle_photo') {
+    request.fields['media_id'] = newVehicleGalleryMediaId();
   }
 
   final uploadFilename = fallbackFilename();
