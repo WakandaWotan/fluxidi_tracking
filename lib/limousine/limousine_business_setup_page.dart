@@ -21,9 +21,11 @@ import 'limousine_offer_binding.dart';
 import 'limousine_offer_editor.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_profile_identity.dart';
 import 'limousine_public_hero_overlay.dart';
 import 'limousine_quote_requests_nav.dart';
 import 'limousine_simple_offer_editor.dart';
+import 'limousine_pricing_local_store.dart';
 import 'limousine_vehicle_persist.dart';
 import 'limousine_vehicle_public_copy.dart';
 import 'limousine_vehicle_public_copy_editor.dart';
@@ -103,7 +105,11 @@ class _LimousineBusinessSetupPageState
       <String, Map<String, String>>{};
   Map<String, Map<String, String>> _publishedVehiclePublicCopy =
       <String, Map<String, String>>{};
+  LimousineProfileLogoSelection _logo = const LimousineProfileLogoSelection();
+  LimousineProfileLogoSelection _publishedLogo =
+      const LimousineProfileLogoSelection();
   bool _heroUploading = false;
+  bool _logoUploading = false;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
   String _t(LocalizedText text) => text.of(_lang);
@@ -205,9 +211,17 @@ class _LimousineBusinessSetupPageState
       final loader = widget.loadPricing ?? () => fetchAdminLimousinePricing();
       final data = await loader();
       if (!mounted) return;
-      final section = (data['limousine'] is Map)
+      await limousinePricingLocalStore.warm();
+      if (!mounted) return;
+      final rawSection = (data['limousine'] is Map)
           ? Map<String, dynamic>.from(data['limousine'] as Map)
           : <String, dynamic>{};
+      final section = limousineMergeVehiclePublicCopyOverlay(
+        section: rawSection,
+        overlay: limousinePricingLocalStore.peekMerged(
+          limousineDefaultLocalPricingScopeKeys(),
+        ),
+      );
       final offers = (section['offers'] is List)
           ? (section['offers'] as List)
                 .whereType<Map>()
@@ -227,7 +241,8 @@ class _LimousineBusinessSetupPageState
         if (_editEpoch == 0) {
           _applyPersistedPublicText(section);
           _applyPersistedSelectedVehicleIds(section);
-          _applyPersistedHero(section);
+          _applyPersistedHero(section, fromLoad: true);
+          _applyPersistedLogo(section, fromLoad: true);
           _applyPersistedVehiclePublicCopy(section);
           _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         }
@@ -278,11 +293,14 @@ class _LimousineBusinessSetupPageState
     final publishedDescription = limousineLocalizedOf(
       section['published_public_description'],
     );
-    _publishedPublicTitle = limousineLocalizedMapHasText(publishedTitle)
-        ? publishedTitle
-        : title;
-    _publishedPublicDescription =
-        limousineLocalizedMapHasText(publishedDescription)
+    final hasPublishedTitle =
+        section.containsKey('published_public_title') ||
+        section.containsKey('publishedPublicTitle');
+    final hasPublishedDescription =
+        section.containsKey('published_public_description') ||
+        section.containsKey('publishedPublicDescription');
+    _publishedPublicTitle = hasPublishedTitle ? publishedTitle : title;
+    _publishedPublicDescription = hasPublishedDescription
         ? publishedDescription
         : description;
   }
@@ -292,17 +310,27 @@ class _LimousineBusinessSetupPageState
       section[kLimousineVehiclePublicCopyKey] ??
           section['limousineVehiclePublicCopy'],
     );
-    final published = limousineVehiclePublicCopyById(
+    _publishedVehiclePublicCopy = limousineVehiclePublicCopyById(
       section[kLimousinePublishedVehiclePublicCopyKey] ??
           section['publishedLimousineVehiclePublicCopy'],
     );
-    _publishedVehiclePublicCopy = published.isNotEmpty
-        ? published
-        : limousineCloneVehiclePublicCopy(_vehiclePublicCopy);
+  }
+
+  void _rememberVehiclePublicCopyOverlay({required bool updatePublished}) {
+    limousinePricingLocalStore.writeVehiclePublicCopy(
+      scopeKeys: limousineDefaultLocalPricingScopeKeys(),
+      working: _vehiclePublicCopy,
+      published: updatePublished
+          ? _vehiclePublicCopy
+          : _publishedVehiclePublicCopy,
+      updatePublished: updatePublished,
+      revision: _revision,
+    );
   }
 
   Future<void> _openVehiclePublicCopy(VehicleProfile vehicle) async {
-    final saved = _vehiclePublicCopy[vehicle.id] ?? const <String, String>{};
+    final vehicleId = limousineCanonicalVehicleId(vehicle.id);
+    final saved = _vehiclePublicCopy[vehicleId] ?? const <String, String>{};
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (dialogContext) {
@@ -318,13 +346,15 @@ class _LimousineBusinessSetupPageState
     setState(() {
       final next = limousineCloneVehiclePublicCopy(_vehiclePublicCopy);
       if (limousinePublicCopyHasText(result)) {
-        next[vehicle.id] = result;
+        next[vehicleId] = result;
       } else {
-        next.remove(vehicle.id);
+        next.remove(vehicleId);
       }
       _vehiclePublicCopy = next;
     });
+    _rememberVehiclePublicCopyOverlay(updatePublished: false);
     _markDirty();
+    await _persist(publish: false);
   }
 
   Iterable<String> get _taxiHeroUrls {
@@ -335,31 +365,64 @@ class _LimousineBusinessSetupPageState
     ];
   }
 
-  void _applyPersistedHero(Map<String, dynamic> section) {
+  void _applyPersistedHero(
+    Map<String, dynamic> section, {
+    bool fromLoad = false,
+  }) {
     _hero = limousineSanitizeProfileCover(
       limousineHeroFromSection(section),
       taxiHeroUrls: _taxiHeroUrls,
     );
-    final publishedRaw = limousinePublishedProfileCoverRaw(section);
-    final published = publishedRaw is Map
-        ? limousineSanitizeProfileCover(
-            limousineHeroFromSection(<String, dynamic>{
-              kLimousineProfileCoverKey: publishedRaw,
-              'limousine_hero': publishedRaw,
-            }),
-            taxiHeroUrls: _taxiHeroUrls,
-          )
-        : limousineSanitizeProfileCover(
-            limousineHeroFromSection(section),
-            taxiHeroUrls: _taxiHeroUrls,
-          );
-    _publishedHero = published.hasPhoto ? published : _hero;
+    if (limousineHasPublishedProfileCoverKey(section)) {
+      final publishedRaw = limousinePublishedProfileCoverRaw(section);
+      _publishedHero = publishedRaw is Map
+          ? limousineSanitizeProfileCover(
+              limousineHeroFromSection(<String, dynamic>{
+                kLimousineProfileCoverKey: publishedRaw,
+                'limousine_hero': publishedRaw,
+              }),
+              taxiHeroUrls: _taxiHeroUrls,
+            )
+          : limousineSanitizeProfileCover(
+              limousineHeroFromSection(<String, dynamic>{
+                'limousine_hero_url': publishedRaw,
+              }),
+              taxiHeroUrls: _taxiHeroUrls,
+            );
+      return;
+    }
+    if (fromLoad) {
+      _publishedHero = _hero;
+    }
+  }
+
+  void _applyPersistedLogo(
+    Map<String, dynamic> section, {
+    bool fromLoad = false,
+  }) {
+    _logo = limousineSanitizeProfileLogo(limousineLogoFromSection(section));
+    if (limousineHasPublishedProfileLogoKey(section)) {
+      _publishedLogo = limousineSanitizeProfileLogo(
+        limousinePublishedLogoFromSection(section),
+      );
+      return;
+    }
+    if (fromLoad) {
+      _publishedLogo = _logo;
+    }
   }
 
   String get _companyLogoUrl {
     if (widget.logoUrl.startsWith('https://')) return widget.logoUrl;
     final url = localBackendBusinessProfileNotifier.value?.publicLogoUrl ?? '';
     return url.startsWith('https://') ? url : '';
+  }
+
+  String get _effectiveLogoUrl {
+    return limousineEffectiveLogoUrl(
+      overrideUrl: _logo.photoUrl,
+      companyLogoUrl: _companyLogoUrl,
+    );
   }
 
   List<String> get _fallbackHeroUrls {
@@ -415,6 +478,51 @@ class _LimousineBusinessSetupPageState
     } finally {
       if (mounted) setState(() => _heroUploading = false);
     }
+  }
+
+  Future<void> _uploadLimousineLogo() async {
+    if (_logoUploading) return;
+    setState(() => _logoUploading = true);
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 900,
+        imageQuality: 88,
+      );
+      if (picked == null) return;
+      final uploaded = await uploadPublicPartnerMedia(
+        mediaType: kLimousineProfileLogoMediaType,
+        filePath: picked.path,
+        filename: picked.name,
+      );
+      final url = (uploaded['url'] ?? '').toString().trim();
+      if (!url.startsWith('https://')) return;
+      final safe = limousineSanitizeProfileLogoOverrideUrl(url);
+      if (safe.isEmpty) return;
+      setState(() {
+        _logo = LimousineProfileLogoSelection(
+          photoUrl: safe,
+          sourceRevision: _logo.sourceRevision + 1,
+          explicitOverride: true,
+        );
+      });
+      _markDirty();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = limousineFriendlyCompanyError(error, language: _lang);
+      });
+    } finally {
+      if (mounted) setState(() => _logoUploading = false);
+    }
+  }
+
+  void _clearLimousineLogoOverride() {
+    if (!_logo.hasOverride) return;
+    setState(() {
+      _logo = const LimousineProfileLogoSelection();
+    });
+    _markDirty();
   }
 
   Future<void> _pickHeroFromGallery() async {
@@ -571,6 +679,8 @@ class _LimousineBusinessSetupPageState
         publishedTitle: _publishedPublicTitle,
         publishedDescription: _publishedPublicDescription,
         publishedHero: _publishedHero.toSectionJson(),
+        logo: _logo.toSectionJson(),
+        publishedLogo: _publishedLogo.toSectionJson(),
         taxiHeroUrls: _taxiHeroUrls,
       ),
       ...limousineVehiclePublicCopyPayload(
@@ -608,6 +718,7 @@ class _LimousineBusinessSetupPageState
       _error = null;
       _status = null;
     });
+    _rememberVehiclePublicCopyOverlay(updatePublished: false);
     try {
       await _persistFleet();
       if (!mounted || saveId != _saveEpoch) return;
@@ -656,15 +767,23 @@ class _LimousineBusinessSetupPageState
             section.containsKey(kLimousinePublishedProfileCoverKey) ||
             section.containsKey('limousine_hero') ||
             section.containsKey('published_limousine_hero')) {
-          _applyPersistedHero(section);
+          _applyPersistedHero(section, fromLoad: false);
+        }
+        if (section.containsKey(kLimousineProfileLogoKey) ||
+            section.containsKey(kLimousinePublishedProfileLogoKey) ||
+            section.containsKey('limousine_logo') ||
+            section.containsKey('published_limousine_logo')) {
+          _applyPersistedLogo(section, fromLoad: false);
         }
         if (publish) {
           _publishedPublicTitle = _publicTitle.toJson();
           _publishedPublicDescription = _publicDescription.toJson();
           _publishedHero = _hero;
+          _publishedLogo = _logo;
           _publishedVehiclePublicCopy = limousineCloneVehiclePublicCopy(
             _vehiclePublicCopy,
           );
+          _rememberVehiclePublicCopyOverlay(updatePublished: true);
         }
         _sectionEnabled = publish ? true : _sectionEnabled;
         _dirty = false;
@@ -1765,6 +1884,75 @@ class _LimousineBusinessSetupPageState
     );
   }
 
+  Widget _logoEditor(LimousineUxTokens tokens) {
+    final override = _logo.hasOverride;
+    final previewUrl = _effectiveLogoUrl;
+    return Column(
+      key: kLimousineBusinessSetupLogoKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _t(kLimousineBusinessSetupLogoTitle),
+          style: TextStyle(
+            color: tokens.onSurface,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _t(kLimousineBusinessSetupLogoHint),
+          style: TextStyle(color: tokens.muted, fontSize: 12.5),
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: previewUrl.startsWith('https://')
+                  ? _fillPhoto(tokens, previewUrl)
+                  : ColoredBox(color: tokens.surfaceAlt),
+            ),
+          ),
+        ),
+        if (!override) ...[
+          const SizedBox(height: 8),
+          Text(
+            _t(kLimousineBusinessSetupLogoFallback),
+            style: TextStyle(color: tokens.gold, fontSize: 12.5),
+          ),
+        ],
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: override
+                  ? kLimousineBusinessSetupLogoReplaceKey
+                  : kLimousineBusinessSetupLogoPickKey,
+              onPressed: _logoUploading ? null : _uploadLimousineLogo,
+              icon: const Icon(Icons.image_outlined),
+              label: Text(
+                override
+                    ? _t(kLimousineBusinessSetupLogoReplace)
+                    : _t(kLimousineBusinessSetupLogoPick),
+              ),
+            ),
+            if (override)
+              OutlinedButton(
+                key: kLimousineBusinessSetupLogoClearKey,
+                onPressed: _clearLimousineLogoOverride,
+                child: Text(_t(kLimousineBusinessSetupLogoClear)),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _publicBody(LimousineUxTokens tokens, bool tablet) {
     final editor = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1790,6 +1978,8 @@ class _LimousineBusinessSetupPageState
         ),
         const SizedBox(height: 16),
         _coverEditor(tokens),
+        const SizedBox(height: 16),
+        _logoEditor(tokens),
         ExpansionTile(
           key: kLimousineBusinessSetupOtherLanguagesKey,
           title: Text(_t(kLimousineBusinessSetupOtherLanguages)),
@@ -1868,7 +2058,7 @@ class _LimousineBusinessSetupPageState
     );
     final resolvedHero = _resolvedHero;
     final identity = resolvePublicPartnerHeroIdentity(
-      logoUrl: _companyLogoUrl,
+      logoUrl: _effectiveLogoUrl,
       logoImage: widget.logoImage,
       companyName: widget.companyName.isNotEmpty ? widget.companyName : title,
       description: description,

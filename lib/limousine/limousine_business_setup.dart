@@ -9,6 +9,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
+import 'limousine_profile_identity.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
@@ -123,6 +124,18 @@ const Key kLimousineBusinessSetupCoverFallbackKey = ValueKey<String>(
 );
 const Key kLimousineBusinessSetupCoverUploadKey = ValueKey<String>(
   'limousine_business_setup_cover_upload',
+);
+const Key kLimousineBusinessSetupLogoKey = ValueKey<String>(
+  'limousine_business_setup_logo',
+);
+const Key kLimousineBusinessSetupLogoPickKey = ValueKey<String>(
+  'limousine_business_setup_logo_pick',
+);
+const Key kLimousineBusinessSetupLogoReplaceKey = ValueKey<String>(
+  'limousine_business_setup_logo_replace',
+);
+const Key kLimousineBusinessSetupLogoClearKey = ValueKey<String>(
+  'limousine_business_setup_logo_clear',
 );
 const Key kLimousineSimpleOfferScopeAllKey = ValueKey<String>(
   'limousine_simple_offer_scope_all',
@@ -268,6 +281,8 @@ Map<String, dynamic> limousinePublicDisplayPayload({
   required Map<String, String> publishedTitle,
   required Map<String, String> publishedDescription,
   required Map<String, dynamic> publishedHero,
+  Map<String, dynamic> logo = const <String, dynamic>{},
+  Map<String, dynamic> publishedLogo = const <String, dynamic>{},
   Iterable<String> taxiHeroUrls = const <String>[],
 }) {
   final safeHero = limousineSanitizeProfileCoverMap(
@@ -278,19 +293,43 @@ Map<String, dynamic> limousinePublicDisplayPayload({
     publishedHero,
     taxiHeroUrls: taxiHeroUrls,
   );
+  final safeLogo = limousineSanitizeProfileLogoMap(logo);
+  final safePublishedLogo = limousineSanitizeProfileLogoMap(publishedLogo);
   final snapshot = publish ? safeHero : safePublished;
+  final logoSnapshot = publish ? safeLogo : safePublishedLogo;
+  final publishedTitleSnapshot = publish ? title : publishedTitle;
+  final publishedDescriptionSnapshot = publish
+      ? description
+      : publishedDescription;
+  final publishedCard = <String, dynamic>{
+    'public_title': publishedTitleSnapshot,
+    'public_description': publishedDescriptionSnapshot,
+    'cover': snapshot,
+    'logo': logoSnapshot,
+  };
+  final workingCard = <String, dynamic>{
+    'public_title': title,
+    'public_description': description,
+    'cover': safeHero,
+    'logo': safeLogo,
+  };
   return <String, dynamic>{
     'public_title': title,
     'public_description': description,
     kLimousineProfileCoverKey: safeHero,
     'limousine_hero': safeHero,
-    'published_public_title': publish ? title : publishedTitle,
-    'published_public_description': publish
-        ? description
-        : publishedDescription,
+    kLimousineProfileLogoKey: safeLogo,
+    'limousine_logo': safeLogo,
+    kLimousineVisitingCardKey: workingCard,
+    'published_public_title': publishedTitleSnapshot,
+    'published_public_description': publishedDescriptionSnapshot,
     kLimousinePublishedProfileCoverKey: snapshot,
     'published_limousine_hero': snapshot,
+    kLimousinePublishedProfileLogoKey: logoSnapshot,
+    'published_limousine_logo': logoSnapshot,
+    kLimousinePublishedVisitingCardKey: publishedCard,
     kLimousineProfileCoverSchemaKey: kLimousineProfileCoverSchemaVersion,
+    kLimousineProfileLogoSchemaKey: kLimousineProfileLogoSchemaVersion,
   };
 }
 

@@ -180,8 +180,9 @@ void main() {
     expect(data.vehicles, hasLength(1));
     expect(data.vehicles.single.displayName, 'S-Class');
     expect(data.vehicles.single.serviceClassId, 'executive_sedan');
-    expect(data.heroPhotoUrl, 'https://cdn.example/limo.jpg');
+    expect(data.heroPhotoUrl, isEmpty);
     expect(data.heroPhotoUrl.contains('taxi-cover'), isFalse);
+    expect(data.heroPhotoUrl.contains('limo.jpg'), isFalse);
     expect(
       data.vehicles.any((vehicle) => vehicle.displayName == 'Taxi Van'),
       isFalse,
@@ -244,8 +245,9 @@ void main() {
 
   test('limousine profile projection drops taxi chrome and taxi cover', () {
     final data = buildLimousinePublicProfileData(profile: _profile());
-    expect(data.showroom.heroPhotoUrl, 'https://cdn.example/limo.jpg');
+    expect(data.showroom.heroPhotoUrl, isEmpty);
     expect(data.showroom.heroPhotoUrl.contains('taxi-cover'), isFalse);
+    expect(data.showroom.heroPhotoUrl.contains('limo.jpg'), isFalse);
     expect(
       data.showroom.vehicles.any(
         (vehicle) => vehicle.displayName == 'Taxi Van',

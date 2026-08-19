@@ -723,7 +723,7 @@ void main() {
       await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
       await tester.pumpAndSettle();
       expect(find.text('Maison Noire'), findsOneWidget);
-      expect(find.text('Vanaf €450'), findsNothing);
+      expect(find.text('Vanaf €450'), findsOneWidget);
       expect(find.textContaining('★'), findsNothing);
       _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
       await tester.pumpAndSettle();

@@ -105,6 +105,9 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
+  buildLimousinePublicVisitingCard as _buildLimousinePublicVisitingCard,
+} from "./modules/limousine_public_visiting_card.mjs";
+import {
   fetchRatehawkHotelsStatus,
   handleAdminRatehawkTestHotelpage,
   handleAdminRatehawkTestPrebook,
@@ -76920,6 +76923,12 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         return [profile.partner_id, { hero_photo_url: heroUrl, logo_url: logoUrl }];
       }),
   );
+  const visitingCardByPartnerId = new Map(
+    visibleProfiles.map((profile) => [
+      profile.partner_id,
+      _publicLimousineVisitingCardFields(profile),
+    ]),
+  );
   const nearbyCapabilitySignalsByPartnerId = new Map(
     visibleProfiles
       .map((profile) => {
@@ -77096,6 +77105,7 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
         ...capabilitySignals,
+        ...(visitingCardByPartnerId.get(p.partner_id) || {}),
       };
     });
 }
@@ -77404,6 +77414,7 @@ function _validateCompanyMediaType(mediaType) {
     normalizedMediaType === "company_logo" ||
     normalizedMediaType === "company_hero" ||
     normalizedMediaType === "limousine_profile_cover" ||
+    normalizedMediaType === "limousine_profile_logo" ||
     normalizedMediaType === "vehicle_photo" ||
     normalizedMediaType === "driver_photo"
   ) {
@@ -77448,6 +77459,9 @@ function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId,
   }
   if (mediaType === "limousine_profile_cover") {
     return `public-media/${tenantSeg}/${companySeg}/limousine/profile-cover.${safeExt}`;
+  }
+  if (mediaType === "limousine_profile_logo") {
+    return `public-media/${tenantSeg}/${companySeg}/limousine/profile-logo.${safeExt}`;
   }
   if (mediaType === "vehicle_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);
@@ -77650,6 +77664,52 @@ function _normalizePublicBookingCapabilities(raw, profileEnabled) {
   };
 }
 
+function _publicLimousineVehicleCopyFields(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const visiting =
+    src.published_limousine_visiting_card &&
+    typeof src.published_limousine_visiting_card === "object"
+      ? src.published_limousine_visiting_card
+      : {};
+  const rawCopy =
+    visiting.vehicle_public_copy ??
+    src.published_limousine_vehicle_public_copy ??
+    src.publishedLimousineVehiclePublicCopy;
+  if (!rawCopy || typeof rawCopy !== "object" || Array.isArray(rawCopy)) return {};
+  const out = {};
+  for (const [id, value] of Object.entries(rawCopy)) {
+    const vehicleId = String(id || "").trim();
+    if (!vehicleId) continue;
+    const localized = {};
+    const map = value && typeof value === "object" ? value : {};
+    for (const lang of ["nl", "en", "fr", "es", "de"]) {
+      const text = String(map[lang] ?? "").trim().slice(0, 600);
+      if (text) localized[lang] = text;
+    }
+    if (Object.keys(localized).length) out[vehicleId] = localized;
+  }
+  return Object.keys(out).length
+    ? { published_limousine_vehicle_public_copy: out }
+    : {};
+}
+
+function _publicLimousineVisitingCardFields(raw) {
+  const card = _buildLimousinePublicVisitingCard(raw);
+  const hasText = (map) =>
+    map && typeof map === "object" && Object.values(map).some((value) => String(value || "").trim());
+  const copy = _publicLimousineVehicleCopyFields(raw);
+  if (
+    !hasText(card.published_public_title) &&
+    !hasText(card.published_public_description) &&
+    !card.published_limousine_profile_cover?.photo_url &&
+    !card.published_limousine_profile_logo?.photo_url &&
+    !copy.published_limousine_vehicle_public_copy
+  ) {
+    return {};
+  }
+  return { ...card, ...copy };
+}
+
 function _normalizePublicPartnerProfileEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
@@ -77706,6 +77766,8 @@ function _normalizePublicPartnerProfileEntry(raw) {
       raw.booking_capabilities ?? raw.bookingCapabilities,
       profileEnabled,
     ),
+    ..._publicLimousineVisitingCardFields(raw),
+    ..._publicLimousineVehicleCopyFields(raw),
   };
 }
 

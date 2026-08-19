@@ -117,7 +117,7 @@ class LimousinePublicProfilePage extends StatelessWidget {
           minHeight: 260,
           aspectRatio: 16 / 8,
           borderRadius: 0,
-          placeholderLabel: showroom.companyName,
+          placeholderLabel: '',
           fit: showroom.heroIsExplicit ? BoxFit.cover : BoxFit.contain,
           alignment: showroom.heroAlignment,
         ),

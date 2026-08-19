@@ -263,7 +263,8 @@ void main() {
         ],
       },
     );
-    expect(showroom.heroPhotoUrl, 'https://cdn.example/party-ext.jpg');
+    expect(showroom.heroPhotoUrl, isEmpty);
+    expect(showroom.heroPhotoUrl.contains('party-ext'), isFalse);
     expect(showroom.vehicles, hasLength(1));
     expect(showroom.vehicles.single.displayName, 'Party Limo');
   });

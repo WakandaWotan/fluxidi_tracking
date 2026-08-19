@@ -419,6 +419,10 @@ Map<String, dynamic> taxiReplaceBusinessHero({
   next.remove(kLimousinePublishedProfileCoverKey);
   next.remove('limousine_hero');
   next.remove('published_limousine_hero');
+  next.remove('limousine_profile_logo');
+  next.remove('published_limousine_profile_logo');
+  next.remove('limousine_logo');
+  next.remove('published_limousine_logo');
   return next;
 }
 

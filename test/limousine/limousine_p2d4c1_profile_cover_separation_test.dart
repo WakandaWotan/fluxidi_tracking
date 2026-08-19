@@ -398,5 +398,9 @@ void main() {
     ).readAsStringSync();
     expect(worker.contains('limousine_profile_cover'), isTrue);
     expect(worker.contains('limousine/profile-cover.'), isTrue);
+    expect(setup.contains('kLimousineProfileLogoMediaType'), isTrue);
+    expect(setup.contains("mediaType: 'company_logo'"), isFalse);
+    expect(worker.contains('limousine_profile_logo'), isTrue);
+    expect(worker.contains('limousine/profile-logo.'), isTrue);
   });
 }

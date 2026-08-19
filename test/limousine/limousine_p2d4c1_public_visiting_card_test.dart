@@ -231,12 +231,11 @@ void _assertVisitingCardCopy(WidgetTester tester) {
   expect(find.text('Roze Hummer'), findsNothing);
   expect(find.text('Witte stretch'), findsNothing);
   expect(find.text('stretch limousine'), findsNothing);
-  expect(find.textContaining('16 personen'), findsNothing);
   expect(find.textContaining('8 personen'), findsNothing);
   expect(find.textContaining('3 bagage'), findsNothing);
   expect(find.textContaining('2 bagage'), findsNothing);
-  expect(find.textContaining('Vanaf €250'), findsNothing);
-  expect(find.textContaining('Vanaf €'), findsNothing);
+  expect(find.text('2 limousines · tot 16 personen'), findsOneWidget);
+  expect(find.textContaining('Vanaf €250'), findsOneWidget);
   expect(find.text('Fluxidi BV'), findsNothing);
   expect(find.text('null'), findsNothing);
   final photo = tester.widget<LimousineContainPhoto>(
@@ -392,6 +391,13 @@ void main() {
     expect(draft['limousine_profile_cover'], liveHero);
     expect(draft['published_limousine_profile_cover'], publishedHero);
     expect(draft['limousine_profile_cover_schema'], 1);
+    expect(draft['limousine_profile_logo'], isA<Map>());
+    expect(draft['published_limousine_profile_logo'], isA<Map>());
+    expect(draft['published_limousine_visiting_card'], isA<Map>());
+    expect(
+      (draft['published_limousine_visiting_card'] as Map)['public_title'],
+      publishedTitle,
+    );
 
     final published = limousinePublicDisplayPayload(
       publish: true,
@@ -439,8 +445,8 @@ void main() {
     expect(find.text('Voor elke gelegenheid'), findsNothing);
     expect(find.text('More info'), findsOneWidget);
     expect(find.text('View offers'), findsOneWidget);
-    expect(find.textContaining('16 passengers'), findsNothing);
-    expect(find.textContaining('From €250'), findsNothing);
+    expect(find.text('2 limousines · up to 16 passengers'), findsOneWidget);
+    expect(find.textContaining('From €250'), findsOneWidget);
   });
 
   testWidgets('Bekijk aanbod opens this company showroom with vehicle data', (

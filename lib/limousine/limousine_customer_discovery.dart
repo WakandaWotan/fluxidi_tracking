@@ -10,6 +10,7 @@ import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
+import 'limousine_profile_identity.dart';
 import 'limousine_offers.dart';
 import 'limousine_service_capability.dart';
 
@@ -99,6 +100,12 @@ Key limousineDiscoveryCardDescriptionKey(String partnerId) =>
 
 Key limousineDiscoveryCardCoverKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_card_cover_$partnerId');
+
+Key limousineDiscoveryCardVehiclesKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_card_vehicles_$partnerId');
+
+Key limousineDiscoveryCardPriceKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_card_price_$partnerId');
 
 /// Visiting-card cover source. Vehicle / gallery photos are never used here.
 enum LimousineDiscoveryCoverSource { publishedHero, emptyPlaceholder }
@@ -547,12 +554,7 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
     coverSource: cover.hasPhoto
         ? LimousineDiscoveryCoverSource.publishedHero
         : LimousineDiscoveryCoverSource.emptyPlaceholder,
-    logoUrl: _httpsOnly(
-      partner['logo_url'] ??
-          partner['logoUrl'] ??
-          asStringKeyedMap(partner['media'])['logo_url'] ??
-          asStringKeyedMap(partner['media'])['logoUrl'],
-    ),
+    logoUrl: limousineDiscoveryEffectiveLogoUrl(partner),
     verifiedPartner: _verifiedPartner(partner),
     publicCity: _publicCity(partner),
     distanceKm: _authoritativeDistanceKm(partner),
@@ -568,7 +570,47 @@ bool _localizedHasText(Map<String, String> map) {
 
 Map<String, dynamic> _limousineSectionOf(Map<String, dynamic> partner) {
   final nested = asStringKeyedMap(partner['limousine'] ?? partner['pricing']);
-  return nested.isEmpty ? partner : <String, dynamic>{...partner, ...nested};
+  final merged = nested.isEmpty
+      ? Map<String, dynamic>.from(partner)
+      : <String, dynamic>{...partner, ...nested};
+  final visiting = asStringKeyedMap(
+    merged[kLimousinePublishedVisitingCardKey] ??
+        merged['publishedLimousineVisitingCard'] ??
+        partner[kLimousinePublishedVisitingCardKey],
+  );
+  if (visiting.isEmpty) return merged;
+  if (visiting['public_title'] != null) {
+    merged['published_public_title'] = visiting['public_title'];
+  }
+  if (visiting['public_description'] != null) {
+    merged['published_public_description'] = visiting['public_description'];
+  }
+  if (visiting['cover'] != null) {
+    merged[kLimousinePublishedProfileCoverKey] = visiting['cover'];
+    merged['published_limousine_hero'] = visiting['cover'];
+  }
+  if (visiting['logo'] != null) {
+    merged[kLimousinePublishedProfileLogoKey] = visiting['logo'];
+    merged['published_limousine_logo'] = visiting['logo'];
+  }
+  return merged;
+}
+
+String limousineDiscoveryPublishedLogoOverride(Map<String, dynamic> partner) {
+  final source = _limousineSectionOf(partner);
+  if (!limousineHasPublishedProfileLogoKey(source)) return '';
+  return limousinePublishedLogoFromSection(source).photoUrl;
+}
+
+String limousineDiscoveryEffectiveLogoUrl(Map<String, dynamic> partner) {
+  final computed = limousineEffectiveLogoUrl(
+    overrideUrl: limousineDiscoveryPublishedLogoOverride(partner),
+    companyLogoUrl: limousineCompanyLogoUrl(partner),
+  );
+  if (computed.isNotEmpty) return computed;
+  return _httpsOnly(
+    partner['limousine_logo_url'] ?? partner['limousineLogoUrl'],
+  );
 }
 
 Map<String, String> _publishedOrLiveLocalized(
@@ -879,6 +921,24 @@ String limousineDiscoveryServiceClassLabel(String serviceClassId) {
   final token = limousineOfferToken(serviceClassId);
   if (token.isEmpty) return '';
   return token.replaceAll('_', ' ');
+}
+
+String limousineDiscoveryVehicleSummary(
+  List<LimousineDiscoveryVehicleThumb> vehicles,
+  AppLanguage language,
+) {
+  if (vehicles.isEmpty) return '';
+  final count = vehicles.length;
+  final noun = count == 1
+      ? kLimousineDiscoveryVehicleOne.of(language)
+      : '$count ${kLimousineDiscoveryVehicleMany.of(language)}';
+  var maxPax = 0;
+  for (final vehicle in vehicles) {
+    final pax = vehicle.passengerCapacity ?? 0;
+    if (pax > maxPax) maxPax = pax;
+  }
+  if (maxPax <= 0) return noun;
+  return '$noun · ${kLimousineDiscoveryUpTo.of(language)} $maxPax ${kLimousineDiscoveryPassengers.of(language)}';
 }
 
 bool limousineDiscoveryCardShowsFabricatedSocialProof(String text) {

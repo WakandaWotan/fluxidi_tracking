@@ -167,3 +167,24 @@ const LocalizedText kLimousineDiscoveryLuggage = LocalizedText(
   fr: 'bagages',
   es: 'equipaje',
 );
+
+const LocalizedText kLimousineDiscoveryVehicleOne = LocalizedText(
+  nl: '1 limousine',
+  en: '1 limousine',
+  fr: '1 limousine',
+  es: '1 limusina',
+);
+
+const LocalizedText kLimousineDiscoveryVehicleMany = LocalizedText(
+  nl: 'limousines',
+  en: 'limousines',
+  fr: 'limousines',
+  es: 'limusinas',
+);
+
+const LocalizedText kLimousineDiscoveryUpTo = LocalizedText(
+  nl: 'tot',
+  en: 'up to',
+  fr: 'jusqu’à',
+  es: 'hasta',
+);

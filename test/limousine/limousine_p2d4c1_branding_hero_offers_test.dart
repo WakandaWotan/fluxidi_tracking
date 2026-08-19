@@ -192,7 +192,7 @@ void main() {
     expect(showroom.heroPhotoUrl.contains('taxi-cover'), isFalse);
     expect(
       buildLimousineProviderShowroomData(profile: _profile()).heroPhotoUrl,
-      'https://cdn.example/party.jpg',
+      isEmpty,
     );
   });
 

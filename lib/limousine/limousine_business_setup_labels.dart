@@ -647,6 +647,48 @@ const LocalizedText kLimousineBusinessSetupCoverFocus = LocalizedText(
   es: 'Posición de enfoque',
 );
 
+const LocalizedText kLimousineBusinessSetupLogoTitle = LocalizedText(
+  nl: 'Logo limousineprofiel',
+  en: 'Limousine profile logo',
+  fr: 'Logo du profil limousine',
+  es: 'Logo del perfil de limusina',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoHint = LocalizedText(
+  nl: 'Optioneel een eigen logo alleen voor limousine. Zonder override blijft het algemene bedrijfslogo zichtbaar, zonder het te kopiëren.',
+  en: 'Optional logo for limousine only. Without an override the general company logo is shown, without copying it.',
+  fr: 'Logo facultatif réservé à la limousine. Sans remplacement, le logo général reste visible, sans être copié.',
+  es: 'Logo opcional solo para limusina. Sin anulación se muestra el logo general, sin copiarlo.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoPick = LocalizedText(
+  nl: 'Kies logo',
+  en: 'Choose logo',
+  fr: 'Choisir un logo',
+  es: 'Elegir logo',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoReplace = LocalizedText(
+  nl: 'Logo vervangen',
+  en: 'Replace logo',
+  fr: 'Remplacer le logo',
+  es: 'Reemplazar logo',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoClear = LocalizedText(
+  nl: 'Eigen logo verwijderen',
+  en: 'Remove own logo',
+  fr: 'Supprimer le logo propre',
+  es: 'Quitar el logo propio',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoFallback = LocalizedText(
+  nl: 'Geen eigen limousinelogo: het algemene bedrijfslogo wordt alleen als weergave gebruikt.',
+  en: 'No own limousine logo: the general company logo is used for display only.',
+  fr: 'Pas de logo limousine propre : le logo général sert uniquement à l’affichage.',
+  es: 'Sin logo propio de limusina: el logo general solo se usa para mostrar.',
+);
+
 const LocalizedText kLimousineBusinessSetupOfferForVehicles = LocalizedText(
   nl: 'Voor welke limousine(s)?',
   en: 'For which limousine(s)?',

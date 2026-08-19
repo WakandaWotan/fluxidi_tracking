@@ -235,6 +235,7 @@ class _LimousineCustomerDiscoveryPageState
           profile: profile,
           distanceKm: card.distanceKm,
           discoveryCard: card,
+          logoImage: card.logoImage,
           market: PublicPartnerMarket.limousine,
         ),
       ),
@@ -717,7 +718,7 @@ class _ProviderCard extends StatelessWidget {
       gold: tokens.gold,
       minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
       aspectRatio: horizontal ? 16 / 10 : 16 / 9,
-      placeholderLabel: limousineDiscoveryCardTitle(card, language),
+      placeholderLabel: '',
       fit: card.coverIsExplicit ? BoxFit.cover : BoxFit.contain,
       alignment: card.coverAlignment,
     );
@@ -728,7 +729,13 @@ class _ProviderCard extends StatelessWidget {
               children: [
                 Expanded(flex: 11, child: photo),
                 const SizedBox(width: 16),
-                Expanded(flex: 9, child: info),
+                Expanded(
+                  flex: 9,
+                  child: SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    child: info,
+                  ),
+                ),
               ],
             ),
           )
@@ -759,6 +766,8 @@ class _ProviderCard extends StatelessWidget {
   Widget _info() {
     final title = limousineDiscoveryCardTitle(card, language);
     final description = limousineDiscoveryCardDescription(card, language);
+    final vehicles = limousineDiscoveryVehicleSummary(card.vehicles, language);
+    final price = limousineDiscoveryPriceLabel(card.price, language);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
       child: Column(
@@ -799,7 +808,7 @@ class _ProviderCard extends StatelessWidget {
             ),
           ),
           if (description.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               description,
               key: limousineDiscoveryCardDescriptionKey(card.publicPartnerId),
@@ -809,6 +818,34 @@ class _ProviderCard extends StatelessWidget {
                 color: tokens.muted,
                 fontSize: 13.5,
                 height: 1.35,
+              ),
+            ),
+          ],
+          if (vehicles.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              vehicles,
+              key: limousineDiscoveryCardVehiclesKey(card.publicPartnerId),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tokens.onSurface.withOpacity(0.82),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (price.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              price,
+              key: limousineDiscoveryCardPriceKey(card.publicPartnerId),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tokens.gold,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],

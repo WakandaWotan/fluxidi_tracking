@@ -12,10 +12,12 @@ import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
+import 'limousine_profile_identity.dart';
 import 'limousine_offers.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_service_capability.dart';
+import 'limousine_pricing_local_store.dart';
 import 'limousine_vehicle_public_copy.dart';
 
 const String kLimousineCustomerQuoteGateDefineKey = 'LIMOUSINE_QUOTE_ENABLED';
@@ -325,9 +327,9 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
   Map<String, Map<String, String>> publicCopyById = const {},
 }) {
   if (!limousinePublicVehicleIsClassified(vehicle)) return null;
-  final vehicleId = (vehicle['vehicle_id'] ?? vehicle['vehicleId'] ?? '')
-      .toString()
-      .trim();
+  final vehicleId = limousineCanonicalVehicleId(
+    vehicle['vehicle_id'] ?? vehicle['vehicleId'],
+  );
   final name = (vehicle['name'] ?? '').toString().trim();
   final brand = (vehicle['brand_model'] ?? vehicle['brandModel'] ?? '')
       .toString()
@@ -446,10 +448,16 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
       (profile['partner_id'] ?? profile['partnerId'] ?? partnerIdFallback)
           .toString()
           .trim();
-  final publishedTitle = limousineDiscoveryLocalizedText(
+  var publishedTitle = limousineDiscoveryLocalizedText(
     limousineDiscoveryPublishedTitleMap(profile),
     language,
   ).trim();
+  if (publishedTitle.isEmpty && discoveryCard != null) {
+    publishedTitle = limousineDiscoveryLocalizedText(
+      discoveryCard.publicTitle,
+      language,
+    ).trim();
+  }
   final companyName = publishedTitle.isNotEmpty
       ? publishedTitle
       : sanitizePublicPartnerBrandName(
@@ -459,16 +467,31 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
               .toString(),
         );
   final media = asStringKeyedMap(profile['media']);
-  final logoUrl = _httpsOnly(
-    profile['logo_url'] ??
-        profile['logoUrl'] ??
-        media['logo_url'] ??
-        media['logoUrl'],
-  );
-  final publishedDescription = limousineDiscoveryLocalizedText(
+  var logoUrl = limousineDiscoveryEffectiveLogoUrl(profile);
+  if (logoUrl.isEmpty && discoveryCard != null) {
+    logoUrl = discoveryCard.logoUrl;
+  }
+  if (logoUrl.isEmpty) {
+    logoUrl = limousineEffectiveLogoUrl(
+      overrideUrl: '',
+      companyLogoUrl: _httpsOnly(
+        profile['logo_url'] ??
+            profile['logoUrl'] ??
+            media['logo_url'] ??
+            media['logoUrl'],
+      ),
+    );
+  }
+  var publishedDescription = limousineDiscoveryLocalizedText(
     limousineDiscoveryPublishedDescriptionMap(profile),
     language,
   );
+  if (publishedDescription.isEmpty && discoveryCard != null) {
+    publishedDescription = limousineDiscoveryLocalizedText(
+      discoveryCard.publicDescription,
+      language,
+    );
+  }
   final tagline = publishedDescription.isNotEmpty
       ? publishedDescription
       : (profile['tagline'] ?? '').toString().trim();
@@ -478,8 +501,15 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
   final trust = asStringKeyedMap(profile['trust']);
   final verified =
       profile['verified_partner'] == true || trust['verified_partner'] == true;
-  final offers = collectLimousineShowroomOffers(profile);
-  final publicCopy = limousinePublishedVehiclePublicCopyOf(profile);
+  var publicCopy = limousinePublishedVehiclePublicCopyOf(profile);
+  if (publicCopy.isEmpty) {
+    publicCopy = limousinePricingLocalStore.publishedCopyForProfile(profile);
+  }
+  final hydratedProfile = limousineAttachPublishedVehiclePublicCopy(
+    profile,
+    publicCopy,
+  );
+  final offers = collectLimousineShowroomOffers(hydratedProfile);
   final parsed = <LimousineShowroomVehicle>[];
   final records = limousinePublicVehicleRecords(profile);
   for (var i = 0; i < records.length; i++) {
@@ -532,13 +562,21 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         ),
       ),
   ];
-  final hero = limousineResolvePublishedProfileCover(
+  var hero = limousineResolvePublishedProfileCover(
     source: profile,
-    fallbackVehiclePhotoUrls: [
-      for (final vehicle in vehicles)
-        if (vehicle.primaryPhotoUrl.isNotEmpty) vehicle.primaryPhotoUrl,
-    ],
+    fallbackVehiclePhotoUrls: const <String>[],
   );
+  if (!hero.hasPhoto &&
+      discoveryCard != null &&
+      discoveryCard.coverImageUrl.startsWith('https://') &&
+      !discoveryCard.coverIsPlaceholder) {
+    hero = LimousineHeroSelection(
+      photoUrl: discoveryCard.coverImageUrl,
+      sourceKind: kLimousineHeroSourceUpload,
+      alignment: 'center',
+      explicit: discoveryCard.coverIsExplicit,
+    );
+  }
   return LimousineProviderShowroomData(
     partnerId: partnerId,
     companyName: companyName,

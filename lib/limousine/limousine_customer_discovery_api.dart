@@ -10,8 +10,10 @@ import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import 'limousine_customer_discovery.dart';
+import 'limousine_pricing_local_store.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_service_capability.dart';
+import 'limousine_vehicle_public_copy.dart';
 
 abstract class LimousineDiscoveryGateway {
   Future<LimousineDiscoveryPageData> search(LimousineDiscoveryQuery query);
@@ -255,7 +257,11 @@ class LimousineDiscoveryController extends ChangeNotifier {
         profileUnavailablePartnerId = card.publicPartnerId;
         return null;
       }
-      return map;
+      await limousinePricingLocalStore.warm();
+      return limousineAttachPublishedVehiclePublicCopy(
+        map,
+        limousinePricingLocalStore.publishedCopyForProfile(map),
+      );
     } on TimeoutException {
       profileUnavailablePartnerId = card.publicPartnerId;
       return null;
