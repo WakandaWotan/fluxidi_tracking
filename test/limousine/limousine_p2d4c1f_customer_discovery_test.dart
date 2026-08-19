@@ -626,6 +626,14 @@ void main() {
       'published_at': '2026-08-17T10:00:00Z',
       'bookable': false,
       'limousine_available': true,
+      'limousine_offers': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'offer_id': 'off_quote',
+          'enabled': true,
+          'published': true,
+          'price_presentation': 'quote_required',
+        },
+      ],
       'vehicles': <Map<String, dynamic>>[
         <String, dynamic>{
           'service_category': 'limousine',

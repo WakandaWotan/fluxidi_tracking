@@ -259,7 +259,11 @@ void main() {
 
   test('gates-off errors stay friendly and never expose raw exceptions', () {
     final message = limousineFriendlyCompanyError(Exception('not_found'));
-    expect(message, kLimousineGatesOffFriendly.nl);
+    expect(message, kLimousinePricingSaveFailed.nl);
+    expect(
+      limousineFriendlyCompanyError(Exception('stale_source_revision')),
+      kLimousinePricingStaleConflict.nl,
+    );
     expect(limousineLooksLikeRawException(message), isFalse);
     expect(limousineLooksLikeRawException('Exception: not_found'), isTrue);
     expect(limousineLooksLikeRawException('LIMOUSINE_QUOTE_ENABLED'), isTrue);

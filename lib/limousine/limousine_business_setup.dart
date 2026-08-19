@@ -224,7 +224,13 @@ class LimousineBusinessSetupReadiness {
   final List<LimousineBusinessSetupChecklistItem> items;
   final double progress;
 
-  bool get canPublish => items.every((item) => item.complete);
+  /// Publish may run on a valid unpublished offer. 100% / Compleet waits for
+  /// a published offer via [live_status].
+  bool get canPublish => items
+      .where((item) => item.code != 'live_status')
+      .every((item) => item.complete);
+
+  bool get isFullyComplete => items.every((item) => item.complete);
 }
 
 bool limousinePublicTextIsComplete({
@@ -321,7 +327,7 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
   final hasLimousineVehicle = limousineVehicles.any(
     (vehicle) => vehicle.isActive,
   );
-  final hasUsableOffer = offers.any((offer) {
+  final hasValidOffer = offers.any((offer) {
     if (offer['enabled'] == false) return false;
     return validateLimousineOffer(
       offer,
@@ -330,6 +336,13 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
       readiness: true,
     ).errors.isEmpty;
   });
+  final hasPublishedOffer = offers.any(
+    (offer) => limousineOfferIsValidPublished(
+      offer,
+      vehicles: vehicles,
+      knownClassIds: knownClassIds,
+    ),
+  );
   final hasPublicText = limousinePublicTextIsComplete(
     title: publicTitle,
     description: publicDescription,
@@ -346,7 +359,7 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
     LimousineBusinessSetupChecklistItem(
       code: 'offers',
       section: LimousineBusinessSetupSection.offers,
-      complete: hasUsableOffer,
+      complete: hasValidOffer,
     ),
     LimousineBusinessSetupChecklistItem(
       code: 'public_text',
@@ -362,8 +375,9 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
       code: 'live_status',
       section: LimousineBusinessSetupSection.review,
       complete:
+          sectionEnabled &&
           hasLimousineVehicle &&
-          hasUsableOffer &&
+          hasPublishedOffer &&
           hasPublicText &&
           hasPublicPhoto,
     ),
@@ -717,6 +731,31 @@ bool limousinePreviewContainsUnpublished(
     if (id.isNotEmpty && !publishedIds.contains(id)) return true;
   }
   return false;
+}
+
+bool limousinePricingSaveIsStaleConflict(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('stale_source_revision') ||
+      (text.contains('409') && text.contains('stale'));
+}
+
+bool limousinePricingPublishConfirmedVisible(Map<String, dynamic> data) {
+  if (data['visibility_ok'] == true) return true;
+  final projected =
+      int.tryParse('${data['public_projected_offer_count'] ?? ''}') ?? 0;
+  return data['discovery_listable'] == true && projected > 0;
+}
+
+int limousinePricingResponseRevision(
+  Map<String, dynamic> data, {
+  int fallback = 0,
+}) {
+  final section = data['limousine'] is Map
+      ? Map<String, dynamic>.from(data['limousine'] as Map)
+      : const <String, dynamic>{};
+  return int.tryParse('${data['source_revision'] ?? ''}') ??
+      int.tryParse('${section['source_revision'] ?? ''}') ??
+      fallback;
 }
 
 String limousineBusinessSetupFriendlyStatus({

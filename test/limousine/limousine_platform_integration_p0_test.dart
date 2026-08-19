@@ -35,6 +35,15 @@ Map<String, dynamic> _publiclyAvailableCompany({
             'is_active': true,
           },
         ],
+    'limousine_available': true,
+    'limousine_offers': const [
+      <String, dynamic>{
+        'offer_id': 'off_quote',
+        'enabled': true,
+        'published': true,
+        'price_presentation': 'quote_required',
+      },
+    ],
     ...?extra,
   };
 }

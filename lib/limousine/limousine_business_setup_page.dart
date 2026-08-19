@@ -505,17 +505,6 @@ class _LimousineBusinessSetupPageState
         });
         return;
       }
-      if (publish) {
-        await _saveOffers(publish: false);
-        if (!mounted || saveId != _saveEpoch) return;
-        if (startedAt != _editEpoch) {
-          setState(() {
-            _saving = false;
-            _status = _t(kLimousineBusinessSetupUnsaved);
-          });
-          return;
-        }
-      }
       final data = await _saveOffers(publish: publish);
       if (!mounted || saveId != _saveEpoch) return;
       if (startedAt != _editEpoch) {
@@ -535,20 +524,29 @@ class _LimousineBusinessSetupPageState
       final section = (data['limousine'] is Map)
           ? Map<String, dynamic>.from(data['limousine'] as Map)
           : <String, dynamic>{};
-      rememberLimousineQuoteRequestsConfirmedOffers(offers);
+      final responseOffers = (section['offers'] is List)
+          ? (section['offers'] as List)
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList()
+          : offers;
+      rememberLimousineQuoteRequestsConfirmedOffers(responseOffers);
+      final visible = publish && limousinePricingPublishConfirmedVisible(data);
       setState(() {
         _offers
           ..clear()
-          ..addAll(offers.map((offer) => Map<String, dynamic>.from(offer)));
-        _revision =
-            int.tryParse('${section['source_revision'] ?? _revision}') ??
-            _revision;
+          ..addAll(
+            responseOffers.map((offer) => Map<String, dynamic>.from(offer)),
+          );
+        _revision = limousinePricingResponseRevision(data, fallback: _revision);
         _applyPersistedHero(section);
         _sectionEnabled = publish ? true : _sectionEnabled;
         _dirty = false;
         _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         _status = publish
-            ? _t(kLimousineBusinessSetupTestMessage)
+            ? (visible
+                  ? _t(kLimousineBusinessSetupTestMessage)
+                  : _t(kLimousineBusinessSetupPublishedLocal))
             : _t(kLimousineBusinessSetupDraftSaved);
       });
     } catch (error) {

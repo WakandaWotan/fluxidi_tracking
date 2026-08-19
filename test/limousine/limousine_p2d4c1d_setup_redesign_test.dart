@@ -180,9 +180,32 @@ void main() {
     );
     expect(
       ready.items.singleWhere((item) => item.code == 'live_status').complete,
-      isTrue,
+      isFalse,
     );
-    expect(ready.progress, closeTo(1.0, 0.01));
+    expect(ready.canPublish, isTrue);
+    expect(ready.progress, closeTo(0.8, 0.01));
+  });
+
+  test('published offer completes live status; draft does not', () {
+    final draft = limousineBusinessSetupReadiness(
+      vehicles: <VehicleProfile>[limo],
+      offers: <Map<String, dynamic>>[_quoteOffer(published: false)],
+      publicTitle: const <String, String>{'nl': 'Titel'},
+      publicDescription: const <String, String>{'nl': 'Tekst'},
+      knownClassIds: const <String>['first_class_sedan', 'executive_sedan'],
+      sectionEnabled: true,
+    );
+    final published = limousineBusinessSetupReadiness(
+      vehicles: <VehicleProfile>[limo],
+      offers: <Map<String, dynamic>>[_quoteOffer(published: true)],
+      publicTitle: const <String, String>{'nl': 'Titel'},
+      publicDescription: const <String, String>{'nl': 'Tekst'},
+      knownClassIds: const <String>['first_class_sedan', 'executive_sedan'],
+      sectionEnabled: true,
+    );
+    expect(draft.isFullyComplete, isFalse);
+    expect(published.isFullyComplete, isTrue);
+    expect(published.progress, closeTo(1.0, 0.01));
   });
 
   test(

@@ -330,6 +330,7 @@ void main() {
     final company = <String, dynamic>{
       ...store.partnerProfile,
       'features': <String, dynamic>{'limousine': true},
+      'limousine_available': true,
       'coverage': <String, dynamic>{
         'primary_postcode': '9688',
         'postcodes': <String>['9688', '9000'],

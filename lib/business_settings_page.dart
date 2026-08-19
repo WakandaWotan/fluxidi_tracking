@@ -418,6 +418,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   // LIMOUSINE-MARKETPLACE-P2B2 — limousine offers used by the public preview.
   bool _limousineSectionEnabled = false;
+  bool _limousinePublicAvailable = false;
+  bool _limousineDiscoveryListable = false;
+  Map<String, String> _limousinePublicTitle = const <String, String>{};
+  Map<String, String> _limousinePublicDescription = const <String, String>{};
   List<Map<String, dynamic>> _limousineOffers = <Map<String, dynamic>>[];
   LimousineOffersEditorSnapshot _limousineOffersConfirmed =
       const LimousineOffersEditorSnapshot(
@@ -522,6 +526,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       'published_at': _publicPartnerProfilePublishedAt,
       'bookable': true,
       'vehicles': vehicles,
+      'limousine_offers': _limousineOffers,
+      if (_limousinePublicAvailable) 'limousine_available': true,
+      if (_limousineDiscoveryListable) 'discovery_listable': true,
     };
   }
 
@@ -623,6 +630,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       setState(() {
         _limousineOffers = offers;
         _limousineSectionEnabled = section['enabled'] == true;
+        _limousinePublicTitle = limousineLocalizedOf(section['public_title']);
+        _limousinePublicDescription = limousineLocalizedOf(
+          section['public_description'],
+        );
+        _limousinePublicAvailable =
+            data['visibility_ok'] == true ||
+            data['discovery_listable'] == true;
+        _limousineDiscoveryListable = data['discovery_listable'] == true;
         _limousineOffersConfirmed = LimousineOffersEditorSnapshot(
           enabled: _limousineSectionEnabled,
           offers: _limousineOffers,
@@ -662,12 +677,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         knownClassIds: _limousineKnownClassIds,
       ),
     );
-    final hasText = _limousineOffers.any(
-      (offer) => limousinePublicTextIsComplete(
-        title: limousineLocalizedOf(offer['title']),
-        description: limousineLocalizedOf(offer['description']),
-      ),
-    );
+    final hasText =
+        limousinePublicTextIsComplete(
+          title: _limousinePublicTitle,
+          description: _limousinePublicDescription,
+        ) ||
+        _limousineOffers.any(
+          (offer) => limousinePublicTextIsComplete(
+            title: limousineLocalizedOf(offer['title']),
+            description: limousineLocalizedOf(offer['description']),
+          ),
+        );
     final hasMedia =
         _publicHeroPhotoUrlCtrl.text.trim().isNotEmpty ||
         vehicles.any(limousineVehicleHasSafePublicPhoto);

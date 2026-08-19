@@ -108,6 +108,7 @@ const LocalizedText kLimousineBusinessSetupPublishedLocal = LocalizedText(
   es: 'Publicación comprobada. La visibilidad sigue siendo del servidor.',
 );
 
+
 const LocalizedText kLimousineBusinessSetupSectionVehicles = LocalizedText(
   nl: 'Voertuigen',
   en: 'Vehicles',

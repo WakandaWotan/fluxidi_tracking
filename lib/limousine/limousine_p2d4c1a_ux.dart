@@ -80,6 +80,20 @@ const LocalizedText kLimousineGatesOffFriendly = LocalizedText(
   es: 'Las solicitudes de presupuesto y las reservas aún no están activas en este entorno de prueba.',
 );
 
+const LocalizedText kLimousinePricingStaleConflict = LocalizedText(
+  nl: 'Een nieuwere versie staat al op de server. Vernieuw en probeer opnieuw.',
+  en: 'A newer version is already on the server. Refresh and try again.',
+  fr: 'Une version plus récente est déjà sur le serveur. Actualisez et réessayez.',
+  es: 'Ya hay una versión más reciente en el servidor. Actualice e inténtelo de nuevo.',
+);
+
+const LocalizedText kLimousinePricingSaveFailed = LocalizedText(
+  nl: 'Opslaan is niet gelukt. Controleer de verbinding en probeer opnieuw.',
+  en: 'Save failed. Check the connection and try again.',
+  fr: 'L’enregistrement a échoué. Vérifiez la connexion et réessayez.',
+  es: 'No se pudo guardar. Compruebe la conexión e inténtelo de nuevo.',
+);
+
 const LocalizedText kLimousineBusinessSetupTransactionsOff =
     kLimousineGatesOffFriendly;
 
@@ -733,7 +747,12 @@ String limousineFriendlyCompanyError(
   Object error, {
   AppLanguage language = AppLanguage.nl,
 }) {
-  return kLimousineGatesOffFriendly.of(language);
+  final text = error.toString().toLowerCase();
+  if (text.contains('stale_source_revision') ||
+      (text.contains('409') && text.contains('stale'))) {
+    return kLimousinePricingStaleConflict.of(language);
+  }
+  return kLimousinePricingSaveFailed.of(language);
 }
 
 class LimousineOffersEditorSnapshot {

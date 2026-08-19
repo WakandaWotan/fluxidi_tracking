@@ -58,6 +58,15 @@ Map<String, dynamic> _company({
             'is_active': true,
           },
         ],
+    'limousine_available': true,
+    'limousine_offers': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'offer_id': 'off_quote',
+        'enabled': true,
+        'published': true,
+        'price_presentation': 'quote_required',
+      },
+    ],
     ...?extra,
   };
 }

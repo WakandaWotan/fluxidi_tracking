@@ -167,8 +167,14 @@ LimousineAvailabilityComposition composeLimousinePublicAvailability(
       LimousinePublicAvailabilityState.publishedButTemporarilyUnavailable,
     );
   }
+  if (!_hasEligibleActiveLimousineVehicle(company) ||
+      !_hasPublishedPublicLimousineOffer(company)) {
+    return result(
+      LimousinePublicAvailabilityState.publishedButTemporarilyUnavailable,
+    );
+  }
   if (_serverMarksLimousineAvailable(company) ||
-      _hasEligibleActiveLimousineVehicle(company)) {
+      _discoveryListable(company)) {
     return result(LimousinePublicAvailabilityState.publiclyAvailable);
   }
   return result(
@@ -292,6 +298,31 @@ bool _temporarilyUnavailable(Map<String, dynamic> company) {
         ?.toString(),
   );
   return availability == 'paused' || availability == 'offline';
+}
+
+bool _discoveryListable(Map<String, dynamic> company) {
+  return looksTruthyPublicFlag(company['discovery_listable']) ||
+      looksTruthyPublicFlag(company['discoveryListable']);
+}
+
+bool _hasPublishedPublicLimousineOffer(Map<String, dynamic> company) {
+  final raw =
+      company['limousine_offers'] ??
+      company['limousineOffers'] ??
+      company['offers'];
+  if (raw is! List) return false;
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final offer = asStringKeyedMap(item);
+    if (looksFalseyPublicFlag(offer['published'])) continue;
+    if (looksFalseyPublicFlag(offer['enabled'])) continue;
+    if (looksTruthyPublicFlag(offer['draft']) ||
+        looksTruthyPublicFlag(offer['is_draft'])) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 bool _hasEligibleActiveLimousineVehicle(Map<String, dynamic> company) {

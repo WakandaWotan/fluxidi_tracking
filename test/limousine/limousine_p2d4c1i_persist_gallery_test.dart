@@ -415,13 +415,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(persisted, isNotEmpty);
     expect(persisted.first, <String>['vh_party', 'vh_hummer']);
-    expect(saves, hasLength(2));
-    expect(saves.last['enabled'], isTrue);
-    expect(saves.first['selected_vehicle_ids'], <String>[
-      'vh_party',
-      'vh_hummer',
-    ]);
-    expect(saves.last['selected_vehicle_ids'], <String>[
+    expect(saves, hasLength(1));
+    expect(saves.single['enabled'], isTrue);
+    expect(saves.single['source_revision'], 3);
+    expect(
+      (saves.single['offers'] as List).cast<Map>().every(
+        (offer) => offer['published'] == true,
+      ),
+      isTrue,
+    );
+    expect(saves.single['selected_vehicle_ids'], <String>[
       'vh_party',
       'vh_hummer',
     ]);
