@@ -16,6 +16,7 @@ import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_showroom_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_adaptive_vehicle_photo.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_detail_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_media.dart';
 
@@ -319,7 +320,7 @@ void main() {
       );
       expect(
         find.descendant(
-          of: find.byType(LimousineContainPhoto),
+          of: find.byType(LimousineAdaptiveVehiclePhoto),
           matching: find.byKey(kLimousineDetailCompanyLogoKey),
         ),
         findsNothing,

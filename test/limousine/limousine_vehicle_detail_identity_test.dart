@@ -14,8 +14,8 @@ import 'package:fluxidi_tracking/limousine/limousine_provider_showroom.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_copy.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_showroom_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_adaptive_vehicle_photo.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_detail_page.dart';
-import 'package:fluxidi_tracking/limousine/limousine_vehicle_media.dart';
 
 final Uint8List _kTinyPng = Uint8List.fromList(<int>[
   0x89,
@@ -247,7 +247,9 @@ void main() {
       expect(find.text('Fluxidi'), findsNothing);
       expect(find.text('Party Limo'), findsOneWidget);
 
-      final photo = tester.getRect(find.byType(LimousineContainPhoto).first);
+      final photo = tester.getRect(
+        find.byType(LimousineAdaptiveVehiclePhoto).first,
+      );
       final thumbs = tester.getRect(
         find.byKey(kLimousineDetailGalleryThumbsKey),
       );
@@ -257,8 +259,8 @@ void main() {
       expect(thumbs.overlaps(logo), isFalse);
       expect(logo.top, greaterThanOrEqualTo(thumbs.bottom - 0.5));
       expect(title.top, greaterThanOrEqualTo(logo.bottom - 0.5));
-      expect(logo.height, 60);
-      expect(logo.width, lessThanOrEqualTo(280));
+      expect(logo.height, 36);
+      expect(logo.width, lessThanOrEqualTo(140));
       expect(logo.left, lessThan(title.left + 1));
       expect(tester.takeException(), isNull);
     },

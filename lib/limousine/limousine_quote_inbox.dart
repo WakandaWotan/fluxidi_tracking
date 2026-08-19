@@ -377,7 +377,7 @@ String localizedLimousineText(
   final code = languageCode.trim().toLowerCase();
   final direct = values[code];
   if (direct != null && direct.trim().isNotEmpty) return direct.trim();
-  for (final lang in const <String>['nl', 'en', 'fr', 'es']) {
+  for (final lang in const <String>['nl', 'en', 'fr', 'es', 'de']) {
     final text = values[lang];
     if (text != null && text.trim().isNotEmpty) return text.trim();
   }

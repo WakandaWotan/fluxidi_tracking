@@ -470,7 +470,8 @@ void main() {
     expect(find.byKey(kLimousineVehicleDetailPageKey), findsOneWidget);
     expect(find.text('Roze Hummer'), findsWidgets);
     expect(find.textContaining('16'), findsWidgets);
-    expect(find.textContaining('Vanaf €'), findsWidgets);
+    expect(find.text('Vanafprijs'), findsOneWidget);
+    expect(find.textContaining('€250'), findsWidgets);
   });
 
   testWidgets('Meer info opens the public limousine profile for this partner', (

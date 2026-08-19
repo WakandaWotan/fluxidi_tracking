@@ -252,6 +252,32 @@ const LocalizedText kLimousineBusinessSetupManagePhotos = LocalizedText(
   en: 'Manage photos',
   fr: 'Gérer les photos',
   es: 'Gestionar fotos',
+  de: 'Fotos verwalten',
+);
+
+const LocalizedText kLimousineBusinessSetupEditPublicDetails = LocalizedText(
+  nl: 'Publieke details bewerken',
+  en: 'Edit public details',
+  fr: 'Modifier les détails publics',
+  es: 'Editar detalles públicos',
+  de: 'Öffentliche Details bearbeiten',
+);
+
+const LocalizedText kLimousineBusinessSetupVehiclePublicCopyField =
+    LocalizedText(
+      nl: 'Publieke voertuigbeschrijving',
+      en: 'Public vehicle description',
+      fr: 'Description publique du véhicule',
+      es: 'Descripción pública del vehículo',
+      de: 'Öffentliche Fahrzeugbeschreibung',
+    );
+
+const LocalizedText kLimousineBusinessSetupVehiclePublicCopyHint = LocalizedText(
+  nl: 'Vertel waarvoor deze limousine geschikt is en wat deze bijzonder maakt.',
+  en: 'Describe what this limousine is suited for and what makes it special.',
+  fr: 'Décrivez à quoi cette limousine convient et ce qui la rend spéciale.',
+  es: 'Describa para qué sirve esta limusina y qué la hace especial.',
+  de: 'Beschreiben Sie, wofür diese Limousine geeignet ist und was sie besonders macht.',
 );
 
 const LocalizedText kLimousineBusinessSetupUnsavedTitle = LocalizedText(

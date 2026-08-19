@@ -33,7 +33,7 @@ double limousineCompanyIdentityLogoHeight(
     case LimousineCompanyIdentitySurface.discoveryCard:
       return tablet ? 52 : 40;
     case LimousineCompanyIdentitySurface.vehicleDetail:
-      return tablet ? 60 : 44;
+      return tablet ? 36 : 28;
   }
 }
 
@@ -46,7 +46,7 @@ double limousineCompanyIdentityLogoMaxWidth(
     case LimousineCompanyIdentitySurface.discoveryCard:
       return tablet ? 220 : 160;
     case LimousineCompanyIdentitySurface.vehicleDetail:
-      return tablet ? 280 : 200;
+      return tablet ? 140 : 96;
   }
 }
 

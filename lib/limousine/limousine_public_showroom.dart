@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../app_strings.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
@@ -106,7 +107,9 @@ List<LimousinePublishedOffer> collectLimousineShowroomOffers(
     final offer = tryParseLimousineShowroomOffer(item);
     if (offer != null) parsed.add(offer);
   }
-  return sortLimousineOffersVehicleFirst(parsed);
+  return limousineDeduplicatePublishedOffers(
+    sortLimousineOffersVehicleFirst(parsed),
+  );
 }
 
 LimousineShowroomCta limousineShowroomCtaFor(LimousinePublishedOffer offer) {

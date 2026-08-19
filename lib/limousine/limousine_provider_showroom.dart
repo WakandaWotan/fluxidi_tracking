@@ -16,6 +16,7 @@ import 'limousine_offers.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_service_capability.dart';
+import 'limousine_vehicle_public_copy.dart';
 
 const String kLimousineCustomerQuoteGateDefineKey = 'LIMOUSINE_QUOTE_ENABLED';
 const String kLimousineCustomerManualQuoteGateDefineKey =
@@ -173,6 +174,7 @@ class LimousineShowroomVehicle {
     this.color = '',
     this.length = '',
     this.vehicleId = '',
+    this.publicDescription = const <String, String>{},
     this.offers = const <LimousinePublishedOffer>[],
   });
 
@@ -187,6 +189,7 @@ class LimousineShowroomVehicle {
   final String color;
   final String length;
   final String vehicleId;
+  final Map<String, String> publicDescription;
   final List<LimousinePublishedOffer> offers;
 
   String get displayName {
@@ -319,6 +322,7 @@ List<Map<String, dynamic>> limousinePublicVehicleRecords(
 LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
   Map<String, dynamic> vehicle, {
   required int index,
+  Map<String, Map<String, String>> publicCopyById = const {},
 }) {
   if (!limousinePublicVehicleIsClassified(vehicle)) return null;
   final vehicleId = (vehicle['vehicle_id'] ?? vehicle['vehicleId'] ?? '')
@@ -401,6 +405,11 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
             .toString()
             .trim(),
     vehicleId: vehicleId,
+    publicDescription: limousineVehiclePublicDescriptionMap(
+      vehicle: vehicle,
+      catalog: publicCopyById,
+      vehicleId: vehicleId,
+    ),
   );
 }
 
@@ -420,7 +429,9 @@ List<LimousinePublishedOffer> _offersForVehicle({
     }
     matched.add(offer);
   }
-  return limousineSortPublishedOffers(matched);
+  return limousineDeduplicatePublishedOffers(
+    limousineSortPublishedOffers(matched),
+  );
 }
 
 LimousineProviderShowroomData buildLimousineProviderShowroomData({
@@ -468,10 +479,15 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
   final verified =
       profile['verified_partner'] == true || trust['verified_partner'] == true;
   final offers = collectLimousineShowroomOffers(profile);
+  final publicCopy = limousinePublishedVehiclePublicCopyOf(profile);
   final parsed = <LimousineShowroomVehicle>[];
   final records = limousinePublicVehicleRecords(profile);
   for (var i = 0; i < records.length; i++) {
-    final vehicle = tryParseLimousineShowroomVehicle(records[i], index: i);
+    final vehicle = tryParseLimousineShowroomVehicle(
+      records[i],
+      index: i,
+      publicCopyById: publicCopy,
+    );
     if (vehicle != null) parsed.add(vehicle);
   }
   if (parsed.isEmpty && discoveryCard != null) {
@@ -508,6 +524,7 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         color: vehicle.color,
         length: vehicle.length,
         vehicleId: vehicle.vehicleId,
+        publicDescription: vehicle.publicDescription,
         offers: _offersForVehicle(
           vehicle: vehicle,
           offers: offers,

@@ -129,12 +129,16 @@ bool limousineOfferAppliesToVehicleId({
   final wanted = vehicleId.trim();
   if (wanted.isEmpty) return false;
   final scope = limousineOfferScopeOf(offer);
+  // Explicit vehicle ids are authoritative, even when a projection copy still
+  // carries applies_to_all_selected_vehicles from the original all-selected row.
+  if (scope.vehicleIds.isNotEmpty) {
+    return scope.vehicleIds.contains(wanted);
+  }
   if (scope.appliesToAllSelected || scope.legacyUnbound) {
     if (selectedVehicleIds.isEmpty) return true;
     return selectedVehicleIds.contains(wanted);
   }
-  if (scope.vehicleIds.isEmpty) return false;
-  return scope.vehicleIds.contains(wanted);
+  return false;
 }
 
 bool limousinePublishedOfferAppliesToVehicle({
@@ -225,6 +229,22 @@ List<LimousinePublishedOffer> limousineSortPublishedOffers(
       return sa.sortOrder.compareTo(sb.sortOrder);
     return a.offerId.compareTo(b.offerId);
   });
+  return out;
+}
+
+/// Collapse projection copies of the same catalog offer. First row in the
+/// incoming order wins, so callers keep their sort (vehicle-first or
+/// featured/sortOrder). Never deduplicates on visible price text.
+List<LimousinePublishedOffer> limousineDeduplicatePublishedOffers(
+  Iterable<LimousinePublishedOffer> offers,
+) {
+  final seen = <String>{};
+  final out = <LimousinePublishedOffer>[];
+  for (final offer in offers) {
+    final id = offer.offerId.trim();
+    if (id.isEmpty || !seen.add(id)) continue;
+    out.add(offer);
+  }
   return out;
 }
 
@@ -430,6 +450,42 @@ String limousineFormatPublishedOfferPrice(
       }
       return _money(cents, currency);
   }
+}
+
+/// Amount only — used on detail cards so "Vanaf" is not repeated in the value.
+String limousineFormatPublishedOfferAmount(
+  LimousinePublishedOffer offer,
+  AppLanguage language,
+) {
+  final kind = limousinePublishedDisplayKind(offer);
+  if (kind == LimousineOfferDisplayKind.quote) {
+    return kLimousineShowroomPriceOnRequest.of(language);
+  }
+  final currency = offer.currency.trim().isEmpty ? 'EUR' : offer.currency;
+  final hourly = offer.raw['hourly'] is Map
+      ? Map<String, dynamic>.from(offer.raw['hourly'] as Map)
+      : const <String, dynamic>{};
+  final cents = kind == LimousineOfferDisplayKind.hourly
+      ? (limousineCentsOf(hourly['first_hour_cents']) ??
+            offer.displayAmountCents)
+      : kind == LimousineOfferDisplayKind.package
+      ? (limousineCentsOf(hourly['package_amount_cents']) ??
+            offer.displayAmountCents)
+      : offer.displayAmountCents;
+  if (cents == null || cents <= 0) {
+    return kLimousineShowroomPriceOnRequest.of(language);
+  }
+  return _money(cents, currency);
+}
+
+String limousineDetailOfferKindLabel(
+  LimousineOfferDisplayKind kind,
+  AppLanguage language,
+) {
+  if (kind == LimousineOfferDisplayKind.fromPrice) {
+    return kLimousineOfferFromPriceKind.of(language);
+  }
+  return limousineOfferKindLabel(kind, language);
 }
 
 String limousineShowroomOffersExtraLabel(int extraCount, AppLanguage language) {

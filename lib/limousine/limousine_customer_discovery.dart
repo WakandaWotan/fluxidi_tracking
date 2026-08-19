@@ -646,7 +646,7 @@ String limousineDiscoveryLocalizedText(
 String _firstLocalized(Map<String, String> map, AppLanguage language) {
   final direct = limousineLocalizedFor(map, language).trim();
   if (direct.isNotEmpty) return direct;
-  for (final lang in const ['nl', 'en', 'fr', 'es']) {
+  for (final lang in const ['nl', 'en', 'fr', 'es', 'de']) {
     final value = (map[lang] ?? '').trim();
     if (value.isNotEmpty) return value;
   }

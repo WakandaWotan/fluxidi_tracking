@@ -5,6 +5,7 @@ import '../app_strings.dart';
 import '../nearby/public_partner_market.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_adaptive_vehicle_photo.dart';
 import 'limousine_brand_logo.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
@@ -18,7 +19,7 @@ import 'limousine_public_copy.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
-import 'limousine_vehicle_media.dart';
+import 'limousine_vehicle_public_copy.dart';
 
 class LimousineVehicleDetailPage extends StatefulWidget {
   const LimousineVehicleDetailPage({
@@ -35,6 +36,8 @@ class LimousineVehicleDetailPage extends StatefulWidget {
     this.onQuote,
     this.onBook,
     this.market = PublicPartnerMarket.limousine,
+    this.photoSourceSizes,
+    this.photoImages,
   });
 
   final PublicPartnerMarket market;
@@ -49,6 +52,8 @@ class LimousineVehicleDetailPage extends StatefulWidget {
   final bool bookEnabled;
   final ValueChanged<LimousinePublishedOffer>? onQuote;
   final ValueChanged<LimousinePublishedOffer>? onBook;
+  final Map<String, Size>? photoSourceSizes;
+  final List<ImageProvider>? photoImages;
 
   @override
   State<LimousineVehicleDetailPage> createState() =>
@@ -102,7 +107,7 @@ class _LimousineVehicleDetailPageState
                         slivers: [
                           SliverToBoxAdapter(child: _hero(tokens)),
                           SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
                             sliver: SliverToBoxAdapter(
                               child: Align(
                                 alignment: Alignment.topCenter,
@@ -128,6 +133,14 @@ class _LimousineVehicleDetailPageState
     );
   }
 
+  Size? _sourceSizeFor(String url) => widget.photoSourceSizes?[url];
+
+  ImageProvider? _imageFor(int index) {
+    final images = widget.photoImages;
+    if (images == null || index < 0 || index >= images.length) return null;
+    return images[index];
+  }
+
   Widget _hero(LimousineUxTokens tokens) {
     final photos = widget.vehicle.photoUrls;
     final tablet = MediaQuery.sizeOf(context).shortestSide >= 600;
@@ -137,41 +150,18 @@ class _LimousineVehicleDetailPageState
         Stack(
           children: [
             if (multi)
-              SizedBox(
-                key: kLimousineDetailGalleryKey,
-                height: tablet ? 360 : 320,
-                child: PageView.builder(
-                  controller: _gallery,
-                  itemCount: photos.length,
-                  onPageChanged: (index) => setState(() => _page = index),
-                  itemBuilder: (_, index) => GestureDetector(
-                    onTap: () => _openFullscreen(tokens, photos, index),
-                    child: LimousineContainPhoto(
-                      imageUrl: photos[index],
-                      background: tokens.surfaceAlt,
-                      gold: tokens.gold,
-                      minHeight: tablet ? 320 : 280,
-                      aspectRatio: 16 / 9,
-                      borderRadius: 0,
-                      placeholderLabel: widget.vehicle.displayName,
-                    ),
-                  ),
-                ),
+              _adaptivePage(
+                tokens,
+                photos: photos,
               )
             else
-              GestureDetector(
+              _slide(
+                tokens,
+                url: widget.vehicle.primaryPhotoUrl,
+                index: 0,
                 onTap: photos.isEmpty
                     ? null
-                    : () => _openFullscreen(tokens, photos, 0),
-                child: LimousineContainPhoto(
-                  imageUrl: widget.vehicle.primaryPhotoUrl,
-                  background: tokens.surfaceAlt,
-                  gold: tokens.gold,
-                  minHeight: tablet ? 320 : 280,
-                  aspectRatio: 16 / 9,
-                  borderRadius: 0,
-                  placeholderLabel: widget.vehicle.displayName,
-                ),
+                    : () => _openFullscreen(photos, 0),
               ),
             SafeArea(
               child: IconButton(
@@ -270,30 +260,33 @@ class _LimousineVehicleDetailPageState
               itemBuilder: (_, index) {
                 final selected = index == _page;
                 return GestureDetector(
-                  onTap: () => _gallery.animateToPage(
-                    index,
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                  ),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: selected ? tokens.gold : tokens.border,
-                        width: selected ? 2 : 1,
+                  key: limousineDetailGalleryThumbKey(index),
+                  onTap: () {
+                    _gallery.animateToPage(
+                      index,
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOut,
+                    );
+                    _openFullscreen(photos, index);
+                  },
+                  child: Semantics(
+                    button: true,
+                    selected: selected,
+                    label: widget.vehicle.displayName,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: selected ? tokens.gold : tokens.border,
+                          width: selected ? 2 : 1,
+                        ),
                       ),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(9),
-                      child: Image.network(
-                        photos[index],
-                        width: 88,
-                        height: 56,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => SizedBox(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(9),
+                        child: SizedBox(
                           width: 88,
                           height: 56,
-                          child: ColoredBox(color: tokens.surfaceAlt),
+                          child: _thumbImage(tokens, photos[index], index),
                         ),
                       ),
                     ),
@@ -306,42 +299,83 @@ class _LimousineVehicleDetailPageState
     );
   }
 
-  void _openFullscreen(
-    LimousineUxTokens tokens,
-    List<String> photos,
-    int index,
-  ) {
+  Widget _adaptivePage(
+    LimousineUxTokens tokens, {
+    required List<String> photos,
+  }) {
+    final currentUrl = photos[_page.clamp(0, photos.length - 1)];
+    final height = limousineAdaptiveHeroHeight(
+      viewport: MediaQuery.sizeOf(context),
+      sourceSize: _sourceSizeFor(currentUrl) ?? const Size(16, 9),
+    );
+    return SizedBox(
+      key: kLimousineDetailGalleryKey,
+      height: height,
+      child: PageView.builder(
+        controller: _gallery,
+        itemCount: photos.length,
+        onPageChanged: (index) => setState(() => _page = index),
+        itemBuilder: (_, index) => _slide(
+          tokens,
+          url: photos[index],
+          index: index,
+          fillParent: true,
+          onTap: () => _openFullscreen(photos, index),
+        ),
+      ),
+    );
+  }
+
+  Widget _slide(
+    LimousineUxTokens tokens, {
+    required String url,
+    required int index,
+    VoidCallback? onTap,
+    bool fillParent = false,
+  }) {
+    return LimousineAdaptiveVehiclePhoto(
+      imageUrl: url,
+      image: _imageFor(index),
+      sourceSize: _sourceSizeFor(url),
+      fillParent: fillParent,
+      background: tokens.surfaceAlt,
+      gold: tokens.gold,
+      placeholderLabel: widget.vehicle.displayName,
+      semanticLabel: widget.vehicle.displayName,
+      onTap: onTap,
+    );
+  }
+
+  Widget _thumbImage(LimousineUxTokens tokens, String url, int index) {
+    final image = _imageFor(index);
+    if (image != null) {
+      return Image(image: image, width: 88, height: 56, fit: BoxFit.contain);
+    }
+    return Image.network(
+      url,
+      width: 88,
+      height: 56,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => SizedBox(
+        width: 88,
+        height: 56,
+        child: ColoredBox(color: tokens.surfaceAlt),
+      ),
+    );
+  }
+
+  void _openFullscreen(List<String> photos, int index) {
     if (photos.isEmpty) return;
-    showDialog<void>(
+    setState(() => _page = index);
+    if (_gallery.hasClients && _gallery.page?.round() != index) {
+      _gallery.jumpToPage(index);
+    }
+    openLimousineVehiclePhotoViewer(
       context: context,
-      builder: (dialogContext) {
-        return Dialog(
-          backgroundColor: Colors.black,
-          insetPadding: const EdgeInsets.all(12),
-          child: Stack(
-            children: [
-              LimousineContainPhoto(
-                imageUrl: photos[index],
-                background: Colors.black,
-                gold: tokens.gold,
-                minHeight: 280,
-                aspectRatio: 16 / 9,
-                borderRadius: 12,
-                placeholderLabel: widget.vehicle.displayName,
-              ),
-              Positioned(
-                top: 4,
-                right: 4,
-                child: IconButton(
-                  color: Colors.white,
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      photos: photos,
+      initialIndex: index,
+      semanticLabel: widget.vehicle.displayName,
+      images: widget.photoImages,
     );
   }
 
@@ -353,6 +387,14 @@ class _LimousineVehicleDetailPageState
     final comfort = limousineMeaningfulComfortFeatures(
       vehicle.features,
       language: _lang,
+    );
+    final about = limousineResolvePublicCopyText(
+      vehicle.publicDescription,
+      _lang,
+    );
+    final classLabel = limousineServiceClassLabel(
+      vehicle.serviceClassId,
+      _lang,
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -381,61 +423,39 @@ class _LimousineVehicleDetailPageState
               ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         Text(
           key: kLimousineDetailVehicleTitleKey,
           title.isEmpty ? _t(kLimousineProviderShowroomTitle) : title,
           style: TextStyle(
             color: tokens.onSurface,
-            fontSize: 28,
+            fontSize: 24,
             fontWeight: FontWeight.w700,
             height: 1.15,
           ),
         ),
-        const SizedBox(height: 22),
-        Text(
-          _t(kLimousineDetailSpecs),
-          style: TextStyle(
-            color: tokens.gold,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.4,
-          ),
-        ),
         const SizedBox(height: 10),
         Wrap(
-          spacing: 10,
-          runSpacing: 8,
+          spacing: 8,
+          runSpacing: 6,
           children: [
-            if (vehicle.serviceClassId.isNotEmpty)
-              _spec(
-                tokens,
-                '${_t(kLimousineDetailClass)}: ${limousineDiscoveryServiceClassLabel(vehicle.serviceClassId)}',
-              ),
+            if (classLabel.isNotEmpty) _specChip(tokens, label: classLabel),
             if (vehicle.passengerCapacity != null)
-              _spec(
+              _specChip(
                 tokens,
-                '${_t(kLimousineShowroomPassengers)}: ${vehicle.passengerCapacity}',
+                icon: Icons.person_outline,
+                label: '${vehicle.passengerCapacity}',
               ),
             if (vehicle.luggageCapacity != null)
-              _spec(
+              _specChip(
                 tokens,
-                '${_t(kLimousineShowroomLuggage)}: ${vehicle.luggageCapacity}',
-              ),
-            if (vehicle.color.isNotEmpty)
-              _spec(
-                tokens,
-                '${_t(kLimousineShowroomColour)}: ${vehicle.color}',
-              ),
-            if (vehicle.length.isNotEmpty)
-              _spec(
-                tokens,
-                '${_t(kLimousineShowroomLength)}: ${vehicle.length}',
+                icon: Icons.work_outline,
+                label: '${vehicle.luggageCapacity}',
               ),
           ],
         ),
         if (comfort.isNotEmpty) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Column(
             key: kLimousineDetailComfortSectionKey,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -447,18 +467,46 @@ class _LimousineVehicleDetailPageState
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 comfort.join(' · '),
-                style: TextStyle(color: tokens.muted, height: 1.4),
+                style: TextStyle(color: tokens.muted, height: 1.35),
               ),
             ],
           ),
         ],
-        const SizedBox(height: 22),
+        if (about.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Column(
+            key: kLimousineDetailAboutSectionKey,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(kLimousineDetailAboutHeading),
+                style: TextStyle(
+                  color: tokens.gold,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                key: kLimousineDetailAboutBodyKey,
+                about,
+                style: TextStyle(
+                  color: tokens.onSurface,
+                  height: 1.45,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 18),
         _prices(tokens),
         if (_gateMessage.isNotEmpty) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
             key: kLimousineDetailGateOffBannerKey,
             _gateMessage,
@@ -470,7 +518,7 @@ class _LimousineVehicleDetailPageState
   }
 
   Widget _prices(LimousineUxTokens tokens) {
-    final offers = limousineSortPublishedOffers(widget.vehicle.offers);
+    final offers = limousineDeduplicatePublishedOffers(widget.vehicle.offers);
     return Column(
       key: kLimousineDetailPricesSectionKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -479,25 +527,25 @@ class _LimousineVehicleDetailPageState
           _t(kLimousineDetailPricesHeading),
           style: TextStyle(
             color: tokens.onSurface,
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         if (offers.isEmpty)
           Text(
             key: kLimousineDetailOfferPriceKey,
             kLimousineShowroomPriceOnRequest.of(_lang),
             style: TextStyle(
               color: tokens.gold,
-              fontSize: 18,
+              fontSize: 17,
               fontWeight: FontWeight.w700,
             ),
           )
         else
           for (final offer in offers) ...[
             _offerCard(tokens, offer),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
           ],
       ],
     );
@@ -515,8 +563,10 @@ class _LimousineVehicleDetailPageState
         title.trim().toLowerCase() == 'limousine' ||
         description.trim().toLowerCase() ==
             'limousine / arrangementen / limousine';
-    final kindLabel = limousineOfferKindLabel(kind, _lang);
-    final priceLabel = limousineFormatPublishedOfferPrice(offer, _lang);
+    final kindLabel = limousineDetailOfferKindLabel(kind, _lang);
+    final priceLabel = kind == LimousineOfferDisplayKind.fromPrice
+        ? limousineFormatPublishedOfferAmount(offer, _lang)
+        : limousineFormatPublishedOfferPrice(offer, _lang);
     final showKindEyebrow = limousineShouldShowOfferKindEyebrow(
       kindLabel,
       priceLabel,
@@ -529,11 +579,11 @@ class _LimousineVehicleDetailPageState
       key: limousineDetailOfferCardKey(offer.offerId),
       decoration: BoxDecoration(
         color: tokens.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: tokens.border),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -544,10 +594,10 @@ class _LimousineVehicleDetailPageState
                 style: TextStyle(
                   color: tokens.gold,
                   fontWeight: FontWeight.w700,
-                  fontSize: 13,
+                  fontSize: 12,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 2),
             ],
             if (title.isNotEmpty &&
                 !generic &&
@@ -556,47 +606,46 @@ class _LimousineVehicleDetailPageState
                 title,
                 style: TextStyle(
                   color: tokens.onSurface,
-                  fontSize: 17,
+                  fontSize: 16,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
             ],
             if (description.isNotEmpty && !generic) ...[
               Text(
                 description,
-                style: TextStyle(color: tokens.muted, height: 1.4),
+                style: TextStyle(color: tokens.muted, height: 1.35, fontSize: 13),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
             ],
-            const SizedBox(height: 4),
             Text(
               key: kLimousineDetailOfferPriceKey,
               priceLabel,
               style: TextStyle(
                 color: tokens.gold,
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: FontWeight.w700,
               ),
             ),
             if (kind == LimousineOfferDisplayKind.fromPrice) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 _t(kLimousineOfferFromPriceDisclaimer),
-                style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                style: TextStyle(color: tokens.muted, fontSize: 11.5, height: 1.3),
               ),
             ],
             if (included.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Text(
                 included,
-                style: TextStyle(color: tokens.onSurface, height: 1.35),
+                style: TextStyle(color: tokens.onSurface, height: 1.3, fontSize: 13),
               ),
             ],
             if (cta != LimousineShowroomCta.none) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
                 child: FilledButton(
                   key: isSummary
                       ? (isBook
@@ -613,7 +662,12 @@ class _LimousineVehicleDetailPageState
                     foregroundColor: const Color(0xFF1A1408),
                     disabledBackgroundColor: tokens.gold.withOpacity(0.28),
                     disabledForegroundColor: tokens.muted,
-                    minimumSize: const Size.fromHeight(46),
+                    minimumSize: const Size(88, 44),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
                   ),
                   child: Text(
                     isBook
@@ -633,17 +687,30 @@ class _LimousineVehicleDetailPageState
     );
   }
 
-  Widget _spec(LimousineUxTokens tokens, String text) {
+  Widget _specChip(
+    LimousineUxTokens tokens, {
+    IconData? icon,
+    required String label,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: tokens.surface,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(999),
         border: Border.all(color: tokens.border),
       ),
-      child: Text(
-        text,
-        style: TextStyle(color: tokens.onSurface, fontSize: 13.5),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: tokens.muted),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(color: tokens.onSurface, fontSize: 13),
+          ),
+        ],
       ),
     );
   }

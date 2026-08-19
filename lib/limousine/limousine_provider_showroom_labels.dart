@@ -22,17 +22,19 @@ const LocalizedText kLimousineProviderShowroomEmpty = LocalizedText(
 );
 
 const LocalizedText kLimousineDetailQuoteCta = LocalizedText(
-  nl: 'Vraag offerte aan',
+  nl: 'Offerte aanvragen',
   en: 'Request a quote',
   fr: 'Demander un devis',
   es: 'Solicitar presupuesto',
+  de: 'Angebot anfragen',
 );
 
 const LocalizedText kLimousineDetailBookCta = LocalizedText(
-  nl: 'Boek nu',
-  en: 'Book now',
-  fr: 'Réserver maintenant',
-  es: 'Reservar ahora',
+  nl: 'Boeken',
+  en: 'Book',
+  fr: 'Réserver',
+  es: 'Reservar',
+  de: 'Buchen',
 );
 
 const LocalizedText kLimousineDetailQuoteComingSoon = LocalizedText(
@@ -159,6 +161,23 @@ const LocalizedText kLimousineDetailPricesHeading = LocalizedText(
   en: 'Prices and arrangements',
   fr: 'Prix et formules',
   es: 'Precios y arreglos',
+  de: 'Preise und Arrangements',
+);
+
+const LocalizedText kLimousineDetailAboutHeading = LocalizedText(
+  nl: 'Over deze limousine',
+  en: 'About this limousine',
+  fr: 'À propos de cette limousine',
+  es: 'Sobre esta limusina',
+  de: 'Über diese Limousine',
+);
+
+const LocalizedText kLimousineOfferFromPriceKind = LocalizedText(
+  nl: 'Vanafprijs',
+  en: 'From price',
+  fr: 'Prix à partir de',
+  es: 'Precio desde',
+  de: 'Ab-Preis',
 );
 
 const LocalizedText kLimousineOfferFixedKind = LocalizedText(

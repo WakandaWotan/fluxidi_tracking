@@ -25,6 +25,8 @@ import 'limousine_public_hero_overlay.dart';
 import 'limousine_quote_requests_nav.dart';
 import 'limousine_simple_offer_editor.dart';
 import 'limousine_vehicle_persist.dart';
+import 'limousine_vehicle_public_copy.dart';
+import 'limousine_vehicle_public_copy_editor.dart';
 
 typedef LimousinePricingLoader = Future<Map<String, dynamic>> Function();
 typedef LimousinePricingSaver =
@@ -97,6 +99,10 @@ class _LimousineBusinessSetupPageState
   LimousineHeroSelection _publishedHero = const LimousineHeroSelection();
   Map<String, String> _publishedPublicTitle = <String, String>{};
   Map<String, String> _publishedPublicDescription = <String, String>{};
+  Map<String, Map<String, String>> _vehiclePublicCopy =
+      <String, Map<String, String>>{};
+  Map<String, Map<String, String>> _publishedVehiclePublicCopy =
+      <String, Map<String, String>>{};
   bool _heroUploading = false;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
@@ -222,6 +228,7 @@ class _LimousineBusinessSetupPageState
           _applyPersistedPublicText(section);
           _applyPersistedSelectedVehicleIds(section);
           _applyPersistedHero(section);
+          _applyPersistedVehiclePublicCopy(section);
           _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         }
         _dirty = false;
@@ -278,6 +285,46 @@ class _LimousineBusinessSetupPageState
         limousineLocalizedMapHasText(publishedDescription)
         ? publishedDescription
         : description;
+  }
+
+  void _applyPersistedVehiclePublicCopy(Map<String, dynamic> section) {
+    _vehiclePublicCopy = limousineVehiclePublicCopyById(
+      section[kLimousineVehiclePublicCopyKey] ??
+          section['limousineVehiclePublicCopy'],
+    );
+    final published = limousineVehiclePublicCopyById(
+      section[kLimousinePublishedVehiclePublicCopyKey] ??
+          section['publishedLimousineVehiclePublicCopy'],
+    );
+    _publishedVehiclePublicCopy = published.isNotEmpty
+        ? published
+        : limousineCloneVehiclePublicCopy(_vehiclePublicCopy);
+  }
+
+  Future<void> _openVehiclePublicCopy(VehicleProfile vehicle) async {
+    final saved = _vehiclePublicCopy[vehicle.id] ?? const <String, String>{};
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (dialogContext) {
+        return LimousineVehiclePublicCopyDialog(
+          initial: saved,
+          language: _lang,
+          primaryLang: _primaryLang,
+          backgroundColor: widget.backgroundColor,
+        );
+      },
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      final next = limousineCloneVehiclePublicCopy(_vehiclePublicCopy);
+      if (limousinePublicCopyHasText(result)) {
+        next[vehicle.id] = result;
+      } else {
+        next.remove(vehicle.id);
+      }
+      _vehiclePublicCopy = next;
+    });
+    _markDirty();
   }
 
   void _applyPersistedHero(Map<String, dynamic> section) {
@@ -507,6 +554,11 @@ class _LimousineBusinessSetupPageState
         publishedDescription: _publishedPublicDescription,
         publishedHero: _publishedHero.toSectionJson(),
       ),
+      ...limousineVehiclePublicCopyPayload(
+        publish: publish,
+        working: _vehiclePublicCopy,
+        published: _publishedVehiclePublicCopy,
+      ),
     };
     final saver =
         widget.savePricing ?? (section) => saveAdminLimousinePricing(section);
@@ -589,6 +641,9 @@ class _LimousineBusinessSetupPageState
           _publishedPublicTitle = _publicTitle.toJson();
           _publishedPublicDescription = _publicDescription.toJson();
           _publishedHero = _hero;
+          _publishedVehiclePublicCopy = limousineCloneVehiclePublicCopy(
+            _vehiclePublicCopy,
+          );
         }
         _sectionEnabled = publish ? true : _sectionEnabled;
         _dirty = false;
@@ -1195,39 +1250,61 @@ class _LimousineBusinessSetupPageState
                     ),
                   ],
                 ),
-                if (flags.limousine)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      key: limousineBusinessSetupManagePhotosKey(vehicle.id),
-                      onPressed: () =>
-                          unawaited(_openVehicleSetup(vehicleId: vehicle.id)),
-                      icon: const Icon(Icons.photo_library_outlined, size: 18),
-                      label: Text(_t(kLimousineBusinessSetupManagePhotos)),
-                    ),
-                  ),
                 if (flags.limousine && _knownClasses.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: DropdownButtonFormField<String>(
-                      isExpanded: true,
-                      value: _knownClasses.contains(vehicle.serviceClassId)
-                          ? vehicle.serviceClassId
-                          : _knownClasses.first,
-                      items: [
-                        for (final id in _knownClasses)
-                          DropdownMenuItem<String>(
-                            value: id,
-                            child: Text(
-                              limousineServiceClassLabel(id, _lang),
-                              overflow: TextOverflow.ellipsis,
+                    padding: const EdgeInsets.only(top: 6),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isDense: true,
+                        isExpanded: true,
+                        value: _knownClasses.contains(vehicle.serviceClassId)
+                            ? vehicle.serviceClassId
+                            : _knownClasses.first,
+                        items: [
+                          for (final id in _knownClasses)
+                            DropdownMenuItem<String>(
+                              value: id,
+                              child: Text(
+                                limousineServiceClassLabel(id, _lang),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) _setVehicleClass(vehicle, value);
-                      },
+                        ],
+                        onChanged: (value) {
+                          if (value != null) _setVehicleClass(vehicle, value);
+                        },
+                      ),
                     ),
+                  ),
+                if (flags.limousine)
+                  Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton.icon(
+                        key: limousineBusinessSetupEditPublicDetailsKey(
+                          vehicle.id,
+                        ),
+                        onPressed: () =>
+                            unawaited(_openVehiclePublicCopy(vehicle)),
+                        icon: const Icon(Icons.notes_outlined, size: 16),
+                        label: Text(_t(kLimousineBusinessSetupEditPublicDetails)),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
+                      TextButton.icon(
+                        key: limousineBusinessSetupManagePhotosKey(vehicle.id),
+                        onPressed: () =>
+                            unawaited(_openVehicleSetup(vehicleId: vehicle.id)),
+                        icon: const Icon(Icons.photo_library_outlined, size: 16),
+                        label: Text(_t(kLimousineBusinessSetupManagePhotos)),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
