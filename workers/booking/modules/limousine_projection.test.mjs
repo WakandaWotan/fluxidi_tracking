@@ -41,12 +41,25 @@ test("projection reports safe readiness fields only", () => {
     "eligible_vehicle_count",
     "limousine_available",
     "limousine_service_enabled",
+    "published_offer_count",
     "reason",
   ]);
-  assert.equal(projection.limousine_available, true);
+  assert.equal(projection.limousine_available, false);
   assert.equal(projection.limousine_service_enabled, true);
   assert.equal(projection.eligible_vehicle_count, 1);
-  assert.equal(projection.reason, "eligible");
+  assert.equal(projection.reason, "no_published_offer");
+  assert.equal(projection.published_offer_count, 0);
+});
+
+test("projection is available only with a published public offer", () => {
+  const withOffers = buildLimousineProjection(
+    readyProfile({
+      limousine_offers: [{ offer_id: "off_1", published: true, enabled: true }],
+    }),
+  );
+  assert.equal(withOffers.limousine_available, true);
+  assert.equal(withOffers.reason, "eligible");
+  assert.equal(withOffers.published_offer_count, 1);
 });
 
 test("21) projection has no subscription-private / customer-private fields", () => {

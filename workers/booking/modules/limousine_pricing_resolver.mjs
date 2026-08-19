@@ -314,6 +314,11 @@ export function applyPublicLimousineHeroFields(profile, section) {
   };
 }
 
+function incomingHasOwn(source, keys) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return false;
+  return keys.some((key) => Object.prototype.hasOwnProperty.call(source, key));
+}
+
 export function normalizeLimousinePricingSection(raw) {
   const src = asObject(raw);
   return {
@@ -335,6 +340,47 @@ export function normalizeLimousinePricingSection(raw) {
     ),
     limousine_hero: normalizeLimousineHero(src),
   };
+}
+
+/// PATCH-like merge: omitted fields keep the stored value. An explicit empty
+/// array/object is a deliberate clear. Full records still normalize as before.
+export function mergeLimousinePricingSection(existingRaw, incomingRaw) {
+  const existing = normalizeLimousinePricingSection(existingRaw);
+  const incoming =
+    incomingRaw && typeof incomingRaw === "object" && !Array.isArray(incomingRaw)
+      ? incomingRaw
+      : {};
+  const merged = { ...incoming };
+  if (!incomingHasOwn(incoming, ["enabled"])) merged.enabled = existing.enabled;
+  if (!incomingHasOwn(incoming, ["currency"])) merged.currency = existing.currency;
+  if (!incomingHasOwn(incoming, ["classes"])) merged.classes = existing.classes;
+  if (!incomingHasOwn(incoming, ["offers"])) merged.offers = existing.offers;
+  if (!incomingHasOwn(incoming, ["selected_vehicle_ids", "selectedVehicleIds"])) {
+    merged.selected_vehicle_ids = existing.selected_vehicle_ids;
+  }
+  if (!incomingHasOwn(incoming, ["public_title", "publicTitle"])) {
+    merged.public_title = existing.public_title;
+  }
+  if (!incomingHasOwn(incoming, ["public_description", "publicDescription"])) {
+    merged.public_description = existing.public_description;
+  }
+  if (
+    !incomingHasOwn(incoming, [
+      "limousine_hero",
+      "limousineHero",
+      "limousine_hero_url",
+      "limousineHeroUrl",
+    ])
+  ) {
+    merged.limousine_hero = existing.limousine_hero;
+  }
+  return normalizeLimousinePricingSection(merged);
+}
+
+export function countPublishedLimousineOffers(section) {
+  const offers = Array.isArray(section?.offers) ? section.offers : [];
+  return offers.filter((offer) => offer && offer.enabled !== false && offer.published === true)
+    .length;
 }
 
 export function findLimousineClassPricing(section, classId) {

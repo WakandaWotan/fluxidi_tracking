@@ -108,7 +108,10 @@ import {
   mergePublicPartnerProfilePreserveOmitted as _mergePublicPartnerProfilePreserveOmitted,
 } from "./modules/limousine_public_service_persist.mjs";
 import {
+  applyLimousinePublicFieldsToProfileEntry as _applyLimousinePublicFieldsToProfileEntry,
   buildLimousineProjection as _buildLimousineProjection,
+  limousinePublicContentDigest as _limousinePublicContentDigest,
+  limousinePublicContentDigestFromProfile as _limousinePublicContentDigestFromProfile,
   resolveLimousineProjectionRevision as _resolveLimousineProjectionRevision,
   stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
 } from "./modules/limousine_projection.mjs";
@@ -169,7 +172,9 @@ import {
 } from "./modules/limousine_booking.mjs";
 import {
   applyPublicLimousineHeroFields as _applyPublicLimousineHeroFields,
+  countPublishedLimousineOffers as _countPublishedLimousineOffers,
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
+  mergeLimousinePricingSection as _mergeLimousinePricingSection,
   normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
   resolveLimousineQuote as _resolveLimousineQuote,
 } from "./modules/limousine_pricing_resolver.mjs";
@@ -46185,10 +46190,38 @@ export default {
           allowTenantLegacyFallback: false,
         });
         const section = _normalizeLimousinePricingSection(rawProfile?.limousine ?? null);
+        let publicProjectedOfferCount = 0;
+        let discoveryListable = false;
+        let discoveryReason = "no_profile";
+        try {
+          const partnerKeys = buildScopedPartnerKeys(explicitScope);
+          const record = partnerKeys
+            ? await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" })
+            : null;
+          const profile = record && typeof record === "object" ? record.partner_profile : null;
+          if (profile && typeof profile === "object") {
+            publicProjectedOfferCount = Array.isArray(profile.limousine_offers)
+              ? profile.limousine_offers.length
+              : 0;
+            discoveryListable = _isLimousineDiscoveryListable(profile);
+            discoveryReason = discoveryListable
+              ? "listable"
+              : publicProjectedOfferCount === 0
+                ? "no_published_offer"
+                : String(profile.limousine_projection?.reason || "not_listable");
+          }
+        } catch (_) {
+          discoveryReason = "error";
+        }
         return json({
           ok: true,
           key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
           limousine: section,
+          source_revision: section.source_revision,
+          published_offer_count: _countPublishedLimousineOffers(section),
+          public_projected_offer_count: publicProjectedOfferCount,
+          discovery_listable: discoveryListable,
+          discovery_reason: discoveryReason,
         }, 200);
       }
 
@@ -46223,7 +46256,7 @@ export default {
           allowTenantLegacyFallback: false,
         })) || {};
         const existingSection = _normalizeLimousinePricingSection(rawProfile.limousine ?? null);
-        const nextSection = _normalizeLimousinePricingSection(incomingSection);
+        const nextSection = _mergeLimousinePricingSection(existingSection, incomingSection);
         // Monotonic: an older revision may never overwrite newer configuration.
         const clientRevision = Number(incomingSection.source_revision ?? 0) || 0;
         if (clientRevision > 0 && clientRevision < existingSection.source_revision) {
@@ -46242,16 +46275,31 @@ export default {
           scopedKeys.pricingProfileKey,
           JSON.stringify({ version: 1, updated_at: nowIso, pricing_profile: mergedProfile }),
         );
+        let refreshResult = { ok: false, reason: "not_attempted" };
         try {
-          await refreshPartnerLimousineProjection(env, explicitScope);
+          refreshResult = await refreshPartnerLimousineProjection(env, explicitScope);
         } catch (_) {
-          // non-fatal
+          refreshResult = { ok: false, reason: "error" };
         }
+        const publishedOfferCount = _countPublishedLimousineOffers(nextSection);
+        const publicProjectedOfferCount = Number(refreshResult.public_projected_offer_count) || 0;
+        const discoveryListable = refreshResult.discovery_listable === true;
         return json({
           ok: true,
           changed: true,
           key: scopedKeys.pricingProfileKey,
           limousine: nextSection,
+          source_revision: nextSection.source_revision,
+          published_offer_count: publishedOfferCount,
+          public_projected_offer_count: publicProjectedOfferCount,
+          projection_refresh: {
+            ok: refreshResult.ok === true,
+            changed: refreshResult.changed === true,
+            reason: refreshResult.reason || (refreshResult.ok ? "ok" : "error"),
+          },
+          discovery_listable: discoveryListable,
+          discovery_reason: refreshResult.discovery_reason || (discoveryListable ? "listable" : "not_listable"),
+          visibility_ok: discoveryListable && publicProjectedOfferCount > 0,
         }, 200);
       }
 
@@ -78998,10 +79046,9 @@ function _logNearbyCapabilitiesDiagnostics(partnerId, payload) {
   );
 }
 
-// LIMOUSINE-MARKETPLACE-P2A: set `limousine_entitled` on a single partner entry
-// inside a stored profile array, preserving every other entry and field. The
-// stored entries are already normalized, so no re-normalization is applied.
-async function _setLimousineEntitledInProfileArray(env, key, partnerId, entitled, wrapper) {
+// Sync the sanitized limousine sub-document onto one partner entry inside a
+// stored profile array. Other partners and non-limousine fields stay as-is.
+async function _syncLimousinePublicFieldsInProfileArray(env, key, partnerId, stamped, wrapper) {
   const raw = await env.BOOKING_KV.get(key, { type: "json" });
   const list = Array.isArray(raw)
     ? raw
@@ -79012,8 +79059,9 @@ async function _setLimousineEntitledInProfileArray(env, key, partnerId, entitled
   let changed = false;
   const next = list.map((entry) => {
     if (entry && typeof entry === "object" && entry.partner_id === partnerId) {
-      if (entry.limousine_entitled !== entitled) changed = true;
-      return { ...entry, limousine_entitled: entitled };
+      const updated = _applyLimousinePublicFieldsToProfileEntry(entry, stamped);
+      if (JSON.stringify(updated) !== JSON.stringify(entry)) changed = true;
+      return updated;
     }
     return entry;
   });
@@ -79106,48 +79154,94 @@ async function refreshPartnerLimousineProjection(env, scope) {
     const projection = _buildLimousineProjection(nextProfileBase, {
       safeOfferCount: publicOffers.length,
     });
+    const nextDigest = _limousinePublicContentDigest({
+      offers: publicOffers,
+      hero: pricingSection?.limousine_hero,
+      selectedVehicleIds: pricingSection?.selected_vehicle_ids,
+    });
+    const existingDigest = _limousinePublicContentDigestFromProfile(existingProfile);
     const revision = _resolveLimousineProjectionRevision({
       existingRecord: record,
       existingProfile,
       nextProjection: projection,
       entitled,
+      existingContentDigest: existingDigest,
+      nextContentDigest: nextDigest,
     });
-    if (!revision.changed) {
-      return { ok: true, changed: false, source_revision: revision.source_revision };
-    }
-    const stamped = _stampLimousineProjectionOnProfile({
-      profile: nextProfileBase,
-      entitled,
-      projection,
-      sourceRevision: revision.source_revision,
-    });
-    await env.BOOKING_KV.put(
-      scopedKeys.profileKey,
-      JSON.stringify({
-        ...(record && typeof record === "object" ? record : {}),
-        version: record?.version ?? 1,
-        updated_at: revision.updated_at,
-        source_revision: revision.source_revision,
-        partner_profile: stamped,
-      }),
+    const stamped = revision.changed
+      ? _stampLimousineProjectionOnProfile({
+          profile: nextProfileBase,
+          entitled,
+          projection,
+          sourceRevision: revision.source_revision,
+        })
+      : {
+          ...nextProfileBase,
+          limousine_entitled: entitled === true,
+          limousine_projection: existingProfile.limousine_projection,
+          source_revision: revision.source_revision,
+        };
+    const toSync = _applyLimousinePublicFieldsToProfileEntry(
+      stamped,
+      { ...stamped, limousine_offers: publicOffers },
     );
-    // Propagate the entitlement change to the discovery arrays so a revocation
-    // takes effect without a manual republish.
-    await _setLimousineEntitledInProfileArray(
+    if (revision.changed) {
+      await env.BOOKING_KV.put(
+        scopedKeys.profileKey,
+        JSON.stringify({
+          ...(record && typeof record === "object" ? record : {}),
+          version: record?.version ?? 1,
+          updated_at: revision.updated_at,
+          source_revision: revision.source_revision,
+          partner_profile: toSync,
+        }),
+      );
+    } else {
+      const scopedNeedsOffers =
+        JSON.stringify(existingProfile.limousine_offers || []) !==
+        JSON.stringify(publicOffers);
+      if (scopedNeedsOffers) {
+        await env.BOOKING_KV.put(
+          scopedKeys.profileKey,
+          JSON.stringify({
+            ...(record && typeof record === "object" ? record : {}),
+            version: record?.version ?? 1,
+            updated_at: revision.updated_at,
+            source_revision: revision.source_revision,
+            partner_profile: toSync,
+          }),
+        );
+      }
+    }
+    // Heal v1/v2 even when the fingerprint is unchanged so a previous
+    // entitled-only write cannot leave public offers empty.
+    await _syncLimousinePublicFieldsInProfileArray(
       env,
       PARTNER_PROFILES_KEY,
       existingProfile.partner_id,
-      entitled,
+      toSync,
       null,
     );
-    await _setLimousineEntitledInProfileArray(
+    await _syncLimousinePublicFieldsInProfileArray(
       env,
       PUBLIC_PARTNER_PROFILES_V2_KEY,
       existingProfile.partner_id,
-      entitled,
+      toSync,
       { version: 2, updated_at: revision.updated_at },
     );
-    return { ok: true, changed: true, source_revision: revision.source_revision };
+    const discoveryListable = _isLimousineDiscoveryListable(toSync);
+    return {
+      ok: true,
+      changed: revision.changed === true,
+      source_revision: revision.source_revision,
+      public_projected_offer_count: publicOffers.length,
+      discovery_listable: discoveryListable,
+      discovery_reason: discoveryListable
+        ? "listable"
+        : publicOffers.length === 0
+          ? "no_published_offer"
+          : String(projection.reason || "not_listable"),
+    };
   } catch (_) {
     return { ok: false, reason: "error" };
   }

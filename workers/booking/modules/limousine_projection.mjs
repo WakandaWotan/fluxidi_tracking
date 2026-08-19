@@ -20,31 +20,39 @@ import { buildSafePublicLimousineOffers } from "./limousine_offers.mjs";
 /// LIMOUSINE-MARKETPLACE-P2B2: when commercial `offers` are supplied, a safe
 /// `published_offer_count` is added (published + enabled + valid + eligible
 /// only). Omitting `offers` keeps the projection byte-identical to P2A.
+function publishedOfferCountForProjection(profile, options = {}) {
+  if (options && Number.isFinite(Number(options.safeOfferCount))) {
+    return Math.max(0, Math.trunc(Number(options.safeOfferCount)));
+  }
+  const p = profile && typeof profile === "object" ? profile : {};
+  if (options && options.offers != null) {
+    const evaluation = evaluateLimousineProviderEligibility(p);
+    return buildSafePublicLimousineOffers(options.offers, {
+      eligible: evaluation.eligible,
+      knownVehicles: options.knownVehicles || [],
+      knownClassIds: options.knownClassIds || [],
+      readiness: evaluation.eligible,
+    }).length;
+  }
+  if (Array.isArray(p.limousine_offers)) return p.limousine_offers.length;
+  if (Array.isArray(p.limousineOffers)) return p.limousineOffers.length;
+  return 0;
+}
+
 export function buildLimousineProjection(profile, options = {}) {
   const p = profile && typeof profile === "object" ? profile : {};
   const evaluation = evaluateLimousineProviderEligibility(p);
   const vehicles = Array.isArray(p.vehicles) ? p.vehicles : [];
   const eligibleVehicleCount = vehicles.filter((v) => isEligibleLimousineVehicle(v)).length;
-  const base = {
+  const publishedOfferCount = publishedOfferCountForProjection(p, options);
+  const available = evaluation.eligible && publishedOfferCount > 0;
+  return {
     limousine_service_enabled: companyEnabledLimousine(p),
-    limousine_available: evaluation.eligible,
+    limousine_available: available,
     eligible_vehicle_count: eligibleVehicleCount,
-    reason: evaluation.reason,
+    reason: evaluation.eligible && !available ? "no_published_offer" : evaluation.reason,
+    published_offer_count: publishedOfferCount,
   };
-  if (options && Number.isFinite(Number(options.safeOfferCount))) {
-    return {
-      ...base,
-      published_offer_count: Math.max(0, Math.trunc(Number(options.safeOfferCount))),
-    };
-  }
-  if (!options || options.offers == null) return base;
-  const safeOffers = buildSafePublicLimousineOffers(options.offers, {
-    eligible: evaluation.eligible,
-    knownVehicles: options.knownVehicles || [],
-    knownClassIds: options.knownClassIds || [],
-    readiness: evaluation.eligible,
-  });
-  return { ...base, published_offer_count: safeOffers.length };
 }
 
 /// The customer-safe offer list. Never includes the private operating-base
@@ -60,9 +68,67 @@ export function buildLimousinePublicOffers(profile, options = {}) {
   });
 }
 
+/// Public-safe digest of offer content, hero and selected vehicles. Count alone
+/// is not enough: price, binding, title or hero changes must also project.
+export function limousinePublicContentDigest({
+  offers = [],
+  hero = null,
+  selectedVehicleIds = [],
+} = {}) {
+  const safeOffers = (Array.isArray(offers) ? offers : []).map((raw) => {
+    const offer = raw && typeof raw === "object" ? raw : {};
+    const vehicleIds = offer.vehicle_ids ?? offer.vehicleIds;
+    return {
+      offer_id: String(offer.offer_id ?? offer.offerId ?? ""),
+      published: offer.published === true,
+      enabled: offer.enabled !== false,
+      price_presentation: String(
+        offer.price_presentation ?? offer.pricePresentation ?? "",
+      ),
+      display_amount_cents:
+        Number(offer.display_amount_cents ?? offer.displayAmountCents ?? 0) || 0,
+      vehicle_id: String(offer.vehicle_id ?? offer.vehicleId ?? ""),
+      vehicle_ids: Array.isArray(vehicleIds) ? [...vehicleIds].map(String).sort() : [],
+      service_class_id: String(offer.service_class_id ?? offer.serviceClassId ?? ""),
+      applies_to_all:
+        offer.applies_to_all_selected_vehicles === true ||
+        offer.appliesToAllSelectedVehicles === true,
+      title: offer.title ?? {},
+      description: offer.description ?? {},
+    };
+  });
+  const h = hero && typeof hero === "object" ? hero : {};
+  return JSON.stringify({
+    offers: safeOffers,
+    hero: {
+      photo_url: String(h.photo_url ?? h.photoUrl ?? ""),
+      source_kind: String(h.source_kind ?? h.sourceKind ?? ""),
+      alignment: String(h.alignment ?? ""),
+      source_revision: Number(h.source_revision ?? h.sourceRevision ?? 0) || 0,
+    },
+    selected: (Array.isArray(selectedVehicleIds) ? selectedVehicleIds : [])
+      .map(String)
+      .sort(),
+  });
+}
+
+export function limousinePublicContentDigestFromProfile(profile) {
+  const p = profile && typeof profile === "object" ? profile : {};
+  return limousinePublicContentDigest({
+    offers: p.limousine_offers ?? p.limousineOffers ?? [],
+    hero: {
+      photo_url: p.limousine_hero_url ?? p.limousineHeroUrl,
+      source_kind: p.limousine_hero_source ?? p.limousineHeroSource,
+      alignment: p.limousine_hero_alignment ?? p.limousineHeroAlignment,
+      source_revision: p.limousine_hero_revision ?? p.limousineHeroRevision,
+    },
+    selectedVehicleIds: p.selected_vehicle_ids ?? p.selectedVehicleIds ?? [],
+  });
+}
+
 /// Deterministic fingerprint of the safe projection + the entitlement input, so
 /// an idempotent replay does not advance the revision but a real change does.
-export function limousineProjectionFingerprint(projection, entitled) {
+export function limousineProjectionFingerprint(projection, entitled, contentDigest = "") {
   const p = projection && typeof projection === "object" ? projection : {};
   return JSON.stringify([
     entitled === true,
@@ -70,6 +136,8 @@ export function limousineProjectionFingerprint(projection, entitled) {
     p.limousine_available === true,
     toMonotonicInt(p.eligible_vehicle_count),
     String(p.reason || ""),
+    toMonotonicInt(p.published_offer_count),
+    String(contentDigest || ""),
   ]);
 }
 
@@ -99,6 +167,8 @@ export function resolveLimousineProjectionRevision({
   nextProjection = null,
   entitled = false,
   nowIso = null,
+  existingContentDigest,
+  nextContentDigest,
 } = {}) {
   const now = String(nowIso || new Date().toISOString());
   const floor = readProjectionRevision(existingRecord, existingProfile);
@@ -110,10 +180,13 @@ export function resolveLimousineProjectionRevision({
     existingProfile && typeof existingProfile === "object"
       ? existingProfile.limousine_entitled === true
       : false;
+  const existingDigest =
+    existingContentDigest ?? limousinePublicContentDigestFromProfile(existingProfile);
+  const nextDigest = nextContentDigest ?? existingDigest;
 
   const unchanged =
-    limousineProjectionFingerprint(existingProj, existingEntitled) ===
-    limousineProjectionFingerprint(nextProjection, entitled);
+    limousineProjectionFingerprint(existingProj, existingEntitled, existingDigest) ===
+    limousineProjectionFingerprint(nextProjection, entitled, nextDigest);
 
   if (unchanged && floor >= 1) {
     const prevUpdatedAt =
@@ -144,4 +217,51 @@ export function stampLimousineProjectionOnProfile({
     },
     source_revision: revision,
   };
+}
+
+/// Copies the sanitized limousine sub-document onto one public profile entry.
+/// Other partners and non-limousine fields stay untouched.
+export function applyLimousinePublicFieldsToProfileEntry(entry, stamped) {
+  if (!entry || typeof entry !== "object") return entry;
+  const src = stamped && typeof stamped === "object" ? stamped : {};
+  const next = { ...entry };
+  const proj =
+    src.limousine_projection && typeof src.limousine_projection === "object"
+      ? src.limousine_projection
+      : {};
+  const offers = Array.isArray(src.limousine_offers) ? src.limousine_offers : [];
+  next.limousine_entitled = src.limousine_entitled === true;
+  next.limousine_service_enabled =
+    src.limousine_service_enabled === true || proj.limousine_service_enabled === true;
+  next.limousine_available =
+    src.limousine_available === true || proj.limousine_available === true;
+  if (src.limousine_projection) next.limousine_projection = src.limousine_projection;
+  next.limousine_offers = offers;
+  if (src.limousine_hero_url) {
+    next.limousine_hero_url = src.limousine_hero_url;
+    next.limousine_hero_source = src.limousine_hero_source || "";
+    next.limousine_hero_alignment = src.limousine_hero_alignment || "";
+    next.limousine_hero_revision = src.limousine_hero_revision || 0;
+  } else {
+    delete next.limousine_hero_url;
+    delete next.limousine_hero_source;
+    delete next.limousine_hero_alignment;
+    delete next.limousine_hero_revision;
+  }
+  if (src.source_revision != null) next.source_revision = src.source_revision;
+  if (offers.length === 0) {
+    next.limousine_available = false;
+    if (next.limousine_projection && typeof next.limousine_projection === "object") {
+      next.limousine_projection = {
+        ...next.limousine_projection,
+        limousine_available: false,
+        published_offer_count: 0,
+        reason:
+          next.limousine_projection.reason === "eligible"
+            ? "no_published_offer"
+            : next.limousine_projection.reason,
+      };
+    }
+  }
+  return next;
 }
