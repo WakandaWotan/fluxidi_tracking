@@ -230,7 +230,12 @@ void main() {
     expect(allowlisted?.testPreview, isTrue);
     expect(allowlisted?.publicCity, 'Gent');
     expect(allowlisted?.vehicles.first.serviceClassId, 'executive_sedan');
-    expect(allowlisted?.coverImageUrl, 'https://cdn.example/v1.jpg');
+    expect(allowlisted?.coverImageUrl, isEmpty);
+    expect(allowlisted?.coverIsPlaceholder, isTrue);
+    expect(
+      allowlisted?.coverSource,
+      LimousineDiscoveryCoverSource.emptyPlaceholder,
+    );
 
     expect(tryParseLimousineDiscoveryCard(_taxiOnly()), isNull);
     expect(tryParseLimousineDiscoveryCard(_airportOnly()), isNull);

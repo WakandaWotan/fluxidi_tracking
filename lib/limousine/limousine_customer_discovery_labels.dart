@@ -113,10 +113,17 @@ const LocalizedText kLimousineDiscoveryViewOffers = LocalizedText(
 );
 
 const LocalizedText kLimousineDiscoveryViewProfile = LocalizedText(
-  nl: 'Bekijk profiel',
-  en: 'View profile',
-  fr: 'Voir le profil',
-  es: 'Ver perfil',
+  nl: 'Meer info',
+  en: 'More info',
+  fr: 'Plus d’infos',
+  es: 'Más info',
+);
+
+const LocalizedText kLimousineDiscoveryCompanyFallback = LocalizedText(
+  nl: 'Limousine',
+  en: 'Limousine',
+  fr: 'Limousine',
+  es: 'Limusina',
 );
 
 const LocalizedText kLimousineDiscoveryQuoteOnRequest = LocalizedText(

@@ -711,12 +711,15 @@ class _ProviderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final info = _info();
     final photo = LimousineContainPhoto(
+      key: limousineDiscoveryCardCoverKey(card.publicPartnerId),
       imageUrl: card.coverImageUrl,
       background: tokens.surfaceAlt,
       gold: tokens.gold,
       minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
       aspectRatio: horizontal ? 16 / 10 : 16 / 9,
-      placeholderLabel: card.companyName,
+      placeholderLabel: limousineDiscoveryCardTitle(card, language),
+      fit: card.coverIsExplicit ? BoxFit.cover : BoxFit.contain,
+      alignment: card.coverAlignment,
     );
     final body = horizontal
         ? IntrinsicHeight(
@@ -754,18 +757,8 @@ class _ProviderCard extends StatelessWidget {
   }
 
   Widget _info() {
-    final price = limousineDiscoveryPriceLabel(card.price, language);
-    final vehicleLabels = <String>[
-      for (final vehicle in card.vehicles)
-        [
-          if (vehicle.serviceClassId.isNotEmpty)
-            limousineDiscoveryServiceClassLabel(vehicle.serviceClassId),
-          if (vehicle.passengerCapacity != null)
-            '${vehicle.passengerCapacity} ${kLimousineDiscoveryPassengers.of(language)}',
-          if (vehicle.luggageCapacity != null)
-            '${vehicle.luggageCapacity} ${kLimousineDiscoveryLuggage.of(language)}',
-        ].where((part) => part.isNotEmpty).join(' · '),
-    ].where((part) => part.isNotEmpty).toList(growable: false);
+    final title = limousineDiscoveryCardTitle(card, language);
+    final description = limousineDiscoveryCardDescription(card, language);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
       child: Column(
@@ -776,7 +769,7 @@ class _ProviderCard extends StatelessWidget {
               Expanded(
                 child: LimousineDiscoveryCompanyIdentity(
                   logoUrl: card.logoUrl,
-                  companyName: card.companyName,
+                  companyName: '',
                   tokens: tokens,
                   logoImage: card.logoImage,
                 ),
@@ -793,23 +786,23 @@ class _ProviderCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (card.publicCity.isNotEmpty || card.distanceKm != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              [
-                if (card.publicCity.isNotEmpty) card.publicCity,
-                if (card.distanceKm != null)
-                  limousineDiscoveryDistanceLabel(card.distanceKm!, language),
-              ].join(' · '),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: tokens.muted, fontSize: 13.5),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            key: limousineDiscoveryCardTitleKey(card.publicPartnerId),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: tokens.onSurface,
+              fontWeight: FontWeight.w800,
+              fontSize: 18,
             ),
-          ],
-          if (vehicleLabels.isNotEmpty) ...[
-            const SizedBox(height: 10),
+          ),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 6),
             Text(
-              vehicleLabels.join('\n'),
+              description,
+              key: limousineDiscoveryCardDescriptionKey(card.publicPartnerId),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -819,17 +812,13 @@ class _ProviderCard extends StatelessWidget {
               ),
             ),
           ],
-          if (price.isNotEmpty) ...[
-            const SizedBox(height: 10),
+          if (card.distanceKm != null) ...[
+            const SizedBox(height: 6),
             Text(
-              price,
+              limousineDiscoveryDistanceLabel(card.distanceKm!, language),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.gold,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: tokens.muted, fontSize: 12.5),
             ),
           ],
           const SizedBox(height: 14),

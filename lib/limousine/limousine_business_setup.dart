@@ -256,6 +256,34 @@ class LimousineBusinessSetupReadiness {
   bool get isFullyComplete => items.every((item) => item.complete);
 }
 
+/// Working-copy vs published visiting-card fields for step 3.
+/// Draft save keeps [published*] unchanged so the live marketplace card
+/// does not pick up unpublished title/photo/description.
+Map<String, dynamic> limousinePublicDisplayPayload({
+  required bool publish,
+  required Map<String, String> title,
+  required Map<String, String> description,
+  required Map<String, dynamic> hero,
+  required Map<String, String> publishedTitle,
+  required Map<String, String> publishedDescription,
+  required Map<String, dynamic> publishedHero,
+}) {
+  return <String, dynamic>{
+    'public_title': title,
+    'public_description': description,
+    'limousine_hero': hero,
+    'published_public_title': publish ? title : publishedTitle,
+    'published_public_description': publish
+        ? description
+        : publishedDescription,
+    'published_limousine_hero': publish ? hero : publishedHero,
+  };
+}
+
+bool limousineLocalizedMapHasText(Map<String, String> values) {
+  return values.values.any((value) => value.trim().isNotEmpty);
+}
+
 bool limousinePublicTextIsComplete({
   required Map<String, String> title,
   required Map<String, String> description,

@@ -8,6 +8,7 @@ import 'package:flutter/painting.dart';
 import '../app_strings.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
+import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_service_capability.dart';
@@ -90,6 +91,18 @@ const Key kLimousineDiscoveryCompanyNameFallbackKey = ValueKey<String>(
 Key limousineDiscoveryViewLimousinesCtaKey(String partnerId) =>
     limousineDiscoveryOffersCtaKey(partnerId);
 
+Key limousineDiscoveryCardTitleKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_card_title_$partnerId');
+
+Key limousineDiscoveryCardDescriptionKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_card_description_$partnerId');
+
+Key limousineDiscoveryCardCoverKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_card_cover_$partnerId');
+
+/// Visiting-card cover source. Vehicle / gallery photos are never used here.
+enum LimousineDiscoveryCoverSource { publishedHero, emptyPlaceholder }
+
 /// P2D4C1F server contract consumed by discovery. Lives on the isolated
 /// Worker branch; Flutter never invents these fields locally.
 const String kLimousineDiscoveryWorkerContract = '''
@@ -145,7 +158,12 @@ class LimousineDiscoveryCard {
   const LimousineDiscoveryCard({
     required this.publicPartnerId,
     required this.companyName,
+    this.publicTitle = const <String, String>{},
+    this.publicDescription = const <String, String>{},
     this.coverImageUrl = '',
+    this.coverAlignment = Alignment.center,
+    this.coverIsExplicit = false,
+    this.coverSource = LimousineDiscoveryCoverSource.emptyPlaceholder,
     this.logoUrl = '',
     this.verifiedPartner = false,
     this.publicCity = '',
@@ -160,7 +178,12 @@ class LimousineDiscoveryCard {
 
   final String publicPartnerId;
   final String companyName;
+  final Map<String, String> publicTitle;
+  final Map<String, String> publicDescription;
   final String coverImageUrl;
+  final Alignment coverAlignment;
+  final bool coverIsExplicit;
+  final LimousineDiscoveryCoverSource coverSource;
   final String logoUrl;
   final bool verifiedPartner;
   final String publicCity;
@@ -170,6 +193,10 @@ class LimousineDiscoveryCard {
   final bool testPreview;
   final ImageProvider? logoImage;
 
+  bool get coverIsPlaceholder =>
+      coverSource == LimousineDiscoveryCoverSource.emptyPlaceholder ||
+      coverImageUrl.isEmpty;
+
   LimousineDiscoveryCard copyWith({
     double? distanceKm,
     bool clearDistance = false,
@@ -178,7 +205,12 @@ class LimousineDiscoveryCard {
     return LimousineDiscoveryCard(
       publicPartnerId: publicPartnerId,
       companyName: companyName,
+      publicTitle: publicTitle,
+      publicDescription: publicDescription,
       coverImageUrl: coverImageUrl,
+      coverAlignment: coverAlignment,
+      coverIsExplicit: coverIsExplicit,
+      coverSource: coverSource,
       logoUrl: logoUrl,
       verifiedPartner: verifiedPartner,
       publicCity: publicCity,
@@ -500,11 +532,21 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
               '')
           .toString()
           .trim();
-  if (name.isEmpty) return null;
+  final title = limousineDiscoveryPublishedTitleMap(partner);
+  final description = limousineDiscoveryPublishedDescriptionMap(partner);
+  if (name.isEmpty && !_localizedHasText(title)) return null;
+  final cover = limousineDiscoveryPublishedCover(partner);
   return LimousineDiscoveryCard(
     publicPartnerId: id,
     companyName: name,
-    coverImageUrl: limousinePreferredDiscoveryCoverUrl(partner),
+    publicTitle: title,
+    publicDescription: description,
+    coverImageUrl: cover.photoUrl,
+    coverAlignment: cover.flutterAlignment,
+    coverIsExplicit: cover.explicit,
+    coverSource: cover.hasPhoto
+        ? LimousineDiscoveryCoverSource.publishedHero
+        : LimousineDiscoveryCoverSource.emptyPlaceholder,
     logoUrl: _httpsOnly(
       partner['logo_url'] ??
           partner['logoUrl'] ??
@@ -518,6 +560,97 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
     price: _authoritativePrice(partner),
     testPreview: partner['test_preview'] == true,
   );
+}
+
+bool _localizedHasText(Map<String, String> map) {
+  return map.values.any((value) => value.trim().isNotEmpty);
+}
+
+Map<String, dynamic> _limousineSectionOf(Map<String, dynamic> partner) {
+  final nested = asStringKeyedMap(partner['limousine'] ?? partner['pricing']);
+  return nested.isEmpty ? partner : <String, dynamic>{...partner, ...nested};
+}
+
+Map<String, String> _publishedOrLiveLocalized(
+  Map<String, dynamic> partner, {
+  required String publishedKey,
+  required String liveKey,
+}) {
+  final source = _limousineSectionOf(partner);
+  final hasPublishedKey =
+      source.containsKey(publishedKey) ||
+      source.containsKey(_camel(publishedKey));
+  final published = limousineLocalizedOf(
+    source[publishedKey] ?? source[_camel(publishedKey)],
+  );
+  if (_localizedHasText(published)) return published;
+  // An explicit empty published snapshot must not leak a draft working copy.
+  if (hasPublishedKey) return published;
+  return limousineLocalizedOf(source[liveKey] ?? source[_camel(liveKey)]);
+}
+
+String _camel(String snake) {
+  final parts = snake.split('_');
+  if (parts.length < 2) return snake;
+  final rest = parts.skip(1).map((part) {
+    if (part.isEmpty) return part;
+    return '${part[0].toUpperCase()}${part.substring(1)}';
+  }).join();
+  return '${parts.first}$rest';
+}
+
+Map<String, String> limousineDiscoveryPublishedTitleMap(
+  Map<String, dynamic> partner,
+) {
+  return _publishedOrLiveLocalized(
+    partner,
+    publishedKey: 'published_public_title',
+    liveKey: 'public_title',
+  );
+}
+
+Map<String, String> limousineDiscoveryPublishedDescriptionMap(
+  Map<String, dynamic> partner,
+) {
+  return _publishedOrLiveLocalized(
+    partner,
+    publishedKey: 'published_public_description',
+    liveKey: 'public_description',
+  );
+}
+
+String limousineDiscoveryCardTitle(
+  LimousineDiscoveryCard card,
+  AppLanguage language,
+) {
+  final localized = limousineDiscoveryLocalizedText(card.publicTitle, language);
+  if (localized.isNotEmpty) return localized;
+  if (card.companyName.trim().isNotEmpty) return card.companyName.trim();
+  return kLimousineDiscoveryCompanyFallback.of(language);
+}
+
+String limousineDiscoveryCardDescription(
+  LimousineDiscoveryCard card,
+  AppLanguage language,
+) {
+  return limousineDiscoveryLocalizedText(card.publicDescription, language);
+}
+
+String limousineDiscoveryLocalizedText(
+  Map<String, String> map,
+  AppLanguage language,
+) {
+  return _firstLocalized(map, language);
+}
+
+String _firstLocalized(Map<String, String> map, AppLanguage language) {
+  final direct = limousineLocalizedFor(map, language).trim();
+  if (direct.isNotEmpty) return direct;
+  for (final lang in const ['nl', 'en', 'fr', 'es']) {
+    final value = (map[lang] ?? '').trim();
+    if (value.isNotEmpty) return value;
+  }
+  return '';
 }
 
 bool _verifiedPartner(Map<String, dynamic> partner) {
@@ -653,35 +786,51 @@ String _httpsOnly(Object? raw) {
   return '';
 }
 
-/// Discovery cover: first classified limousine vehicle photo, then an
-/// explicit limousine cover. Never the generic taxi hero/cover.
-String limousinePreferredDiscoveryCoverUrl(Map<String, dynamic> partner) {
-  for (final vehicle in _discoveryVehicles(partner)) {
-    if (!_vehicleIsAuthoritativeLimousine(vehicle)) continue;
-    final url = _httpsOnly(
-      vehicle['primary_photo_url'] ??
-          vehicle['primaryPhotoUrl'] ??
-          vehicle['photo_url'] ??
-          vehicle['photoUrl'] ??
-          vehicle['public_photo_url'] ??
-          vehicle['publicPhotoUrl'],
+/// Visiting-card cover from step 3 "Publieke weergave".
+///
+/// Fallback order (documented product rule):
+/// 1. published limousine hero / explicit limousine cover URL
+/// 2. empty placeholder — never taxi `hero_photo_url`, never the first
+///    vehicle/gallery photo. Those belong on "Bekijk aanbod" and detail.
+LimousineHeroSelection limousineDiscoveryPublishedCover(
+  Map<String, dynamic> partner,
+) {
+  final source = _limousineSectionOf(partner);
+  final publishedHero =
+      source['published_limousine_hero'] ?? source['publishedLimousineHero'];
+  final hasPublishedHeroKey =
+      source.containsKey('published_limousine_hero') ||
+      source.containsKey('publishedLimousineHero');
+  if (hasPublishedHeroKey) {
+    final resolved = _heroFromPublishedValue(publishedHero);
+    if (resolved.hasPhoto) return resolved;
+    return const LimousineHeroSelection(
+      sourceKind: kLimousineHeroSourceFallback,
     );
-    if (url.isNotEmpty) return url;
   }
-  final media = asStringKeyedMap(partner['media']);
-  for (final map in <Map<String, dynamic>>[partner, media]) {
-    for (final key in const [
-      'limousine_cover_url',
-      'limousineCoverUrl',
-      'limousine_hero_url',
-      'limousineHeroUrl',
-      'limousine_hero_photo_url',
-    ]) {
-      final url = _httpsOnly(map[key]);
-      if (url.isNotEmpty) return url;
-    }
+  final live = resolveLimousineHero(source: source);
+  if (live.hasPhoto) return live;
+  return const LimousineHeroSelection(sourceKind: kLimousineHeroSourceFallback);
+}
+
+LimousineHeroSelection _heroFromPublishedValue(Object? publishedHero) {
+  if (publishedHero is Map) {
+    return resolveLimousineHero(
+      source: <String, dynamic>{'limousine_hero': publishedHero},
+    );
   }
-  return '';
+  final url = (publishedHero ?? '').toString().trim();
+  if (url.startsWith('https://')) {
+    return resolveLimousineHero(
+      source: <String, dynamic>{'limousine_hero_url': url},
+    );
+  }
+  return const LimousineHeroSelection(sourceKind: kLimousineHeroSourceFallback);
+}
+
+/// Discovery cover: published public hero only. Kept as a URL helper for tests.
+String limousinePreferredDiscoveryCoverUrl(Map<String, dynamic> partner) {
+  return limousineDiscoveryPublishedCover(partner).photoUrl;
 }
 
 String limousineDiscoveryDistanceLabel(

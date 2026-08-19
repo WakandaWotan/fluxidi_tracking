@@ -59,6 +59,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
               companyNameFallback: companyNameFallback,
               distanceKm: distanceKm,
               discoveryCard: discoveryCard,
+              language: language,
             );
             final tablet = MediaQuery.sizeOf(context).shortestSide >= 600;
             return Scaffold(

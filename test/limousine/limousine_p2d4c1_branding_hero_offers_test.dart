@@ -196,7 +196,7 @@ void main() {
     );
   });
 
-  test('discovery keeps vehicle primary photo, not company hero', () {
+  test('discovery uses the published public cover, never a vehicle photo', () {
     final card = tryParseLimousineDiscoveryCard(<String, dynamic>{
       'partner_id': 'limo_1',
       'company_name': 'Maison Noire',
@@ -223,7 +223,9 @@ void main() {
         ),
       ],
     });
-    expect(card?.coverImageUrl, 'https://cdn.example/party.jpg');
+    expect(card?.coverImageUrl, 'https://cdn.example/limousine-hero.jpg');
+    expect(card?.coverIsPlaceholder, isFalse);
+    expect(card?.coverSource, LimousineDiscoveryCoverSource.publishedHero);
     expect(card?.logoUrl, 'https://cdn.example/logo.png');
     expect(card?.price.kind, LimousineDiscoveryPriceKind.fromPrice);
     expect(card?.price.amountCents, 25000);

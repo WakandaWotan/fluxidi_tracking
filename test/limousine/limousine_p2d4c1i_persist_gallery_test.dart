@@ -65,7 +65,10 @@ Map<String, dynamic> _publicVehicle({
 
 Widget _app(Widget child, {Size size = kLimousinePhonePortrait}) {
   return MaterialApp(
-    home: MediaQuery(data: MediaQueryData(size: size), child: child),
+    home: MediaQuery(
+      data: MediaQueryData(size: size),
+      child: child,
+    ),
   );
 }
 
@@ -80,14 +83,13 @@ void main() {
   test('selected vehicle ids survive save, dispose and bootstrap reload', () {
     final before = <VehicleProfile>[
       _vehicle(id: 'vh_party', name: 'Party Limo'),
-      _vehicle(
-        id: 'vh_hummer',
-        name: 'Hummer white',
-        classId: 'luxury_van',
-      ),
+      _vehicle(id: 'vh_hummer', name: 'Hummer white', classId: 'luxury_van'),
       _vehicle(id: 'vh_taxi', name: 'Taxi Van', category: '', classId: ''),
     ];
-    expect(limousineSelectedVehicleIds(before), <String>['vh_party', 'vh_hummer']);
+    expect(limousineSelectedVehicleIds(before), <String>[
+      'vh_party',
+      'vh_hummer',
+    ]);
     final remoteBare = VehicleProfile(
       id: 'vh_party',
       vehicleName: 'Party Limo',
@@ -118,7 +120,10 @@ void main() {
       ),
       before[2],
     ];
-    expect(limousineSelectionSurvivesReload(before: before, after: after), isTrue);
+    expect(
+      limousineSelectionSurvivesReload(before: before, after: after),
+      isTrue,
+    );
     expect(mergedParty.serviceCategory, 'limousine');
     expect(mergedParty.serviceClassId, 'stretch_limousine');
     expect(after[1].serviceClassId, 'luxury_van');
@@ -230,15 +235,43 @@ void main() {
       'test_preview': true,
     };
     final card = tryParseLimousineDiscoveryCard(partner);
-    expect(card?.coverImageUrl, 'https://cdn.example/party-ext.jpg');
+    expect(card?.coverImageUrl, isEmpty);
+    expect(card?.coverIsPlaceholder, isTrue);
+    expect(card?.coverImageUrl.contains('party-ext'), isFalse);
     expect(card?.coverImageUrl.contains('party-int'), isFalse);
     expect(card?.coverImageUrl.contains('taxi-cover'), isFalse);
-    final showroom = buildLimousineProviderShowroomData(profile: <String, dynamic>{
-      'partner_id': 'limo_1',
-      'company_name': 'Maison Noire',
-      'limousine_available': true,
-      'hero_photo_url': 'https://cdn.example/taxi-cover.jpg',
-      'vehicles': <Map<String, dynamic>>[
+    final showroom = buildLimousineProviderShowroomData(
+      profile: <String, dynamic>{
+        'partner_id': 'limo_1',
+        'company_name': 'Maison Noire',
+        'limousine_available': true,
+        'hero_photo_url': 'https://cdn.example/taxi-cover.jpg',
+        'vehicles': <Map<String, dynamic>>[
+          _publicVehicle(
+            name: 'Party Limo',
+            photos: const <String>[
+              'https://cdn.example/party-ext.jpg',
+              'https://cdn.example/party-int.jpg',
+            ],
+          ),
+          <String, dynamic>{
+            'name': 'Taxi Van',
+            'service_category': 'taxi',
+            'photo_url': 'https://cdn.example/taxi-van.jpg',
+            'is_active': true,
+          },
+        ],
+      },
+    );
+    expect(showroom.heroPhotoUrl, 'https://cdn.example/party-ext.jpg');
+    expect(showroom.vehicles, hasLength(1));
+    expect(showroom.vehicles.single.displayName, 'Party Limo');
+  });
+
+  testWidgets(
+    'detail shows both photos and hides carousel for a single photo',
+    (tester) async {
+      final two = tryParseLimousineShowroomVehicle(
         _publicVehicle(
           name: 'Party Limo',
           photos: const <String>[
@@ -246,73 +279,50 @@ void main() {
             'https://cdn.example/party-int.jpg',
           ],
         ),
-        <String, dynamic>{
-          'name': 'Taxi Van',
-          'service_category': 'taxi',
-          'photo_url': 'https://cdn.example/taxi-van.jpg',
-          'is_active': true,
-        },
-      ],
-    });
-    expect(showroom.heroPhotoUrl, 'https://cdn.example/party-ext.jpg');
-    expect(showroom.vehicles, hasLength(1));
-    expect(showroom.vehicles.single.displayName, 'Party Limo');
-  });
-
-  testWidgets('detail shows both photos and hides carousel for a single photo', (
-    tester,
-  ) async {
-    final two = tryParseLimousineShowroomVehicle(
-      _publicVehicle(
-        name: 'Party Limo',
-        photos: const <String>[
-          'https://cdn.example/party-ext.jpg',
-          'https://cdn.example/party-int.jpg',
-        ],
-      ),
-      index: 0,
-    )!;
-    await tester.pumpWidget(
-      _app(
-        LimousineVehicleDetailPage(
-          vehicle: two,
-          companyName: 'Maison Noire',
-          partnerId: 'limo_1',
+        index: 0,
+      )!;
+      await tester.pumpWidget(
+        _app(
+          LimousineVehicleDetailPage(
+            vehicle: two,
+            companyName: 'Maison Noire',
+            partnerId: 'limo_1',
+          ),
+          size: kLimousineSmX400Portrait,
         ),
-        size: kLimousineSmX400Portrait,
-      ),
-    );
-    await tester.pump();
-    expect(find.byKey(kLimousineDetailGalleryKey), findsOneWidget);
-    expect(find.byKey(kLimousineDetailGalleryCounterKey), findsOneWidget);
-    expect(find.text('1 / 2'), findsOneWidget);
-    expect(find.byKey(kLimousineDetailGalleryThumbsKey), findsOneWidget);
-    expect(find.byKey(kLimousineDetailGalleryPrevKey), findsOneWidget);
-    expect(find.byKey(kLimousineDetailGalleryNextKey), findsOneWidget);
-    expect(find.text('Vraag offerte aan'), findsNothing);
+      );
+      await tester.pump();
+      expect(find.byKey(kLimousineDetailGalleryKey), findsOneWidget);
+      expect(find.byKey(kLimousineDetailGalleryCounterKey), findsOneWidget);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.byKey(kLimousineDetailGalleryThumbsKey), findsOneWidget);
+      expect(find.byKey(kLimousineDetailGalleryPrevKey), findsOneWidget);
+      expect(find.byKey(kLimousineDetailGalleryNextKey), findsOneWidget);
+      expect(find.text('Vraag offerte aan'), findsNothing);
 
-    final one = tryParseLimousineShowroomVehicle(
-      _publicVehicle(
-        name: 'Hummer white',
-        photos: const <String>['https://cdn.example/hummer.jpg'],
-      ),
-      index: 0,
-    )!;
-    await tester.pumpWidget(
-      _app(
-        LimousineVehicleDetailPage(
-          vehicle: one,
-          companyName: 'Maison Noire',
-          partnerId: 'limo_1',
+      final one = tryParseLimousineShowroomVehicle(
+        _publicVehicle(
+          name: 'Hummer white',
+          photos: const <String>['https://cdn.example/hummer.jpg'],
         ),
-      ),
-    );
-    await tester.pump();
-    expect(find.byKey(kLimousineDetailGalleryKey), findsNothing);
-    expect(find.byKey(kLimousineDetailGalleryCounterKey), findsNothing);
-    expect(find.byKey(kLimousineDetailGalleryThumbsKey), findsNothing);
-    expect(find.byKey(kLimousineDetailGalleryPrevKey), findsNothing);
-  });
+        index: 0,
+      )!;
+      await tester.pumpWidget(
+        _app(
+          LimousineVehicleDetailPage(
+            vehicle: one,
+            companyName: 'Maison Noire',
+            partnerId: 'limo_1',
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(kLimousineDetailGalleryKey), findsNothing);
+      expect(find.byKey(kLimousineDetailGalleryCounterKey), findsNothing);
+      expect(find.byKey(kLimousineDetailGalleryThumbsKey), findsNothing);
+      expect(find.byKey(kLimousineDetailGalleryPrevKey), findsNothing);
+    },
+  );
 
   test('public gallery payload never leaks private fields', () {
     final urls = orderPublicVehicleGalleryUrls(
@@ -334,134 +344,142 @@ void main() {
     expect(jsonEncode(payload).contains('file://'), isFalse);
   });
 
-  testWidgets('publish persists selected vehicles before offers and keeps them', (
-    tester,
-  ) async {
-    final persisted = <List<String>>[];
-    final saves = <Map<String, dynamic>>[];
-    final vehicles = <VehicleProfile>[
-      _vehicle(id: 'vh_party', name: 'Party Limo'),
-      _vehicle(id: 'vh_hummer', name: 'Hummer white', classId: 'luxury_van'),
-    ];
-    await tester.pumpWidget(
-      _app(
-        LimousineBusinessSetupPage(
-          loadPricing: () async => <String, dynamic>{
-            'limousine': <String, dynamic>{
-              'enabled': true,
-              'source_revision': 3,
-              'offers': <Map<String, dynamic>>[
-                <String, dynamic>{
-                  'offer_id': 'off_1',
-                  'enabled': true,
-                  'published': true,
-                  'target_type': LimousineOfferTarget.serviceClass,
-                  'service_class_id': 'stretch_limousine',
-                  'price_presentation': LimousinePricePresentation.quoteRequired,
-                  'currency': 'EUR',
-                  'title': <String, String>{
-                    'nl': 'Avond',
-                    'en': 'Evening',
-                    'fr': 'Soiree',
-                    'es': 'Noche',
-                  },
-                  'description': <String, String>{
-                    'nl': 'Avondrit',
-                    'en': 'Evening ride',
-                    'fr': 'Soiree',
-                    'es': 'Noche',
-                  },
-                  'hourly': <String, dynamic>{
-                    'enabled': false,
-                    'currency': 'EUR',
-                  },
-                  'distance_time': <String, dynamic>{
-                    'enabled': false,
-                    'currency': 'EUR',
-                  },
-                },
-              ],
-            },
-          },
-          savePricing: (section) async {
-            saves.add(Map<String, dynamic>.from(section));
-            return <String, dynamic>{
+  testWidgets(
+    'publish persists selected vehicles before offers and keeps them',
+    (tester) async {
+      final persisted = <List<String>>[];
+      final saves = <Map<String, dynamic>>[];
+      final vehicles = <VehicleProfile>[
+        _vehicle(id: 'vh_party', name: 'Party Limo'),
+        _vehicle(id: 'vh_hummer', name: 'Hummer white', classId: 'luxury_van'),
+      ];
+      await tester.pumpWidget(
+        _app(
+          LimousineBusinessSetupPage(
+            loadPricing: () async => <String, dynamic>{
               'limousine': <String, dynamic>{
-                'source_revision': 4,
-                'offers': section['offers'],
-                'enabled': section['enabled'],
-                'selected_vehicle_ids': section['selected_vehicle_ids'],
+                'enabled': true,
+                'source_revision': 3,
+                'offers': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'offer_id': 'off_1',
+                    'enabled': true,
+                    'published': true,
+                    'target_type': LimousineOfferTarget.serviceClass,
+                    'service_class_id': 'stretch_limousine',
+                    'price_presentation':
+                        LimousinePricePresentation.quoteRequired,
+                    'currency': 'EUR',
+                    'title': <String, String>{
+                      'nl': 'Avond',
+                      'en': 'Evening',
+                      'fr': 'Soiree',
+                      'es': 'Noche',
+                    },
+                    'description': <String, String>{
+                      'nl': 'Avondrit',
+                      'en': 'Evening ride',
+                      'fr': 'Soiree',
+                      'es': 'Noche',
+                    },
+                    'hourly': <String, dynamic>{
+                      'enabled': false,
+                      'currency': 'EUR',
+                    },
+                    'distance_time': <String, dynamic>{
+                      'enabled': false,
+                      'currency': 'EUR',
+                    },
+                  },
+                ],
               },
-            };
-          },
-          persistVehicles: (rows) async {
-            persisted.add(limousineSelectedVehicleIds(rows));
-          },
-          vehicles: vehicles,
-          knownClassIds: const <String>['stretch_limousine', 'luxury_van'],
-          entryEnabled: true,
-          language: AppLanguage.nl,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Party Limo'), findsWidgets);
-    expect(find.text('Hummer white'), findsWidgets);
-    tester
-            .widget<ButtonStyleButton>(
-              find.byKey(kLimousineBusinessSetupPublishKey),
-            )
-            .onPressed!();
-    await tester.pumpAndSettle();
-    expect(persisted, isNotEmpty);
-    expect(persisted.first, <String>['vh_party', 'vh_hummer']);
-    expect(saves, hasLength(1));
-    expect(saves.single['enabled'], isTrue);
-    expect(saves.single['source_revision'], 3);
-    expect(
-      (saves.single['offers'] as List).cast<Map>().every(
-        (offer) => offer['published'] == true,
-      ),
-      isTrue,
-    );
-    expect(saves.single['selected_vehicle_ids'], <String>[
-      'vh_party',
-      'vh_hummer',
-    ]);
-    expect(find.text('Party Limo'), findsWidgets);
-    expect(find.text('Hummer white'), findsWidgets);
-    expect(find.text('Foto’s beheren'), findsWidgets);
-  });
-
-  testWidgets('dirty back navigation shows save or discard instead of dropping', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _app(
-        LimousineBusinessSetupPage(
-          loadPricing: () async => <String, dynamic>{
-            'limousine': <String, dynamic>{
-              'enabled': true,
-              'offers': <Map<String, dynamic>>[],
             },
-          },
-          savePricing: (_) async => <String, dynamic>{},
-          vehicles: <VehicleProfile>[
-            _vehicle(id: 'vh_party', name: 'Party Limo', category: '', classId: ''),
-          ],
-          knownClassIds: const <String>['stretch_limousine'],
-          language: AppLanguage.nl,
+            savePricing: (section) async {
+              saves.add(Map<String, dynamic>.from(section));
+              return <String, dynamic>{
+                'limousine': <String, dynamic>{
+                  'source_revision': 4,
+                  'offers': section['offers'],
+                  'enabled': section['enabled'],
+                  'selected_vehicle_ids': section['selected_vehicle_ids'],
+                },
+              };
+            },
+            persistVehicles: (rows) async {
+              persisted.add(limousineSelectedVehicleIds(rows));
+            },
+            vehicles: vehicles,
+            knownClassIds: const <String>['stretch_limousine', 'luxury_van'],
+            entryEnabled: true,
+            language: AppLanguage.nl,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(Checkbox).first);
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_back));
-    await tester.pumpAndSettle();
-    expect(find.byKey(kLimousineBusinessSetupLeaveDialogKey), findsOneWidget);
-    expect(find.text('Party Limo'), findsWidgets);
-  });
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Party Limo'), findsWidgets);
+      expect(find.text('Hummer white'), findsWidgets);
+      tester
+          .widget<ButtonStyleButton>(
+            find.byKey(kLimousineBusinessSetupPublishKey),
+          )
+          .onPressed!();
+      await tester.pumpAndSettle();
+      expect(persisted, isNotEmpty);
+      expect(persisted.first, <String>['vh_party', 'vh_hummer']);
+      expect(saves, hasLength(1));
+      expect(saves.single['enabled'], isTrue);
+      expect(saves.single['source_revision'], 3);
+      expect(
+        (saves.single['offers'] as List).cast<Map>().every(
+          (offer) => offer['published'] == true,
+        ),
+        isTrue,
+      );
+      expect(saves.single['selected_vehicle_ids'], <String>[
+        'vh_party',
+        'vh_hummer',
+      ]);
+      expect(find.text('Party Limo'), findsWidgets);
+      expect(find.text('Hummer white'), findsWidgets);
+      expect(find.text('Foto’s beheren'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'dirty back navigation shows save or discard instead of dropping',
+    (tester) async {
+      await tester.pumpWidget(
+        _app(
+          LimousineBusinessSetupPage(
+            loadPricing: () async => <String, dynamic>{
+              'limousine': <String, dynamic>{
+                'enabled': true,
+                'offers': <Map<String, dynamic>>[],
+              },
+            },
+            savePricing: (_) async => <String, dynamic>{},
+            vehicles: <VehicleProfile>[
+              _vehicle(
+                id: 'vh_party',
+                name: 'Party Limo',
+                category: '',
+                classId: '',
+              ),
+            ],
+            knownClassIds: const <String>['stretch_limousine'],
+            language: AppLanguage.nl,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+      expect(find.byKey(kLimousineBusinessSetupLeaveDialogKey), findsOneWidget);
+      expect(find.text('Party Limo'), findsWidgets);
+    },
+  );
 
   testWidgets('phone detail keeps swipe chrome and hides tablet arrows', (
     tester,

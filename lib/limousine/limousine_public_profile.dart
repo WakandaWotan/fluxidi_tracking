@@ -1,6 +1,7 @@
 // Standalone public limousine company profile. Never a taxi partner-page
 // variant. Reads only the already-loaded public projection.
 
+import '../app_strings.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_service_capability.dart';
@@ -24,11 +25,12 @@ class LimousinePublicProfileData {
   final String bookingEmail;
   final String serviceRegion;
 
-  bool get hasPublicRating =>
-      ratingAverage != null && (ratingCount ?? 0) > 0;
+  bool get hasPublicRating => ratingAverage != null && (ratingCount ?? 0) > 0;
 
   bool get hasPublicContact =>
-      websiteUrl.isNotEmpty || publicPhone.isNotEmpty || bookingEmail.isNotEmpty;
+      websiteUrl.isNotEmpty ||
+      publicPhone.isNotEmpty ||
+      bookingEmail.isNotEmpty;
 }
 
 double? _publicRatingAverage(Map<String, dynamic> source) {
@@ -112,6 +114,7 @@ LimousinePublicProfileData buildLimousinePublicProfileData({
   String companyNameFallback = '',
   double? distanceKm,
   LimousineDiscoveryCard? discoveryCard,
+  AppLanguage language = AppLanguage.nl,
 }) {
   final showroom = buildLimousineProviderShowroomData(
     profile: profile,
@@ -119,17 +122,15 @@ LimousinePublicProfileData buildLimousinePublicProfileData({
     companyNameFallback: companyNameFallback,
     distanceKm: distanceKm,
     discoveryCard: discoveryCard,
+    language: language,
   );
   final trust = asStringKeyedMap(profile['trust']);
   final contact = asStringKeyedMap(profile['public_contact']);
   return LimousinePublicProfileData(
     showroom: showroom,
-    ratingAverage:
-        _publicRatingAverage(profile) ?? _publicRatingAverage(trust),
+    ratingAverage: _publicRatingAverage(profile) ?? _publicRatingAverage(trust),
     ratingCount: _publicRatingCount(profile) ?? _publicRatingCount(trust),
-    websiteUrl: _httpsOrPublicHost(
-      contact['website'] ?? profile['website'],
-    ),
+    websiteUrl: _httpsOrPublicHost(contact['website'] ?? profile['website']),
     publicPhone: _publicPhone(
       contact['public_phone'] ?? contact['publicPhone'],
     ),

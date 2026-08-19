@@ -722,7 +722,8 @@ void main() {
       );
       await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
       await tester.pumpAndSettle();
-      expect(find.text('Vanaf €450'), findsOneWidget);
+      expect(find.text('Maison Noire'), findsOneWidget);
+      expect(find.text('Vanaf €450'), findsNothing);
       expect(find.textContaining('★'), findsNothing);
       _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
       await tester.pumpAndSettle();
@@ -902,9 +903,8 @@ void main() {
         await tester.pump();
         expect(find.byType(LimousineBrandLogoCorner), findsNothing);
         expect(find.byType(LimousineBrandLogoPlaque), findsNothing);
-        expect(find.byType(LimousineDiscoveryCompanyIdentity), findsOneWidget);
         expect(
-          find.byKey(kLimousineDiscoveryCompanyNameFallbackKey),
+          find.byKey(limousineDiscoveryCardTitleKey('limo_1')),
           findsOneWidget,
         );
         expect(find.text('Maison Noire'), findsOneWidget);
@@ -912,11 +912,10 @@ void main() {
         expect(find.byType(LimousineContainPhoto), findsOneWidget);
 
         final photo = tester.getRect(find.byType(LimousineContainPhoto));
-        final identity = tester.getRect(
-          find.byType(LimousineDiscoveryCompanyIdentity),
+        final title = tester.getRect(
+          find.byKey(limousineDiscoveryCardTitleKey('limo_1')),
         );
-        final overlap = photo.overlaps(identity);
-        expect(overlap, isFalse);
+        expect(photo.overlaps(title), isFalse);
         expect(
           find.byKey(limousineDiscoveryOffersCtaKey('limo_1')),
           findsOneWidget,

@@ -275,9 +275,9 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('Fluxidi'), findsNothing);
+      expect(find.text('Fluxidi'), findsOneWidget);
       expect(find.text('Bekijk aanbod'), findsOneWidget);
-      expect(find.text('Bekijk profiel'), findsOneWidget);
+      expect(find.text('Meer info'), findsOneWidget);
 
       final photo = tester.getRect(
         find.descendant(of: card, matching: find.byType(LimousineContainPhoto)),

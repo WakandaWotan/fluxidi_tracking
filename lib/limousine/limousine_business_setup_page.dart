@@ -94,6 +94,9 @@ class _LimousineBusinessSetupPageState
   String? _error;
   late String _primaryLang;
   LimousineHeroSelection _hero = const LimousineHeroSelection();
+  LimousineHeroSelection _publishedHero = const LimousineHeroSelection();
+  Map<String, String> _publishedPublicTitle = <String, String>{};
+  Map<String, String> _publishedPublicDescription = <String, String>{};
   bool _heroUploading = false;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
@@ -262,10 +265,30 @@ class _LimousineBusinessSetupPageState
         _publicDescription.controllers[lang]!.text = nextDescription;
       }
     }
+    final publishedTitle = limousineLocalizedOf(
+      section['published_public_title'],
+    );
+    final publishedDescription = limousineLocalizedOf(
+      section['published_public_description'],
+    );
+    _publishedPublicTitle = limousineLocalizedMapHasText(publishedTitle)
+        ? publishedTitle
+        : title;
+    _publishedPublicDescription =
+        limousineLocalizedMapHasText(publishedDescription)
+        ? publishedDescription
+        : description;
   }
 
   void _applyPersistedHero(Map<String, dynamic> section) {
     _hero = limousineHeroFromSection(section);
+    final publishedRaw = section['published_limousine_hero'];
+    final published = publishedRaw is Map
+        ? limousineHeroFromSection(<String, dynamic>{
+            'limousine_hero': publishedRaw,
+          })
+        : limousineHeroFromSection(section);
+    _publishedHero = published.hasPhoto ? published : _hero;
   }
 
   String get _companyLogoUrl {
@@ -475,9 +498,15 @@ class _LimousineBusinessSetupPageState
       'source_revision': _revision,
       'offers': offers,
       'selected_vehicle_ids': limousineSelectedVehicleIds(_vehicles),
-      'public_title': _publicTitle.toJson(),
-      'public_description': _publicDescription.toJson(),
-      'limousine_hero': _hero.toSectionJson(),
+      ...limousinePublicDisplayPayload(
+        publish: publish,
+        title: _publicTitle.toJson(),
+        description: _publicDescription.toJson(),
+        hero: _hero.toSectionJson(),
+        publishedTitle: _publishedPublicTitle,
+        publishedDescription: _publishedPublicDescription,
+        publishedHero: _publishedHero.toSectionJson(),
+      ),
     };
     final saver =
         widget.savePricing ?? (section) => saveAdminLimousinePricing(section);
@@ -552,7 +581,15 @@ class _LimousineBusinessSetupPageState
             responseOffers.map((offer) => Map<String, dynamic>.from(offer)),
           );
         _revision = limousinePricingResponseRevision(data, fallback: _revision);
-        _applyPersistedHero(section);
+        if (section.containsKey('limousine_hero') ||
+            section.containsKey('published_limousine_hero')) {
+          _applyPersistedHero(section);
+        }
+        if (publish) {
+          _publishedPublicTitle = _publicTitle.toJson();
+          _publishedPublicDescription = _publicDescription.toJson();
+          _publishedHero = _hero;
+        }
         _sectionEnabled = publish ? true : _sectionEnabled;
         _dirty = false;
         _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);

@@ -429,15 +429,24 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
   String companyNameFallback = '',
   double? distanceKm,
   LimousineDiscoveryCard? discoveryCard,
+  AppLanguage language = AppLanguage.nl,
 }) {
   final partnerId =
       (profile['partner_id'] ?? profile['partnerId'] ?? partnerIdFallback)
           .toString()
           .trim();
-  final companyName = sanitizePublicPartnerBrandName(
-    (profile['company_name'] ?? profile['companyName'] ?? companyNameFallback)
-        .toString(),
-  );
+  final publishedTitle = limousineDiscoveryLocalizedText(
+    limousineDiscoveryPublishedTitleMap(profile),
+    language,
+  ).trim();
+  final companyName = publishedTitle.isNotEmpty
+      ? publishedTitle
+      : sanitizePublicPartnerBrandName(
+          (profile['company_name'] ??
+                  profile['companyName'] ??
+                  companyNameFallback)
+              .toString(),
+        );
   final media = asStringKeyedMap(profile['media']);
   final logoUrl = _httpsOnly(
     profile['logo_url'] ??
@@ -445,7 +454,13 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         media['logo_url'] ??
         media['logoUrl'],
   );
-  final tagline = (profile['tagline'] ?? '').toString().trim();
+  final publishedDescription = limousineDiscoveryLocalizedText(
+    limousineDiscoveryPublishedDescriptionMap(profile),
+    language,
+  );
+  final tagline = publishedDescription.isNotEmpty
+      ? publishedDescription
+      : (profile['tagline'] ?? '').toString().trim();
   final description = (profile['about_short'] ?? profile['aboutShort'] ?? '')
       .toString()
       .trim();

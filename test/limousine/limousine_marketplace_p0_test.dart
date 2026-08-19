@@ -439,12 +439,13 @@ void main() {
         isTrue,
       );
       final profile = File(
-        'lib/partner_public_profile_page.dart',
+        'lib/limousine/limousine_public_profile_page.dart',
       ).readAsStringSync();
+      expect(profile.contains('buildLimousinePublicProfileData'), isTrue);
       expect(
-        profile.contains(
-          'limousinePublicServiceLabelFor(appConfig.currentLanguage)',
-        ),
+        File(
+          'lib/limousine/limousine_marketplace_labels.dart',
+        ).readAsStringSync().contains('limousinePublicServiceLabelFor'),
         isTrue,
       );
     });

@@ -145,10 +145,12 @@ void main() {
     customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
   });
 
-  test('discovery cover prefers limousine vehicle photo over taxi hero', () {
+  test('discovery cover ignores vehicle photos and taxi hero', () {
     final card = tryParseLimousineDiscoveryCard(_nearbyCard());
-    expect(card?.coverImageUrl, 'https://cdn.example/limo.jpg');
+    expect(card?.coverImageUrl, isEmpty);
+    expect(card?.coverIsPlaceholder, isTrue);
     expect(card?.coverImageUrl.contains('taxi-cover'), isFalse);
+    expect(card?.coverImageUrl.contains('limo.jpg'), isFalse);
     expect(limousineUrlLooksLikeTaxiCoverField('hero_photo_url'), isTrue);
     expect(limousineUrlLooksLikeTaxiCoverField('limousine_cover_url'), isFalse);
   });
@@ -274,7 +276,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Bekijk aanbod'), findsOneWidget);
-    expect(find.text('Bekijk profiel'), findsOneWidget);
+    expect(find.text('Meer info'), findsOneWidget);
+    expect(find.text('Bekijk profiel'), findsNothing);
     expect(find.text('Bekijk limousines'), findsNothing);
     expect(find.text('Vraag offerte aan'), findsNothing);
     expect(find.text('Boek nu'), findsNothing);
@@ -338,7 +341,7 @@ void main() {
     expect(find.text('Bekijk bedrijfsprofiel'), findsOneWidget);
   });
 
-  testWidgets('Bekijk profiel opens the limousine profile, not the taxi page', (
+  testWidgets('Meer info opens the limousine profile, not the taxi page', (
     tester,
   ) async {
     final gateway = MemoryLimousineDiscoveryGateway(
@@ -481,7 +484,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineDiscoveryPhoneLayoutKey), findsOneWidget);
     expect(find.text('Bekijk aanbod'), findsOneWidget);
-    expect(find.text('Bekijk profiel'), findsOneWidget);
+    expect(find.text('Meer info'), findsOneWidget);
+    expect(find.text('Bekijk profiel'), findsNothing);
   });
 
   testWidgets('showroom more info opens the vehicle detail page', (
