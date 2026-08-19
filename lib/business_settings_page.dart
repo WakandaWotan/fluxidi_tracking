@@ -12,6 +12,7 @@ import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
+import 'package:fluxidi_tracking/business_settings_sticky_save.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
@@ -635,8 +636,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           section['public_description'],
         );
         _limousinePublicAvailable =
-            data['visibility_ok'] == true ||
-            data['discovery_listable'] == true;
+            data['visibility_ok'] == true || data['discovery_listable'] == true;
         _limousineDiscoveryListable = data['discovery_listable'] == true;
         _limousineOffersConfirmed = LimousineOffersEditorSnapshot(
           enabled: _limousineSectionEnabled,
@@ -2418,7 +2418,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       final cached = localBackendBusinessProfileNotifier.value;
       final formNow = _backendBusinessProfileFromForm();
       final localBase = _mergeBackendBusinessProfile(
-        local: cached ??
+        local:
+            cached ??
             mergeLocalIntoBackendPreview(
               BackendBusinessProfile.defaults(),
               companyProfileNotifier.value,
@@ -7186,7 +7187,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'name': v.vehicleName.trim(),
             'brand_model': brand,
             'category': _publicTierCategoryLabel(v.tierId),
-            if (isLimousine && v.id.trim().isNotEmpty) 'vehicle_id': v.id.trim(),
+            if (isLimousine && v.id.trim().isNotEmpty)
+              'vehicle_id': v.id.trim(),
             if (serviceCategory.isNotEmpty) 'service_category': serviceCategory,
             if (serviceClass.isNotEmpty) 'service_class': serviceClass,
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
@@ -8562,13 +8564,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
   void _showMissingStrictCompanyScopeSnackbar() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger == null) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   ({String tenantId, String companyId})? _strictSettingsScopeForAction({
@@ -13327,59 +13334,28 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               // airport fixed fares above.
               if (_shouldShowSection('limousine_offers_pricing'))
                 _limousineOffersCard(),
-              const SizedBox(height: 4),
-              if (_isActiveStepMode)
-                // SafeArea ensures the wizard's primary "Save and
-                // continue" button is never clipped by Android's gesture
-                // bar / 3-button nav: the button is padded by at least
-                // MediaQuery.padding.bottom (system inset) AND a 12-pixel
-                // minimum so even on devices without a system inset there
-                // is a visible gap. Top is disabled because the AppBar
-                // already handles the top inset. This wrapper is gated on
-                // `_isActiveStepMode` so normal full-settings layout is
-                // unchanged.
-                SafeArea(
-                  top: false,
-                  minimum: const EdgeInsets.only(bottom: 12),
-                  child: FilledButton.icon(
-                    onPressed: _saveAllBusy ? null : _saveAndContinue,
-                    icon: _saveAllBusy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.save_outlined),
-                    label: Text(
-                      _t(
-                        nl: 'Opslaan en verder',
-                        en: 'Save and continue',
-                        fr: 'Enregistrer et continuer',
-                        es: 'Guardar y continuar',
-                      ),
-                    ),
-                  ),
-                )
-              else
-                FilledButton.icon(
-                  onPressed: _saveAllBusy ? null : _save,
-                  icon: _saveAllBusy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save),
-                  label: Text(
-                    _t(
-                      nl: 'Alles opslaan en publiceren',
-                      en: 'Save and publish everything',
-                      fr: 'Tout enregistrer et publier',
-                      es: 'Guardar y publicar todo',
-                    ),
-                  ),
-                ),
             ],
+          ),
+          bottomNavigationBar: BusinessSettingsStickySaveBar(
+            background: _pageBg,
+            busy: _saveAllBusy,
+            continueMode: _isActiveStepMode,
+            onPressed: _saveAllBusy
+                ? null
+                : (_isActiveStepMode ? _saveAndContinue : _save),
+            label: _isActiveStepMode
+                ? _t(
+                    nl: 'Opslaan en verder',
+                    en: 'Save and continue',
+                    fr: 'Enregistrer et continuer',
+                    es: 'Guardar y continuar',
+                  )
+                : _t(
+                    nl: 'Alles opslaan en publiceren',
+                    en: 'Save and publish everything',
+                    fr: 'Tout enregistrer et publier',
+                    es: 'Guardar y publicar todo',
+                  ),
           ),
         ),
       ),
