@@ -230,6 +230,7 @@ void main() {
     expect(allowlisted?.testPreview, isTrue);
     expect(allowlisted?.publicCity, 'Gent');
     expect(allowlisted?.vehicles.first.serviceClassId, 'executive_sedan');
+    expect(allowlisted?.coverImageUrl, 'https://cdn.example/v1.jpg');
 
     expect(tryParseLimousineDiscoveryCard(_taxiOnly()), isNull);
     expect(tryParseLimousineDiscoveryCard(_airportOnly()), isNull);
@@ -510,7 +511,7 @@ void main() {
       'services': <String>['taxi'],
     };
     opened = 0;
-    _press(tester, limousineDiscoveryProfileCtaKey('limo_1'));
+    _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
     await tester.pumpAndSettle();
     expect(opened, 0);
     expect(

@@ -683,7 +683,7 @@ void main() {
   });
 
   testWidgets(
-    'Bekijk aanbod opens a server-confirmed profile and never /book',
+    'Bekijk limousines opens a server-confirmed profile and never /book',
     (tester) async {
       final opened = <String>[];
       final gateway = MemoryLimousineDiscoveryGateway(
@@ -720,7 +720,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Vanaf €450'), findsOneWidget);
       expect(find.textContaining('★'), findsNothing);
-      _press(tester, limousineDiscoveryOffersCtaKey('limo_1'));
+      _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
       await tester.pumpAndSettle();
       expect(opened, <String>['limo_1']);
       expect(gateway.profileCalls, 1);
@@ -763,7 +763,7 @@ void main() {
       );
       await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
       await tester.pumpAndSettle();
-      _press(tester, limousineDiscoveryProfileCtaKey('limo_1'));
+      _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
       await tester.pumpAndSettle();
       expect(opened, 0);
       expect(

@@ -105,11 +105,14 @@ const LocalizedText kLimousineDiscoveryVerified = LocalizedText(
   es: 'Socio verificado',
 );
 
-const LocalizedText kLimousineDiscoveryViewOffers = LocalizedText(
-  nl: 'Bekijk aanbod',
-  en: 'View offers',
-  fr: 'Voir l’offre',
-  es: 'Ver oferta',
+const LocalizedText kLimousineDiscoveryViewOffers =
+    kLimousineDiscoveryViewLimousines;
+
+const LocalizedText kLimousineDiscoveryViewLimousines = LocalizedText(
+  nl: 'Bekijk limousines',
+  en: 'View limousines',
+  fr: 'Voir les limousines',
+  es: 'Ver limusinas',
 );
 
 const LocalizedText kLimousineDiscoveryViewProfile = LocalizedText(

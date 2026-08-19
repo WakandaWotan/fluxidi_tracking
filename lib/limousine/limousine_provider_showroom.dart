@@ -1,0 +1,468 @@
+// Public limousine showroom / detail projection. Reads only the already
+// loaded partner profile. Never uses taxi covers, taxi vehicles or private
+// fleet fields. Transaction gates stay fail-closed.
+
+import 'package:flutter/foundation.dart';
+
+import '../app_strings.dart';
+import 'limousine_customer_discovery.dart';
+import 'limousine_customer_discovery_labels.dart';
+import 'limousine_offers.dart';
+import 'limousine_public_showroom.dart';
+import 'limousine_customer_quote.dart';
+import 'limousine_service_capability.dart';
+
+const String kLimousineCustomerQuoteGateDefineKey = 'LIMOUSINE_QUOTE_ENABLED';
+const String kLimousineCustomerManualQuoteGateDefineKey =
+    'LIMOUSINE_MANUAL_QUOTE_ENABLED';
+const String kLimousineCustomerBookGateDefineKey = 'LIMOUSINE_BOOK_ENABLED';
+
+const bool kLimousineCustomerQuoteGateEnabled = bool.fromEnvironment(
+  kLimousineCustomerQuoteGateDefineKey,
+  defaultValue: false,
+);
+const bool kLimousineCustomerManualQuoteGateEnabled = bool.fromEnvironment(
+  kLimousineCustomerManualQuoteGateDefineKey,
+  defaultValue: false,
+);
+const bool kLimousineCustomerBookGateEnabled = bool.fromEnvironment(
+  kLimousineCustomerBookGateDefineKey,
+  defaultValue: false,
+);
+
+bool limousineCustomerQuoteCtaEnabled({
+  bool quoteGate = kLimousineCustomerQuoteGateEnabled,
+  bool manualQuoteGate = kLimousineCustomerManualQuoteGateEnabled,
+}) {
+  return quoteGate || manualQuoteGate;
+}
+
+bool limousineCustomerBookCtaEnabled({
+  bool bookGate = kLimousineCustomerBookGateEnabled,
+}) {
+  return bookGate;
+}
+
+const Key kLimousineProviderShowroomPageKey = ValueKey<String>(
+  'limousine_provider_showroom_page',
+);
+const Key kLimousineProviderShowroomHeroKey = ValueKey<String>(
+  'limousine_provider_showroom_hero',
+);
+const Key kLimousineProviderShowroomCatalogKey = ValueKey<String>(
+  'limousine_provider_showroom_catalog',
+);
+const Key kLimousineProviderShowroomEmptyKey = ValueKey<String>(
+  'limousine_provider_showroom_empty',
+);
+const Key kLimousineVehicleDetailPageKey = ValueKey<String>(
+  'limousine_vehicle_detail_page',
+);
+const Key kLimousineDetailQuoteCtaKey = ValueKey<String>(
+  'limousine_vehicle_detail_quote_cta',
+);
+const Key kLimousineDetailBookCtaKey = ValueKey<String>(
+  'limousine_vehicle_detail_book_cta',
+);
+const Key kLimousineDetailGateOffBannerKey = ValueKey<String>(
+  'limousine_vehicle_detail_gate_off',
+);
+const Key kLimousineDetailGalleryKey = ValueKey<String>(
+  'limousine_vehicle_detail_gallery',
+);
+
+Key limousineShowroomVehicleCardKey(String vehicleKey) =>
+    ValueKey<String>('limousine_showroom_vehicle_$vehicleKey');
+
+Key limousineShowroomMoreInfoCtaKey(String vehicleKey) =>
+    ValueKey<String>('limousine_showroom_more_info_$vehicleKey');
+
+const Set<String> kLimousineShowroomForbiddenKeys = <String>{
+  'tenant_id',
+  'company_id',
+  'license_plate',
+  'vin',
+  'driver_id',
+  'operating_base',
+  'operating_base_address',
+  'base_address',
+};
+
+const Set<String> kLimousineTaxiCoverKeys = <String>{
+  'hero_photo_url',
+  'herophotourl',
+  'cover_image_url',
+  'coverimageurl',
+  'public_hero_photo_url',
+};
+
+const Set<String> kLimousineExplicitCoverKeys = <String>{
+  'limousine_cover_url',
+  'limousinecoverurl',
+  'limousine_hero_url',
+  'limousineherourl',
+  'limousine_hero_photo_url',
+};
+
+class LimousineShowroomVehicle {
+  const LimousineShowroomVehicle({
+    required this.key,
+    this.name = '',
+    this.brandModel = '',
+    this.serviceClassId = '',
+    this.photoUrls = const <String>[],
+    this.passengerCapacity,
+    this.luggageCapacity,
+    this.features = const <String>[],
+    this.color = '',
+    this.vehicleId = '',
+    this.offers = const <LimousinePublishedOffer>[],
+  });
+
+  final String key;
+  final String name;
+  final String brandModel;
+  final String serviceClassId;
+  final List<String> photoUrls;
+  final int? passengerCapacity;
+  final int? luggageCapacity;
+  final List<String> features;
+  final String color;
+  final String vehicleId;
+  final List<LimousinePublishedOffer> offers;
+
+  String get displayName {
+    if (name.trim().isNotEmpty) return name.trim();
+    if (brandModel.trim().isNotEmpty) return brandModel.trim();
+    return '';
+  }
+
+  String get primaryPhotoUrl => photoUrls.isEmpty ? '' : photoUrls.first;
+
+  LimousinePublishedOffer? get primaryOffer =>
+      offers.isEmpty ? null : offers.first;
+}
+
+class LimousineProviderShowroomData {
+  const LimousineProviderShowroomData({
+    required this.partnerId,
+    required this.companyName,
+    this.logoUrl = '',
+    this.tagline = '',
+    this.description = '',
+    this.verifiedPartner = false,
+    this.distanceKm,
+    this.heroPhotoUrl = '',
+    this.vehicles = const <LimousineShowroomVehicle>[],
+  });
+
+  final String partnerId;
+  final String companyName;
+  final String logoUrl;
+  final String tagline;
+  final String description;
+  final bool verifiedPartner;
+  final double? distanceKm;
+  final String heroPhotoUrl;
+  final List<LimousineShowroomVehicle> vehicles;
+}
+
+String _httpsOnly(Object? raw) {
+  final text = (raw ?? '').toString().trim();
+  if (text.startsWith('https://')) return text;
+  return '';
+}
+
+int? _positiveInt(Object? raw) {
+  if (raw is int && raw > 0) return raw;
+  if (raw is num && raw > 0) return raw.round();
+  final parsed = int.tryParse((raw ?? '').toString().trim());
+  if (parsed == null || parsed <= 0) return null;
+  return parsed;
+}
+
+bool limousineShowroomPayloadLeaksPrivate(Map<String, dynamic> raw) {
+  for (final key in raw.keys) {
+    if (kLimousineShowroomForbiddenKeys.contains(
+      normalizePublicServiceToken(key),
+    )) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool limousineUrlLooksLikeTaxiCoverField(String fieldName) {
+  return kLimousineTaxiCoverKeys.contains(normalizePublicServiceToken(fieldName));
+}
+
+String limousineExplicitCoverUrl(Map<String, dynamic> source) {
+  final media = asStringKeyedMap(source['media']);
+  for (final map in <Map<String, dynamic>>[source, media]) {
+    for (final entry in map.entries) {
+      if (!kLimousineExplicitCoverKeys.contains(
+        normalizePublicServiceToken(entry.key),
+      )) {
+        continue;
+      }
+      final url = _httpsOnly(entry.value);
+      if (url.isNotEmpty) return url;
+    }
+  }
+  return '';
+}
+
+String limousinePreferredCoverUrl({
+  required Map<String, dynamic> source,
+  required List<String> limousineVehiclePhotoUrls,
+}) {
+  if (limousineVehiclePhotoUrls.isNotEmpty &&
+      limousineVehiclePhotoUrls.first.isNotEmpty) {
+    return limousineVehiclePhotoUrls.first;
+  }
+  final explicit = limousineExplicitCoverUrl(source);
+  if (explicit.isNotEmpty) return explicit;
+  return '';
+}
+
+List<Map<String, dynamic>> limousinePublicVehicleRecords(
+  Map<String, dynamic> profile,
+) {
+  final out = <Map<String, dynamic>>[];
+  final seen = <String>{};
+  for (final key in const [
+    'limousine_vehicles',
+    'limousineVehicles',
+    'vehicles',
+    'public_vehicles',
+    'publicVehicles',
+  ]) {
+    final raw = profile[key];
+    if (raw is! List) continue;
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = asStringKeyedMap(item);
+      final fingerprint = [
+        map['vehicle_id'] ?? map['vehicleId'] ?? '',
+        map['photo_url'] ?? map['photoUrl'] ?? '',
+        map['name'] ?? '',
+        map['service_class'] ?? map['service_class_id'] ?? '',
+      ].join('|');
+      if (!seen.add(fingerprint)) continue;
+      out.add(map);
+    }
+  }
+  return out;
+}
+
+LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
+  Map<String, dynamic> vehicle, {
+  required int index,
+}) {
+  if (!limousinePublicVehicleIsClassified(vehicle)) return null;
+  final vehicleId = (vehicle['vehicle_id'] ?? vehicle['vehicleId'] ?? '')
+      .toString()
+      .trim();
+  final name = (vehicle['name'] ?? '').toString().trim();
+  final brand = (vehicle['brand_model'] ?? vehicle['brandModel'] ?? '')
+      .toString()
+      .trim();
+  final serviceClass = limousineOfferToken(
+    vehicle['service_class'] ??
+        vehicle['serviceClass'] ??
+        vehicle['service_class_id'] ??
+        vehicle['serviceClassId'],
+  );
+  final photos = <String>{};
+  for (final value in <Object?>[
+    vehicle['photo_url'],
+    vehicle['photoUrl'],
+    vehicle['public_photo_url'],
+    vehicle['publicPhotoUrl'],
+  ]) {
+    final url = _httpsOnly(value);
+    if (url.isNotEmpty) photos.add(url);
+  }
+  final gallery = vehicle['gallery'] ?? vehicle['photos'];
+  if (gallery is List) {
+    for (final item in gallery) {
+      final url = _httpsOnly(item);
+      if (url.isNotEmpty) photos.add(url);
+    }
+  }
+  final features = <String>[];
+  final rawFeatures = vehicle['features'];
+  if (rawFeatures is List) {
+    for (final item in rawFeatures) {
+      final text = item.toString().trim();
+      if (text.isEmpty) continue;
+      if (kLimousineShowroomForbiddenKeys.contains(
+        normalizePublicServiceToken(text),
+      )) {
+        continue;
+      }
+      features.add(text);
+    }
+  }
+  final key = vehicleId.isNotEmpty
+      ? vehicleId
+      : 'vehicle_${index}_${serviceClass}_${photos.isEmpty ? name : photos.first}';
+  return LimousineShowroomVehicle(
+    key: key,
+    name: name,
+    brandModel: brand,
+    serviceClassId: serviceClass,
+    photoUrls: photos.toList(growable: false),
+    passengerCapacity: _positiveInt(
+      vehicle['passenger_capacity'] ??
+          vehicle['passengerCapacity'] ??
+          vehicle['pax'],
+    ),
+    luggageCapacity: _positiveInt(
+      vehicle['luggage_capacity'] ??
+          vehicle['luggageCapacity'] ??
+          vehicle['luggage'],
+    ),
+    features: features,
+    color: (vehicle['color'] ?? '').toString().trim(),
+    vehicleId: vehicleId,
+  );
+}
+
+List<LimousinePublishedOffer> _offersForVehicle({
+  required LimousineShowroomVehicle vehicle,
+  required List<LimousinePublishedOffer> offers,
+  required int classifiedVehicleCount,
+}) {
+  final matched = <LimousinePublishedOffer>[];
+  for (final offer in offers) {
+    if (offer.isVehicleTargeted) {
+      if (vehicle.vehicleId.isNotEmpty &&
+          offer.vehicleId == vehicle.vehicleId) {
+        matched.add(offer);
+      }
+      continue;
+    }
+    if (vehicle.serviceClassId.isNotEmpty &&
+        offer.serviceClassId == vehicle.serviceClassId) {
+      matched.add(offer);
+    }
+  }
+  if (matched.isNotEmpty) return matched;
+  if (classifiedVehicleCount == 1 && offers.length == 1) {
+    return offers;
+  }
+  return const <LimousinePublishedOffer>[];
+}
+
+LimousineProviderShowroomData buildLimousineProviderShowroomData({
+  required Map<String, dynamic> profile,
+  String partnerIdFallback = '',
+  String companyNameFallback = '',
+  double? distanceKm,
+  LimousineDiscoveryCard? discoveryCard,
+}) {
+  final partnerId =
+      (profile['partner_id'] ?? profile['partnerId'] ?? partnerIdFallback)
+          .toString()
+          .trim();
+  final companyName =
+      (profile['company_name'] ??
+              profile['companyName'] ??
+              companyNameFallback)
+          .toString()
+          .trim();
+  final media = asStringKeyedMap(profile['media']);
+  final logoUrl = _httpsOnly(
+    profile['logo_url'] ?? profile['logoUrl'] ?? media['logo_url'],
+  );
+  final tagline = (profile['tagline'] ?? '').toString().trim();
+  final description = (profile['about_short'] ?? profile['aboutShort'] ?? '')
+      .toString()
+      .trim();
+  final trust = asStringKeyedMap(profile['trust']);
+  final verified =
+      profile['verified_partner'] == true || trust['verified_partner'] == true;
+  final offers = collectLimousineShowroomOffers(profile);
+  final parsed = <LimousineShowroomVehicle>[];
+  final records = limousinePublicVehicleRecords(profile);
+  for (var i = 0; i < records.length; i++) {
+    final vehicle = tryParseLimousineShowroomVehicle(records[i], index: i);
+    if (vehicle != null) parsed.add(vehicle);
+  }
+  if (parsed.isEmpty && discoveryCard != null) {
+    for (var i = 0; i < discoveryCard.vehicles.length; i++) {
+      final thumb = discoveryCard.vehicles[i];
+      parsed.add(
+        LimousineShowroomVehicle(
+          key: 'discovery_$i',
+          serviceClassId: thumb.serviceClassId,
+          photoUrls: thumb.photoUrl.isEmpty
+              ? const <String>[]
+              : <String>[thumb.photoUrl],
+          passengerCapacity: thumb.passengerCapacity,
+          luggageCapacity: thumb.luggageCapacity,
+        ),
+      );
+    }
+  }
+  final vehicles = [
+    for (final vehicle in parsed)
+      LimousineShowroomVehicle(
+        key: vehicle.key,
+        name: vehicle.name,
+        brandModel: vehicle.brandModel,
+        serviceClassId: vehicle.serviceClassId,
+        photoUrls: vehicle.photoUrls,
+        passengerCapacity: vehicle.passengerCapacity,
+        luggageCapacity: vehicle.luggageCapacity,
+        features: vehicle.features,
+        color: vehicle.color,
+        vehicleId: vehicle.vehicleId,
+        offers: _offersForVehicle(
+          vehicle: vehicle,
+          offers: offers,
+          classifiedVehicleCount: parsed.length,
+        ),
+      ),
+  ];
+  final cover = limousinePreferredCoverUrl(
+    source: profile,
+    limousineVehiclePhotoUrls: [
+      for (final vehicle in vehicles)
+        if (vehicle.primaryPhotoUrl.isNotEmpty) vehicle.primaryPhotoUrl,
+    ],
+  );
+  return LimousineProviderShowroomData(
+    partnerId: partnerId,
+    companyName: companyName,
+    logoUrl: logoUrl,
+    tagline: tagline,
+    description: description,
+    verifiedPartner: verified,
+    distanceKm: distanceKm ?? _positiveDouble(profile['distance_km']),
+    heroPhotoUrl: cover,
+    vehicles: vehicles,
+  );
+}
+
+double? _positiveDouble(Object? raw) {
+  if (raw is num && raw.isFinite && raw >= 0) return raw.toDouble();
+  return null;
+}
+
+String limousineShowroomVehiclePriceLabel(
+  LimousineShowroomVehicle vehicle,
+  AppLanguage language,
+) {
+  final offer = vehicle.primaryOffer;
+  if (offer != null) {
+    return limousineShowroomPriceLabel(offer, language);
+  }
+  return kLimousineDiscoveryQuoteOnRequest.of(language);
+}
+
+LimousineShowroomCta limousineDetailCtaFor(LimousinePublishedOffer? offer) {
+  if (offer == null) return LimousineShowroomCta.none;
+  return limousineShowroomCtaFor(offer);
+}

@@ -71,10 +71,13 @@ Key limousineDiscoveryCardKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_card_$partnerId');
 
 Key limousineDiscoveryOffersCtaKey(String partnerId) =>
-    ValueKey<String>('limousine_discovery_offers_$partnerId');
+    limousineDiscoveryViewLimousinesCtaKey(partnerId);
 
 Key limousineDiscoveryProfileCtaKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_profile_$partnerId');
+
+Key limousineDiscoveryViewLimousinesCtaKey(String partnerId) =>
+    ValueKey<String>('limousine_discovery_view_limousines_$partnerId');
 
 /// P2D4C1F server contract consumed by discovery. Lives on the isolated
 /// Worker branch; Flutter never invents these fields locally.
@@ -324,6 +327,12 @@ bool _recordLooksDraftOrUnpublished(Map<String, dynamic> record) {
 }
 
 bool _vehicleIsAuthoritativeLimousine(Map<String, dynamic> vehicle) {
+  return limousinePublicVehicleIsClassified(vehicle);
+}
+
+/// Server-authoritative public vehicle. Never inferred from `category`,
+/// Premium, name or taxi/airport tokens.
+bool limousinePublicVehicleIsClassified(Map<String, dynamic> vehicle) {
   if (_recordLooksDraftOrUnpublished(vehicle)) return false;
   if (looksFalseyPublicFlag(vehicle['is_active']) ||
       looksFalseyPublicFlag(vehicle['isActive'])) {
@@ -476,12 +485,7 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
   return LimousineDiscoveryCard(
     publicPartnerId: id,
     companyName: name,
-    coverImageUrl: _httpsOnly(
-      partner['hero_photo_url'] ??
-          partner['heroPhotoUrl'] ??
-          partner['cover_image_url'] ??
-          partner['coverImageUrl'],
-    ),
+    coverImageUrl: limousinePreferredDiscoveryCoverUrl(partner),
     logoUrl: _httpsOnly(partner['logo_url'] ?? partner['logoUrl']),
     verifiedPartner: _verifiedPartner(partner),
     publicCity: _publicCity(partner),
@@ -629,6 +633,35 @@ int? _positiveInt(Object? raw) {
 String _httpsOnly(Object? raw) {
   final text = (raw ?? '').toString().trim();
   if (text.startsWith('https://')) return text;
+  return '';
+}
+
+/// Discovery cover: first classified limousine vehicle photo, then an
+/// explicit limousine cover. Never the generic taxi hero/cover.
+String limousinePreferredDiscoveryCoverUrl(Map<String, dynamic> partner) {
+  for (final vehicle in _discoveryVehicles(partner)) {
+    if (!_vehicleIsAuthoritativeLimousine(vehicle)) continue;
+    final url = _httpsOnly(
+      vehicle['photo_url'] ??
+          vehicle['photoUrl'] ??
+          vehicle['public_photo_url'] ??
+          vehicle['publicPhotoUrl'],
+    );
+    if (url.isNotEmpty) return url;
+  }
+  final media = asStringKeyedMap(partner['media']);
+  for (final map in <Map<String, dynamic>>[partner, media]) {
+    for (final key in const [
+      'limousine_cover_url',
+      'limousineCoverUrl',
+      'limousine_hero_url',
+      'limousineHeroUrl',
+      'limousine_hero_photo_url',
+    ]) {
+      final url = _httpsOnly(map[key]);
+      if (url.isNotEmpty) return url;
+    }
+  }
   return '';
 }
 
