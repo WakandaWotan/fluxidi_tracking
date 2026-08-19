@@ -139,3 +139,66 @@ const LocalizedText kLimousineShowroomLength = LocalizedText(
   fr: 'Longueur',
   es: 'Longitud',
 );
+
+const LocalizedText kLimousineDetailPricesHeading = LocalizedText(
+  nl: 'Prijzen en arrangementen',
+  en: 'Prices and arrangements',
+  fr: 'Prix et formules',
+  es: 'Precios y arreglos',
+);
+
+const LocalizedText kLimousineOfferFixedKind = LocalizedText(
+  nl: 'Vaste prijs',
+  en: 'Fixed price',
+  fr: 'Prix fixe',
+  es: 'Precio fijo',
+);
+
+const LocalizedText kLimousineOfferHourlyKind = LocalizedText(
+  nl: 'Uurhuur',
+  en: 'Hourly hire',
+  fr: 'Location à l’heure',
+  es: 'Alquiler por hora',
+);
+
+const LocalizedText kLimousineOfferPackageKind = LocalizedText(
+  nl: 'Pakket / arrangement',
+  en: 'Package / arrangement',
+  fr: 'Forfait / formule',
+  es: 'Paquete / arreglo',
+);
+
+const LocalizedText kLimousineOfferPerHour = LocalizedText(
+  nl: 'per uur',
+  en: 'per hour',
+  fr: 'par heure',
+  es: 'por hora',
+);
+
+const LocalizedText kLimousineOfferMinimumHours = LocalizedText(
+  nl: 'minimaal',
+  en: 'minimum',
+  fr: 'minimum',
+  es: 'mínimo',
+);
+
+const LocalizedText kLimousineOfferHoursUnit = LocalizedText(
+  nl: 'uur',
+  en: 'hours',
+  fr: 'heures',
+  es: 'horas',
+);
+
+const LocalizedText kLimousineOfferExtraArrangements = LocalizedText(
+  nl: 'arrangementen',
+  en: 'arrangements',
+  fr: 'formules',
+  es: 'arreglos',
+);
+
+const LocalizedText kLimousineOfferFromPriceDisclaimer = LocalizedText(
+  nl: 'Dit is een vanafprijs, geen gegarandeerde eindprijs.',
+  en: 'This is a from-price, not a guaranteed final price.',
+  fr: 'Ceci est un prix à partir de, pas un prix final garanti.',
+  es: 'Este es un precio desde, no un precio final garantizado.',
+);

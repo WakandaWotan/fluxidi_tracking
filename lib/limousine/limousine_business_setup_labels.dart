@@ -558,6 +558,111 @@ LocalizedText limousineBusinessSetupMissingCopy(
   return kLimousineBusinessSetupReady;
 }
 
+const LocalizedText kLimousineBusinessSetupCoverTitle = LocalizedText(
+  nl: 'Omslagfoto limousineprofiel',
+  en: 'Limousine profile cover photo',
+  fr: 'Photo de couverture du profil limousine',
+  es: 'Foto de portada del perfil de limusina',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverHint = LocalizedText(
+  nl: 'Kies een sfeer- of bedrijfsfoto voor het limousineprofiel. Dit is geen voertuiggalerij.',
+  en: 'Choose an atmosphere or company photo for the limousine profile. This is not a vehicle gallery.',
+  fr: 'Choisissez une photo d’ambiance ou d’entreprise pour le profil limousine. Ce n’est pas une galerie de véhicules.',
+  es: 'Elija una foto de ambiente o de empresa para el perfil de limusina. No es una galería de vehículos.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverFallback = LocalizedText(
+  nl: 'Automatische fallback: hoofdfoto van de eerste geselecteerde limousine. Kies een eigen omslagfoto om dit vast te zetten.',
+  en: 'Automatic fallback: primary photo of the first selected limousine. Choose your own cover to lock this.',
+  fr: 'Repli automatique : photo principale de la première limousine sélectionnée. Choisissez votre propre couverture pour la verrouiller.',
+  es: 'Respaldo automático: foto principal de la primera limusina seleccionada. Elija su propia portada para fijarla.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverUpload = LocalizedText(
+  nl: 'Nieuwe omslagfoto uploaden',
+  en: 'Upload a new cover photo',
+  fr: 'Téléverser une nouvelle photo de couverture',
+  es: 'Subir una nueva foto de portada',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverPickGallery = LocalizedText(
+  nl: 'Kies uit limousinegalerij',
+  en: 'Choose from limousine gallery',
+  fr: 'Choisir dans la galerie limousine',
+  es: 'Elegir de la galería de limusinas',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverReplace = LocalizedText(
+  nl: 'Huidige hero vervangen',
+  en: 'Replace current hero',
+  fr: 'Remplacer le visuel actuel',
+  es: 'Reemplazar el hero actual',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverFocus = LocalizedText(
+  nl: 'Focuspositie',
+  en: 'Focus position',
+  fr: 'Position de focus',
+  es: 'Posición de enfoque',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferForVehicles = LocalizedText(
+  nl: 'Voor welke limousine(s)?',
+  en: 'For which limousine(s)?',
+  fr: 'Pour quelle(s) limousine(s) ?',
+  es: '¿Para qué limusina(s)?',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferAllSelected = LocalizedText(
+  nl: 'Alle geselecteerde limousines',
+  en: 'All selected limousines',
+  fr: 'Toutes les limousines sélectionnées',
+  es: 'Todas las limusinas seleccionadas',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferLegacyAll = LocalizedText(
+  nl: 'Bestaand aanbod zonder voertuigkoppeling: wordt behandeld als alle geselecteerde limousines tot u het opnieuw opslaat.',
+  en: 'Existing offer without a vehicle link: treated as all selected limousines until you save it again.',
+  fr: 'Offre existante sans lien véhicule : traitée comme toutes les limousines sélectionnées jusqu’à nouvel enregistrement.',
+  es: 'Oferta existente sin vínculo de vehículo: se trata como todas las limusinas seleccionadas hasta que la vuelva a guardar.',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferInactiveLink = LocalizedText(
+  nl: 'Een gekoppeld voertuig is niet langer als limousine gepubliceerd. Het aanbod blijft bewaard maar verschijnt niet bij dat voertuig.',
+  en: 'A linked vehicle is no longer published as a limousine. The offer is kept but not shown for that vehicle.',
+  fr: 'Un véhicule lié n’est plus publié comme limousine. L’offre est conservée mais n’apparaît pas pour ce véhicule.',
+  es: 'Un vehículo vinculado ya no se publica como limusina. La oferta se conserva pero no aparece en ese vehículo.',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferFeatured = LocalizedText(
+  nl: 'Uitgelicht aanbod',
+  en: 'Featured offer',
+  fr: 'Offre mise en avant',
+  es: 'Oferta destacada',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferSortOrder = LocalizedText(
+  nl: 'Publieke volgorde',
+  en: 'Public sort order',
+  fr: 'Ordre public',
+  es: 'Orden público',
+);
+
+const LocalizedText kLimousineBusinessSetupPackageCard = LocalizedText(
+  nl: 'Pakket / arrangement',
+  en: 'Package / arrangement',
+  fr: 'Forfait / formule',
+  es: 'Paquete / arreglo',
+);
+
+const LocalizedText kLimousineBusinessSetupAppliesTo = LocalizedText(
+  nl: 'Zichtbaar bij',
+  en: 'Shown on',
+  fr: 'Visible sur',
+  es: 'Visible en',
+);
+
 String limousineBusinessSetupProfilePercent(
   double progress,
   AppLanguage language,

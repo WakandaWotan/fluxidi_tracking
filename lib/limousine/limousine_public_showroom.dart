@@ -83,8 +83,11 @@ LimousinePublishedOffer? tryParseLimousineShowroomOffer(Object? raw) {
     return null;
   }
   if (offer.isVehicleTargeted) {
-    final vehicle = map['vehicle'];
-    if (vehicle is! Map || offer.vehicleId.isEmpty) return null;
+    final boundIds = limousineNormalizeBoundVehicleIds(
+      map['vehicle_ids'] ?? map['vehicleIds'],
+      single: offer.vehicleId,
+    );
+    if (boundIds.isEmpty) return null;
   }
   final showsAmount =
       offer.displayAmountCents != null && offer.displayAmountCents! > 0;

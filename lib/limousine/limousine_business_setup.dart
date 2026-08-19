@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
@@ -104,7 +105,23 @@ const Key kLimousineSimpleOfferFirstHourKey = ValueKey<String>(
   'limousine_simple_offer_first_hour',
 );
 
-enum LimousineSimpleOfferMode { quote, fromPrice, fixed, hourly }
+enum LimousineSimpleOfferMode { quote, fromPrice, fixed, hourly, package }
+
+const Key kLimousineBusinessSetupCoverKey = ValueKey<String>(
+  'limousine_business_setup_cover',
+);
+const Key kLimousineBusinessSetupCoverFallbackKey = ValueKey<String>(
+  'limousine_business_setup_cover_fallback',
+);
+const Key kLimousineBusinessSetupCoverUploadKey = ValueKey<String>(
+  'limousine_business_setup_cover_upload',
+);
+const Key kLimousineSimpleOfferScopeAllKey = ValueKey<String>(
+  'limousine_simple_offer_scope_all',
+);
+const Key kLimousineSimpleOfferFeaturedKey = ValueKey<String>(
+  'limousine_simple_offer_featured',
+);
 
 Key limousineBusinessSetupVehiclePhotoKey(String vehicleId) =>
     ValueKey<String>('limousine_business_setup_vehicle_photo_$vehicleId');
@@ -476,6 +493,10 @@ class LimousineSimpleOfferDraft {
     this.packageDurationMinutes,
     this.packageAmountCents,
     this.includedHours,
+    this.appliesToAllSelected = true,
+    this.vehicleIds = const <String>[],
+    this.featured = false,
+    this.sortOrder = 0,
   });
 
   final LimousineSimpleOfferMode mode;
@@ -498,6 +519,10 @@ class LimousineSimpleOfferDraft {
   final int? packageDurationMinutes;
   final int? packageAmountCents;
   final int? includedHours;
+  final bool appliesToAllSelected;
+  final List<String> vehicleIds;
+  final bool featured;
+  final int sortOrder;
 }
 
 String limousineSimpleOfferPresentation(LimousineSimpleOfferMode mode) {
@@ -510,6 +535,8 @@ String limousineSimpleOfferPresentation(LimousineSimpleOfferMode mode) {
       return LimousinePricePresentation.exactFixed;
     case LimousineSimpleOfferMode.hourly:
       return LimousinePricePresentation.fromPrice;
+    case LimousineSimpleOfferMode.package:
+      return LimousinePricePresentation.exactFixed;
   }
 }
 
@@ -523,14 +550,21 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
   next['published'] = draft.published;
   next['price_presentation'] = presentation;
   next['currency'] = draft.currency;
-  next['target_type'] = draft.targetType;
-  next['vehicle_id'] = draft.targetType == LimousineOfferTarget.vehicle
-      ? draft.vehicleId
-      : '';
-  next['service_class_id'] =
-      draft.targetType == LimousineOfferTarget.serviceClass
-      ? draft.serviceClassId
-      : (next['service_class_id'] ?? '');
+  final scoped = limousineWriteOfferScope(
+    next,
+    appliesToAllSelected: draft.appliesToAllSelected,
+    vehicleIds: draft.vehicleIds.isNotEmpty
+        ? draft.vehicleIds
+        : (draft.vehicleId.isEmpty ? const <String>[] : <String>[draft.vehicleId]),
+    featured: draft.featured,
+    sortOrder: draft.sortOrder,
+  );
+  next.addAll(scoped);
+  if (draft.appliesToAllSelected && draft.serviceClassId.isNotEmpty) {
+    next['service_class_id'] = draft.serviceClassId;
+  } else if (!draft.appliesToAllSelected) {
+    next['service_class_id'] = next['service_class_id'] ?? draft.serviceClassId;
+  }
   next['journey_types'] = List<String>.from(draft.journeyTypes);
   if (draft.mode != LimousineSimpleOfferMode.quote) {
     next['display_amount_cents'] = draft.amountCents;
@@ -583,10 +617,13 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
     ...((next['hourly'] is Map)
         ? Map<String, dynamic>.from(next['hourly'] as Map)
         : <String, dynamic>{}),
-    'enabled': draft.mode == LimousineSimpleOfferMode.hourly,
+    'enabled':
+        draft.mode == LimousineSimpleOfferMode.hourly ||
+        draft.mode == LimousineSimpleOfferMode.package,
     'currency': draft.currency,
   };
-  if (draft.mode == LimousineSimpleOfferMode.hourly) {
+  if (draft.mode == LimousineSimpleOfferMode.hourly ||
+      draft.mode == LimousineSimpleOfferMode.package) {
     hourly['first_hour_cents'] = draft.firstHourCents;
     hourly['additional_hour_cents'] = draft.additionalHourCents;
     hourly['minimum_duration_minutes'] = draft.minimumDurationMinutes;
@@ -597,7 +634,13 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
     if (draft.includedHours != null) {
       hourly['included_hours'] = draft.includedHours;
     }
-    next['display_amount_cents'] = draft.firstHourCents ?? draft.amountCents;
+    next['display_amount_cents'] = draft.mode == LimousineSimpleOfferMode.package
+        ? (draft.packageAmountCents ?? draft.amountCents)
+        : (draft.firstHourCents ?? draft.amountCents);
+    if (draft.mode == LimousineSimpleOfferMode.package &&
+        (draft.packageAmountCents == null || draft.packageAmountCents! <= 0)) {
+      next['price_presentation'] = LimousinePricePresentation.quoteRequired;
+    }
   }
   next['hourly'] = hourly;
   return next;

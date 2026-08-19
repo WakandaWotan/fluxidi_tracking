@@ -36,6 +36,8 @@ class LimousineContainPhoto extends StatelessWidget {
     this.aspectRatio = 16 / 10,
     this.placeholderLabel = '',
     this.gold = const Color(0xFFC9A227),
+    this.fit = BoxFit.contain,
+    this.alignment = Alignment.center,
   });
 
   final String imageUrl;
@@ -45,6 +47,8 @@ class LimousineContainPhoto extends StatelessWidget {
   final double aspectRatio;
   final String placeholderLabel;
   final Color gold;
+  final BoxFit fit;
+  final Alignment alignment;
 
   @override
   Widget build(BuildContext context) {
@@ -69,7 +73,7 @@ class LimousineContainPhoto extends StatelessWidget {
                         child: Image.network(
                           imageUrl,
                           fit: BoxFit.cover,
-                          alignment: Alignment.center,
+                          alignment: alignment,
                           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                         ),
                       ),
@@ -77,8 +81,8 @@ class LimousineContainPhoto extends StatelessWidget {
                       Image.network(
                         imageUrl,
                         key: kLimousineVehiclePhotoContainKey,
-                        fit: BoxFit.contain,
-                        alignment: Alignment.center,
+                        fit: fit,
+                        alignment: alignment,
                         loadingBuilder: (context, child, progress) {
                           if (progress == null) return child;
                           return Center(

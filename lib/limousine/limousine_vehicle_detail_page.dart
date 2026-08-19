@@ -4,10 +4,12 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_brand_logo.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_page.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
@@ -23,6 +25,7 @@ class LimousineVehicleDetailPage extends StatefulWidget {
     required this.companyName,
     required this.partnerId,
     this.verifiedPartner = false,
+    this.logoUrl = '',
     this.quoteEnabled = kLimousineCustomerQuoteGateEnabled,
     this.manualQuoteEnabled = kLimousineCustomerManualQuoteGateEnabled,
     this.bookEnabled = kLimousineCustomerBookGateEnabled,
@@ -34,6 +37,7 @@ class LimousineVehicleDetailPage extends StatefulWidget {
   final String companyName;
   final String partnerId;
   final bool verifiedPartner;
+  final String logoUrl;
   final bool quoteEnabled;
   final bool manualQuoteEnabled;
   final bool bookEnabled;
@@ -106,7 +110,6 @@ class _LimousineVehicleDetailPageState
                       ],
                     ),
                   ),
-                  _ctaBar(tokens),
                 ],
               ),
             );
@@ -166,6 +169,16 @@ class _LimousineVehicleDetailPageState
                 color: tokens.onHero,
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: const Icon(Icons.arrow_back),
+              ),
+            ),
+            LimousineBrandLogoCorner(
+              alignment: Alignment.bottomRight,
+              child: LimousineBrandLogoPlaque(
+                logoUrl: widget.logoUrl,
+                companyName: widget.companyName,
+                minExtent: kLimousineLogoDetailMin,
+                maxExtent: kLimousineLogoDetailMax,
+                tokens: tokens,
               ),
             ),
             if (multi && tablet) ...[
@@ -338,13 +351,6 @@ class _LimousineVehicleDetailPageState
     final title = vehicle.displayName.isEmpty
         ? limousineDiscoveryServiceClassLabel(vehicle.serviceClassId)
         : vehicle.displayName;
-    final offer = vehicle.primaryOffer;
-    final description = offer == null
-        ? ''
-        : localizedLimousineText(offer.description, languageCode: _lang.name);
-    final arrangement = offer == null
-        ? ''
-        : localizedLimousineText(offer.title, languageCode: _lang.name);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -376,13 +382,6 @@ class _LimousineVehicleDetailPageState
               ),
           ],
         ),
-        if (description.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            description,
-            style: TextStyle(color: tokens.onSurface, height: 1.45, fontSize: 15.5),
-          ),
-        ],
         const SizedBox(height: 22),
         Text(
           _t(kLimousineDetailSpecs),
@@ -440,27 +439,8 @@ class _LimousineVehicleDetailPageState
             style: TextStyle(color: tokens.muted, height: 1.4),
           ),
         ],
-        if (arrangement.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          Text(
-            _t(kLimousineShowroomOffersHeading),
-            style: TextStyle(
-              color: tokens.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(arrangement, style: TextStyle(color: tokens.muted)),
-        ],
-        const SizedBox(height: 18),
-        Text(
-          limousineShowroomVehiclePriceLabel(vehicle, _lang),
-          style: TextStyle(
-            color: tokens.gold,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        const SizedBox(height: 22),
+        _prices(tokens),
         if (_gateMessage.isNotEmpty) ...[
           const SizedBox(height: 14),
           Text(
@@ -473,6 +453,142 @@ class _LimousineVehicleDetailPageState
     );
   }
 
+  Widget _prices(LimousineUxTokens tokens) {
+    final offers = limousineSortPublishedOffers(widget.vehicle.offers);
+    return Column(
+      key: kLimousineDetailPricesSectionKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _t(kLimousineDetailPricesHeading),
+          style: TextStyle(
+            color: tokens.onSurface,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (offers.isEmpty)
+          Text(
+            kLimousineShowroomPriceOnRequest.of(_lang),
+            style: TextStyle(
+              color: tokens.gold,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          )
+        else
+          for (final offer in offers) ...[
+            _offerCard(tokens, offer),
+            const SizedBox(height: 12),
+          ],
+      ],
+    );
+  }
+
+  Widget _offerCard(LimousineUxTokens tokens, LimousinePublishedOffer offer) {
+    final kind = limousinePublishedDisplayKind(offer);
+    final title = localizedLimousineText(offer.title, languageCode: _lang.name);
+    final description = localizedLimousineText(
+      offer.description,
+      languageCode: _lang.name,
+    );
+    final included = limousineIncludedServicesLabel(offer, _lang);
+    final generic =
+        title.trim().toLowerCase() == 'limousine' ||
+        description.trim().toLowerCase() == 'limousine / arrangementen / limousine';
+    final cta = limousineDetailCtaFor(offer);
+    final isBook = cta == LimousineShowroomCta.book;
+    final summaryId = widget.vehicle.primaryOffer?.offerId ?? '';
+    final isSummary = offer.offerId == summaryId;
+    return DecoratedBox(
+      key: limousineDetailOfferCardKey(offer.offerId),
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: tokens.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              limousineOfferKindLabel(kind, _lang),
+              style: TextStyle(
+                color: tokens.gold,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+            if (title.isNotEmpty && !generic) ...[
+              const SizedBox(height: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  color: tokens.onSurface,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            if (description.isNotEmpty && !generic) ...[
+              const SizedBox(height: 6),
+              Text(
+                description,
+                style: TextStyle(color: tokens.muted, height: 1.4),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Text(
+              limousineFormatPublishedOfferPrice(offer, _lang),
+              style: TextStyle(
+                color: tokens.gold,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (kind == LimousineOfferDisplayKind.fromPrice) ...[
+              const SizedBox(height: 6),
+              Text(
+                _t(kLimousineOfferFromPriceDisclaimer),
+                style: TextStyle(color: tokens.muted, fontSize: 12.5),
+              ),
+            ],
+            if (included.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(included, style: TextStyle(color: tokens.onSurface, height: 1.35)),
+            ],
+            if (cta != LimousineShowroomCta.none) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  key: isSummary
+                      ? (isBook
+                            ? kLimousineDetailBookCtaKey
+                            : kLimousineDetailQuoteCtaKey)
+                      : ValueKey<String>(
+                          'limousine_vehicle_detail_cta_${offer.offerId}',
+                        ),
+                  onPressed: () => _handleCta(offer, isBook),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: tokens.gold,
+                    foregroundColor: const Color(0xFF1A1408),
+                    minimumSize: const Size.fromHeight(46),
+                  ),
+                  child: Text(
+                    isBook ? _t(kLimousineDetailBookCta) : _t(kLimousineDetailQuoteCta),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _spec(LimousineUxTokens tokens, String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -482,39 +598,6 @@ class _LimousineVehicleDetailPageState
         border: Border.all(color: tokens.border),
       ),
       child: Text(text, style: TextStyle(color: tokens.onSurface, fontSize: 13.5)),
-    );
-  }
-
-  Widget _ctaBar(LimousineUxTokens tokens) {
-    final offer = widget.vehicle.primaryOffer;
-    final cta = limousineDetailCtaFor(offer);
-    if (cta == LimousineShowroomCta.none || offer == null) {
-      return const SizedBox.shrink();
-    }
-    final isBook = cta == LimousineShowroomCta.book;
-    return Material(
-      color: tokens.surface,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              key: isBook ? kLimousineDetailBookCtaKey : kLimousineDetailQuoteCtaKey,
-              onPressed: () => _handleCta(offer, isBook),
-              style: FilledButton.styleFrom(
-                backgroundColor: tokens.gold,
-                foregroundColor: const Color(0xFF1A1408),
-                minimumSize: const Size.fromHeight(48),
-              ),
-              child: Text(
-                isBook ? _t(kLimousineDetailBookCta) : _t(kLimousineDetailQuoteCta),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 

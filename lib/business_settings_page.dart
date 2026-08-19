@@ -7101,6 +7101,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'name': v.vehicleName.trim(),
             'brand_model': brand,
             'category': _publicTierCategoryLabel(v.tierId),
+            if (isLimousine && v.id.trim().isNotEmpty) 'vehicle_id': v.id.trim(),
             if (serviceCategory.isNotEmpty) 'service_category': serviceCategory,
             if (serviceClass.isNotEmpty) 'service_class': serviceClass,
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,

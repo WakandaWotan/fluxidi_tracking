@@ -87,6 +87,27 @@ String limousineOfferToken(Object? raw) => (raw ?? '')
     .toLowerCase()
     .replaceAll(RegExp(r'[\s-]+'), '_');
 
+List<String> limousineNormalizeBoundVehicleIds(
+  Object? raw, {
+  Object? single,
+}) {
+  final out = <String>[];
+  final seen = <String>{};
+  void add(Object? value) {
+    final id = (value ?? '').toString().trim();
+    if (id.isEmpty || id.length > 96 || !seen.add(id)) return;
+    out.add(id);
+  }
+
+  if (raw is List) {
+    for (final item in raw) {
+      add(item);
+    }
+  }
+  add(single);
+  return out;
+}
+
 bool _boolOf(Object? raw, {bool fallback = false}) {
   if (raw is bool) return raw;
   final t = limousineOfferToken(raw);
@@ -225,18 +246,43 @@ LimousineOfferValidation validateLimousineOffer(
 
   final classIds = knownClassIds.map(limousineOfferToken).toSet();
 
-  if (targetType == LimousineOfferTarget.vehicle) {
-    final vehicleId = (offer['vehicle_id'] ?? '').toString().trim();
-    VehicleProfile? vehicle;
-    for (final v in vehicles) {
-      if (v.id == vehicleId) {
-        vehicle = v;
-        break;
-      }
+  final boundIds = <String>[
+    ...limousineNormalizeBoundVehicleIds(
+      offer['vehicle_ids'] ?? offer['vehicleIds'],
+      single: offer['vehicle_id'] ?? offer['vehicleId'],
+    ),
+  ];
+  final appliesToAll = offer.containsKey('applies_to_all_selected_vehicles') ||
+          offer.containsKey('appliesToAllSelectedVehicles')
+      ? _boolOf(
+          offer['applies_to_all_selected_vehicles'] ??
+              offer['appliesToAllSelectedVehicles'],
+        )
+      : boundIds.isEmpty;
+  if (appliesToAll) {
+    final classId = limousineOfferToken(offer['service_class_id']);
+    if (classId.isNotEmpty && !classIds.contains(classId)) {
+      errors.add(LimousineOfferError.unknownServiceClass);
     }
-    if (vehicleId.isEmpty || vehicle == null) {
+  } else if (targetType == LimousineOfferTarget.vehicle || boundIds.isNotEmpty) {
+    final records = <VehicleProfile>[
+      for (final id in boundIds)
+        for (final vehicle in vehicles)
+          if (vehicle.id == id) vehicle,
+    ];
+    final validRecords = records.where((vehicle) {
+      if (!vehicle.isActive) return false;
+      if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') {
+        return false;
+      }
+      final vehicleClass = limousineOfferToken(vehicle.serviceClassId);
+      return vehicleClass.isNotEmpty &&
+          !isForbiddenClassInferenceToken(vehicleClass);
+    }).toList(growable: false);
+    if (boundIds.isEmpty || records.isEmpty) {
       errors.add(LimousineOfferError.unknownVehicle);
-    } else {
+    } else if (validRecords.isEmpty) {
+      final vehicle = records.first;
       if (!vehicle.isActive) errors.add(LimousineOfferError.inactiveVehicle);
       if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') {
         errors.add(LimousineOfferError.vehicleNotLimousine);
@@ -514,6 +560,46 @@ bool limousineOfferCanResolvePrice(Map<String, dynamic> offer) =>
 bool limousineOfferAmountIsSnapshotEligible(Map<String, dynamic> offer) =>
     limousineOfferCanResolvePrice(offer);
 
+bool _limousineOfferMayPublishForDisplay(
+  Map<String, dynamic> offer, {
+  required List<VehicleProfile> vehicles,
+  required List<String> knownClassIds,
+  required bool readiness,
+}) {
+  final validation = validateLimousineOffer(
+    offer,
+    vehicles: vehicles,
+    knownClassIds: knownClassIds,
+    readiness: readiness,
+  );
+  if (validation.valid) return true;
+  const displayOnly = <String>{
+    LimousineOfferError.incompleteFixedRule,
+    LimousineOfferError.hourlyIncomplete,
+    LimousineOfferError.hourlyMissingMinimumDuration,
+    LimousineOfferError.packageIncomplete,
+  };
+  if (validation.errors.any((code) => !displayOnly.contains(code))) {
+    return false;
+  }
+  final display = limousineCentsOf(offer['display_amount_cents']);
+  if (validation.errors.contains(LimousineOfferError.incompleteFixedRule) &&
+      (display == null || display <= 0)) {
+    return false;
+  }
+  final hourlyErrors = validation.errors
+      .where((code) => code != LimousineOfferError.incompleteFixedRule)
+      .toList(growable: false);
+  if (hourlyErrors.isEmpty) return true;
+  final hourly = _mapOf(offer['hourly']);
+  final packageAmount = limousineCentsOf(hourly['package_amount_cents']);
+  final packageDuration = _intOf(hourly['package_duration_minutes']);
+  return packageAmount != null &&
+      packageAmount > 0 &&
+      packageDuration != null &&
+      packageDuration > 0;
+}
+
 /// Customer-safe projection. Never exposes the private operating-base address,
 /// unpublished rules, internal costs or raw pricing records.
 List<Map<String, dynamic>> buildSafePublicLimousineOffers(
@@ -528,31 +614,50 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
   for (final offer in offers) {
     if (!_boolOf(offer['enabled'])) continue;
     if (!_boolOf(offer['published'])) continue;
-    final validation = validateLimousineOffer(
+    if (!_limousineOfferMayPublishForDisplay(
       offer,
       vehicles: vehicles,
       knownClassIds: knownClassIds,
       readiness: readiness,
-    );
-    if (!validation.valid) continue;
+    )) {
+      continue;
+    }
     final presentation = limousineOfferToken(offer['price_presentation']);
     if (presentation == LimousinePricePresentation.unavailable) continue;
 
     // Authoritative vehicle join: an exact-vehicle offer publishes only when the
     // fleet record still resolves to an active, classified limousine.
     Map<String, dynamic>? safeVehicle;
-    if (limousineOfferToken(offer['target_type']) ==
-        LimousineOfferTarget.vehicle) {
-      final vehicleId = (offer['vehicle_id'] ?? '').toString().trim();
-      VehicleProfile? record;
-      for (final v in vehicles) {
-        if (v.id == vehicleId) {
-          record = v;
-          break;
+    final boundIds = limousineNormalizeBoundVehicleIds(
+      offer['vehicle_ids'] ?? offer['vehicleIds'],
+      single: offer['vehicle_id'] ?? offer['vehicleId'],
+    );
+    final appliesToAll = offer.containsKey('applies_to_all_selected_vehicles') ||
+            offer.containsKey('appliesToAllSelectedVehicles')
+        ? _boolOf(
+            offer['applies_to_all_selected_vehicles'] ??
+                offer['appliesToAllSelectedVehicles'],
+          )
+        : boundIds.isEmpty;
+    final publicVehicleIds = <String>[];
+    if (!appliesToAll &&
+        (boundIds.isNotEmpty ||
+            limousineOfferToken(offer['target_type']) ==
+                LimousineOfferTarget.vehicle)) {
+      for (final vehicleId in boundIds) {
+        VehicleProfile? record;
+        for (final vehicle in vehicles) {
+          if (vehicle.id == vehicleId) {
+            record = vehicle;
+            break;
+          }
         }
+        final safe = buildSafePublicLimousineVehicle(record);
+        if (safe == null) continue;
+        publicVehicleIds.add(safe['vehicle_id'].toString());
+        safeVehicle ??= safe;
       }
-      safeVehicle = buildSafePublicLimousineVehicle(record);
-      if (safeVehicle == null) continue;
+      if (publicVehicleIds.isEmpty) continue;
     }
 
     final display = limousineCentsOf(offer['display_amount_cents']);
@@ -566,9 +671,17 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
         _boolOf(mobilisation['outbound_charged']) ||
         _boolOf(mobilisation['return_charged']);
 
+    final hourly = _mapOf(offer['hourly']);
     out.add(<String, dynamic>{
       'offer_id': (offer['offer_id'] ?? '').toString(),
       'target_type': limousineOfferToken(offer['target_type']),
+      'applies_to_all_selected_vehicles': appliesToAll,
+      'featured': _boolOf(offer['featured']),
+      'sort_order': _intOf(offer['sort_order'] ?? offer['sortOrder']) ?? 0,
+      if (publicVehicleIds.isNotEmpty) ...{
+        'vehicle_ids': publicVehicleIds,
+        'vehicle_id': publicVehicleIds.first,
+      },
       if (safeVehicle != null) ...{
         'vehicle': safeVehicle,
         'vehicle_id': safeVehicle['vehicle_id'],
@@ -592,6 +705,18 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
               .where((t) => t.isNotEmpty)
               .toList(growable: false) ??
           const <String>[],
+      if (_boolOf(hourly['enabled']))
+        'hourly': <String, dynamic>{
+          'first_hour_cents': hourly['first_hour_cents'],
+          'additional_hour_cents': hourly['additional_hour_cents'],
+          'minimum_duration_minutes': hourly['minimum_duration_minutes'],
+          if (hourly['included_hours'] != null)
+            'included_hours': hourly['included_hours'],
+          if (hourly['package_duration_minutes'] != null)
+            'package_duration_minutes': hourly['package_duration_minutes'],
+          if (hourly['package_amount_cents'] != null)
+            'package_amount_cents': hourly['package_amount_cents'],
+        },
       'included_services': _listOf(offer['included_services'])
           .where((s) => _boolOf(s['active'], fallback: true))
           .where((s) => !_localizedIsEmpty(s['label']))

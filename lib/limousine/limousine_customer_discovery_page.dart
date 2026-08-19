@@ -14,6 +14,7 @@ import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
 import 'limousine_address_field.dart';
 import 'limousine_address_lookup.dart';
+import 'limousine_brand_logo.dart';
 import 'limousine_current_location.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_api.dart';
@@ -705,13 +706,27 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = _info();
-    final photo = LimousineContainPhoto(
-      imageUrl: card.coverImageUrl,
-      background: tokens.surfaceAlt,
-      gold: tokens.gold,
-      minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
-      aspectRatio: horizontal ? 16 / 10 : 16 / 9,
-      placeholderLabel: card.companyName,
+    final photo = Stack(
+      children: [
+        LimousineContainPhoto(
+          imageUrl: card.coverImageUrl,
+          background: tokens.surfaceAlt,
+          gold: tokens.gold,
+          minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
+          aspectRatio: horizontal ? 16 / 10 : 16 / 9,
+          placeholderLabel: card.companyName,
+        ),
+        LimousineBrandLogoCorner(
+          alignment: Alignment.bottomLeft,
+          child: LimousineBrandLogoPlaque(
+            logoUrl: card.logoUrl,
+            companyName: card.companyName,
+            minExtent: kLimousineLogoDiscoveryMin,
+            maxExtent: kLimousineLogoDiscoveryMax,
+            tokens: tokens,
+          ),
+        ),
+      ],
     );
     final body = horizontal
         ? IntrinsicHeight(

@@ -5,6 +5,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_brand_logo.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -102,6 +103,8 @@ class LimousinePublicProfilePage extends StatelessWidget {
           aspectRatio: 16 / 8,
           borderRadius: 0,
           placeholderLabel: showroom.companyName,
+          fit: showroom.heroIsExplicit ? BoxFit.cover : BoxFit.contain,
+          alignment: showroom.heroAlignment,
         ),
         Positioned.fill(
           child: DecoratedBox(
@@ -132,21 +135,6 @@ class LimousinePublicProfilePage extends StatelessWidget {
                 const SizedBox(height: 28),
                 Row(
                   children: [
-                    if (showroom.logoUrl.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            showroom.logoUrl,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
                     Expanded(
                       child: Text(
                         showroom.companyName,
@@ -171,6 +159,16 @@ class LimousinePublicProfilePage extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+        LimousineBrandLogoCorner(
+          alignment: Alignment.bottomRight,
+          child: LimousineBrandLogoPlaque(
+            logoUrl: showroom.logoUrl,
+            companyName: showroom.companyName,
+            minExtent: kLimousineLogoHeroMin,
+            maxExtent: kLimousineLogoHeroMax,
+            tokens: tokens,
           ),
         ),
       ],

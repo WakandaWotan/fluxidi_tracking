@@ -4,6 +4,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_brand_logo.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -103,6 +104,8 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           aspectRatio: 16 / 8,
           borderRadius: 0,
           placeholderLabel: data.companyName,
+          fit: data.heroIsExplicit ? BoxFit.cover : BoxFit.contain,
+          alignment: data.heroAlignment,
         ),
         Positioned.fill(
           child: DecoratedBox(
@@ -133,21 +136,6 @@ class LimousineProviderShowroomPage extends StatelessWidget {
                 const SizedBox(height: 28),
                 Row(
                   children: [
-                    if (data.logoUrl.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            data.logoUrl,
-                            width: 48,
-                            height: 48,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
                     Expanded(
                       child: Text(
                         data.companyName,
@@ -197,6 +185,16 @@ class LimousineProviderShowroomPage extends StatelessWidget {
                 ],
               ],
             ),
+          ),
+        ),
+        LimousineBrandLogoCorner(
+          alignment: Alignment.bottomRight,
+          child: LimousineBrandLogoPlaque(
+            logoUrl: data.logoUrl,
+            companyName: data.companyName,
+            minExtent: kLimousineLogoHeroMin,
+            maxExtent: kLimousineLogoHeroMax,
+            tokens: tokens,
           ),
         ),
       ],
@@ -388,24 +386,6 @@ class LimousineProviderShowroomPage extends StatelessWidget {
               style: TextStyle(color: tokens.onSurface, fontSize: 13.5),
             ),
           ],
-          if (vehicle.offers.length > 1) ...[
-            const SizedBox(height: 8),
-            Text(
-              kLimousineShowroomOffersHeading.of(language),
-              style: TextStyle(
-                color: tokens.muted,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            for (final extra in vehicle.offers.skip(1).take(3))
-              Text(
-                localizedLimousineText(extra.title, languageCode: language.name),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: tokens.muted, fontSize: 13),
-              ),
-          ],
           const SizedBox(height: 10),
           Text(
             limousineShowroomVehiclePriceLabel(vehicle, language),
@@ -450,6 +430,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           companyName: data.companyName,
           partnerId: data.partnerId,
           verifiedPartner: data.verifiedPartner,
+          logoUrl: data.logoUrl,
         ),
       ),
     );

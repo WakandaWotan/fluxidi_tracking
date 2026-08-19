@@ -3,11 +3,14 @@
 // fleet fields. Transaction gates stay fail-closed.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 
 import '../app_strings.dart';
 import '../vehicle_gallery_contract.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
+import 'limousine_hero_contract.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_customer_quote.dart';
@@ -95,6 +98,12 @@ const Key kLimousinePublicProfileOffersCtaKey = ValueKey<String>(
 const Key kLimousinePublicProfileFleetKey = ValueKey<String>(
   'limousine_public_profile_fleet',
 );
+const Key kLimousineDetailPricesSectionKey = ValueKey<String>(
+  'limousine_vehicle_detail_prices',
+);
+
+Key limousineDetailOfferCardKey(String offerId) =>
+    ValueKey<String>('limousine_vehicle_detail_offer_$offerId');
 const Key kLimousineShowroomCompanyProfileCtaKey = ValueKey<String>(
   'limousine_showroom_company_profile_cta',
 );
@@ -170,7 +179,7 @@ class LimousineShowroomVehicle {
   String get primaryPhotoUrl => photoUrls.isEmpty ? '' : photoUrls.first;
 
   LimousinePublishedOffer? get primaryOffer =>
-      offers.isEmpty ? null : offers.first;
+      limousineSelectSummaryOffer(offers);
 }
 
 class LimousineProviderShowroomData {
@@ -183,6 +192,8 @@ class LimousineProviderShowroomData {
     this.verifiedPartner = false,
     this.distanceKm,
     this.heroPhotoUrl = '',
+    this.heroIsExplicit = false,
+    this.heroAlignment = Alignment.center,
     this.vehicles = const <LimousineShowroomVehicle>[],
   });
 
@@ -194,6 +205,8 @@ class LimousineProviderShowroomData {
   final bool verifiedPartner;
   final double? distanceKm;
   final String heroPhotoUrl;
+  final bool heroIsExplicit;
+  final Alignment heroAlignment;
   final List<LimousineShowroomVehicle> vehicles;
 }
 
@@ -246,13 +259,10 @@ String limousinePreferredCoverUrl({
   required Map<String, dynamic> source,
   required List<String> limousineVehiclePhotoUrls,
 }) {
-  if (limousineVehiclePhotoUrls.isNotEmpty &&
-      limousineVehiclePhotoUrls.first.isNotEmpty) {
-    return limousineVehiclePhotoUrls.first;
-  }
-  final explicit = limousineExplicitCoverUrl(source);
-  if (explicit.isNotEmpty) return explicit;
-  return '';
+  return limousineResolvedHeroUrl(
+    source: source,
+    fallbackVehiclePhotoUrls: limousineVehiclePhotoUrls,
+  );
 }
 
 List<Map<String, dynamic>> limousinePublicVehicleRecords(
@@ -377,27 +387,20 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
 List<LimousinePublishedOffer> _offersForVehicle({
   required LimousineShowroomVehicle vehicle,
   required List<LimousinePublishedOffer> offers,
-  required int classifiedVehicleCount,
+  required Iterable<String> selectedVehicleIds,
 }) {
   final matched = <LimousinePublishedOffer>[];
   for (final offer in offers) {
-    if (offer.isVehicleTargeted) {
-      if (vehicle.vehicleId.isNotEmpty &&
-          offer.vehicleId == vehicle.vehicleId) {
-        matched.add(offer);
-      }
+    if (!limousinePublishedOfferAppliesToVehicle(
+      offer: offer,
+      vehicleId: vehicle.vehicleId,
+      selectedVehicleIds: selectedVehicleIds,
+    )) {
       continue;
     }
-    if (vehicle.serviceClassId.isNotEmpty &&
-        offer.serviceClassId == vehicle.serviceClassId) {
-      matched.add(offer);
-    }
+    matched.add(offer);
   }
-  if (matched.isNotEmpty) return matched;
-  if (classifiedVehicleCount == 1 && offers.length == 1) {
-    return offers;
-  }
-  return const <LimousinePublishedOffer>[];
+  return limousineSortPublishedOffers(matched);
 }
 
 LimousineProviderShowroomData buildLimousineProviderShowroomData({
@@ -419,7 +422,10 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
           .trim();
   final media = asStringKeyedMap(profile['media']);
   final logoUrl = _httpsOnly(
-    profile['logo_url'] ?? profile['logoUrl'] ?? media['logo_url'],
+    profile['logo_url'] ??
+        profile['logoUrl'] ??
+        media['logo_url'] ??
+        media['logoUrl'],
   );
   final tagline = (profile['tagline'] ?? '').toString().trim();
   final description = (profile['about_short'] ?? profile['aboutShort'] ?? '')
@@ -451,6 +457,10 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
       );
     }
   }
+  final selectedIds = [
+    for (final vehicle in parsed)
+      if (vehicle.vehicleId.isNotEmpty) vehicle.vehicleId,
+  ];
   final vehicles = [
     for (final vehicle in parsed)
       LimousineShowroomVehicle(
@@ -468,13 +478,13 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         offers: _offersForVehicle(
           vehicle: vehicle,
           offers: offers,
-          classifiedVehicleCount: parsed.length,
+          selectedVehicleIds: selectedIds,
         ),
       ),
   ];
-  final cover = limousinePreferredCoverUrl(
+  final hero = resolveLimousineHero(
     source: profile,
-    limousineVehiclePhotoUrls: [
+    fallbackVehiclePhotoUrls: [
       for (final vehicle in vehicles)
         if (vehicle.primaryPhotoUrl.isNotEmpty) vehicle.primaryPhotoUrl,
     ],
@@ -487,7 +497,9 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
     description: description,
     verifiedPartner: verified,
     distanceKm: distanceKm ?? _positiveDouble(profile['distance_km']),
-    heroPhotoUrl: cover,
+    heroPhotoUrl: hero.photoUrl,
+    heroIsExplicit: hero.explicit,
+    heroAlignment: hero.flutterAlignment,
     vehicles: vehicles,
   );
 }
@@ -501,11 +513,17 @@ String limousineShowroomVehiclePriceLabel(
   LimousineShowroomVehicle vehicle,
   AppLanguage language,
 ) {
-  final offer = vehicle.primaryOffer;
-  if (offer != null) {
-    return limousineShowroomPriceLabel(offer, language);
+  final summary = limousineSelectSummaryOffer(vehicle.offers);
+  if (summary == null) {
+    return kLimousineDiscoveryQuoteOnRequest.of(language);
   }
-  return kLimousineDiscoveryQuoteOnRequest.of(language);
+  final price = limousineFormatPublishedOfferPrice(summary, language);
+  final extra = limousineShowroomOffersExtraLabel(
+    vehicle.offers.length - 1,
+    language,
+  );
+  if (extra.isEmpty) return price;
+  return '$price · $extra';
 }
 
 LimousineShowroomCta limousineDetailCtaFor(LimousinePublishedOffer? offer) {

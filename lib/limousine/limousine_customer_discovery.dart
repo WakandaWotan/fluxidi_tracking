@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../app_strings.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_service_capability.dart';
 
@@ -488,7 +489,12 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
     publicPartnerId: id,
     companyName: name,
     coverImageUrl: limousinePreferredDiscoveryCoverUrl(partner),
-    logoUrl: _httpsOnly(partner['logo_url'] ?? partner['logoUrl']),
+    logoUrl: _httpsOnly(
+      partner['logo_url'] ??
+          partner['logoUrl'] ??
+          asStringKeyedMap(partner['media'])['logo_url'] ??
+          asStringKeyedMap(partner['media'])['logoUrl'],
+    ),
     verifiedPartner: _verifiedPartner(partner),
     publicCity: _publicCity(partner),
     distanceKm: _authoritativeDistanceKm(partner),
@@ -579,26 +585,14 @@ LimousineDiscoveryPrice _authoritativePrice(Map<String, dynamic> partner) {
     );
   }
 
-  LimousineDiscoveryPrice? bestOffer;
-  for (final offer in _discoveryOffers(partner)) {
-    if (!_isValidPublishedLimousineOffer(offer)) continue;
-    final parsed = _priceFromPresentation(
-      limousineOfferToken(
-        offer['price_presentation'] ?? offer['pricePresentation'],
-      ),
-      _positiveInt(
-        offer['display_amount_cents'] ?? offer['displayAmountCents'],
-      ),
-      (offer['currency'] ?? '').toString().trim(),
-    );
-    if (parsed == null) continue;
-    if (bestOffer == null ||
-        (parsed.hasAuthoritativeAmount && !bestOffer.hasAuthoritativeAmount)) {
-      bestOffer = parsed;
-    }
+  final offerMaps = <Map<String, dynamic>>[
+    for (final offer in _discoveryOffers(partner))
+      if (_isValidPublishedLimousineOffer(offer)) offer,
+  ];
+  if (offerMaps.isNotEmpty) {
+    return limousineDiscoveryPriceFromOffers(offerMaps);
   }
-  return bestOffer ??
-      fromPartner ??
+  return fromPartner ??
       const LimousineDiscoveryPrice(kind: LimousineDiscoveryPriceKind.none);
 }
 
