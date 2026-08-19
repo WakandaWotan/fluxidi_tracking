@@ -249,6 +249,32 @@ export function normalizePaidExtra(raw) {
   };
 }
 
+export function normalizeOfferVehicleIds(raw, single) {
+  const out = [];
+  const seen = new Set();
+  const add = (value) => {
+    const id = String(value ?? "").trim();
+    if (!id || id.length > 96 || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+  if (Array.isArray(raw)) raw.forEach(add);
+  add(single);
+  return out;
+}
+
+function offerAppliesToAllSelected(src, vehicleIds) {
+  const raw = src.applies_to_all_selected_vehicles ?? src.appliesToAllSelectedVehicles;
+  if (raw === undefined || raw === null || raw === "") {
+    return vehicleIds.length === 0;
+  }
+  return toBool(raw, false);
+}
+
+function fleetVehicleId(vehicle) {
+  return String(vehicle?.vehicle_id ?? vehicle?.id ?? "").trim();
+}
+
 export function normalizeLimousineOffer(raw) {
   const src = asObject(raw);
   const targetType = normalizeLimousineToken(src.target_type ?? src.targetType);
@@ -262,12 +288,21 @@ export function normalizeLimousineOffer(raw) {
         ),
       )
     : [];
+  const vehicleIds = normalizeOfferVehicleIds(
+    src.vehicle_ids ?? src.vehicleIds,
+    src.vehicle_id ?? src.vehicleId,
+  );
+  const appliesToAll = offerAppliesToAllSelected(src, vehicleIds);
   return {
     offer_id: normalizeId(src.offer_id ?? src.offerId),
     enabled: toBool(src.enabled, false),
     published: toBool(src.published, false),
     target_type: Object.values(LIMOUSINE_OFFER_TARGETS).includes(targetType) ? targetType : "",
-    vehicle_id: String(src.vehicle_id ?? src.vehicleId ?? "").trim(),
+    vehicle_id: appliesToAll ? "" : (vehicleIds[0] || String(src.vehicle_id ?? src.vehicleId ?? "").trim()),
+    vehicle_ids: appliesToAll ? [] : vehicleIds,
+    applies_to_all_selected_vehicles: appliesToAll,
+    featured: toBool(src.featured, false),
+    sort_order: toInt(src.sort_order ?? src.sortOrder) ?? 0,
     service_class_id: normalizeId(src.service_class_id ?? src.serviceClassId),
     price_presentation: PRESENTATION_SET.has(presentation) ? presentation : "",
     currency: normalizeCurrency(src.currency),
@@ -385,15 +420,32 @@ export function validateLimousineOffer(
 
   const classIds = new Set(knownClassIds.map((c) => normalizeId(c)));
 
-  if (o.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE) {
-    // Accept both the local model shape (`id`) and the authoritative scoped
-    // fleet record shape (`vehicle_id` / `service_class`).
-    const vehicle = knownVehicles.find(
-      (v) => String(v?.vehicle_id ?? v?.id ?? "").trim() === o.vehicle_id,
-    );
-    if (!o.vehicle_id || !vehicle) {
+  const boundIds = o.vehicle_ids.length ? o.vehicle_ids : o.vehicle_id ? [o.vehicle_id] : [];
+  if (o.applies_to_all_selected_vehicles) {
+    if (o.service_class_id && !classIds.has(o.service_class_id)) {
+      errors.push(E.UNKNOWN_SERVICE_CLASS);
+    }
+  } else if (o.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE || boundIds.length > 0) {
+    const records = boundIds
+      .map((id) => knownVehicles.find((v) => fleetVehicleId(v) === id))
+      .filter(Boolean);
+    const validRecords = records.filter((vehicle) => {
+      if (vehicle.is_active === false || vehicle.isActive === false) return false;
+      if (
+        normalizeLimousineToken(vehicle.service_category ?? vehicle.serviceCategory) !==
+        "limousine"
+      ) {
+        return false;
+      }
+      const vehicleClassId = normalizeId(
+        vehicle.service_class_id ?? vehicle.service_class ?? vehicle.serviceClassId,
+      );
+      return classIds.has(vehicleClassId);
+    });
+    if (boundIds.length === 0 || records.length === 0) {
       errors.push(E.UNKNOWN_VEHICLE);
-    } else {
+    } else if (validRecords.length === 0) {
+      const vehicle = records[0];
       if (vehicle.is_active === false || vehicle.isActive === false) {
         errors.push(E.INACTIVE_VEHICLE);
       }
@@ -488,6 +540,36 @@ export function validateLimousineOffer(
   if (o.published && !readiness) errors.push(E.PUBLISHED_WITHOUT_READINESS);
 
   return { valid: errors.length === 0, errors: Array.from(new Set(errors)), offer: o };
+}
+
+/// Public showroom may display a marketing exact/package price even when the
+/// offer cannot yet resolve a bookable total. Quote validation stays strict.
+function limousineOfferMayPublishForDisplay(offer, ctx) {
+  const { valid, errors, offer: o } = validateLimousineOffer(offer, ctx);
+  if (valid) return true;
+  const displayOnly = new Set([
+    LIMOUSINE_OFFER_ERRORS.INCOMPLETE_FIXED_RULE,
+    LIMOUSINE_OFFER_ERRORS.HOURLY_INCOMPLETE,
+    LIMOUSINE_OFFER_ERRORS.HOURLY_MISSING_MINIMUM_DURATION,
+    LIMOUSINE_OFFER_ERRORS.PACKAGE_INCOMPLETE,
+  ]);
+  if (!errors.every((code) => displayOnly.has(code))) return false;
+  const hasDisplay = o.display_amount_cents != null && o.display_amount_cents > 0;
+  if (errors.includes(LIMOUSINE_OFFER_ERRORS.INCOMPLETE_FIXED_RULE) && !hasDisplay) {
+    return false;
+  }
+  const hourlyErrors = errors.filter(
+    (code) => code !== LIMOUSINE_OFFER_ERRORS.INCOMPLETE_FIXED_RULE,
+  );
+  if (hourlyErrors.length) {
+    const packageOk =
+      o.hourly?.package_amount_cents != null &&
+      o.hourly.package_amount_cents > 0 &&
+      o.hourly?.package_duration_minutes != null &&
+      o.hourly.package_duration_minutes > 0;
+    return packageOk;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -654,23 +736,38 @@ export function buildSafePublicLimousineOffers(
   const out = [];
   for (const offer of normalized) {
     if (!offer.enabled || !offer.published) continue;
-    const { valid } = validateLimousineOffer(offer, {
-      knownVehicles,
-      knownClassIds,
-      readiness,
-    });
-    if (!valid) continue;
+    if (
+      !limousineOfferMayPublishForDisplay(offer, {
+        knownVehicles,
+        knownClassIds,
+        readiness,
+      })
+    ) {
+      continue;
+    }
     if (offer.price_presentation === LIMOUSINE_PRICE_PRESENTATIONS.UNAVAILABLE) continue;
 
-    // Authoritative vehicle join: an exact-vehicle offer only publishes when the
-    // scoped fleet record still resolves to an active, classified limousine.
+    // Authoritative vehicle join: bound vehicles publish only while they are
+    // still an active classified limousine. Unpublished links are dropped from
+    // the public array; the admin offer itself is not deleted.
     let safeVehicle = null;
-    if (offer.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE) {
-      const record = knownVehicles.find(
-        (v) => String(v?.vehicle_id ?? v?.id ?? "").trim() === offer.vehicle_id,
-      );
-      safeVehicle = buildSafePublicVehicle(record);
-      if (!safeVehicle) continue;
+    const publicVehicleIds = [];
+    if (!offer.applies_to_all_selected_vehicles) {
+      const boundIds = offer.vehicle_ids.length
+        ? offer.vehicle_ids
+        : offer.vehicle_id
+          ? [offer.vehicle_id]
+          : [];
+      if (boundIds.length > 0 || offer.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE) {
+        for (const id of boundIds) {
+          const record = knownVehicles.find((v) => fleetVehicleId(v) === id);
+          const safe = buildSafePublicVehicle(record);
+          if (!safe) continue;
+          publicVehicleIds.push(safe.vehicle_id);
+          if (!safeVehicle) safeVehicle = safe;
+        }
+        if (publicVehicleIds.length === 0) continue;
+      }
     }
 
     const showsAmount =
@@ -681,6 +778,12 @@ export function buildSafePublicLimousineOffers(
     out.push({
       offer_id: offer.offer_id,
       target_type: offer.target_type,
+      applies_to_all_selected_vehicles: offer.applies_to_all_selected_vehicles === true,
+      featured: offer.featured === true,
+      sort_order: offer.sort_order || 0,
+      ...(publicVehicleIds.length
+        ? { vehicle_ids: publicVehicleIds, vehicle_id: publicVehicleIds[0] }
+        : {}),
       ...(safeVehicle ? { vehicle: safeVehicle, vehicle_id: safeVehicle.vehicle_id } : {}),
       service_class_id: safeVehicle
         ? safeVehicle.service_class_id
@@ -703,6 +806,12 @@ export function buildSafePublicLimousineOffers(
               minimum_duration_minutes: offer.hourly.minimum_duration_minutes,
               ...(offer.hourly.included_hours != null
                 ? { included_hours: offer.hourly.included_hours }
+                : {}),
+              ...(offer.hourly.package_duration_minutes != null
+                ? { package_duration_minutes: offer.hourly.package_duration_minutes }
+                : {}),
+              ...(offer.hourly.package_amount_cents != null
+                ? { package_amount_cents: offer.hourly.package_amount_cents }
                 : {}),
             },
           }

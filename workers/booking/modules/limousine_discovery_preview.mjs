@@ -178,8 +178,10 @@ function nearbyVehicles(profile) {
         vehicle.serviceClass,
     );
     if (!serviceClassId) continue;
+    const vehicleId = safeText(vehicle.vehicle_id ?? vehicle.vehicleId, 96);
     out.push({
       service_category: "limousine",
+      ...(vehicleId ? { vehicle_id: vehicleId } : {}),
       photo_url: httpsOnly(
         vehicle.primary_photo_url ??
           vehicle.photo_url ??
@@ -207,19 +209,57 @@ function nearbyVehicles(profile) {
   return out;
 }
 
+function offerAmountCents(offer) {
+  const hourly = asObject(offer?.hourly);
+  const packageAmount = positiveInt(hourly.package_amount_cents ?? hourly.packageAmountCents);
+  if (packageAmount != null) return packageAmount;
+  const firstHour = positiveInt(hourly.first_hour_cents ?? hourly.firstHourCents);
+  if (firstHour != null) return firstHour;
+  return positiveInt(offer?.display_amount_cents ?? offer?.displayAmountCents);
+}
+
+function offerLooksHourlyOrPackage(offer) {
+  const hourly = asObject(offer?.hourly);
+  return looksTruthy(hourly.enabled);
+}
+
 function nearbyPrice(profile) {
   const offers = publishedLimousineOffers(profile);
-  const first = offers[0] || null;
+  let chosen = offers.find((offer) => looksTruthy(offer.featured)) || null;
+  if (!chosen) {
+    let lowest = null;
+    for (const offer of offers) {
+      if (offerPresentation(offer) !== "from_price") continue;
+      const amount = offerAmountCents(offer);
+      if (amount == null) continue;
+      if (lowest == null || amount < lowest.amount) {
+        lowest = { offer, amount };
+      }
+    }
+    if (lowest) chosen = lowest.offer;
+  }
+  if (!chosen) {
+    chosen =
+      offers.find((offer) => {
+        const presentation = offerPresentation(offer);
+        return (
+          presentation === "exact_fixed" ||
+          offerLooksHourlyOrPackage(offer)
+        ) && offerAmountCents(offer) != null;
+      }) ||
+      offers[0] ||
+      null;
+  }
   const presentation =
-    offerPresentation(first) ||
+    offerPresentation(chosen) ||
     normalizeLimousineToken(
       profile?.limousine_price_presentation ?? profile?.limousinePricePresentation,
     );
   if (!PRESENTATION.has(presentation)) return {};
-  const amount = first
-    ? positiveInt(first.display_amount_cents ?? first.displayAmountCents)
+  const amount = chosen
+    ? offerAmountCents(chosen)
     : positiveInt(profile?.display_amount_cents);
-  const currency = safeText(first?.currency ?? profile?.currency, 8).toUpperCase();
+  const currency = safeText(chosen?.currency ?? profile?.currency, 8).toUpperCase();
   const out = { limousine_price_presentation: presentation };
   if (presentation !== "quote_required" && amount != null && currency) {
     out.display_amount_cents = amount;
@@ -236,9 +276,12 @@ export function buildLimousineNearbyCardProjection(profile, { testPreview = true
   const city = publicCity(p);
   const trust = asObject(p.trust);
   const verified = p.verified_partner === true || trust.verified_partner === true;
+  const media = asObject(p.media);
+  const logoUrl = httpsOnly(p.logo_url ?? p.logoUrl ?? media.logo_url ?? media.logoUrl);
   return {
     limousine_available: true,
     limousine_service_enabled: true,
+    ...(logoUrl ? { logo_url: logoUrl } : {}),
     ...(city ? { public_city: city, service_region: city } : {}),
     trust: { verified_partner: verified },
     limousine_vehicles: nearbyVehicles(p),

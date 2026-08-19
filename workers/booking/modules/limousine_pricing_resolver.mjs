@@ -265,6 +265,55 @@ function normalizeSelectedVehicleIds(raw) {
   return out;
 }
 
+const LIMOUSINE_HERO_SOURCES = new Set(["upload", "vehicle_media"]);
+const LIMOUSINE_HERO_ALIGNMENTS = new Set(["center", "top", "bottom", "left", "right"]);
+
+function httpsOnly(raw) {
+  const text = String(raw ?? "").trim();
+  return /^https:\/\//i.test(text) ? text.slice(0, 600) : "";
+}
+
+export function normalizeLimousineHero(raw) {
+  const src = asObject(raw);
+  const nested = asObject(src.limousine_hero ?? src.limousineHero);
+  const photo = httpsOnly(
+    nested.photo_url ??
+      nested.photoUrl ??
+      src.limousine_hero_url ??
+      src.limousineHeroUrl,
+  );
+  const source = normalizeLimousineToken(
+    nested.source_kind ?? nested.sourceKind ?? src.limousine_hero_source,
+  );
+  const alignment = normalizeLimousineToken(
+    nested.alignment ?? src.limousine_hero_alignment,
+  );
+  return {
+    photo_url: photo,
+    source_kind: LIMOUSINE_HERO_SOURCES.has(source) ? source : photo ? "upload" : "",
+    vehicle_id: String(nested.vehicle_id ?? nested.vehicleId ?? "").trim().slice(0, 96),
+    alignment: LIMOUSINE_HERO_ALIGNMENTS.has(alignment) ? alignment : "center",
+    source_revision: toInt(nested.source_revision ?? nested.sourceRevision ?? src.limousine_hero_revision) ?? 0,
+  };
+}
+
+export function applyPublicLimousineHeroFields(profile, section) {
+  const base = profile && typeof profile === "object" ? { ...profile } : {};
+  const hero = normalizeLimousineHero(section);
+  delete base.limousine_hero_url;
+  delete base.limousine_hero_source;
+  delete base.limousine_hero_alignment;
+  delete base.limousine_hero_revision;
+  if (!hero.photo_url) return base;
+  return {
+    ...base,
+    limousine_hero_url: hero.photo_url,
+    limousine_hero_source: hero.source_kind || "upload",
+    limousine_hero_alignment: hero.alignment,
+    limousine_hero_revision: hero.source_revision,
+  };
+}
+
 export function normalizeLimousinePricingSection(raw) {
   const src = asObject(raw);
   return {
@@ -284,6 +333,7 @@ export function normalizeLimousinePricingSection(raw) {
       src.public_description ?? src.publicDescription,
       { max: 400 },
     ),
+    limousine_hero: normalizeLimousineHero(src),
   };
 }
 

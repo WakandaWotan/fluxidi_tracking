@@ -163,6 +163,7 @@ import {
   limousineQuoteFingerprint as _limousineQuoteFingerprint,
 } from "./modules/limousine_booking.mjs";
 import {
+  applyPublicLimousineHeroFields as _applyPublicLimousineHeroFields,
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
   normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
   resolveLimousineQuote as _resolveLimousineQuote,
@@ -47101,10 +47102,16 @@ export default {
           normalizedProfile,
         )
           : [];
-        normalizedProfile = {
-          ...normalizedProfile,
-          limousine_offers: _limousinePublicOffers,
-        };
+        const _limousinePricingSection = _limousinePublishAllowlisted
+          ? await _loadLimousinePricingSection(env, explicitScope)
+          : null;
+        normalizedProfile = _applyPublicLimousineHeroFields(
+          {
+            ...normalizedProfile,
+            limousine_offers: _limousinePublicOffers,
+          },
+          _limousinePricingSection,
+        );
         const _limousineProjection = _buildLimousineProjection(normalizedProfile, {
           safeOfferCount: _limousinePublicOffers.length,
         });
@@ -79029,11 +79036,15 @@ async function refreshPartnerLimousineProjection(env, scope) {
       scope,
       { ...existingProfile, limousine_entitled: entitled },
     );
-    const nextProfileBase = {
-      ...existingProfile,
-      limousine_entitled: entitled,
-      limousine_offers: publicOffers,
-    };
+    const pricingSection = await _loadLimousinePricingSection(env, scope);
+    const nextProfileBase = _applyPublicLimousineHeroFields(
+      {
+        ...existingProfile,
+        limousine_entitled: entitled,
+        limousine_offers: publicOffers,
+      },
+      pricingSection,
+    );
     const projection = _buildLimousineProjection(nextProfileBase, {
       safeOfferCount: publicOffers.length,
     });
@@ -79864,12 +79875,16 @@ function _normalizePublicVehicles(raw) {
       media,
       fallbackPhotoUrl,
     });
+    const publicVehicleId = _safePublicText(row.vehicle_id ?? row.vehicleId, 96);
     out.push({
       name: _safePublicText(row.name, 120),
       brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
       category: _safePublicText(row.category, 80),
       ...(serviceCategory ? { service_category: serviceCategory } : {}),
       ...(serviceClass ? { service_class: serviceClass } : {}),
+      ...(serviceCategory === "limousine" && publicVehicleId
+        ? { vehicle_id: publicVehicleId }
+        : {}),
       pax: _safePublicInt(row.pax, 0, 0, 99),
       luggage: _safePublicInt(row.luggage, 0, 0, 99),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
@@ -79955,10 +79970,23 @@ function _sanitizePublicLimousineOffersForProfile(raw) {
     const offerId = _safePublicText(entry.offer_id, 64);
     if (!offerId) continue;
     const vehicle = entry.vehicle && typeof entry.vehicle === "object" ? entry.vehicle : null;
+    const vehicleIds = _safePublicStringList(entry.vehicle_ids ?? entry.vehicleIds, {
+      maxItems: 20,
+      maxItemLen: 96,
+    });
+    const singleVehicleId = _safePublicText(entry.vehicle_id ?? entry.vehicleId, 96);
     out.push({
       offer_id: offerId,
       target_type: _safePublicText(entry.target_type, 24),
       service_class_id: _safePublicText(entry.service_class_id, 64),
+      applies_to_all_selected_vehicles: _safePublicBool(
+        entry.applies_to_all_selected_vehicles ?? entry.appliesToAllSelectedVehicles,
+        false,
+      ),
+      featured: _safePublicBool(entry.featured, false),
+      sort_order: _safePublicInt(entry.sort_order ?? entry.sortOrder, 0, 0, 9999),
+      ...(vehicleIds.length ? { vehicle_ids: vehicleIds } : {}),
+      ...(singleVehicleId ? { vehicle_id: singleVehicleId } : {}),
       ...(vehicle
         ? {
             vehicle: {
@@ -79975,7 +80003,7 @@ function _sanitizePublicLimousineOffersForProfile(raw) {
                 ? { photo_url: _safePublicHttpsUrl(vehicle.photo_url, 600) }
                 : {}),
             },
-            vehicle_id: _safePublicText(entry.vehicle_id, 96),
+            vehicle_id: _safePublicText(entry.vehicle_id ?? vehicle.vehicle_id, 96),
           }
         : {}),
       title: localized(entry.title),
@@ -80021,6 +80049,26 @@ function _sanitizePublicLimousineOffersForProfile(raw) {
               ),
               ...(entry.hourly.included_hours != null
                 ? { included_hours: _safePublicInt(entry.hourly.included_hours, 0, 0, 1000) }
+                : {}),
+              ...(entry.hourly.package_duration_minutes != null
+                ? {
+                    package_duration_minutes: _safePublicInt(
+                      entry.hourly.package_duration_minutes,
+                      0,
+                      0,
+                      100000,
+                    ),
+                  }
+                : {}),
+              ...(entry.hourly.package_amount_cents != null
+                ? {
+                    package_amount_cents: _safePublicInt(
+                      entry.hourly.package_amount_cents,
+                      0,
+                      0,
+                      100000000,
+                    ),
+                  }
                 : {}),
             },
           }
@@ -80113,6 +80161,28 @@ function _normalizePublicPartnerProfileEntry(raw) {
       : {}),
     ...(Array.isArray(raw.limousine_offers)
       ? { limousine_offers: _sanitizePublicLimousineOffersForProfile(raw.limousine_offers) }
+      : {}),
+    ...(_safePublicHttpsUrl(raw.limousine_hero_url ?? raw.limousineHeroUrl, 600)
+      ? {
+          limousine_hero_url: _safePublicHttpsUrl(
+            raw.limousine_hero_url ?? raw.limousineHeroUrl,
+            600,
+          ),
+          limousine_hero_source: _safePublicText(
+            raw.limousine_hero_source ?? raw.limousineHeroSource,
+            24,
+          ),
+          limousine_hero_alignment: _safePublicText(
+            raw.limousine_hero_alignment ?? raw.limousineHeroAlignment,
+            24,
+          ),
+          limousine_hero_revision: _safePublicInt(
+            raw.limousine_hero_revision ?? raw.limousineHeroRevision,
+            0,
+            0,
+            1000000000,
+          ),
+        }
       : {}),
     ...(raw.limousine_projection && typeof raw.limousine_projection === "object"
       ? {
@@ -80347,6 +80417,24 @@ function _publicLimousineShowroomFieldsFromStoredProfile(profile) {
   if (src.limousine_service_enabled === true) out.limousine_service_enabled = true;
   if (Array.isArray(src.limousine_offers)) {
     out.limousine_offers = _sanitizePublicLimousineOffersForProfile(src.limousine_offers);
+  }
+  const heroUrl = _safePublicHttpsUrl(src.limousine_hero_url ?? src.limousineHeroUrl, 600);
+  if (heroUrl) {
+    out.limousine_hero_url = heroUrl;
+    out.limousine_hero_source = _safePublicText(
+      src.limousine_hero_source ?? src.limousineHeroSource,
+      24,
+    );
+    out.limousine_hero_alignment = _safePublicText(
+      src.limousine_hero_alignment ?? src.limousineHeroAlignment,
+      24,
+    );
+    out.limousine_hero_revision = _safePublicInt(
+      src.limousine_hero_revision ?? src.limousineHeroRevision,
+      0,
+      0,
+      1000000000,
+    );
   }
   return out;
 }
