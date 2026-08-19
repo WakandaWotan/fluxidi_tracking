@@ -191,6 +191,9 @@ import {
 import {
   normalizePublicVehicleGallery as _normalizePublicVehicleGallery,
   attachPublicVehicleMediaFields as _attachPublicVehicleMediaFields,
+  newVehicleGalleryMediaId as _newVehicleGalleryMediaId,
+  sanitizeVehicleGalleryMediaId as _sanitizeVehicleGalleryMediaId,
+  publicMediaObjectIdentity as _publicMediaObjectIdentity,
 } from "./modules/limousine_public_vehicle_media.mjs";
 import {
   compareLimousineNearbyRank as _compareLimousineNearbyRank,
@@ -20236,9 +20239,12 @@ function _normalizeVehiclePhotoRef(value) {
 function _normalizeVehiclePhotoRefList(value) {
   if (!Array.isArray(value)) return [];
   const out = [];
+  const seen = new Set();
   for (const entry of value) {
     const ref = _normalizeVehiclePhotoRef(entry);
-    if (!ref || out.includes(ref)) continue;
+    const identity = _publicMediaObjectIdentity(ref);
+    if (!ref || !identity || seen.has(identity)) continue;
+    seen.add(identity);
     out.push(ref);
     if (out.length >= 12) break;
   }
@@ -47057,12 +47063,14 @@ export default {
           return json({ ok: false, error: "content_type_mismatch" }, 400);
         }
 
+        const requestedMediaId = _sanitizeVehicleGalleryMediaId(form.get("media_id"));
         const objectKey = _buildPublicCompanyMediaKey({
           tenantId,
           companyId,
           mediaType: normalizedMediaType,
           entityId: entityIdValidation.entity_id,
           ext: detected.ext,
+          mediaId: requestedMediaId,
         });
         await env.PUBLIC_MEDIA.put(objectKey, bytes, {
           httpMetadata: {
@@ -47073,10 +47081,14 @@ export default {
         const uploadedAt = Date.now();
         const mediaUrl =
           `${url.origin}/public/media/${_encodePublicMediaKeyForUrl(objectKey)}?v=${uploadedAt}`;
+        const storedMediaId = normalizedMediaType === "vehicle_photo"
+          ? (objectKey.split("/").pop() || "").replace(/\.[^.]+$/, "")
+          : "";
         return json({
           ok: true,
           media_type: normalizedMediaType,
           entity_id: entityIdValidation.entity_id || "",
+          media_id: storedMediaId,
           key: objectKey,
           url: mediaUrl,
           uploaded_at: uploadedAt,
@@ -79857,7 +79869,7 @@ function _validatePublicMediaEntityId(mediaType, entityIdRaw) {
   return { ok: true, entity_id: safe };
 }
 
-function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId, ext }) {
+function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId, ext, mediaId }) {
   const tenantSeg = _sanitizePublicMediaSegment(tenantId);
   const companySeg = _sanitizePublicMediaSegment(companyId);
   if (!tenantSeg || !companySeg) {
@@ -79871,7 +79883,8 @@ function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId,
   if (mediaType === "vehicle_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);
     if (!entitySeg) throw new Error("invalid vehicle entity scope");
-    return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/photo.${safeExt}`;
+    const mediaSeg = _sanitizeVehicleGalleryMediaId(mediaId) || _newVehicleGalleryMediaId();
+    return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/gallery/${mediaSeg}.${safeExt}`;
   }
   if (mediaType === "driver_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);

@@ -17,6 +17,50 @@ export const LIMOUSINE_PUBLIC_MEDIA_FORBIDDEN = Object.freeze([
   "content://",
 ]);
 
+export function publicMediaObjectIdentity(raw) {
+  let text = String(raw || "").trim();
+  const hash = text.indexOf("#");
+  if (hash >= 0) text = text.slice(0, hash);
+  const query = text.indexOf("?");
+  if (query >= 0) text = text.slice(0, query);
+  return text;
+}
+
+export function newVehicleGalleryMediaId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function sanitizeVehicleGalleryMediaId(raw) {
+  const sanitized = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  if (!sanitized || sanitized === "photo" || sanitized.length > 80) return "";
+  return sanitized;
+}
+
+export function buildVehicleGalleryObjectKey({
+  tenantId,
+  companyId,
+  vehicleId,
+  mediaId,
+  ext,
+} = {}) {
+  const tenant = sanitizeVehicleGalleryMediaId(tenantId);
+  const company = sanitizeVehicleGalleryMediaId(companyId);
+  const vehicle = sanitizeVehicleGalleryMediaId(vehicleId);
+  const media = sanitizeVehicleGalleryMediaId(mediaId) || newVehicleGalleryMediaId();
+  const safeExt = sanitizeVehicleGalleryMediaId(ext || "jpg") || "jpg";
+  if (!tenant || !company || !vehicle) return "";
+  return `public-media/${tenant}/${company}/vehicles/${vehicle}/gallery/${media}.${safeExt}`;
+}
+
 function httpsOnly(raw, safeHttpsUrl) {
   if (typeof safeHttpsUrl === "function") {
     return String(safeHttpsUrl(raw) || "").trim();
@@ -50,10 +94,11 @@ export function normalizePublicVehicleGallery(row, safeHttpsUrl) {
   const seen = new Set();
   const push = (value) => {
     const url = httpsOnly(value, safeHttpsUrl);
-    if (!url || seen.has(url) || urls.length >= LIMOUSINE_PUBLIC_GALLERY_MAX) {
+    const identity = publicMediaObjectIdentity(url);
+    if (!url || !identity || seen.has(identity) || urls.length >= LIMOUSINE_PUBLIC_GALLERY_MAX) {
       return;
     }
-    seen.add(url);
+    seen.add(identity);
     urls.push(url);
   };
   push(primary);
