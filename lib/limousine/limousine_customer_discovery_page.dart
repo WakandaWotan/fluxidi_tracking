@@ -206,6 +206,7 @@ class _LimousineCustomerDiscoveryPageState
           profile: profile,
           distanceKm: card.distanceKm,
           discoveryCard: card,
+          logoImage: card.logoImage,
         ),
       ),
     );
@@ -766,6 +767,7 @@ class _ProviderCard extends StatelessWidget {
                   logoUrl: card.logoUrl,
                   companyName: card.companyName,
                   tokens: tokens,
+                  logoImage: card.logoImage,
                 ),
               ),
               if (card.verifiedPartner)

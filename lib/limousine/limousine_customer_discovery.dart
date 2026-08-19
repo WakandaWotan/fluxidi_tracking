@@ -3,6 +3,7 @@
 // Never infer eligibility from names, drafts, preview state or private bases.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 
 import '../app_strings.dart';
 import 'limousine_customer_discovery_labels.dart';
@@ -154,6 +155,7 @@ class LimousineDiscoveryCard {
       kind: LimousineDiscoveryPriceKind.none,
     ),
     this.testPreview = false,
+    this.logoImage,
   });
 
   final String publicPartnerId;
@@ -166,10 +168,12 @@ class LimousineDiscoveryCard {
   final List<LimousineDiscoveryVehicleThumb> vehicles;
   final LimousineDiscoveryPrice price;
   final bool testPreview;
+  final ImageProvider? logoImage;
 
   LimousineDiscoveryCard copyWith({
     double? distanceKm,
     bool clearDistance = false,
+    ImageProvider? logoImage,
   }) {
     return LimousineDiscoveryCard(
       publicPartnerId: publicPartnerId,
@@ -182,6 +186,7 @@ class LimousineDiscoveryCard {
       vehicles: vehicles,
       price: price,
       testPreview: testPreview,
+      logoImage: logoImage ?? this.logoImage,
     );
   }
 }

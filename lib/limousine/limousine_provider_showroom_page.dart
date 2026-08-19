@@ -24,6 +24,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     this.companyNameFallback = '',
     this.distanceKm,
     this.discoveryCard,
+    this.logoImage,
     this.onOpenVehicle,
     this.onOpenCompanyProfile,
   });
@@ -33,6 +34,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
   final String companyNameFallback;
   final double? distanceKm;
   final LimousineDiscoveryCard? discoveryCard;
+  final ImageProvider? logoImage;
   final ValueChanged<LimousineShowroomVehicle>? onOpenVehicle;
   final VoidCallback? onOpenCompanyProfile;
 
@@ -438,6 +440,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           partnerId: data.partnerId,
           verifiedPartner: data.verifiedPartner,
           logoUrl: data.logoUrl,
+          logoImage: logoImage,
         ),
       ),
     );
