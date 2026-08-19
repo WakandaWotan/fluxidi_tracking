@@ -268,6 +268,11 @@ class _LimousineVehicleDetailPageState
                 tokens,
                 '${_t(kLimousineShowroomColour)}: ${vehicle.color}',
               ),
+            if (vehicle.length.isNotEmpty)
+              _spec(
+                tokens,
+                '${_t(kLimousineShowroomLength)}: ${vehicle.length}',
+              ),
           ],
         ),
         if (vehicle.features.isNotEmpty) ...[

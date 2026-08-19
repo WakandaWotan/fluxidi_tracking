@@ -10,6 +10,7 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_public_profile_page.dart';
 import 'limousine_vehicle_detail_page.dart';
 import 'limousine_vehicle_media.dart';
 
@@ -22,6 +23,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     this.distanceKm,
     this.discoveryCard,
     this.onOpenVehicle,
+    this.onOpenCompanyProfile,
   });
 
   final Map<String, dynamic> profile;
@@ -30,6 +32,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
   final double? distanceKm;
   final LimousineDiscoveryCard? discoveryCard;
   final ValueChanged<LimousineShowroomVehicle>? onOpenVehicle;
+  final VoidCallback? onOpenCompanyProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +221,15 @@ class LimousineProviderShowroomPage extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: kLimousineShowroomCompanyProfileCtaKey,
+            onPressed: () => _openCompanyProfile(context),
+            child: Text(kLimousineShowroomViewCompanyProfile.of(language)),
+          ),
+        ),
+        const SizedBox(height: 8),
         if (data.vehicles.isEmpty)
           Container(
             key: kLimousineProviderShowroomEmptyKey,
@@ -355,6 +366,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
               if (vehicle.luggageCapacity != null)
                 '${vehicle.luggageCapacity} ${kLimousineDiscoveryLuggage.of(language)}',
               if (vehicle.color.isNotEmpty) vehicle.color,
+              if (vehicle.length.isNotEmpty) vehicle.length,
             ].join(' · '),
             style: TextStyle(color: tokens.muted, height: 1.35),
           ),
@@ -438,6 +450,25 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           companyName: data.companyName,
           partnerId: data.partnerId,
           verifiedPartner: data.verifiedPartner,
+        ),
+      ),
+    );
+  }
+
+  void _openCompanyProfile(BuildContext context) {
+    final onOpen = onOpenCompanyProfile;
+    if (onOpen != null) {
+      onOpen();
+      return;
+    }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => LimousinePublicProfilePage(
+          partnerId: partnerId,
+          companyNameFallback: companyNameFallback,
+          profile: profile,
+          distanceKm: distanceKm,
+          discoveryCard: discoveryCard,
         ),
       ),
     );

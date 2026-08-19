@@ -70,6 +70,21 @@ const Key kLimousineDetailGateOffBannerKey = ValueKey<String>(
 const Key kLimousineDetailGalleryKey = ValueKey<String>(
   'limousine_vehicle_detail_gallery',
 );
+const Key kLimousinePublicProfilePageKey = ValueKey<String>(
+  'limousine_public_profile_page',
+);
+const Key kLimousinePublicProfileHeroKey = ValueKey<String>(
+  'limousine_public_profile_hero',
+);
+const Key kLimousinePublicProfileOffersCtaKey = ValueKey<String>(
+  'limousine_public_profile_offers_cta',
+);
+const Key kLimousinePublicProfileFleetKey = ValueKey<String>(
+  'limousine_public_profile_fleet',
+);
+const Key kLimousineShowroomCompanyProfileCtaKey = ValueKey<String>(
+  'limousine_showroom_company_profile_cta',
+);
 
 Key limousineShowroomVehicleCardKey(String vehicleKey) =>
     ValueKey<String>('limousine_showroom_vehicle_$vehicleKey');
@@ -115,6 +130,7 @@ class LimousineShowroomVehicle {
     this.luggageCapacity,
     this.features = const <String>[],
     this.color = '',
+    this.length = '',
     this.vehicleId = '',
     this.offers = const <LimousinePublishedOffer>[],
   });
@@ -128,6 +144,7 @@ class LimousineShowroomVehicle {
   final int? luggageCapacity;
   final List<String> features;
   final String color;
+  final String length;
   final String vehicleId;
   final List<LimousinePublishedOffer> offers;
 
@@ -325,6 +342,13 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
     ),
     features: features,
     color: (vehicle['color'] ?? '').toString().trim(),
+    length: (vehicle['length'] ??
+            vehicle['length_m'] ??
+            vehicle['vehicle_length'] ??
+            vehicle['vehicleLength'] ??
+            '')
+        .toString()
+        .trim(),
     vehicleId: vehicleId,
   );
 }
@@ -418,6 +442,7 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         luggageCapacity: vehicle.luggageCapacity,
         features: vehicle.features,
         color: vehicle.color,
+        length: vehicle.length,
         vehicleId: vehicle.vehicleId,
         offers: _offersForVehicle(
           vehicle: vehicle,

@@ -71,13 +71,15 @@ Key limousineDiscoveryCardKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_card_$partnerId');
 
 Key limousineDiscoveryOffersCtaKey(String partnerId) =>
-    limousineDiscoveryViewLimousinesCtaKey(partnerId);
+    ValueKey<String>('limousine_discovery_offers_$partnerId');
 
 Key limousineDiscoveryProfileCtaKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_profile_$partnerId');
 
+/// Alias for [limousineDiscoveryOffersCtaKey]. Kept so existing discovery
+/// tests still press the primary "Bekijk aanbod" action.
 Key limousineDiscoveryViewLimousinesCtaKey(String partnerId) =>
-    ValueKey<String>('limousine_discovery_view_limousines_$partnerId');
+    limousineDiscoveryOffersCtaKey(partnerId);
 
 /// P2D4C1F server contract consumed by discovery. Lives on the isolated
 /// Worker branch; Flutter never invents these fields locally.

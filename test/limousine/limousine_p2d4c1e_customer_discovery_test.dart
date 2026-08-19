@@ -683,7 +683,7 @@ void main() {
   });
 
   testWidgets(
-    'Bekijk limousines opens a server-confirmed profile and never /book',
+    'Bekijk aanbod opens a server-confirmed profile and never /book',
     (tester) async {
       final opened = <String>[];
       final gateway = MemoryLimousineDiscoveryGateway(

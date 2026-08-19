@@ -14,6 +14,8 @@ import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom_page.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_profile.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_profile_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_showroom.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_detail_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_media.dart';
@@ -56,6 +58,14 @@ Map<String, dynamic> _profile() {
     'about_short': 'Private limousine service.',
     'logo_url': 'https://cdn.example/logo.png',
     'hero_photo_url': 'https://cdn.example/taxi-cover.jpg',
+    'rating_avg': 4.8,
+    'rating_count': 12,
+    'coverage': <String, dynamic>{'region_label': 'Oost-Vlaanderen'},
+    'public_contact': <String, dynamic>{
+      'website': 'https://maison.example',
+      'public_phone': '+32 9 000 00 00',
+      'booking_email': 'book@maison.example',
+    },
     'trust': <String, dynamic>{'verified_partner': true},
     'services': <String>['limousine', 'taxi'],
     'payment_methods': <String>['visa'],
@@ -212,9 +222,10 @@ void main() {
       'lib/limousine/limousine_customer_discovery_page.dart',
     ).readAsStringSync();
     expect(discovery.contains('PartnerPublicProfilePage'), isFalse);
-    expect(discovery.contains('Bekijk aanbod'), isFalse);
+    expect(discovery.contains('PartnerProfilePage'), isFalse);
     expect(discovery.contains('height: 40'), isFalse);
     expect(discovery.contains('LimousineProviderShowroomPage'), isTrue);
+    expect(discovery.contains('LimousinePublicProfilePage'), isTrue);
     final showroom = File(
       'lib/limousine/limousine_provider_showroom_page.dart',
     ).readAsStringSync();
@@ -222,9 +233,30 @@ void main() {
     expect(showroom.contains('Luchthaven'), isFalse);
     expect(showroom.contains('payment_methods'), isFalse);
     expect(showroom.contains('drivers'), isFalse);
+    final profilePage = File(
+      'lib/limousine/limousine_public_profile_page.dart',
+    ).readAsStringSync();
+    expect(profilePage.contains('PartnerPublicProfilePage'), isFalse);
+    expect(profilePage.contains('Taxi'), isFalse);
+    expect(profilePage.contains('Luchthaven'), isFalse);
+    expect(profilePage.contains('payment_methods'), isFalse);
+    expect(profilePage.contains('drivers'), isFalse);
   });
 
-  testWidgets('discovery card has exactly one CTA and no taxi profile labels', (
+  test('limousine profile projection drops taxi chrome and taxi cover', () {
+    final data = buildLimousinePublicProfileData(profile: _profile());
+    expect(data.showroom.heroPhotoUrl, 'https://cdn.example/limo.jpg');
+    expect(data.showroom.heroPhotoUrl.contains('taxi-cover'), isFalse);
+    expect(
+      data.showroom.vehicles.any((vehicle) => vehicle.displayName == 'Taxi Van'),
+      isFalse,
+    );
+    expect(data.hasPublicRating, isTrue);
+    expect(data.websiteUrl, 'https://maison.example');
+    expect(data.serviceRegion, 'Oost-Vlaanderen');
+  });
+
+  testWidgets('discovery card has two distinct limousine CTAs', (
     tester,
   ) async {
     final gateway = MemoryLimousineDiscoveryGateway(
@@ -244,12 +276,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Bekijk limousines'), findsOneWidget);
-    expect(find.text('Bekijk aanbod'), findsNothing);
-    expect(find.text('Bekijk profiel'), findsNothing);
+    expect(find.text('Bekijk aanbod'), findsOneWidget);
+    expect(find.text('Bekijk profiel'), findsOneWidget);
+    expect(find.text('Bekijk limousines'), findsNothing);
     expect(find.text('Vraag offerte aan'), findsNothing);
     expect(find.text('Boek nu'), findsNothing);
-    expect(find.byType(FilledButton), findsWidgets);
     expect(
       find.descendant(
         of: find.byKey(limousineDiscoveryCardKey('limo_1')),
@@ -262,11 +293,11 @@ void main() {
         of: find.byKey(limousineDiscoveryCardKey('limo_1')),
         matching: find.byType(OutlinedButton),
       ),
-      findsNothing,
+      findsOneWidget,
     );
   });
 
-  testWidgets('Bekijk limousines opens the showroom, not the taxi profile', (
+  testWidgets('Bekijk aanbod opens the showroom, not the taxi profile', (
     tester,
   ) async {
     final gateway = MemoryLimousineDiscoveryGateway(
@@ -289,11 +320,13 @@ void main() {
     await tester.pumpAndSettle();
     tester
             .widget<ButtonStyleButton>(
-              find.byKey(limousineDiscoveryViewLimousinesCtaKey('limo_1')),
+              find.byKey(limousineDiscoveryOffersCtaKey('limo_1')),
             )
             .onPressed!();
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineProviderShowroomPageKey), findsOneWidget);
+    expect(find.byType(LimousineProviderShowroomPage), findsOneWidget);
+    expect(find.byType(LimousinePublicProfilePage), findsNothing);
     expect(find.byType(PartnerPublicProfilePage), findsNothing);
     expect(find.text('Onze limousines'), findsOneWidget);
     expect(find.text('S-Class'), findsOneWidget);
@@ -305,6 +338,100 @@ void main() {
     expect(find.text('Vraag offerte aan'), findsNothing);
     expect(find.text('Boek nu'), findsNothing);
     expect(find.byKey(kLimousinePublicShowroomSectionKey), findsNothing);
+    expect(find.text('Bekijk bedrijfsprofiel'), findsOneWidget);
+  });
+
+  testWidgets('Bekijk profiel opens the limousine profile, not the taxi page', (
+    tester,
+  ) async {
+    final gateway = MemoryLimousineDiscoveryGateway(
+      searchHandler: (_) async => LimousineDiscoveryPageData(
+        listingMode: 'test_preview',
+        cards: limousineDiscoveryCardsFromNearbyPartners(<dynamic>[
+          _nearbyCard(),
+        ]),
+      ),
+      profileHandler: (_) async => _profile(),
+    );
+    await tester.pumpWidget(
+      _app(
+        LimousineCustomerDiscoveryPage(
+          gateway: gateway,
+          customerHomeBuilder: (_) => const SizedBox.shrink(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester
+            .widget<ButtonStyleButton>(
+              find.byKey(limousineDiscoveryProfileCtaKey('limo_1')),
+            )
+            .onPressed!();
+    await tester.pumpAndSettle();
+    expect(find.byKey(kLimousinePublicProfilePageKey), findsOneWidget);
+    expect(find.byType(LimousinePublicProfilePage), findsOneWidget);
+    expect(find.byType(LimousineProviderShowroomPage), findsNothing);
+    expect(find.byType(PartnerPublicProfilePage), findsNothing);
+    expect(find.text('Taxi Van'), findsNothing);
+    expect(find.text('Hidden Driver'), findsNothing);
+    expect(find.text('Taxi'), findsNothing);
+    expect(find.text('Luchthaven'), findsNothing);
+    expect(find.text('visa'), findsNothing);
+    expect(find.text('Chauffeured limousines'), findsOneWidget);
+    expect(find.textContaining('Oost-Vlaanderen'), findsOneWidget);
+    expect(find.textContaining('4.8'), findsOneWidget);
+    expect(find.text('Vraag offerte aan'), findsNothing);
+    expect(find.text('Boek nu'), findsNothing);
+    expect(find.text('Meer info'), findsNothing);
+    expect(find.text('Bekijk aanbod'), findsWidgets);
+  });
+
+  testWidgets('limousine profile Bekijk aanbod opens the showroom', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        LimousinePublicProfilePage(
+          partnerId: 'limo_1',
+          profile: _profile(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester
+            .widget<ButtonStyleButton>(
+              find.byKey(kLimousinePublicProfileOffersCtaKey),
+            )
+            .onPressed!();
+    await tester.pumpAndSettle();
+    expect(find.byType(LimousineProviderShowroomPage), findsOneWidget);
+    expect(find.byType(LimousinePublicProfilePage), findsNothing);
+    expect(find.byType(PartnerPublicProfilePage), findsNothing);
+    expect(find.text('Onze limousines'), findsOneWidget);
+    expect(find.text('Vraag offerte aan'), findsNothing);
+  });
+
+  testWidgets('showroom company-profile link opens the limousine profile', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        LimousineProviderShowroomPage(
+          partnerId: 'limo_1',
+          profile: _profile(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester
+            .widget<ButtonStyleButton>(
+              find.byKey(kLimousineShowroomCompanyProfileCtaKey),
+            )
+            .onPressed!();
+    await tester.pumpAndSettle();
+    expect(find.byType(LimousinePublicProfilePage), findsOneWidget);
+    expect(find.byType(LimousineProviderShowroomPage), findsNothing);
+    expect(find.byType(PartnerPublicProfilePage), findsNothing);
   });
 
   testWidgets('tablet discovery uses the available width', (tester) async {
@@ -357,7 +484,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineDiscoveryPhoneLayoutKey), findsOneWidget);
-    expect(find.text('Bekijk limousines'), findsOneWidget);
+    expect(find.text('Bekijk aanbod'), findsOneWidget);
+    expect(find.text('Bekijk profiel'), findsOneWidget);
   });
 
   testWidgets('showroom more info opens the vehicle detail page', (

@@ -1,12 +1,5 @@
 import '../app_strings.dart';
 
-const LocalizedText kLimousineDiscoveryViewLimousines = LocalizedText(
-  nl: 'Bekijk limousines',
-  en: 'View limousines',
-  fr: 'Voir les limousines',
-  es: 'Ver limusinas',
-);
-
 const LocalizedText kLimousineProviderShowroomTitle = LocalizedText(
   nl: 'Onze limousines',
   en: 'Our limousines',
@@ -82,4 +75,67 @@ const LocalizedText kLimousineDetailClass = LocalizedText(
   en: 'Limousine class',
   fr: 'Classe limousine',
   es: 'Clase de limusina',
+);
+
+const LocalizedText kLimousineShowroomViewCompanyProfile = LocalizedText(
+  nl: 'Bekijk bedrijfsprofiel',
+  en: 'View company profile',
+  fr: 'Voir le profil de l’entreprise',
+  es: 'Ver perfil de la empresa',
+);
+
+const LocalizedText kLimousinePublicProfileContact = LocalizedText(
+  nl: 'Contact',
+  en: 'Contact',
+  fr: 'Contact',
+  es: 'Contacto',
+);
+
+const LocalizedText kLimousinePublicProfileWebsite = LocalizedText(
+  nl: 'Website',
+  en: 'Website',
+  fr: 'Site web',
+  es: 'Sitio web',
+);
+
+const LocalizedText kLimousinePublicProfilePhone = LocalizedText(
+  nl: 'Telefoon',
+  en: 'Phone',
+  fr: 'Téléphone',
+  es: 'Teléfono',
+);
+
+const LocalizedText kLimousinePublicProfileEmail = LocalizedText(
+  nl: 'E-mail',
+  en: 'Email',
+  fr: 'E-mail',
+  es: 'Correo',
+);
+
+const LocalizedText kLimousinePublicProfileRegion = LocalizedText(
+  nl: 'Servicegebied',
+  en: 'Service area',
+  fr: 'Zone de service',
+  es: 'Zona de servicio',
+);
+
+const LocalizedText kLimousinePublicProfileFleet = LocalizedText(
+  nl: 'Limousines',
+  en: 'Limousines',
+  fr: 'Limousines',
+  es: 'Limusinas',
+);
+
+const LocalizedText kLimousinePublicProfileReviews = LocalizedText(
+  nl: 'beoordelingen',
+  en: 'reviews',
+  fr: 'avis',
+  es: 'valoraciones',
+);
+
+const LocalizedText kLimousineShowroomLength = LocalizedText(
+  nl: 'Lengte',
+  en: 'Length',
+  fr: 'Longueur',
+  es: 'Longitud',
 );

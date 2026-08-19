@@ -1,8 +1,8 @@
 // LIMOUSINE-MARKETPLACE-P2D4C1F — customer marketplace discovery page.
 // Loads recommended limousine companies without requiring a region or GPS.
-// Opens the limousine provider showroom after a server-confirmed Limousine
-// surface. Does not open the taxi partner profile, start the request wizard
-// or call /book.
+// Opens either the limousine showroom or the standalone limousine company
+// profile after a server-confirmed Limousine surface. Does not open the taxi
+// partner profile, start the request wizard or call /book.
 
 import 'dart:async';
 
@@ -20,8 +20,11 @@ import 'limousine_customer_discovery_api.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom_page.dart';
+import 'limousine_public_profile_page.dart';
 import 'limousine_service_capability.dart';
 import 'limousine_vehicle_media.dart';
+
+enum LimousineDiscoveryDestination { showroom, profile }
 
 typedef LimousineDiscoveryOpenPartner =
     Future<void> Function(
@@ -37,6 +40,7 @@ void openLimousineCustomerDiscovery(
   LimousinePlaceLookup? placeLookup,
   LimousineCurrentLocationPlatform? currentLocationPlatform,
   LimousineDiscoveryOpenPartner? onOpenPartner,
+  LimousineDiscoveryOpenPartner? onOpenProfile,
   bool autoLoadRecommended = true,
 }) {
   Navigator.of(context).push(
@@ -47,6 +51,7 @@ void openLimousineCustomerDiscovery(
         placeLookup: placeLookup,
         currentLocationPlatform: currentLocationPlatform,
         onOpenPartner: onOpenPartner,
+        onOpenProfile: onOpenProfile,
         autoLoadRecommended: autoLoadRecommended,
       ),
     ),
@@ -62,6 +67,7 @@ class LimousineCustomerDiscoveryPage extends StatefulWidget {
     this.placeLookup,
     this.currentLocationPlatform,
     this.onOpenPartner,
+    this.onOpenProfile,
     this.autoLoadRecommended = true,
   });
 
@@ -71,6 +77,7 @@ class LimousineCustomerDiscoveryPage extends StatefulWidget {
   final LimousinePlaceLookup? placeLookup;
   final LimousineCurrentLocationPlatform? currentLocationPlatform;
   final LimousineDiscoveryOpenPartner? onOpenPartner;
+  final LimousineDiscoveryOpenPartner? onOpenProfile;
   final bool autoLoadRecommended;
 
   @override
@@ -170,9 +177,17 @@ class _LimousineCustomerDiscoveryPageState
     _controller.searchAnotherRegion();
   }
 
-  Future<void> _openPartner(LimousineDiscoveryCard card) async {
+  Future<void> _openPartner(
+    LimousineDiscoveryCard card,
+    LimousineDiscoveryDestination destination,
+  ) async {
     final profile = await _controller.openConfirmedPublicProfile(card);
     if (!mounted || profile == null) return;
+    if (destination == LimousineDiscoveryDestination.profile) {
+      final open = widget.onOpenProfile ?? _pushProfile;
+      await open(context, card, profile);
+      return;
+    }
     final open = widget.onOpenPartner ?? _pushShowroom;
     await open(context, card, profile);
   }
@@ -185,6 +200,24 @@ class _LimousineCustomerDiscoveryPageState
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LimousineProviderShowroomPage(
+          partnerId: card.publicPartnerId,
+          companyNameFallback: card.companyName,
+          profile: profile,
+          distanceKm: card.distanceKm,
+          discoveryCard: card,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pushProfile(
+    BuildContext context,
+    LimousineDiscoveryCard card,
+    Map<String, dynamic> profile,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LimousinePublicProfilePage(
           partnerId: card.publicPartnerId,
           companyNameFallback: card.companyName,
           profile: profile,
@@ -608,7 +641,14 @@ class _LimousineCustomerDiscoveryPageState
               tokens: tokens,
               language: _lang,
               horizontal: tablet,
-              onOpen: () => _openPartner(card),
+              onOpenOffers: () => _openPartner(
+                card,
+                LimousineDiscoveryDestination.showroom,
+              ),
+              onOpenProfile: () => _openPartner(
+                card,
+                LimousineDiscoveryDestination.profile,
+              ),
             ),
             const SizedBox(height: 16),
           ],
@@ -629,7 +669,14 @@ class _LimousineCustomerDiscoveryPageState
                 tokens: tokens,
                 language: _lang,
                 horizontal: true,
-                onOpen: () => _openPartner(card),
+                onOpenOffers: () => _openPartner(
+                  card,
+                  LimousineDiscoveryDestination.showroom,
+                ),
+                onOpenProfile: () => _openPartner(
+                  card,
+                  LimousineDiscoveryDestination.profile,
+                ),
               ),
             ),
         ],
@@ -644,14 +691,16 @@ class _ProviderCard extends StatelessWidget {
     required this.tokens,
     required this.language,
     required this.horizontal,
-    required this.onOpen,
+    required this.onOpenOffers,
+    required this.onOpenProfile,
   });
 
   final LimousineDiscoveryCard card;
   final LimousineUxTokens tokens;
   final AppLanguage language;
   final bool horizontal;
-  final VoidCallback onOpen;
+  final VoidCallback onOpenOffers;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -782,14 +831,28 @@ class _ProviderCard extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              key: limousineDiscoveryViewLimousinesCtaKey(card.publicPartnerId),
-              onPressed: onOpen,
+              key: limousineDiscoveryOffersCtaKey(card.publicPartnerId),
+              onPressed: onOpenOffers,
               style: FilledButton.styleFrom(
                 backgroundColor: tokens.gold,
                 foregroundColor: const Color(0xFF1A1408),
                 minimumSize: const Size.fromHeight(46),
               ),
-              child: Text(kLimousineDiscoveryViewLimousines.of(language)),
+              child: Text(kLimousineDiscoveryViewOffers.of(language)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              key: limousineDiscoveryProfileCtaKey(card.publicPartnerId),
+              onPressed: onOpenProfile,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: tokens.onSurface,
+                side: BorderSide(color: tokens.gold.withOpacity(0.55)),
+                minimumSize: const Size.fromHeight(44),
+              ),
+              child: Text(kLimousineDiscoveryViewProfile.of(language)),
             ),
           ),
         ],
