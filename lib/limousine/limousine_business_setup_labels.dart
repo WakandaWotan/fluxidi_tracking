@@ -436,6 +436,20 @@ const LocalizedText kLimousineBusinessSetupIncludedHours = LocalizedText(
   es: 'Horas incluidas',
 );
 
+const LocalizedText kLimousineBusinessSetupOfferValid = LocalizedText(
+  nl: 'Configuratie geldig',
+  en: 'Configuration valid',
+  fr: 'Configuration valide',
+  es: 'Configuración válida',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferIncomplete = LocalizedText(
+  nl: 'Configuratie onvolledig',
+  en: 'Configuration incomplete',
+  fr: 'Configuration incomplète',
+  es: 'Configuración incompleta',
+);
+
 const LocalizedText kLimousineBusinessSetupPassengers = LocalizedText(
   nl: 'Passagiers',
   en: 'Passengers',

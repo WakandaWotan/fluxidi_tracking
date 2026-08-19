@@ -11,6 +11,8 @@ import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
+export 'limousine_offers.dart' show LimousineSimpleOfferMode;
+
 const Key kLimousineBusinessSetupPageKey = ValueKey<String>(
   'limousine_business_setup_page',
 );
@@ -104,8 +106,13 @@ const Key kLimousineSimpleOfferNameKey = ValueKey<String>(
 const Key kLimousineSimpleOfferFirstHourKey = ValueKey<String>(
   'limousine_simple_offer_first_hour',
 );
-
-enum LimousineSimpleOfferMode { quote, fromPrice, fixed, hourly, package }
+const Key kLimousineSimpleOfferExtraHourKey = ValueKey<String>(
+  'limousine_simple_offer_extra_hour',
+);
+const Key kLimousineSimpleOfferMinDurationKey = ValueKey<String>(
+  'limousine_simple_offer_min_duration',
+);
+const double kLimousineBusinessSetupOfferValidityDotSize = 12;
 
 const Key kLimousineBusinessSetupCoverKey = ValueKey<String>(
   'limousine_business_setup_cover',
@@ -149,6 +156,13 @@ Key limousineBusinessSetupManagePhotosKey(String vehicleId) =>
 
 Key limousineBusinessSetupOfferCardKey(String presentation) =>
     ValueKey<String>('limousine_business_setup_offer_$presentation');
+
+Key limousineBusinessSetupOfferValidityKey(
+  String presentation, {
+  required bool valid,
+}) => ValueKey<String>(
+  'limousine_business_setup_offer_validity_${presentation}_${valid ? 'valid' : 'incomplete'}',
+);
 
 Key limousineBusinessSetupPublicLangKey(String lang) =>
     ValueKey<String>('limousine_business_setup_public_lang_$lang');
@@ -293,12 +307,11 @@ bool limousineOfferIsValidPublished(
 }) {
   if (offer['enabled'] == false) return false;
   if (offer['published'] != true) return false;
-  return validateLimousineOffer(
+  return limousineBusinessSetupOfferErrors(
     offer,
     vehicles: vehicles,
     knownClassIds: knownClassIds,
-    readiness: true,
-  ).errors.isEmpty;
+  ).isEmpty;
 }
 
 bool limousineOffersPricingSectionIsComplete({
@@ -338,12 +351,11 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
   );
   final hasValidOffer = offers.any((offer) {
     if (offer['enabled'] == false) return false;
-    return validateLimousineOffer(
+    return limousineBusinessSetupOfferErrors(
       offer,
       vehicles: vehicles,
       knownClassIds: knownClassIds,
-      readiness: true,
-    ).errors.isEmpty;
+    ).isEmpty;
   });
   final hasPublishedOffer = offers.any(
     (offer) => limousineOfferIsValidPublished(
@@ -438,16 +450,40 @@ String? limousineBusinessSetupFieldSection(String errorCode) {
 
 List<String> limousineBusinessSetupOfferErrors(
   Map<String, dynamic> offer, {
+  LimousineSimpleOfferMode? mode,
   List<VehicleProfile> vehicles = const <VehicleProfile>[],
   List<String> knownClassIds = const <String>[],
   bool readiness = true,
 }) {
+  final resolved = mode ?? limousineSimpleOfferModeOf(offer);
+  if (resolved != null) {
+    return limousineValidateSimpleOffer(
+      offer,
+      mode: resolved,
+      vehicles: vehicles,
+      knownClassIds: knownClassIds,
+    ).errors;
+  }
   return validateLimousineOffer(
     offer,
     vehicles: vehicles,
     knownClassIds: knownClassIds,
     readiness: readiness,
   ).errors;
+}
+
+LimousineSimpleOfferValidation limousineBusinessSetupOfferValidation(
+  Map<String, dynamic>? offer, {
+  required LimousineSimpleOfferMode mode,
+  List<VehicleProfile> vehicles = const <VehicleProfile>[],
+  List<String> knownClassIds = const <String>[],
+}) {
+  return limousineValidateSimpleOffer(
+    offer,
+    mode: mode,
+    vehicles: vehicles,
+    knownClassIds: knownClassIds,
+  );
 }
 
 Map<String, dynamic> limousinePrepareDraftOffer(Map<String, dynamic> offer) {
@@ -473,12 +509,12 @@ List<Map<String, dynamic>> limousinePreparePublishOffers(
   return offers
       .map((offer) {
         final copy = Map<String, dynamic>.from(offer);
-        final errors = validateLimousineOffer(
+        final errors = limousineBusinessSetupOfferErrors(
           copy,
           vehicles: vehicles,
           knownClassIds: knownClassIds,
           readiness: true,
-        ).errors;
+        );
         copy['published'] = errors.isEmpty && copy['enabled'] != false;
         return copy;
       })
@@ -649,8 +685,12 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
         draft.mode == LimousineSimpleOfferMode.package,
     'currency': draft.currency,
   };
-  if (draft.mode == LimousineSimpleOfferMode.hourly ||
-      draft.mode == LimousineSimpleOfferMode.package) {
+  if (draft.mode == LimousineSimpleOfferMode.hourly) {
+    hourly['first_hour_cents'] = draft.firstHourCents;
+    hourly['additional_hour_cents'] = draft.additionalHourCents;
+    hourly['minimum_duration_minutes'] = draft.minimumDurationMinutes;
+    next['display_amount_cents'] = draft.firstHourCents ?? draft.amountCents;
+  } else if (draft.mode == LimousineSimpleOfferMode.package) {
     hourly['first_hour_cents'] = draft.firstHourCents;
     hourly['additional_hour_cents'] = draft.additionalHourCents;
     hourly['minimum_duration_minutes'] = draft.minimumDurationMinutes;
@@ -662,11 +702,8 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
       hourly['included_hours'] = draft.includedHours;
     }
     next['display_amount_cents'] =
-        draft.mode == LimousineSimpleOfferMode.package
-        ? (draft.packageAmountCents ?? draft.amountCents)
-        : (draft.firstHourCents ?? draft.amountCents);
-    if (draft.mode == LimousineSimpleOfferMode.package &&
-        (draft.packageAmountCents == null || draft.packageAmountCents! <= 0)) {
+        draft.packageAmountCents ?? draft.amountCents;
+    if (draft.packageAmountCents == null || draft.packageAmountCents! <= 0) {
       next['price_presentation'] = LimousinePricePresentation.quoteRequired;
     }
   }

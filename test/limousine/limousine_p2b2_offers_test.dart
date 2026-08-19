@@ -158,6 +158,59 @@ void main() {
       );
     });
 
+    test('250.00 + 100.00 + 60 minutes is a complete hourly hire', () {
+      final offer = _classOffer(
+        overrides: {
+          'price_presentation': LimousinePricePresentation.fromPrice,
+          'display_amount_cents': 25000,
+          'hourly': {
+            'enabled': true,
+            'first_hour_cents': 25000,
+            'additional_hour_cents': 10000,
+            'minimum_duration_minutes': 60,
+            'currency': 'EUR',
+          },
+        },
+      );
+      expect(
+        validate(offer).errors,
+        isNot(contains(LimousineOfferError.hourlyIncomplete)),
+      );
+      expect(
+        validate(offer).errors,
+        isNot(contains(LimousineOfferError.hourlyMissingMinimumDuration)),
+      );
+      expect(
+        limousineValidateSimpleOffer(
+          offer,
+          mode: LimousineSimpleOfferMode.hourly,
+          vehicles: vehicles,
+          knownClassIds: _classIds,
+        ).isValid,
+        isTrue,
+      );
+    });
+
+    test('locale decimal strings normalize to the same hourly cents', () {
+      final offer = _classOffer(
+        overrides: {
+          'price_presentation': LimousinePricePresentation.fromPrice,
+          'display_amount_cents': '250,00',
+          'hourly': {
+            'enabled': true,
+            'first_hour_cents': '250.00',
+            'additional_hour_cents': '100,00',
+            'minimum_duration_minutes': '60,0',
+            'currency': 'EUR',
+          },
+        },
+      );
+      expect(limousineCentsOf('250.00'), 25000);
+      expect(limousineCentsOf('100,00'), 10000);
+      expect(limousineMinutesOf('60,0'), 60);
+      expect(limousineHourlyHireValidation(offer['hourly']).isValid, isTrue);
+    });
+
     test('missing hourly rates fails closed', () {
       final offer = _classOffer(
         overrides: {

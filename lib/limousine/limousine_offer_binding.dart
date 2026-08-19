@@ -177,7 +177,9 @@ LimousineOfferDisplayKind limousineOfferDisplayKindOf(
       : const <String, dynamic>{};
   final hourlyOn = _boolOf(hourly['enabled']);
   final packageAmount = limousineCentsOf(hourly['package_amount_cents']);
-  final packageDuration = limousineCentsOf(hourly['package_duration_minutes']);
+  final packageDuration = limousineMinutesOf(
+    hourly['package_duration_minutes'],
+  );
   if (hourlyOn &&
       ((packageAmount != null && packageAmount > 0) ||
           (packageDuration != null && packageDuration > 0))) {
@@ -379,9 +381,9 @@ String limousineFormatPublishedOfferPrice(
       : const <String, dynamic>{};
   final currency = offer.currency.trim().isEmpty ? 'EUR' : offer.currency;
   final packageAmount = limousineCentsOf(hourly['package_amount_cents']);
-  final packageMinutes = limousineCentsOf(hourly['package_duration_minutes']);
+  final packageMinutes = limousineMinutesOf(hourly['package_duration_minutes']);
   final firstHour = limousineCentsOf(hourly['first_hour_cents']);
-  final minMinutes = limousineCentsOf(hourly['minimum_duration_minutes']);
+  final minMinutes = limousineMinutesOf(hourly['minimum_duration_minutes']);
   switch (kind) {
     case LimousineOfferDisplayKind.quote:
       return kLimousineShowroomPriceOnRequest.of(language);

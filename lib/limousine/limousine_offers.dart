@@ -87,10 +87,7 @@ String limousineOfferToken(Object? raw) => (raw ?? '')
     .toLowerCase()
     .replaceAll(RegExp(r'[\s-]+'), '_');
 
-List<String> limousineNormalizeBoundVehicleIds(
-  Object? raw, {
-  Object? single,
-}) {
+List<String> limousineNormalizeBoundVehicleIds(Object? raw, {Object? single}) {
   final out = <String>[];
   final seen = <String>{};
   void add(Object? value) {
@@ -118,16 +115,303 @@ bool _boolOf(Object? raw, {bool fallback = false}) {
 
 /// Integer cents. Returns null when absent/invalid; negatives are preserved so
 /// validation can reject them explicitly rather than silently clamping.
+///
+/// Stored whole numbers stay cents. Decimal / locale text (`250.00`, `250,00`)
+/// is authored major-unit input and is converted to cents. Duration fields must
+/// use [limousineMinutesOf] — never this helper.
 int? limousineCentsOf(Object? raw) {
   if (raw == null) return null;
   if (raw is int) return raw;
   if (raw is num) return raw.truncate();
-  final text = raw.toString().trim();
-  if (text.isEmpty) return null;
-  return int.tryParse(text);
+  final original = raw.toString().trim();
+  if (original.isEmpty) return null;
+  final asStoredInt = int.tryParse(original);
+  if (asStoredInt != null) return asStoredInt;
+  return limousineCentsFromMajorUnitText(original);
 }
 
-int? _intOf(Object? raw) => limousineCentsOf(raw);
+/// Editor / locale money text (`250`, `250.00`, `250,00`) → integer cents.
+int? limousineCentsFromMajorUnitText(String raw) {
+  final text = raw.trim().replaceAll(',', '.');
+  if (text.isEmpty) return null;
+  final value = double.tryParse(text);
+  if (value == null) return null;
+  return (value * 100).round();
+}
+
+String limousineMajorUnitTextFromCents(int? cents) =>
+    cents == null ? '' : (cents / 100).toStringAsFixed(2);
+
+/// Whole minutes. Accepts ints, `60.0`, and locale text (`60,0`) without
+/// converting major units to cents.
+int? limousineMinutesOf(Object? raw) {
+  if (raw == null) return null;
+  if (raw is int) return raw;
+  if (raw is num) return raw.truncate();
+  final text = raw.toString().trim().replaceAll(',', '.');
+  if (text.isEmpty) return null;
+  final asInt = int.tryParse(text);
+  if (asInt != null) return asInt;
+  final asDouble = double.tryParse(text);
+  if (asDouble == null) return null;
+  return asDouble.round();
+}
+
+int? _intOf(Object? raw) => limousineMinutesOf(raw);
+
+bool limousineOfferFlag(Object? raw, {bool fallback = false}) =>
+    _boolOf(raw, fallback: fallback);
+
+enum LimousineSimpleOfferMode { quote, fromPrice, fixed, hourly, package }
+
+class LimousineHourlyHireValidation {
+  const LimousineHourlyHireValidation({
+    required this.firstHourCents,
+    required this.additionalHourCents,
+    required this.minimumDurationMinutes,
+    required this.errors,
+    required this.fieldErrors,
+  });
+
+  final int? firstHourCents;
+  final int? additionalHourCents;
+  final int? minimumDurationMinutes;
+  final List<String> errors;
+  final Map<String, String> fieldErrors;
+
+  bool get isValid => errors.isEmpty;
+}
+
+class LimousinePackageHireValidation {
+  const LimousinePackageHireValidation({
+    required this.packageAmountCents,
+    required this.packageDurationMinutes,
+    required this.errors,
+    required this.fieldErrors,
+  });
+
+  final int? packageAmountCents;
+  final int? packageDurationMinutes;
+  final List<String> errors;
+  final Map<String, String> fieldErrors;
+
+  bool get isValid => errors.isEmpty;
+}
+
+class LimousineSimpleOfferValidation {
+  const LimousineSimpleOfferValidation({
+    required this.mode,
+    required this.configured,
+    required this.errors,
+    this.fieldErrors = const <String, String>{},
+  });
+
+  final LimousineSimpleOfferMode mode;
+  final bool configured;
+  final List<String> errors;
+  final Map<String, String> fieldErrors;
+
+  bool get isValid => configured && errors.isEmpty;
+}
+
+/// Canonical hourly-hire field check. Package leftovers are ignored here.
+LimousineHourlyHireValidation limousineHourlyHireValidation(Object? hourlyRaw) {
+  final hourly = _mapOf(hourlyRaw);
+  final first = limousineCentsOf(hourly['first_hour_cents']);
+  final additional = limousineCentsOf(hourly['additional_hour_cents']);
+  final minimum = limousineMinutesOf(hourly['minimum_duration_minutes']);
+  final errors = <String>{};
+  final fields = <String, String>{};
+  if (first == null || first <= 0) {
+    fields['first_hour'] = LimousineOfferError.hourlyIncomplete;
+    errors.add(LimousineOfferError.hourlyIncomplete);
+  }
+  if (additional == null || additional <= 0) {
+    fields['additional_hour'] = LimousineOfferError.hourlyIncomplete;
+    errors.add(LimousineOfferError.hourlyIncomplete);
+  }
+  if (minimum == null || minimum <= 0) {
+    fields['min_duration'] = LimousineOfferError.hourlyMissingMinimumDuration;
+    errors.add(LimousineOfferError.hourlyMissingMinimumDuration);
+  }
+  return LimousineHourlyHireValidation(
+    firstHourCents: first,
+    additionalHourCents: additional,
+    minimumDurationMinutes: minimum,
+    errors: errors.toList(growable: false),
+    fieldErrors: fields,
+  );
+}
+
+/// Package fields are required only when [required] is true.
+LimousinePackageHireValidation limousinePackageHireValidation(
+  Object? hourlyRaw, {
+  required bool required,
+}) {
+  final hourly = _mapOf(hourlyRaw);
+  final amount = limousineCentsOf(hourly['package_amount_cents']);
+  final duration = limousineMinutesOf(hourly['package_duration_minutes']);
+  final hasAmount = amount != null && amount > 0;
+  final hasDuration = duration != null && duration > 0;
+  if (!required || (hasAmount && hasDuration)) {
+    return LimousinePackageHireValidation(
+      packageAmountCents: amount,
+      packageDurationMinutes: duration,
+      errors: const <String>[],
+      fieldErrors: const <String, String>{},
+    );
+  }
+  return LimousinePackageHireValidation(
+    packageAmountCents: amount,
+    packageDurationMinutes: duration,
+    errors: const <String>[LimousineOfferError.packageIncomplete],
+    fieldErrors: <String, String>{
+      if (!hasDuration)
+        'package_duration': LimousineOfferError.packageIncomplete,
+      if (!hasAmount) 'package_amount': LimousineOfferError.packageIncomplete,
+    },
+  );
+}
+
+LimousineSimpleOfferMode? limousineSimpleOfferModeOf(
+  Map<String, dynamic> offer,
+) {
+  final hourlyOn = _boolOf(_mapOf(offer['hourly'])['enabled']);
+  final presentation = limousineOfferToken(offer['price_presentation']);
+  if (hourlyOn) {
+    return presentation == LimousinePricePresentation.exactFixed
+        ? LimousineSimpleOfferMode.package
+        : LimousineSimpleOfferMode.hourly;
+  }
+  if (presentation == LimousinePricePresentation.quoteRequired) {
+    return LimousineSimpleOfferMode.quote;
+  }
+  if (presentation == LimousinePricePresentation.fromPrice) {
+    return LimousineSimpleOfferMode.fromPrice;
+  }
+  if (presentation == LimousinePricePresentation.exactFixed) {
+    return LimousineSimpleOfferMode.fixed;
+  }
+  return null;
+}
+
+const Set<String> _kSimpleOfferSharedErrors = <String>{
+  LimousineOfferError.missingOfferId,
+  LimousineOfferError.unknownTarget,
+  LimousineOfferError.unknownVehicle,
+  LimousineOfferError.inactiveVehicle,
+  LimousineOfferError.vehicleNotLimousine,
+  LimousineOfferError.unknownServiceClass,
+  LimousineOfferError.missingCurrency,
+  LimousineOfferError.currencyConflict,
+  LimousineOfferError.negativeAmount,
+};
+
+Set<String> _simpleOfferPricingErrors(LimousineSimpleOfferMode mode) {
+  switch (mode) {
+    case LimousineSimpleOfferMode.quote:
+      return const <String>{};
+    case LimousineSimpleOfferMode.fromPrice:
+      return const <String>{LimousineOfferError.missingDisplayAmount};
+    case LimousineSimpleOfferMode.fixed:
+      return const <String>{LimousineOfferError.incompleteFixedRule};
+    case LimousineSimpleOfferMode.hourly:
+      return const <String>{
+        LimousineOfferError.hourlyIncomplete,
+        LimousineOfferError.hourlyMissingMinimumDuration,
+      };
+    case LimousineSimpleOfferMode.package:
+      return const <String>{LimousineOfferError.packageIncomplete};
+  }
+}
+
+Map<String, String> _simpleOfferFieldErrors({
+  required LimousineSimpleOfferMode mode,
+  required Map<String, dynamic> offer,
+}) {
+  final hourly = _mapOf(offer['hourly']);
+  switch (mode) {
+    case LimousineSimpleOfferMode.hourly:
+      return limousineHourlyHireValidation(hourly).fieldErrors;
+    case LimousineSimpleOfferMode.package:
+      return limousinePackageHireValidation(hourly, required: true).fieldErrors;
+    case LimousineSimpleOfferMode.fromPrice:
+      final display = limousineCentsOf(offer['display_amount_cents']);
+      if (display == null || display <= 0) {
+        return const <String, String>{
+          'amount': LimousineOfferError.missingDisplayAmount,
+        };
+      }
+      return const <String, String>{};
+    case LimousineSimpleOfferMode.fixed:
+      final rules = _listOf(offer['fixed_rules']);
+      final amount = limousineCentsOf(
+        rules.isEmpty
+            ? offer['display_amount_cents']
+            : rules.first['amount_cents'],
+      );
+      if (amount == null || amount <= 0) {
+        return const <String, String>{
+          'amount': LimousineOfferError.incompleteFixedRule,
+        };
+      }
+      return const <String, String>{};
+    case LimousineSimpleOfferMode.quote:
+      return const <String, String>{};
+  }
+}
+
+/// One validation outcome per simple offer type. Shared by the card, editor,
+/// publication check and public limousine projection.
+LimousineSimpleOfferValidation limousineValidateSimpleOffer(
+  Map<String, dynamic>? offer, {
+  required LimousineSimpleOfferMode mode,
+  List<VehicleProfile> vehicles = const <VehicleProfile>[],
+  List<String> knownClassIds = const <String>[],
+}) {
+  if (offer == null) {
+    return LimousineSimpleOfferValidation(
+      mode: mode,
+      configured: false,
+      errors: const <String>[],
+      fieldErrors: _simpleOfferFieldErrors(
+        mode: mode,
+        offer: <String, dynamic>{
+          'hourly': <String, dynamic>{'enabled': true},
+        },
+      ),
+    );
+  }
+  final contract = validateLimousineOffer(
+    offer,
+    vehicles: vehicles,
+    knownClassIds: knownClassIds,
+    readiness: true,
+  );
+  final keep = <String>{
+    ..._kSimpleOfferSharedErrors,
+    ..._simpleOfferPricingErrors(mode),
+  };
+  var errors = contract.errors.where(keep.contains).toList(growable: false);
+  if (mode == LimousineSimpleOfferMode.hourly) {
+    errors = limousineHourlyHireValidation(offer['hourly']).errors
+        .followedBy(contract.errors.where(_kSimpleOfferSharedErrors.contains))
+        .toSet()
+        .toList(growable: false);
+  } else if (mode == LimousineSimpleOfferMode.package) {
+    errors = limousinePackageHireValidation(offer['hourly'], required: true)
+        .errors
+        .followedBy(contract.errors.where(_kSimpleOfferSharedErrors.contains))
+        .toSet()
+        .toList(growable: false);
+  }
+  return LimousineSimpleOfferValidation(
+    mode: mode,
+    configured: true,
+    errors: errors,
+    fieldErrors: _simpleOfferFieldErrors(mode: mode, offer: offer),
+  );
+}
 
 String limousineCurrencyOf(Object? raw) {
   final c = (raw ?? '').toString().trim().toUpperCase();
@@ -252,7 +536,8 @@ LimousineOfferValidation validateLimousineOffer(
       single: offer['vehicle_id'] ?? offer['vehicleId'],
     ),
   ];
-  final appliesToAll = offer.containsKey('applies_to_all_selected_vehicles') ||
+  final appliesToAll =
+      offer.containsKey('applies_to_all_selected_vehicles') ||
           offer.containsKey('appliesToAllSelectedVehicles')
       ? _boolOf(
           offer['applies_to_all_selected_vehicles'] ??
@@ -264,21 +549,24 @@ LimousineOfferValidation validateLimousineOffer(
     if (classId.isNotEmpty && !classIds.contains(classId)) {
       errors.add(LimousineOfferError.unknownServiceClass);
     }
-  } else if (targetType == LimousineOfferTarget.vehicle || boundIds.isNotEmpty) {
+  } else if (targetType == LimousineOfferTarget.vehicle ||
+      boundIds.isNotEmpty) {
     final records = <VehicleProfile>[
       for (final id in boundIds)
         for (final vehicle in vehicles)
           if (vehicle.id == id) vehicle,
     ];
-    final validRecords = records.where((vehicle) {
-      if (!vehicle.isActive) return false;
-      if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') {
-        return false;
-      }
-      final vehicleClass = limousineOfferToken(vehicle.serviceClassId);
-      return vehicleClass.isNotEmpty &&
-          !isForbiddenClassInferenceToken(vehicleClass);
-    }).toList(growable: false);
+    final validRecords = records
+        .where((vehicle) {
+          if (!vehicle.isActive) return false;
+          if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') {
+            return false;
+          }
+          final vehicleClass = limousineOfferToken(vehicle.serviceClassId);
+          return vehicleClass.isNotEmpty &&
+              !isForbiddenClassInferenceToken(vehicleClass);
+        })
+        .toList(growable: false);
     if (boundIds.isEmpty || records.isEmpty) {
       errors.add(LimousineOfferError.unknownVehicle);
     } else if (validRecords.isEmpty) {
@@ -374,19 +662,14 @@ LimousineOfferValidation validateLimousineOffer(
     errors.add(LimousineOfferError.duplicateRule);
   }
 
-  // Hourly hire.
+  // Hourly hire. Package leftovers stay optional unless a package amount or
+  // duration is actually being authored (half-filled package only).
   if (_boolOf(hourly['enabled'])) {
-    final first = limousineCentsOf(hourly['first_hour_cents']);
-    final additional = limousineCentsOf(hourly['additional_hour_cents']);
-    if (first == null || first <= 0 || additional == null || additional < 0) {
-      errors.add(LimousineOfferError.hourlyIncomplete);
-    }
-    final minimum = _intOf(hourly['minimum_duration_minutes']);
-    if (minimum == null || minimum <= 0) {
-      errors.add(LimousineOfferError.hourlyMissingMinimumDuration);
-    }
+    errors.addAll(limousineHourlyHireValidation(hourly).errors);
     final packageAmount = limousineCentsOf(hourly['package_amount_cents']);
-    final packageDuration = _intOf(hourly['package_duration_minutes']);
+    final packageDuration = limousineMinutesOf(
+      hourly['package_duration_minutes'],
+    );
     final hasAmount = packageAmount != null;
     final hasDuration = packageDuration != null && packageDuration > 0;
     if (hasAmount != hasDuration) {
@@ -572,6 +855,15 @@ bool _limousineOfferMayPublishForDisplay(
     knownClassIds: knownClassIds,
     readiness: readiness,
   );
+  final mode = limousineSimpleOfferModeOf(offer);
+  if (mode != null) {
+    return limousineValidateSimpleOffer(
+      offer,
+      mode: mode,
+      vehicles: vehicles,
+      knownClassIds: knownClassIds,
+    ).isValid;
+  }
   if (validation.valid) return true;
   const displayOnly = <String>{
     LimousineOfferError.incompleteFixedRule,
@@ -593,7 +885,9 @@ bool _limousineOfferMayPublishForDisplay(
   if (hourlyErrors.isEmpty) return true;
   final hourly = _mapOf(offer['hourly']);
   final packageAmount = limousineCentsOf(hourly['package_amount_cents']);
-  final packageDuration = _intOf(hourly['package_duration_minutes']);
+  final packageDuration = limousineMinutesOf(
+    hourly['package_duration_minutes'],
+  );
   return packageAmount != null &&
       packageAmount > 0 &&
       packageDuration != null &&
@@ -632,7 +926,8 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
       offer['vehicle_ids'] ?? offer['vehicleIds'],
       single: offer['vehicle_id'] ?? offer['vehicleId'],
     );
-    final appliesToAll = offer.containsKey('applies_to_all_selected_vehicles') ||
+    final appliesToAll =
+        offer.containsKey('applies_to_all_selected_vehicles') ||
             offer.containsKey('appliesToAllSelectedVehicles')
         ? _boolOf(
             offer['applies_to_all_selected_vehicles'] ??

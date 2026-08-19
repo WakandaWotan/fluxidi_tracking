@@ -341,7 +341,23 @@ void main() {
           ),
         ),
       );
-      expect(find.text('Het gekozen voertuig bestaat niet.'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(
+            limousineBusinessSetupOfferCardKey(
+              LimousinePricePresentation.quoteRequired,
+            ),
+          ),
+          matching: find.byKey(
+            limousineBusinessSetupOfferValidityKey(
+              LimousinePricePresentation.quoteRequired,
+              valid: false,
+            ),
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Het gekozen voertuig bestaat niet.'), findsNothing);
       await tester.tap(
         find.descendant(
           of: find.byKey(

@@ -19,16 +19,9 @@ import 'limousine_p2d4c1a_ux.dart';
 
 const List<String> _kLangs = <String>['nl', 'en', 'fr', 'es'];
 
-int? _centsFromText(String raw) {
-  final text = raw.trim().replaceAll(',', '.');
-  if (text.isEmpty) return null;
-  final value = double.tryParse(text);
-  if (value == null) return null;
-  return (value * 100).round();
-}
+int? _centsFromText(String raw) => limousineCentsFromMajorUnitText(raw);
 
-String _textFromCents(int? cents) =>
-    cents == null ? '' : (cents / 100).toStringAsFixed(2);
+String _textFromCents(int? cents) => limousineMajorUnitTextFromCents(cents);
 
 int? _msFromDate(String raw) {
   final text = raw.trim();
@@ -356,10 +349,10 @@ class _LimousineOfferEditorDialogState
         'enabled': _hourlyEnabled,
         'first_hour_cents': _centsFromText(_firstHour.text),
         'additional_hour_cents': _centsFromText(_additionalHour.text),
-        'minimum_duration_minutes': int.tryParse(_minDuration.text.trim()),
-        'maximum_duration_minutes': int.tryParse(_maxDuration.text.trim()),
-        'included_hours': int.tryParse(_includedHours.text.trim()),
-        'package_duration_minutes': int.tryParse(_packageDuration.text.trim()),
+        'minimum_duration_minutes': limousineMinutesOf(_minDuration.text),
+        'maximum_duration_minutes': limousineMinutesOf(_maxDuration.text),
+        'included_hours': limousineMinutesOf(_includedHours.text),
+        'package_duration_minutes': limousineMinutesOf(_packageDuration.text),
         'package_amount_cents': _centsFromText(_packageAmount.text),
         'excess_hour_cents': _centsFromText(_excessHour.text),
         'currency': widget.currency,

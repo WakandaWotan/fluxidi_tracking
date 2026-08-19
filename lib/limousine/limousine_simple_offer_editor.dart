@@ -12,18 +12,11 @@ import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
-int? _centsFromText(String raw) {
-  final text = raw.trim().replaceAll(',', '.');
-  if (text.isEmpty) return null;
-  final value = double.tryParse(text);
-  if (value == null) return null;
-  return (value * 100).round();
-}
+int? _centsFromText(String raw) => limousineCentsFromMajorUnitText(raw);
 
-String _textFromCents(int? cents) =>
-    cents == null ? '' : (cents / 100).toStringAsFixed(2);
+String _textFromCents(int? cents) => limousineMajorUnitTextFromCents(cents);
 
-int? _intFromText(String raw) => int.tryParse(raw.trim());
+int? _intFromText(String raw) => limousineMinutesOf(raw);
 
 class LimousineSimpleOfferEditor extends StatefulWidget {
   const LimousineSimpleOfferEditor({
@@ -77,6 +70,7 @@ class _LimousineSimpleOfferEditorState
   late final TextEditingController _packageAmount;
   late final TextEditingController _includedHours;
   String? _fieldError;
+  Map<String, String> _fieldErrors = const <String, String>{};
 
   String _t(LocalizedText text) => text.of(widget.language);
 
@@ -145,11 +139,17 @@ class _LimousineSimpleOfferEditorState
     _extraHour = TextEditingController(
       text: _textFromCents(limousineCentsOf(hourly['additional_hour_cents'])),
     );
+    final minimumMinutes = limousineMinutesOf(
+      hourly['minimum_duration_minutes'],
+    );
     _minDuration = TextEditingController(
-      text: '${hourly['minimum_duration_minutes'] ?? ''}',
+      text: minimumMinutes == null ? '' : '$minimumMinutes',
+    );
+    final packageMinutes = limousineMinutesOf(
+      hourly['package_duration_minutes'],
     );
     _packageDuration = TextEditingController(
-      text: '${hourly['package_duration_minutes'] ?? ''}',
+      text: packageMinutes == null ? '' : '$packageMinutes',
     );
     _packageAmount = TextEditingController(
       text: _textFromCents(limousineCentsOf(hourly['package_amount_cents'])),
@@ -157,6 +157,12 @@ class _LimousineSimpleOfferEditorState
     _includedHours = TextEditingController(
       text: '${hourly['included_hours'] ?? ''}',
     );
+    _fieldErrors = limousineBusinessSetupOfferValidation(
+      offer,
+      mode: widget.mode,
+      vehicles: widget.vehicles,
+      knownClassIds: widget.knownClassIds,
+    ).fieldErrors;
   }
 
   @override
@@ -191,8 +197,8 @@ class _LimousineSimpleOfferEditorState
     }
   }
 
-  void _submit() {
-    final draft = LimousineSimpleOfferDraft(
+  LimousineSimpleOfferDraft _draftFromControllers() {
+    return LimousineSimpleOfferDraft(
       mode: widget.mode,
       enabled: _enabled,
       published: _published,
@@ -218,10 +224,28 @@ class _LimousineSimpleOfferEditorState
       featured: _featured,
       sortOrder: _intFromText(_sortOrder.text) ?? 0,
     );
+  }
+
+  String? _errorFor(String field) {
+    final code = _fieldErrors[field];
+    if (code == null) return null;
+    return limousineOfferErrorLabel(code, widget.language);
+  }
+
+  void _submit() {
+    final draft = _draftFromControllers();
     final next = limousineApplySimpleOfferEdits(widget.initialOffer, draft);
+    final validation = limousineBusinessSetupOfferValidation(
+      next,
+      mode: widget.mode,
+      vehicles: widget.vehicles,
+      knownClassIds: widget.knownClassIds,
+    );
+    _fieldErrors = validation.fieldErrors;
     if (_enabled) {
       final errors = limousineBusinessSetupOfferErrors(
         next,
+        mode: widget.mode,
         vehicles: widget.vehicles,
         knownClassIds: widget.knownClassIds,
       );
@@ -332,7 +356,7 @@ class _LimousineSimpleOfferEditorState
                             ),
                             decoration: InputDecoration(
                               labelText: _t(kLimousineBusinessSetupAmount),
-                              errorText: _fieldError,
+                              errorText: _errorFor('amount') ?? _fieldError,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -368,58 +392,69 @@ class _LimousineSimpleOfferEditorState
                             ),
                             decoration: InputDecoration(
                               labelText: _t(kLimousineBusinessSetupFirstHour),
+                              errorText: _errorFor('first_hour'),
                             ),
                           ),
                           const SizedBox(height: 8),
                           TextField(
+                            key: kLimousineSimpleOfferExtraHourKey,
                             controller: _extraHour,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
                             decoration: InputDecoration(
                               labelText: _t(kLimousineBusinessSetupExtraHour),
+                              errorText: _errorFor('additional_hour'),
                             ),
                           ),
                           const SizedBox(height: 8),
                           TextField(
+                            key: kLimousineSimpleOfferMinDurationKey,
                             controller: _minDuration,
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               labelText: _t(kLimousineBusinessSetupMinDuration),
+                              errorText: _errorFor('min_duration'),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _packageDuration,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              labelText: _t(
-                                kLimousineBusinessSetupPackageDuration,
+                          if (widget.mode ==
+                              LimousineSimpleOfferMode.package) ...[
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _packageDuration,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: _t(
+                                  kLimousineBusinessSetupPackageDuration,
+                                ),
+                                errorText: _errorFor('package_duration'),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _packageAmount,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: _t(
-                                kLimousineBusinessSetupPackageAmount,
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _packageAmount,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: InputDecoration(
+                                labelText: _t(
+                                  kLimousineBusinessSetupPackageAmount,
+                                ),
+                                errorText: _errorFor('package_amount'),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _includedHours,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              labelText: _t(
-                                kLimousineBusinessSetupIncludedHours,
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _includedHours,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: _t(
+                                  kLimousineBusinessSetupIncludedHours,
+                                ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                         const SizedBox(height: 12),
                         Text(

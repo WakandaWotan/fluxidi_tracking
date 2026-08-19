@@ -74,7 +74,6 @@ class _LimousineBusinessSetupPageState
   };
   final _hourlyKey = GlobalKey();
   final _advancedKey = GlobalKey();
-  final _fieldErrorKeys = <String, GlobalKey>{};
 
   late List<VehicleProfile> _vehicles;
   late List<VehicleProfile> _vehiclesSnapshot;
@@ -172,6 +171,9 @@ class _LimousineBusinessSetupPageState
       isDark: base.isDark,
     );
   }
+
+  Color get _successColor =>
+      paletteForBusinessTheme(businessThemeNotifier.value).success;
 
   LimousineBusinessSetupReadiness get _readiness {
     return limousineBusinessSetupReadiness(
@@ -618,40 +620,23 @@ class _LimousineBusinessSetupPageState
   }
 
   int? _indexForMode(LimousineSimpleOfferMode mode) {
+    int? first;
+    int? valid;
     for (var i = 0; i < _offers.length; i++) {
-      final offer = _offers[i];
-      final hourly = _mapEnabled(offer['hourly']);
-      final presentation = limousineOfferToken(offer['price_presentation']);
-      switch (mode) {
-        case LimousineSimpleOfferMode.hourly:
-          if (hourly &&
-              limousineOfferDisplayKindOf(offer) !=
-                  LimousineOfferDisplayKind.package) {
-            return i;
-          }
-        case LimousineSimpleOfferMode.package:
-          if (hourly &&
-              limousineOfferDisplayKindOf(offer) ==
-                  LimousineOfferDisplayKind.package) {
-            return i;
-          }
-        case LimousineSimpleOfferMode.quote:
-          if (!hourly &&
-              presentation == LimousinePricePresentation.quoteRequired) {
-            return i;
-          }
-        case LimousineSimpleOfferMode.fromPrice:
-          if (!hourly && presentation == LimousinePricePresentation.fromPrice) {
-            return i;
-          }
-        case LimousineSimpleOfferMode.fixed:
-          if (!hourly &&
-              presentation == LimousinePricePresentation.exactFixed) {
-            return i;
-          }
+      if (limousineSimpleOfferModeOf(_offers[i]) != mode) continue;
+      first ??= i;
+      final validation = limousineBusinessSetupOfferValidation(
+        _offers[i],
+        mode: mode,
+        vehicles: _vehicles,
+        knownClassIds: _knownClasses,
+      );
+      if (validation.isValid) {
+        valid = i;
+        break;
       }
     }
-    return null;
+    return valid ?? first;
   }
 
   Future<void> _editSimpleOffer(LimousineSimpleOfferMode mode) async {
@@ -691,8 +676,6 @@ class _LimousineBusinessSetupPageState
     });
     _markDirty();
   }
-
-  bool _mapEnabled(Object? raw) => raw is Map && raw['enabled'] == true;
 
   void _setVehicleLimousine(VehicleProfile vehicle, bool enabled) {
     final classId = enabled
@@ -823,7 +806,9 @@ class _LimousineBusinessSetupPageState
       if (errors.isEmpty) continue;
       final section = limousineBusinessSetupFieldSection(errors.first);
       if (section == 'hourly' || section == 'advanced') {
-        setState(() => _advancedOpen = true);
+        if (section == 'advanced') {
+          setState(() => _advancedOpen = true);
+        }
         _scrollToKey(section == 'hourly' ? _hourlyKey : _advancedKey);
         return;
       }
@@ -1376,14 +1361,17 @@ class _LimousineBusinessSetupPageState
                 icon: Icons.price_check_outlined,
                 width: cardWidth,
               ),
-              _simpleCard(
-                tokens,
-                mode: LimousineSimpleOfferMode.hourly,
-                presentation: LimousineJourneyTypeId.hourlyPackage,
-                title: _t(kLimousineBusinessSetupHourlyCard),
-                hint: _t(kLimousineBusinessSetupHourlyCard),
-                icon: Icons.schedule_outlined,
-                width: cardWidth,
+              KeyedSubtree(
+                key: _hourlyKey,
+                child: _simpleCard(
+                  tokens,
+                  mode: LimousineSimpleOfferMode.hourly,
+                  presentation: LimousineJourneyTypeId.hourlyPackage,
+                  title: _t(kLimousineBusinessSetupHourlyCard),
+                  hint: _t(kLimousineBusinessSetupHourlyCard),
+                  icon: Icons.schedule_outlined,
+                  width: cardWidth,
+                ),
               ),
               _simpleCard(
                 tokens,
@@ -1408,23 +1396,6 @@ class _LimousineBusinessSetupPageState
             return Wrap(spacing: 10, runSpacing: 10, children: cards);
           },
         ),
-        if (_hourlyErrors().isNotEmpty)
-          Padding(
-            key: _hourlyKey,
-            padding: const EdgeInsets.only(top: 8),
-            child: InkWell(
-              onTap: () {
-                setState(() => _advancedOpen = true);
-                _scrollToKey(_hourlyKey);
-              },
-              child: Text(
-                _hourlyErrors()
-                    .map((code) => limousineOfferErrorLabel(code, _lang))
-                    .join('\n'),
-                style: TextStyle(color: tokens.danger, fontSize: 12.5),
-              ),
-            ),
-          ),
         const SizedBox(height: 8),
         ExpansionTile(
           key: kLimousineBusinessSetupAdvancedKey,
@@ -1494,25 +1465,6 @@ class _LimousineBusinessSetupPageState
     return '${(cents / 100).toStringAsFixed(0)} $_currency';
   }
 
-  List<String> _hourlyErrors() {
-    final errors = <String>{};
-    for (final offer in _offers) {
-      if (!_mapEnabled(offer['hourly'])) continue;
-      errors.addAll(
-        limousineBusinessSetupOfferErrors(
-          offer,
-          vehicles: _vehicles,
-          knownClassIds: _knownClasses,
-        ).where(
-          (code) =>
-              code == LimousineOfferError.hourlyIncomplete ||
-              code == LimousineOfferError.hourlyMissingMinimumDuration,
-        ),
-      );
-    }
-    return errors.toList(growable: false);
-  }
-
   Widget _simpleCard(
     LimousineUxTokens tokens, {
     required LimousineSimpleOfferMode mode,
@@ -1522,14 +1474,14 @@ class _LimousineBusinessSetupPageState
     required IconData icon,
     double width = 248,
   }) {
-    final exists = _indexForMode(mode) != null;
-    final errors = exists
-        ? limousineBusinessSetupOfferErrors(
-            _offers[_indexForMode(mode)!],
-            vehicles: _vehicles,
-            knownClassIds: _knownClasses,
-          )
-        : const <String>[];
+    final index = _indexForMode(mode);
+    final validation = limousineBusinessSetupOfferValidation(
+      index == null ? null : _offers[index],
+      mode: mode,
+      vehicles: _vehicles,
+      knownClassIds: _knownClasses,
+    );
+    final valid = validation.isValid;
     return SizedBox(
       width: width,
       child: Material(
@@ -1539,40 +1491,58 @@ class _LimousineBusinessSetupPageState
         child: InkWell(
           onTap: () => _editSimpleOffer(mode),
           borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, color: tokens.gold),
-                const SizedBox(height: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: tokens.onSurface,
-                    fontWeight: FontWeight.w800,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(icon, color: tokens.gold),
+                    const SizedBox(height: 8),
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: tokens.onSurface,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      hint,
+                      style: TextStyle(color: tokens.muted, fontSize: 12),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _editSimpleOffer(mode),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: Text(_t(kLimousineBusinessSetupEdit)),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Semantics(
+                  label: _t(
+                    valid
+                        ? kLimousineBusinessSetupOfferValid
+                        : kLimousineBusinessSetupOfferIncomplete,
                   ),
-                ),
-                Text(hint, style: TextStyle(color: tokens.muted, fontSize: 12)),
-                TextButton.icon(
-                  onPressed: () => _editSimpleOffer(mode),
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  label: Text(_t(kLimousineBusinessSetupEdit)),
-                ),
-                if (errors.isNotEmpty)
-                  Padding(
-                    key: _fieldErrorKeys.putIfAbsent(
+                  child: Container(
+                    key: limousineBusinessSetupOfferValidityKey(
                       presentation,
-                      () => GlobalKey(),
+                      valid: valid,
                     ),
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      limousineOfferErrorLabel(errors.first, _lang),
-                      style: TextStyle(color: tokens.danger, fontSize: 12),
+                    width: kLimousineBusinessSetupOfferValidityDotSize,
+                    height: kLimousineBusinessSetupOfferValidityDotSize,
+                    decoration: BoxDecoration(
+                      color: valid ? _successColor : tokens.danger,
+                      shape: BoxShape.circle,
                     ),
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
