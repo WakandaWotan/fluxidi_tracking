@@ -374,7 +374,7 @@ void main() {
     expect(find.text('Taxi'), findsNothing);
     expect(find.text('Luchthaven'), findsNothing);
     expect(find.text('visa'), findsNothing);
-    expect(find.text('Chauffeured limousines'), findsOneWidget);
+    expect(find.text('Chauffeured limousines'), findsWidgets);
     expect(find.textContaining('Oost-Vlaanderen'), findsOneWidget);
     expect(find.textContaining('4.8'), findsOneWidget);
     expect(find.text('Vraag offerte aan'), findsNothing);

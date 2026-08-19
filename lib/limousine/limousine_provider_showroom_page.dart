@@ -5,6 +5,7 @@ import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
 import '../nearby/public_partner_identity.dart';
+import '../nearby/public_partner_market.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -28,10 +29,12 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     this.logoImage,
     this.onOpenVehicle,
     this.onOpenCompanyProfile,
+    this.market = PublicPartnerMarket.limousine,
   });
 
   final Map<String, dynamic> profile;
   final String partnerId;
+  final PublicPartnerMarket market;
   final String companyNameFallback;
   final double? distanceKm;
   final LimousineDiscoveryCard? discoveryCard;
@@ -392,6 +395,10 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: data.partnerId,
+          market: market,
+        ),
         builder: (_) => LimousineVehicleDetailPage(
           vehicle: vehicle,
           companyName: data.companyName,
@@ -399,6 +406,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           verifiedPartner: data.verifiedPartner,
           logoUrl: data.logoUrl,
           logoImage: logoImage,
+          market: market,
         ),
       ),
     );
@@ -412,12 +420,17 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     }
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: partnerId,
+          market: market,
+        ),
         builder: (_) => LimousinePublicProfilePage(
           partnerId: partnerId,
           companyNameFallback: companyNameFallback,
           profile: profile,
           distanceKm: distanceKm,
           discoveryCard: discoveryCard,
+          market: market,
         ),
       ),
     );

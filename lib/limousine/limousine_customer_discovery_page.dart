@@ -12,6 +12,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import '../nearby/public_partner_market.dart';
 import 'limousine_address_field.dart';
 import 'limousine_address_lookup.dart';
 import 'limousine_brand_logo.dart';
@@ -200,6 +201,10 @@ class _LimousineCustomerDiscoveryPageState
   ) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: card.publicPartnerId,
+          market: PublicPartnerMarket.limousine,
+        ),
         builder: (_) => LimousineProviderShowroomPage(
           partnerId: card.publicPartnerId,
           companyNameFallback: card.companyName,
@@ -207,6 +212,7 @@ class _LimousineCustomerDiscoveryPageState
           distanceKm: card.distanceKm,
           discoveryCard: card,
           logoImage: card.logoImage,
+          market: PublicPartnerMarket.limousine,
         ),
       ),
     );
@@ -219,12 +225,17 @@ class _LimousineCustomerDiscoveryPageState
   ) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: card.publicPartnerId,
+          market: PublicPartnerMarket.limousine,
+        ),
         builder: (_) => LimousinePublicProfilePage(
           partnerId: card.publicPartnerId,
           companyNameFallback: card.companyName,
           profile: profile,
           distanceKm: card.distanceKm,
           discoveryCard: card,
+          market: PublicPartnerMarket.limousine,
         ),
       ),
     );

@@ -13,12 +13,10 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
-import 'limousine/limousine_customer_entry.dart';
-import 'limousine/limousine_marketplace_labels.dart';
-import 'limousine/limousine_public_showroom_section.dart';
 import 'limousine/limousine_service_capability.dart';
 import 'nearby/public_partner_bookability.dart';
 import 'nearby/public_partner_identity.dart';
+import 'nearby/public_partner_market.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
 import 'payment/payment_method_logo.dart';
@@ -29,6 +27,7 @@ class PartnerPublicProfilePage extends StatefulWidget {
   final String companyNameFallback;
   final WidgetBuilder customerHomeBuilder;
   final bool? limousineShowroomEnabled;
+  final PublicPartnerMarket market;
   final Map<String, dynamic>? profileOverride;
   final http.Client? httpClient;
 
@@ -38,6 +37,7 @@ class PartnerPublicProfilePage extends StatefulWidget {
     required this.companyNameFallback,
     required this.customerHomeBuilder,
     this.limousineShowroomEnabled,
+    this.market = PublicPartnerMarket.taxi,
     this.profileOverride,
     this.httpClient,
   });
@@ -85,10 +85,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     if (lang == AppLanguage.es) return es;
     return nl;
   }
-
-  bool get _limousineShowroomEnabled =>
-      widget.limousineShowroomEnabled ??
-      LimousineCustomerEntryContract.isVisible;
 
   @override
   void initState() {
@@ -831,8 +827,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
 
   String _badgeLabel(String id) => _serviceLabel(id);
 
-  Widget _section(String title, Widget child) {
+  Widget _section(String title, Widget child, {Key? key}) {
     return Container(
+      key: key,
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(11),
@@ -903,6 +900,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   }
 
   String _serviceLabel(String id) {
+    if (isLimousineServiceToken(id)) return '';
     switch (id) {
       case 'taxi_vvb':
         return _t(
@@ -953,8 +951,6 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           fr: 'Paiement en ligne',
           es: 'Pagos en línea',
         );
-      case kLimousinePublicServiceId:
-        return limousinePublicServiceLabelFor(appConfig.currentLanguage);
       case 'comfort':
         return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
       case 'verified_professional':
@@ -1432,18 +1428,21 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     ]);
     final media = _profileMap(p['media']);
     final logoUrl = _profileHttpsUrl(media, const ['logo_url', 'logoUrl']);
-    final heroPhotoUrl = _profileHttpsUrl(media, const [
-      'hero_photo_url',
-      'heroPhotoUrl',
-    ]);
-    final gallery = _profileTextListAny(media, const ['gallery']);
-    final services = _profileTextListAny(p, const ['services']);
     final airportServiceEnabled = _airportServiceEnabledFromProfile(p);
-    final visibleServices = airportServiceEnabled
-        ? services
-        : services
-              .where((serviceId) => !_isAirportServiceToken(serviceId))
-              .toList(growable: false);
+    final catalog = selectPublicPartnerMarketCatalog(
+      profile: p,
+      market: widget.market == PublicPartnerMarket.limousine
+          ? PublicPartnerMarket.taxi
+          : widget.market,
+      airportServiceEnabled: airportServiceEnabled,
+    );
+    final showLimousineOffers =
+        catalog.showLimousineOffers &&
+        widget.market == PublicPartnerMarket.limousine &&
+        (widget.limousineShowroomEnabled ?? false);
+    final heroPhotoUrl = catalog.heroPhotoUrl;
+    final gallery = catalog.gallery;
+    final visibleServices = publicPartnerSafeTaxiServices(catalog.services);
     final paymentMethods = _resolvedPublicPaymentMethods(
       _profileTextListAny(p, const ['payment_methods', 'paymentMethods']),
       _partnerCountryCodeForPaymentResolver(p),
@@ -1478,7 +1477,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     final instantQuote =
         bookingCapabilities['instant_quote'] == true ||
         bookingCapabilities['instantQuote'] == true;
-    final vehicles = _profileMapList(p['vehicles']);
+    final vehicles = publicPartnerSafeTaxiVehicles(
+      catalog.vehicles,
+      limousineVehicleIds: catalog.limousineVehicleIds,
+    );
     final drivers = _profileMapList(p['drivers'])
         .where((d) {
           final displayName = _profileTextAny(d, const [
@@ -1520,6 +1522,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
         return ValueListenableBuilder<AppLanguage>(
           valueListenable: appLanguageNotifier,
           builder: (context, _, __) => Scaffold(
+            key: publicPartnerProfilePageKey(widget.market),
             backgroundColor: palette.background,
             appBar: AppBar(
               backgroundColor: palette.background,
@@ -1967,16 +1970,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (_limousineShowroomEnabled)
-                          LimousinePublicShowroomSection(
-                            profile: p,
-                            partnerId: widget.partnerId,
-                            companyName: companyName,
-                            language: appConfig.currentLanguage,
-                            palette: _themePalette,
-                          ),
+                        if (showLimousineOffers) const SizedBox.shrink(),
                         if (visibleServices.isNotEmpty)
                           _section(
+                            key: kPublicPartnerProfileServicesSectionKey,
                             _t(
                               nl: 'Services',
                               en: 'Services',
@@ -1987,9 +1984,11 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               spacing: 6,
                               runSpacing: 6,
                               children: visibleServices
+                                  .map((s) => _serviceLabel(s))
+                                  .where((label) => label.trim().isNotEmpty)
                                   .map(
-                                    (s) => _chip(
-                                      _serviceLabel(s),
+                                    (label) => _chip(
+                                      label,
                                       icon: Icons.check_circle_outline,
                                       color: _isDarkTheme
                                           ? const Color(0xFFDFC16A)
@@ -2001,6 +2000,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           ),
                         if (vehicles.isNotEmpty)
                           _section(
+                            key: kPublicPartnerProfileVehiclesSectionKey,
                             _t(
                               nl: 'Voertuigen',
                               en: 'Vehicles',
@@ -2010,6 +2010,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             Column(
                               children: vehicles
                                   .map((v) {
+                                    final vehicleId = publicPartnerVehicleId(v);
                                     final vName = _localizeVehicleName(
                                       _profileTextAny(v, const ['name']),
                                     );
@@ -2017,9 +2018,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                       'brand_model',
                                       'brandModel',
                                     ]);
-                                    final vCategory = _profileTextAny(v, const [
-                                      'category',
-                                    ]);
+                                    final rawCategory = _profileTextAny(
+                                      v,
+                                      const ['category'],
+                                    );
+                                    final vCategory =
+                                        isLimousineServiceToken(rawCategory)
+                                        ? ''
+                                        : rawCategory;
                                     final vehiclePhotoUrl = _profileHttpsUrl(
                                       v,
                                       const ['photo_url', 'photoUrl'],
@@ -2027,10 +2033,13 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     final vFeatures = _profileTextListAny(
                                       v,
                                       const ['features'],
-                                    );
+                                    ).where((f) => !isLimousineServiceToken(f));
                                     final vPax = v['pax'];
                                     final vLuggage = v['luggage'];
                                     return Container(
+                                      key: publicPartnerProfileVehicleKey(
+                                        vehicleId.isEmpty ? vName : vehicleId,
+                                      ),
                                       margin: const EdgeInsets.only(bottom: 8),
                                       padding: const EdgeInsets.all(10),
                                       decoration: BoxDecoration(
@@ -2526,6 +2535,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           ),
                         if (paymentMethods.isNotEmpty)
                           _section(
+                            key: kPublicPartnerProfilePaymentsSectionKey,
                             _t(
                               nl: 'Betaalopties',
                               en: 'Payment options',

@@ -6,6 +6,7 @@ import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
 import '../nearby/public_partner_identity.dart';
+import '../nearby/public_partner_market.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -26,11 +27,13 @@ class LimousinePublicProfilePage extends StatelessWidget {
     this.discoveryCard,
     this.logoImage,
     this.onOpenShowroom,
+    this.market = PublicPartnerMarket.limousine,
   });
 
   final Map<String, dynamic> profile;
   final String partnerId;
   final String companyNameFallback;
+  final PublicPartnerMarket market;
   final ImageProvider? logoImage;
   final double? distanceKm;
   final LimousineDiscoveryCard? discoveryCard;
@@ -402,12 +405,17 @@ class LimousinePublicProfilePage extends StatelessWidget {
     }
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: partnerId,
+          market: market,
+        ),
         builder: (_) => LimousineProviderShowroomPage(
           partnerId: partnerId,
           companyNameFallback: companyNameFallback,
           profile: profile,
           distanceKm: distanceKm,
           discoveryCard: discoveryCard,
+          market: market,
         ),
       ),
     );

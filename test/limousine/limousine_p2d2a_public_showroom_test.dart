@@ -465,7 +465,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(client.gets, kLimousinePublicShowroomProfileHttpGets);
-    expect(find.byKey(kLimousinePublicShowroomSectionKey), findsOneWidget);
+    expect(find.byKey(kLimousinePublicShowroomSectionKey), findsNothing);
     expect(
       File(
         'lib/limousine/limousine_public_showroom.dart',
@@ -481,8 +481,8 @@ void main() {
     expect(source.contains('_openPartnerBooking'), isTrue);
     expect(source.contains('_openPartnerAirportBooking'), isTrue);
     expect(source.contains('_airportServiceEnabledFromProfile'), isTrue);
-    expect(source.contains('LimousinePublicShowroomSection'), isTrue);
-    expect(source.contains('_limousineShowroomEnabled'), isTrue);
+    expect(source.contains('LimousinePublicShowroomSection'), isFalse);
+    expect(source.contains('selectPublicPartnerMarketCatalog'), isTrue);
   });
 
   testWidgets('13b) taxi CTA remains usable beside the showroom', (
@@ -500,7 +500,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byKey(kLimousinePublicShowroomSectionKey), findsOneWidget);
+    expect(find.byKey(kLimousinePublicShowroomSectionKey), findsNothing);
     expect(find.byIcon(Icons.local_taxi_outlined), findsWidgets);
     expect(find.byIcon(Icons.flight_takeoff_rounded), findsWidgets);
   });

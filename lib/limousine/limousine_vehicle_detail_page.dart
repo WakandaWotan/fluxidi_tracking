@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import '../nearby/public_partner_market.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
 import 'limousine_brand_logo.dart';
@@ -33,8 +34,10 @@ class LimousineVehicleDetailPage extends StatefulWidget {
     this.bookEnabled = kLimousineCustomerBookGateEnabled,
     this.onQuote,
     this.onBook,
+    this.market = PublicPartnerMarket.limousine,
   });
 
+  final PublicPartnerMarket market;
   final LimousineShowroomVehicle vehicle;
   final String companyName;
   final String partnerId;
@@ -87,33 +90,36 @@ class _LimousineVehicleDetailPageState
             final tokens = LimousineUxTokens.fromCustomer(
               paletteForCustomerTheme(variant),
             );
-            return Scaffold(
-              key: kLimousineVehicleDetailPageKey,
-              backgroundColor: tokens.background,
-              body: Column(
-                children: [
-                  Expanded(
-                    child: CustomScrollView(
-                      slivers: [
-                        SliverToBoxAdapter(child: _hero(tokens)),
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-                          sliver: SliverToBoxAdapter(
-                            child: Align(
-                              alignment: Alignment.topCenter,
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 880,
+            return KeyedSubtree(
+              key: publicPartnerProfilePageKey(widget.market),
+              child: Scaffold(
+                key: kLimousineVehicleDetailPageKey,
+                backgroundColor: tokens.background,
+                body: Column(
+                  children: [
+                    Expanded(
+                      child: CustomScrollView(
+                        slivers: [
+                          SliverToBoxAdapter(child: _hero(tokens)),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                            sliver: SliverToBoxAdapter(
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 880,
+                                  ),
+                                  child: _body(tokens),
                                 ),
-                                child: _body(tokens),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           },

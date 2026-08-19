@@ -309,6 +309,10 @@ bool _isTaxiOrAirportToken(String token) {
       normalized.startsWith('airport');
 }
 
+/// Authoritative taxi/airport service token. Never inferred from names.
+bool isTaxiOrAirportServiceToken(String? raw) =>
+    _isTaxiOrAirportToken(raw ?? '');
+
 bool _isTaxiOrAirportVehicle(Map<String, dynamic> vehicle) {
   return _isTaxiOrAirportToken(
         (vehicle['service_category'] ?? vehicle['serviceCategory'] ?? '')

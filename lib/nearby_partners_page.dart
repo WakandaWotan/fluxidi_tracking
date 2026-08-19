@@ -13,6 +13,7 @@ import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'nearby/nearby_partner_hero_media.dart';
 import 'nearby/public_partner_bookability.dart';
+import 'nearby/public_partner_market.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'partner_public_profile_page.dart';
 
@@ -796,12 +797,20 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
     if (partnerId.isEmpty) return;
+    final market = widget.selectionMode
+        ? PublicPartnerMarket.airport
+        : PublicPartnerMarket.taxi;
     await Navigator.of(context).push(
       MaterialPageRoute(
+        settings: publicPartnerMarketRouteSettings(
+          partnerId: partnerId,
+          market: market,
+        ),
         builder: (_) => PartnerPublicProfilePage(
           partnerId: partnerId,
           companyNameFallback: companyName,
           customerHomeBuilder: widget.customerHomeBuilder,
+          market: market,
         ),
       ),
     );
@@ -1420,7 +1429,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         ? _favoritePartnerProfiles
               .where(_airportServiceEnabledFromPartner)
               .toList(growable: false)
-        : _favoritePartnerProfiles;
+        : _favoritePartnerProfiles
+              .where(publicPartnerAppearsInTaxiSearch)
+              .toList(growable: false);
     return _premiumCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1523,7 +1534,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         ? _partners
               .where(_airportServiceEnabledFromPartner)
               .toList(growable: false)
-        : _partners;
+        : _partners
+              .where(publicPartnerAppearsInTaxiSearch)
+              .toList(growable: false);
     return ValueListenableBuilder<CustomerThemeVariant>(
       valueListenable: customerThemeNotifier,
       builder: (context, _, __) => ValueListenableBuilder<AppLanguage>(
