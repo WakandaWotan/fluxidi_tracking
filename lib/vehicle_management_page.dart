@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/vehicle_fleet_card_media.dart';
 import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -2671,6 +2672,41 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     return allowed.contains(raw) ? raw : '';
   }
 
+  Widget _fleetListPhoto(
+    VehicleProfile vehicle, {
+    required FleetCardMediaLayout layout,
+  }) {
+    final extra = fleetVehicleExtraPhotoCount(
+      primaryPhotoRef: vehicle.primaryPhotoRef,
+      galleryPhotoRefs: vehicle.galleryPhotoRefs,
+    );
+    return FleetVehicleCardMedia(
+      photoRef: vehicle.primaryPhotoRef,
+      fallbackPhotoRef: vehicle.publicPhotoUrl ?? '',
+      extraPhotoCount: extra,
+      extraPhotosLabel: extra <= 0
+          ? ''
+          : _t(
+              nl: '+$extra extra foto\'s',
+              en: '+$extra more photos',
+              fr: '+$extra photos supplémentaires',
+              es: '+$extra fotos adicionales',
+            ),
+      onOpen: () {
+        unawaited(_openVehicleEditor(existing: vehicle, focusGallery: true));
+      },
+      layout: layout,
+      background: _panelBg,
+      gold: _gold,
+      placeholderText: _t(
+        nl: 'Geen voertuigfoto',
+        en: 'No vehicle photo',
+        fr: 'Pas de photo véhicule',
+        es: 'Sin foto del vehículo',
+      ),
+    );
+  }
+
   Widget _photoPreviewBox({
     required String photoRef,
     String? fallbackPhotoRef,
@@ -4417,7 +4453,6 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     final cardPad = tablet ? 14.0 : 8.0;
     final cardMarginBottom = tablet ? 12.0 : 8.0;
     final colGap = tablet ? 12.0 : 8.0;
-    final photoHeight = tablet ? 168.0 : 130.0;
     final statusOffset = tablet ? 8.0 : 6.0;
     final statusPillH = tablet ? 10.0 : 7.0;
     final statusPillV = tablet ? 4.0 : 2.0;
@@ -4457,48 +4492,38 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           // Column 1: photo + status overlay (flex 34)
           Expanded(
             flex: 34,
-            child: Stack(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _photoPreviewBox(
-                  photoRef: v.primaryPhotoRef,
-                  fallbackPhotoRef: v.publicPhotoUrl,
-                  height: photoHeight,
-                  onTap: null,
-                  placeholderText: _t(
-                    nl: 'Geen voertuigfoto',
-                    en: 'No vehicle photo',
-                    fr: 'Pas de photo véhicule',
-                    es: 'Sin foto del vehículo',
-                  ),
+                _fleetListPhoto(
+                  v,
+                  layout: FleetCardMediaLayout.sideColumn,
                 ),
-                Positioned(
-                  top: statusOffset,
-                  left: statusOffset,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: statusPillH,
-                      vertical: statusPillV,
-                    ),
-                    decoration: BoxDecoration(
+                SizedBox(height: statusOffset),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: statusPillH,
+                    vertical: statusPillV,
+                  ),
+                  decoration: BoxDecoration(
+                    color: v.isActive
+                        ? _success.withOpacity(0.85)
+                        : _panelBg.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
                       color: v.isActive
-                          ? _success.withOpacity(0.85)
-                          : _panelBg.withOpacity(0.85),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: v.isActive
-                            ? _success.withOpacity(0.7)
-                            : _theme.border.withOpacity(0.85),
-                      ),
+                          ? _success.withOpacity(0.7)
+                          : _theme.border.withOpacity(0.85),
                     ),
-                    child: Text(
-                      status,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: v.isActive ? Colors.white : _textPrimary,
-                        fontSize: statusFontSize,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  ),
+                  child: Text(
+                    status,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: v.isActive ? Colors.white : _textPrimary,
+                      fontSize: statusFontSize,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -5333,17 +5358,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _photoPreviewBox(
-                                  photoRef: v.primaryPhotoRef,
-                                  fallbackPhotoRef: v.publicPhotoUrl,
-                                  height: isCompactLandscape ? 110 : 176,
-                                  onTap: null,
-                                  placeholderText: _t(
-                                    nl: 'Geen voertuigfoto',
-                                    en: 'No vehicle photo',
-                                    fr: 'Pas de photo véhicule',
-                                    es: 'Sin foto del vehículo',
-                                  ),
+                                _fleetListPhoto(
+                                  v,
+                                  layout: FleetCardMediaLayout.stacked,
                                 ),
                                 SizedBox(height: isCompactLandscape ? 6 : 9),
                                 Row(
@@ -5652,22 +5669,6 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                if (v.galleryPhotoRefs.length > 1) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    _t(
-                                      nl: '+${v.galleryPhotoRefs.length - 1} extra foto\'s',
-                                      en: '+${v.galleryPhotoRefs.length - 1} more photos',
-                                      fr: '+${v.galleryPhotoRefs.length - 1} photos supplémentaires',
-                                      es: '+${v.galleryPhotoRefs.length - 1} fotos adicionales',
-                                    ),
-                                    style: TextStyle(
-                                      color: _textSecondary,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
                                 const SizedBox(height: 6),
                                 Text(
                                   '${_t(nl: 'Bedrijf (lokaal)', en: 'Company (local)', fr: 'Entreprise (locale)', es: 'Empresa (local)')}: '
