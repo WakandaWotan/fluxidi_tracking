@@ -10,6 +10,7 @@ import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
+import 'limousine_pricing_overlay.dart';
 import 'limousine_profile_identity.dart';
 import 'limousine_offers.dart';
 import 'limousine_service_capability.dart';
@@ -527,6 +528,7 @@ List<LimousineDiscoveryCard> limousineDiscoveryCardsFromNearbyPartners(
 LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
   Map<String, dynamic> partner,
 ) {
+  partner = limousineHydratePublicPartnerOverlay(partner);
   if (!limousineDiscoveryPartnerIsIncludable(partner)) return null;
   final id = (partner['partner_id'] ?? partner['partnerId'] ?? '')
       .toString()

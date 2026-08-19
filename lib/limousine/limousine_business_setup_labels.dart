@@ -627,17 +627,45 @@ const LocalizedText kLimousineBusinessSetupCoverUpload = LocalizedText(
 );
 
 const LocalizedText kLimousineBusinessSetupCoverPickGallery = LocalizedText(
-  nl: 'Kies uit limousinegalerij',
-  en: 'Choose from limousine gallery',
-  fr: 'Choisir dans la galerie limousine',
-  es: 'Elegir de la galería de limusinas',
+  nl: 'Kies bestaande limousinefoto',
+  en: 'Choose an existing limousine photo',
+  fr: 'Choisir une photo de limousine existante',
+  es: 'Elegir una foto de limusina existente',
 );
 
 const LocalizedText kLimousineBusinessSetupCoverReplace = LocalizedText(
-  nl: 'Huidige hero vervangen',
-  en: 'Replace current hero',
-  fr: 'Remplacer le visuel actuel',
-  es: 'Reemplazar el hero actual',
+  nl: 'Andere omslagfoto uploaden',
+  en: 'Upload another cover photo',
+  fr: 'Téléverser une autre photo de couverture',
+  es: 'Subir otra foto de portada',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverUploadHelp = LocalizedText(
+  nl: 'Upload een aparte sfeer- of bedrijfsfoto.',
+  en: 'Upload a separate atmosphere or company photo.',
+  fr: 'Téléversez une photo d’ambiance ou d’entreprise distincte.',
+  es: 'Suba una foto de ambiente o de empresa aparte.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverGalleryHelp = LocalizedText(
+  nl: 'Gebruik een bestaande foto van een geselecteerde limousine.',
+  en: 'Use an existing photo of a selected limousine.',
+  fr: 'Utilisez une photo existante d’une limousine sélectionnée.',
+  es: 'Use una foto existente de una limusina seleccionada.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverUploadSuccess = LocalizedText(
+  nl: 'Omslagfoto geüpload.',
+  en: 'Cover photo uploaded.',
+  fr: 'Photo de couverture téléversée.',
+  es: 'Foto de portada subida.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverUploadFailed = LocalizedText(
+  nl: 'Omslagfoto uploaden is mislukt. De foto is niet opgeslagen.',
+  en: 'Cover photo upload failed. The photo was not saved.',
+  fr: 'Échec du téléversement de la photo de couverture. La photo n’a pas été enregistrée.',
+  es: 'Error al subir la foto de portada. La foto no se guardó.',
 );
 
 const LocalizedText kLimousineBusinessSetupCoverFocus = LocalizedText(
@@ -662,24 +690,38 @@ const LocalizedText kLimousineBusinessSetupLogoHint = LocalizedText(
 );
 
 const LocalizedText kLimousineBusinessSetupLogoPick = LocalizedText(
-  nl: 'Kies logo',
-  en: 'Choose logo',
-  fr: 'Choisir un logo',
-  es: 'Elegir logo',
+  nl: 'Eigen limousinelogo uploaden',
+  en: 'Upload own limousine logo',
+  fr: 'Téléverser un logo limousine propre',
+  es: 'Subir logo propio de limusina',
 );
 
 const LocalizedText kLimousineBusinessSetupLogoReplace = LocalizedText(
-  nl: 'Logo vervangen',
-  en: 'Replace logo',
-  fr: 'Remplacer le logo',
-  es: 'Reemplazar logo',
+  nl: 'Limousinelogo vervangen',
+  en: 'Replace limousine logo',
+  fr: 'Remplacer le logo limousine',
+  es: 'Reemplazar logo de limusina',
 );
 
 const LocalizedText kLimousineBusinessSetupLogoClear = LocalizedText(
-  nl: 'Eigen logo verwijderen',
-  en: 'Remove own logo',
-  fr: 'Supprimer le logo propre',
-  es: 'Quitar el logo propio',
+  nl: 'Eigen limousinelogo verwijderen',
+  en: 'Remove own limousine logo',
+  fr: 'Supprimer le logo limousine propre',
+  es: 'Quitar el logo propio de limusina',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoStatusCompany = LocalizedText(
+  nl: 'Algemeen bedrijfslogo wordt gebruikt',
+  en: 'General company logo is used',
+  fr: 'Le logo général de l’entreprise est utilisé',
+  es: 'Se usa el logo general de la empresa',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoStatusOwn = LocalizedText(
+  nl: 'Eigen limousinelogo',
+  en: 'Own limousine logo',
+  fr: 'Logo limousine propre',
+  es: 'Logo propio de limusina',
 );
 
 const LocalizedText kLimousineBusinessSetupLogoFallback = LocalizedText(
@@ -687,6 +729,20 @@ const LocalizedText kLimousineBusinessSetupLogoFallback = LocalizedText(
   en: 'No own limousine logo: the general company logo is used for display only.',
   fr: 'Pas de logo limousine propre : le logo général sert uniquement à l’affichage.',
   es: 'Sin logo propio de limusina: el logo general solo se usa para mostrar.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoUploadSuccess = LocalizedText(
+  nl: 'Limousinelogo geüpload.',
+  en: 'Limousine logo uploaded.',
+  fr: 'Logo limousine téléversé.',
+  es: 'Logo de limusina subido.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoUploadFailed = LocalizedText(
+  nl: 'Limousinelogo uploaden is mislukt. Het logo is niet opgeslagen.',
+  en: 'Limousine logo upload failed. The logo was not saved.',
+  fr: 'Échec du téléversement du logo limousine. Le logo n’a pas été enregistré.',
+  es: 'Error al subir el logo de limusina. El logo no se guardó.',
 );
 
 const LocalizedText kLimousineBusinessSetupOfferForVehicles = LocalizedText(

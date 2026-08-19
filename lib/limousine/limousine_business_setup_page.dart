@@ -26,6 +26,7 @@ import 'limousine_public_hero_overlay.dart';
 import 'limousine_quote_requests_nav.dart';
 import 'limousine_simple_offer_editor.dart';
 import 'limousine_pricing_local_store.dart';
+import 'limousine_pricing_overlay.dart';
 import 'limousine_vehicle_persist.dart';
 import 'limousine_vehicle_public_copy.dart';
 import 'limousine_vehicle_public_copy_editor.dart';
@@ -33,6 +34,14 @@ import 'limousine_vehicle_public_copy_editor.dart';
 typedef LimousinePricingLoader = Future<Map<String, dynamic>> Function();
 typedef LimousinePricingSaver =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> section);
+typedef LimousineSetupPickedImage = ({String path, String name});
+typedef LimousineSetupImagePicker = Future<LimousineSetupPickedImage?> Function();
+typedef LimousineSetupMediaUploader =
+    Future<Map<String, dynamic>> Function({
+      required String mediaType,
+      required String filePath,
+      required String filename,
+    });
 
 class LimousineBusinessSetupPage extends StatefulWidget {
   const LimousineBusinessSetupPage({
@@ -49,6 +58,8 @@ class LimousineBusinessSetupPage extends StatefulWidget {
     this.logoImage,
     this.onConfigureVehicle,
     this.persistVehicles,
+    this.pickImage,
+    this.uploadMedia,
   });
 
   final LimousinePricingLoader? loadPricing;
@@ -63,6 +74,8 @@ class LimousineBusinessSetupPage extends StatefulWidget {
   final ImageProvider? logoImage;
   final VoidCallback? onConfigureVehicle;
   final Future<void> Function(List<VehicleProfile> vehicles)? persistVehicles;
+  final LimousineSetupImagePicker? pickImage;
+  final LimousineSetupMediaUploader? uploadMedia;
 
   @override
   State<LimousineBusinessSetupPage> createState() =>
@@ -216,7 +229,7 @@ class _LimousineBusinessSetupPageState
       final rawSection = (data['limousine'] is Map)
           ? Map<String, dynamic>.from(data['limousine'] as Map)
           : <String, dynamic>{};
-      final section = limousineMergeVehiclePublicCopyOverlay(
+      final section = limousineMergePricingOverlay(
         section: rawSection,
         overlay: limousinePricingLocalStore.peekMerged(
           limousineDefaultLocalPricingScopeKeys(),
@@ -317,6 +330,37 @@ class _LimousineBusinessSetupPageState
   }
 
   void _rememberVehiclePublicCopyOverlay({required bool updatePublished}) {
+    _rememberPricingOverlay(updatePublished: updatePublished);
+  }
+
+  Map<String, dynamic> _displayPayload({required bool publish}) {
+    return limousinePublicDisplayPayload(
+      publish: publish,
+      title: _publicTitle.toJson(),
+      description: _publicDescription.toJson(),
+      hero: _hero.toSectionJson(),
+      publishedTitle: _publishedPublicTitle,
+      publishedDescription: _publishedPublicDescription,
+      publishedHero: _publishedHero.toSectionJson(),
+      logo: _logo.toSectionJson(),
+      publishedLogo: _publishedLogo.toSectionJson(),
+      taxiHeroUrls: _taxiHeroUrls,
+    );
+  }
+
+  List<Map<String, dynamic>> _authoritativePublishedOffers() {
+    return [
+      for (final offer in limousinePreparePublishOffers(
+        _offers,
+        vehicles: _vehicles,
+        knownClassIds: _knownClasses,
+      ))
+        if (offer['published'] == true && offer['enabled'] != false)
+          Map<String, dynamic>.from(offer),
+    ];
+  }
+
+  void _rememberPricingOverlay({required bool updatePublished}) {
     limousinePricingLocalStore.writeVehiclePublicCopy(
       scopeKeys: limousineDefaultLocalPricingScopeKeys(),
       working: _vehiclePublicCopy,
@@ -326,6 +370,23 @@ class _LimousineBusinessSetupPageState
       updatePublished: updatePublished,
       revision: _revision,
     );
+    limousinePricingLocalStore.writeOverlay(
+      scopeKeys: limousineDefaultLocalPricingScopeKeys(),
+      fields: limousinePublishedVisitingCardOverlayFields(
+        displayPayload: _displayPayload(publish: updatePublished),
+        publishedOffers: updatePublished
+            ? _authoritativePublishedOffers()
+            : const <Map<String, dynamic>>[],
+        updatePublished: updatePublished,
+      ),
+      revision: _revision,
+    );
+  }
+
+  Future<void> _persistWorkingDraft() async {
+    _rememberPricingOverlay(updatePublished: false);
+    _markDirty();
+    await _persist(publish: false);
   }
 
   Future<void> _openVehiclePublicCopy(VehicleProfile vehicle) async {
@@ -443,23 +504,64 @@ class _LimousineBusinessSetupPageState
     );
   }
 
+  Future<LimousineSetupPickedImage?> _pickSetupImage({
+    required double maxWidth,
+    required int imageQuality,
+  }) async {
+    final hook = widget.pickImage;
+    if (hook != null) return hook();
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: maxWidth,
+      imageQuality: imageQuality,
+    );
+    if (picked == null) return null;
+    return (path: picked.path, name: picked.name);
+  }
+
+  Future<Map<String, dynamic>> _uploadSetupMedia({
+    required String mediaType,
+    required String filePath,
+    required String filename,
+  }) {
+    final hook = widget.uploadMedia;
+    if (hook != null) {
+      return hook(
+        mediaType: mediaType,
+        filePath: filePath,
+        filename: filename,
+      );
+    }
+    return uploadPublicPartnerMedia(
+      mediaType: mediaType,
+      filePath: filePath,
+      filename: filename,
+    );
+  }
+
   Future<void> _uploadLimousineHero() async {
     if (_heroUploading) return;
-    setState(() => _heroUploading = true);
+    setState(() {
+      _heroUploading = true;
+      _error = null;
+    });
     try {
-      final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1600,
-        imageQuality: 82,
-      );
+      final picked = await _pickSetupImage(maxWidth: 1600, imageQuality: 82);
       if (picked == null) return;
-      final uploaded = await uploadPublicPartnerMedia(
+      final uploaded = await _uploadSetupMedia(
         mediaType: kLimousineProfileCoverMediaType,
         filePath: picked.path,
         filename: picked.name,
       );
       final url = (uploaded['url'] ?? '').toString().trim();
-      if (!url.startsWith('https://')) return;
+      if (!url.startsWith('https://')) {
+        if (!mounted) return;
+        setState(() {
+          _error = _t(kLimousineBusinessSetupCoverUploadFailed);
+          _status = null;
+        });
+        return;
+      }
       setState(() {
         _hero = LimousineHeroSelection(
           photoUrl: url,
@@ -468,12 +570,15 @@ class _LimousineBusinessSetupPageState
           sourceRevision: _hero.sourceRevision + 1,
           explicit: true,
         );
+        _error = null;
+        _status = _t(kLimousineBusinessSetupCoverUploadSuccess);
       });
-      _markDirty();
+      await _persistWorkingDraft();
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _error = limousineFriendlyCompanyError(error, language: _lang);
+        _status = null;
       });
     } finally {
       if (mounted) setState(() => _heroUploading = false);
@@ -482,35 +587,43 @@ class _LimousineBusinessSetupPageState
 
   Future<void> _uploadLimousineLogo() async {
     if (_logoUploading) return;
-    setState(() => _logoUploading = true);
+    setState(() {
+      _logoUploading = true;
+      _error = null;
+    });
     try {
-      final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 900,
-        imageQuality: 88,
-      );
+      final picked = await _pickSetupImage(maxWidth: 900, imageQuality: 88);
       if (picked == null) return;
-      final uploaded = await uploadPublicPartnerMedia(
+      final uploaded = await _uploadSetupMedia(
         mediaType: kLimousineProfileLogoMediaType,
         filePath: picked.path,
         filename: picked.name,
       );
       final url = (uploaded['url'] ?? '').toString().trim();
-      if (!url.startsWith('https://')) return;
       final safe = limousineSanitizeProfileLogoOverrideUrl(url);
-      if (safe.isEmpty) return;
+      if (safe.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _error = _t(kLimousineBusinessSetupLogoUploadFailed);
+          _status = null;
+        });
+        return;
+      }
       setState(() {
         _logo = LimousineProfileLogoSelection(
           photoUrl: safe,
           sourceRevision: _logo.sourceRevision + 1,
           explicitOverride: true,
         );
+        _error = null;
+        _status = _t(kLimousineBusinessSetupLogoUploadSuccess);
       });
-      _markDirty();
+      await _persistWorkingDraft();
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _error = limousineFriendlyCompanyError(error, language: _lang);
+        _status = null;
       });
     } finally {
       if (mounted) setState(() => _logoUploading = false);
@@ -522,7 +635,7 @@ class _LimousineBusinessSetupPageState
     setState(() {
       _logo = const LimousineProfileLogoSelection();
     });
-    _markDirty();
+    _persistWorkingDraft();
   }
 
   Future<void> _pickHeroFromGallery() async {
@@ -563,17 +676,27 @@ class _LimousineBusinessSetupPageState
       },
     );
     if (selected == null || !mounted) return;
+    final url = (selected['url'] ?? '').trim();
+    if (!url.startsWith('https://')) {
+      setState(() {
+        _error = _t(kLimousineBusinessSetupCoverUploadFailed);
+        _status = null;
+      });
+      return;
+    }
     setState(() {
       _hero = LimousineHeroSelection(
-        photoUrl: selected['url'] ?? '',
+        photoUrl: url,
         sourceKind: kLimousineHeroSourceVehicleMedia,
         vehicleId: selected['vehicle_id'] ?? '',
         alignment: _hero.alignment,
         sourceRevision: _hero.sourceRevision + 1,
         explicit: true,
       );
+      _error = null;
+      _status = _t(kLimousineBusinessSetupCoverUploadSuccess);
     });
-    _markDirty();
+    await _persistWorkingDraft();
   }
 
   void _setHeroAlignment(String alignment) {
@@ -754,13 +877,17 @@ class _LimousineBusinessSetupPageState
                 .map((item) => Map<String, dynamic>.from(item))
                 .toList()
           : offers;
-      rememberLimousineQuoteRequestsConfirmedOffers(responseOffers);
+      final visibleOffers = limousineKeepAuthoritativeOffers(
+        sent: offers,
+        server: responseOffers,
+      );
+      rememberLimousineQuoteRequestsConfirmedOffers(visibleOffers);
       final visible = publish && limousinePricingPublishConfirmedVisible(data);
       setState(() {
         _offers
           ..clear()
           ..addAll(
-            responseOffers.map((offer) => Map<String, dynamic>.from(offer)),
+            visibleOffers.map((offer) => Map<String, dynamic>.from(offer)),
           );
         _revision = limousinePricingResponseRevision(data, fallback: _revision);
         if (section.containsKey(kLimousineProfileCoverKey) ||
@@ -1112,7 +1239,9 @@ class _LimousineBusinessSetupPageState
                             16,
                             16,
                             16,
-                            28 + media.viewInsets.bottom,
+                            kLimousineBusinessSetupStickyFooterReserve +
+                                media.padding.bottom +
+                                media.viewInsets.bottom,
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1139,7 +1268,7 @@ class _LimousineBusinessSetupPageState
                                 section:
                                     LimousineBusinessSetupSection.publicText,
                                 index: 3,
-                                child: _publicBody(tokens, tablet),
+                                child: _publicBody(tokens, tablet, media.size),
                               ),
                               const SizedBox(height: 16),
                               _sectionCard(
@@ -1856,10 +1985,23 @@ class _LimousineBusinessSetupPageState
               ),
             ),
             OutlinedButton(
+              key: kLimousineBusinessSetupCoverPickGalleryKey,
               onPressed: _pickHeroFromGallery,
               child: Text(_t(kLimousineBusinessSetupCoverPickGallery)),
             ),
           ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          key: kLimousineBusinessSetupCoverUploadHelpKey,
+          _t(kLimousineBusinessSetupCoverUploadHelp),
+          style: TextStyle(color: tokens.muted, fontSize: 12),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          key: kLimousineBusinessSetupCoverGalleryHelpKey,
+          _t(kLimousineBusinessSetupCoverGalleryHelp),
+          style: TextStyle(color: tokens.muted, fontSize: 12),
         ),
         const SizedBox(height: 8),
         Text(
@@ -1903,29 +2045,21 @@ class _LimousineBusinessSetupPageState
           _t(kLimousineBusinessSetupLogoHint),
           style: TextStyle(color: tokens.muted, fontSize: 12.5),
         ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 72,
-              height: 72,
-              child: previewUrl.startsWith('https://')
-                  ? _fillPhoto(tokens, previewUrl)
-                  : ColoredBox(color: tokens.surfaceAlt),
-            ),
+        const SizedBox(height: 8),
+        Text(
+          key: kLimousineBusinessSetupLogoStatusKey,
+          override
+              ? _t(kLimousineBusinessSetupLogoStatusOwn)
+              : _t(kLimousineBusinessSetupLogoStatusCompany),
+          style: TextStyle(
+            color: tokens.gold,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        if (!override) ...[
-          const SizedBox(height: 8),
-          Text(
-            _t(kLimousineBusinessSetupLogoFallback),
-            style: TextStyle(color: tokens.gold, fontSize: 12.5),
-          ),
-        ],
         const SizedBox(height: 8),
         Wrap(
+          key: kLimousineBusinessSetupLogoActionsKey,
           spacing: 8,
           runSpacing: 8,
           children: [
@@ -1949,11 +2083,32 @@ class _LimousineBusinessSetupPageState
               ),
           ],
         ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: previewUrl.startsWith('https://')
+                  ? _fillPhoto(tokens, previewUrl)
+                  : ColoredBox(color: tokens.surfaceAlt),
+            ),
+          ),
+        ),
+        if (!override) ...[
+          const SizedBox(height: 8),
+          Text(
+            _t(kLimousineBusinessSetupLogoFallback),
+            style: TextStyle(color: tokens.gold, fontSize: 12.5),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _publicBody(LimousineUxTokens tokens, bool tablet) {
+  Widget _publicBody(LimousineUxTokens tokens, bool tablet, Size size) {
     final editor = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2021,7 +2176,7 @@ class _LimousineBusinessSetupPageState
       ],
     );
     final preview = _preview(tokens);
-    if (!tablet) {
+    if (!tablet || size.height >= size.width) {
       return Column(
         key: kLimousineBusinessSetupPublicKey,
         children: [editor, const SizedBox(height: 12), preview],

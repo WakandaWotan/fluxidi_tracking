@@ -8,6 +8,7 @@ import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
+import 'limousine_pricing_overlay.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
 
@@ -100,6 +101,7 @@ List<LimousinePublishedOffer> collectLimousineShowroomOffers(
   Map<String, dynamic>? profile,
 ) {
   if (profile == null) return const <LimousinePublishedOffer>[];
+  profile = limousineHydratePublicPartnerOverlay(profile);
   final raw = profile['limousine_offers'] ?? profile['limousineOffers'];
   if (raw is! List) return const <LimousinePublishedOffer>[];
   final parsed = <LimousinePublishedOffer>[];

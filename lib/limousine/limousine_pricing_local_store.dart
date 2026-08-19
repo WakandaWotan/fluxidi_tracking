@@ -63,6 +63,12 @@ abstract class LimousinePricingLocalStore {
   Map<String, Map<String, String>> publishedCopyForProfile(
     Map<String, dynamic> profile,
   );
+
+  void writeOverlay({
+    required Iterable<String> scopeKeys,
+    required Map<String, dynamic> fields,
+    int revision = 0,
+  });
 }
 
 class MemoryLimousinePricingLocalStore implements LimousinePricingLocalStore {
@@ -146,6 +152,20 @@ class MemoryLimousinePricingLocalStore implements LimousinePricingLocalStore {
     Map<String, dynamic> profile,
   ) {
     return _publishedCopyForProfile(this, profile);
+  }
+
+  @override
+  void writeOverlay({
+    required Iterable<String> scopeKeys,
+    required Map<String, dynamic> fields,
+    int revision = 0,
+  }) {
+    _writeOverlay(
+      this,
+      scopeKeys: scopeKeys,
+      fields: fields,
+      revision: revision,
+    );
   }
 }
 
@@ -341,6 +361,43 @@ class FileLimousinePricingLocalStore implements LimousinePricingLocalStore {
   ) {
     return _publishedCopyForProfile(this, profile);
   }
+
+  @override
+  void writeOverlay({
+    required Iterable<String> scopeKeys,
+    required Map<String, dynamic> fields,
+    int revision = 0,
+  }) {
+    _writeOverlay(
+      this,
+      scopeKeys: scopeKeys,
+      fields: fields,
+      revision: revision,
+    );
+    final root = _root;
+    if (root == null) {
+      if (!_diskEnabled) return;
+      warm().then((_) {
+        final resolved = _root;
+        if (resolved == null) return;
+        for (final key in scopeKeys) {
+          final section = _sections[key];
+          if (section == null) continue;
+          try {
+            _writeFileSync(_fileFor(resolved, key), section);
+          } catch (_) {}
+        }
+      });
+      return;
+    }
+    for (final key in scopeKeys) {
+      final section = _sections[key];
+      if (section == null) continue;
+      try {
+        _writeFileSync(_fileFor(root, key), section);
+      } catch (_) {}
+    }
+  }
 }
 
 LimousinePricingLocalStore limousinePricingLocalStore =
@@ -372,19 +429,72 @@ void _writeVehiclePublicCopy(
   }
 }
 
+void _writeOverlay(
+  LimousinePricingLocalStore store, {
+  required Iterable<String> scopeKeys,
+  required Map<String, dynamic> fields,
+  required int revision,
+}) {
+  final now = DateTime.now().toUtc().toIso8601String();
+  for (final key in scopeKeys) {
+    if (key.trim().isEmpty) continue;
+    final next = Map<String, dynamic>.from(store.peekSection(key));
+    next.addAll(fields);
+    next['_scope_key'] = key;
+    next['source_revision'] = revision;
+    next[kLimousinePricingLocalWorkingUpdatedAtKey] = now;
+    if (fields.containsKey(kLimousinePublishedVehiclePublicCopyKey) ||
+        fields.containsKey('published_public_title') ||
+        fields.containsKey('published_limousine_offers')) {
+      next[kLimousinePricingLocalPublishedUpdatedAtKey] = now;
+    }
+    unawaited(store.writeSection(key, next));
+  }
+}
+
+bool _sectionHasOverlayContent(Map<String, dynamic> section) {
+  if (limousineVehiclePublicCopyById(
+        section[kLimousineVehiclePublicCopyKey],
+      ).isNotEmpty ||
+      limousineVehiclePublicCopyById(
+        section[kLimousinePublishedVehiclePublicCopyKey],
+      ).isNotEmpty) {
+    return true;
+  }
+  bool hasLocalized(Object? raw) {
+    if (raw is! Map) return false;
+    return raw.values.any((value) => value.toString().trim().isNotEmpty);
+  }
+
+  bool hasPhoto(Object? raw) {
+    if (raw is Map) {
+      final url = (raw['photo_url'] ?? raw['photoUrl'] ?? '').toString();
+      return url.startsWith('https://');
+    }
+    return raw.toString().startsWith('https://');
+  }
+
+  return hasLocalized(section['public_title']) ||
+      hasLocalized(section['published_public_title']) ||
+      hasLocalized(section['public_description']) ||
+      hasLocalized(section['published_public_description']) ||
+      hasPhoto(section['limousine_profile_cover']) ||
+      hasPhoto(section['published_limousine_profile_cover']) ||
+      hasPhoto(section['limousine_hero']) ||
+      hasPhoto(section['published_limousine_hero']) ||
+      hasPhoto(section['limousine_profile_logo']) ||
+      hasPhoto(section['published_limousine_profile_logo']) ||
+      (section['published_limousine_offers'] is List &&
+          (section['published_limousine_offers'] as List).isNotEmpty);
+}
+
 Map<String, dynamic> _peekMerged(
   LimousinePricingLocalStore store,
   Iterable<String> scopeKeys,
 ) {
   for (final key in scopeKeys) {
     final section = store.peekSection(key);
-    final working = limousineVehiclePublicCopyById(
-      section[kLimousineVehiclePublicCopyKey],
-    );
-    final published = limousineVehiclePublicCopyById(
-      section[kLimousinePublishedVehiclePublicCopyKey],
-    );
-    if (working.isNotEmpty || published.isNotEmpty) return section;
+    if (_sectionHasOverlayContent(section)) return section;
   }
   return <String, dynamic>{};
 }

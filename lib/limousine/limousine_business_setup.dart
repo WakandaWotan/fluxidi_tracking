@@ -115,6 +115,29 @@ const Key kLimousineSimpleOfferMinDurationKey = ValueKey<String>(
   'limousine_simple_offer_min_duration',
 );
 const double kLimousineBusinessSetupOfferValidityDotSize = 12;
+const double kLimousineBusinessSetupStickyFooterReserve = 96;
+
+const Key kLimousineBusinessSetupCoverPickGalleryKey = ValueKey<String>(
+  'limousine_business_setup_cover_pick_gallery',
+);
+const Key kLimousineBusinessSetupCoverUploadHelpKey = ValueKey<String>(
+  'limousine_business_setup_cover_upload_help',
+);
+const Key kLimousineBusinessSetupCoverGalleryHelpKey = ValueKey<String>(
+  'limousine_business_setup_cover_gallery_help',
+);
+const Key kLimousineBusinessSetupLogoStatusKey = ValueKey<String>(
+  'limousine_business_setup_logo_status',
+);
+const Key kLimousineBusinessSetupLogoActionsKey = ValueKey<String>(
+  'limousine_business_setup_logo_actions',
+);
+const Key kLimousineBusinessSetupMediaStatusKey = ValueKey<String>(
+  'limousine_business_setup_media_status',
+);
+const Key kLimousineBusinessSetupMediaErrorKey = ValueKey<String>(
+  'limousine_business_setup_media_error',
+);
 
 const Key kLimousineBusinessSetupCoverKey = ValueKey<String>(
   'limousine_business_setup_cover',
@@ -597,7 +620,7 @@ List<Map<String, dynamic>> limousinePreparePublishOffers(
           readiness: true,
         );
         copy['published'] = errors.isEmpty && copy['enabled'] != false;
-        return copy;
+        return limousineStampOfferLineage(copy);
       })
       .toList(growable: false);
 }

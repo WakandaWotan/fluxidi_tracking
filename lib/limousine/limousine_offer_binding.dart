@@ -232,20 +232,230 @@ List<LimousinePublishedOffer> limousineSortPublishedOffers(
   return out;
 }
 
-/// Collapse projection copies of the same catalog offer. First row in the
-/// incoming order wins, so callers keep their sort (vehicle-first or
-/// featured/sortOrder). Never deduplicates on visible price text.
+const List<String> kLimousineOfferLineageKeys = <String>[
+  'source_offer_id',
+  'sourceOfferId',
+  'parent_offer_id',
+  'parentOfferId',
+  'catalog_offer_id',
+  'catalogOfferId',
+  'canonical_offer_id',
+  'canonicalOfferId',
+  'offer_source_id',
+  'offerSourceId',
+  'lineage_id',
+  'lineageId',
+  'projected_from',
+  'projectedFrom',
+  'projection_of',
+  'projectionOf',
+  'base_offer_id',
+  'baseOfferId',
+];
+
+String limousineOfferIdOf(Map<String, dynamic> offer) {
+  return (offer['offer_id'] ?? offer['offerId'] ?? '').toString().trim();
+}
+
+String limousineExplicitOfferLineage(Map<String, dynamic> offer) {
+  for (final key in kLimousineOfferLineageKeys) {
+    final value = (offer[key] ?? '').toString().trim();
+    if (value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+String limousineCanonicalOfferLineage(Map<String, dynamic> offer) {
+  final explicit = limousineExplicitOfferLineage(offer);
+  if (explicit.isNotEmpty) return explicit;
+  return limousineOfferIdOf(offer);
+}
+
+String limousineOfferTitleFingerprint(Map<String, dynamic> offer) {
+  final title = limousineLocalizedOf(offer['title']);
+  return const <String>['nl', 'en', 'fr', 'es']
+      .map((lang) => (title[lang] ?? '').trim().toLowerCase())
+      .join('|');
+}
+
+String limousineOfferCommercialFingerprint(Map<String, dynamic> offer) {
+  final kind = limousineOfferDisplayKindOf(offer).name;
+  final cents = _offerPublicAmountCents(offer) ?? 0;
+  final currency = limousineCurrencyOf(offer['currency']);
+  return '$kind|$cents|$currency';
+}
+
+String limousineOfferDedupeKey(Map<String, dynamic> offer) {
+  final lineage = limousineExplicitOfferLineage(offer);
+  final commercial = limousineOfferCommercialFingerprint(offer);
+  if (lineage.isNotEmpty) return 'L:$lineage|$commercial';
+  return 'C:$commercial|${limousineOfferTitleFingerprint(offer)}';
+}
+
+String limousineOfferCatalogFamilyKey(Map<String, dynamic> offer) {
+  return '${limousineOfferCommercialFingerprint(offer)}|${limousineOfferTitleFingerprint(offer)}';
+}
+
+bool limousineOfferLooksLikeProjection(Map<String, dynamic> offer) {
+  for (final key in const <String>[
+    'projection_id',
+    'projectionId',
+    'projected_from',
+    'projectedFrom',
+    'parent_offer_id',
+    'parentOfferId',
+  ]) {
+    if ((offer[key] ?? '').toString().trim().isNotEmpty) return true;
+  }
+  final scope = limousineOfferScopeOf(offer);
+  return !scope.appliesToAllSelected && scope.vehicleIds.isNotEmpty;
+}
+
+DateTime? _offerTimestamp(Map<String, dynamic> offer) {
+  for (final key in const <String>[
+    'updated_at',
+    'updatedAt',
+    'published_at',
+    'publishedAt',
+    'created_at',
+    'createdAt',
+  ]) {
+    final raw = (offer[key] ?? '').toString().trim();
+    if (raw.isEmpty) continue;
+    return DateTime.tryParse(raw);
+  }
+  return null;
+}
+
+Map<String, dynamic> limousineStampOfferLineage(Map<String, dynamic> offer) {
+  final next = Map<String, dynamic>.from(offer);
+  final id = limousineOfferIdOf(next);
+  if (id.isEmpty) return next;
+  final canonical = limousineCanonicalOfferLineage(next);
+  next['canonical_offer_id'] = canonical.isEmpty ? id : canonical;
+  if (limousineExplicitOfferLineage(next).isEmpty) {
+    next['source_offer_id'] = id;
+  }
+  return next;
+}
+
+Map<String, dynamic> limousineInspectPublishedOfferLineage(
+  Map<String, dynamic> offer,
+) {
+  final scope = limousineOfferScopeOf(offer);
+  return <String, dynamic>{
+    'offer_id': limousineOfferIdOf(offer),
+    'source_offer_id': (offer['source_offer_id'] ?? offer['sourceOfferId'] ?? '')
+        .toString()
+        .trim(),
+    'parent_offer_id': (offer['parent_offer_id'] ?? offer['parentOfferId'] ?? '')
+        .toString()
+        .trim(),
+    'canonical_offer_id': limousineCanonicalOfferLineage(offer),
+    'projection_id':
+        (offer['projection_id'] ?? offer['projectionId'] ?? '').toString().trim(),
+    'scope_applies_to_all': scope.appliesToAllSelected,
+    'vehicle_ids': scope.vehicleIds,
+    'legacy_unbound': scope.legacyUnbound,
+    'published': offer['published'] == true,
+    'enabled': offer['enabled'] != false,
+    'price_presentation': limousineOfferToken(offer['price_presentation']),
+    'display_amount_cents': _offerPublicAmountCents(offer),
+    'currency': limousineCurrencyOf(offer['currency']),
+    'source_revision': offer['source_revision'] ?? offer['sourceRevision'],
+    'created_at': offer['created_at'] ?? offer['createdAt'],
+    'updated_at': offer['updated_at'] ?? offer['updatedAt'],
+    'dedupe_key': limousineOfferDedupeKey(offer),
+  };
+}
+
+Map<String, dynamic> _pickCanonicalOfferMap(List<Map<String, dynamic>> group) {
+  final ranked = [...group];
+  ranked.sort((a, b) {
+    final ascope = limousineOfferScopeOf(a);
+    final bscope = limousineOfferScopeOf(b);
+    final aCatalog = ascope.vehicleIds.isEmpty;
+    final bCatalog = bscope.vehicleIds.isEmpty;
+    if (aCatalog != bCatalog) return aCatalog ? -1 : 1;
+    final ap = limousineOfferLooksLikeProjection(a);
+    final bp = limousineOfferLooksLikeProjection(b);
+    if (ap != bp) return ap ? 1 : -1;
+    final at = _offerTimestamp(a);
+    final bt = _offerTimestamp(b);
+    if (at != null && bt != null && at != bt) return bt.compareTo(at);
+    return limousineOfferIdOf(a).compareTo(limousineOfferIdOf(b));
+  });
+  return ranked.first;
+}
+
+/// Collapse the same catalog line even when worker projections minted new
+/// offer IDs. Lineage wins; otherwise commercial kind+amount+currency plus
+/// localized title. Never uses the formatted price string.
+List<Map<String, dynamic>> limousineDeduplicateOfferMaps(
+  Iterable<Map<String, dynamic>> offers,
+) {
+  final groups = <String, List<Map<String, dynamic>>>{};
+  for (final offer in offers) {
+    final id = limousineOfferIdOf(offer);
+    final key = limousineOfferDedupeKey(offer);
+    if (id.isEmpty && key.isEmpty) continue;
+    groups.putIfAbsent(key, () => <Map<String, dynamic>>[]).add(offer);
+  }
+  final families = <String, List<Map<String, dynamic>>>{};
+  for (final group in groups.values) {
+    final family = limousineOfferCatalogFamilyKey(group.first);
+    families.putIfAbsent(family, () => <Map<String, dynamic>>[]).addAll(group);
+  }
+  return [
+    for (final group in families.values) _pickCanonicalOfferMap(group),
+  ];
+}
+
+/// Collapse projection copies of the same catalog offer. First surviving
+/// canonical row keeps caller sort. Never deduplicates on visible price text.
 List<LimousinePublishedOffer> limousineDeduplicatePublishedOffers(
   Iterable<LimousinePublishedOffer> offers,
 ) {
-  final seen = <String>{};
-  final out = <LimousinePublishedOffer>[];
-  for (final offer in offers) {
-    final id = offer.offerId.trim();
-    if (id.isEmpty || !seen.add(id)) continue;
-    out.add(offer);
+  return [
+    for (final map in limousineDeduplicateOfferMaps([
+      for (final offer in offers) offer.raw,
+    ]))
+      LimousinePublishedOffer.fromJson(map),
+  ];
+}
+
+List<Map<String, dynamic>> limousineNormalizeOfferSnapshot({
+  required List<Map<String, dynamic>> server,
+  required List<Map<String, dynamic>> authoritative,
+}) {
+  if (authoritative.isEmpty) {
+    return limousineDeduplicateOfferMaps(server);
   }
-  return out;
+  final keep = <String>{
+    for (final offer in authoritative) limousineOfferDedupeKey(offer),
+  };
+  final extras = <Map<String, dynamic>>[
+    for (final offer in server)
+      if (!keep.contains(limousineOfferDedupeKey(offer))) offer,
+  ];
+  return limousineDeduplicateOfferMaps(<Map<String, dynamic>>[
+    ...authoritative,
+    ...extras,
+  ]);
+}
+
+List<Map<String, dynamic>> limousineKeepAuthoritativeOffers({
+  required List<Map<String, dynamic>> sent,
+  required List<Map<String, dynamic>> server,
+}) {
+  if (sent.isEmpty) return limousineDeduplicateOfferMaps(server);
+  final stamped = [
+    for (final offer in sent) limousineStampOfferLineage(offer),
+  ];
+  return limousineNormalizeOfferSnapshot(
+    server: server,
+    authoritative: stamped,
+  );
 }
 
 LimousinePublishedOffer? limousineSelectSummaryOffer(
