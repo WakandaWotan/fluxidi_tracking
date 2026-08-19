@@ -77403,6 +77403,7 @@ function _validateCompanyMediaType(mediaType) {
   if (
     normalizedMediaType === "company_logo" ||
     normalizedMediaType === "company_hero" ||
+    normalizedMediaType === "limousine_profile_cover" ||
     normalizedMediaType === "vehicle_photo" ||
     normalizedMediaType === "driver_photo"
   ) {
@@ -77444,6 +77445,9 @@ function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId,
   if (mediaType === "company_logo" || mediaType === "company_hero") {
     const fileName = mediaType === "company_logo" ? `logo.${safeExt}` : `hero.${safeExt}`;
     return `public-media/${tenantSeg}/${companySeg}/company/${fileName}`;
+  }
+  if (mediaType === "limousine_profile_cover") {
+    return `public-media/${tenantSeg}/${companySeg}/limousine/profile-cover.${safeExt}`;
   }
   if (mediaType === "vehicle_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);

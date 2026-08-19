@@ -389,6 +389,9 @@ void main() {
     expect(draft['published_public_description'], publishedDescription);
     expect(draft['limousine_hero'], liveHero);
     expect(draft['published_limousine_hero'], publishedHero);
+    expect(draft['limousine_profile_cover'], liveHero);
+    expect(draft['published_limousine_profile_cover'], publishedHero);
+    expect(draft['limousine_profile_cover_schema'], 1);
 
     final published = limousinePublicDisplayPayload(
       publish: true,

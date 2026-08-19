@@ -327,14 +327,32 @@ class _LimousineBusinessSetupPageState
     _markDirty();
   }
 
+  Iterable<String> get _taxiHeroUrls {
+    final profile = localBackendBusinessProfileNotifier.value;
+    return <String>[
+      if ((profile?.publicHeroPhotoUrl ?? '').startsWith('https://'))
+        profile!.publicHeroPhotoUrl,
+    ];
+  }
+
   void _applyPersistedHero(Map<String, dynamic> section) {
-    _hero = limousineHeroFromSection(section);
-    final publishedRaw = section['published_limousine_hero'];
+    _hero = limousineSanitizeProfileCover(
+      limousineHeroFromSection(section),
+      taxiHeroUrls: _taxiHeroUrls,
+    );
+    final publishedRaw = limousinePublishedProfileCoverRaw(section);
     final published = publishedRaw is Map
-        ? limousineHeroFromSection(<String, dynamic>{
-            'limousine_hero': publishedRaw,
-          })
-        : limousineHeroFromSection(section);
+        ? limousineSanitizeProfileCover(
+            limousineHeroFromSection(<String, dynamic>{
+              kLimousineProfileCoverKey: publishedRaw,
+              'limousine_hero': publishedRaw,
+            }),
+            taxiHeroUrls: _taxiHeroUrls,
+          )
+        : limousineSanitizeProfileCover(
+            limousineHeroFromSection(section),
+            taxiHeroUrls: _taxiHeroUrls,
+          );
     _publishedHero = published.hasPhoto ? published : _hero;
   }
 
@@ -373,7 +391,7 @@ class _LimousineBusinessSetupPageState
       );
       if (picked == null) return;
       final uploaded = await uploadPublicPartnerMedia(
-        mediaType: 'company_hero',
+        mediaType: kLimousineProfileCoverMediaType,
         filePath: picked.path,
         filename: picked.name,
       );
@@ -553,6 +571,7 @@ class _LimousineBusinessSetupPageState
         publishedTitle: _publishedPublicTitle,
         publishedDescription: _publishedPublicDescription,
         publishedHero: _publishedHero.toSectionJson(),
+        taxiHeroUrls: _taxiHeroUrls,
       ),
       ...limousineVehiclePublicCopyPayload(
         publish: publish,
@@ -633,7 +652,9 @@ class _LimousineBusinessSetupPageState
             responseOffers.map((offer) => Map<String, dynamic>.from(offer)),
           );
         _revision = limousinePricingResponseRevision(data, fallback: _revision);
-        if (section.containsKey('limousine_hero') ||
+        if (section.containsKey(kLimousineProfileCoverKey) ||
+            section.containsKey(kLimousinePublishedProfileCoverKey) ||
+            section.containsKey('limousine_hero') ||
             section.containsKey('published_limousine_hero')) {
           _applyPersistedHero(section);
         }

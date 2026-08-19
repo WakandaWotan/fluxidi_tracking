@@ -194,7 +194,12 @@ Set<String> publicPartnerLimousineMediaUrls(Map<String, dynamic> profile) {
     if (url.startsWith('https://')) urls.add(url);
   }
 
-  addUrl(limousineReadExplicitHeroUrl(profile));
+  addUrl(
+    limousineSanitizeProfileCoverUrl(
+      limousineReadExplicitHeroUrl(profile),
+      taxiHeroUrls: limousineCollectTaxiHeroUrls(profile),
+    ),
+  );
   for (final vehicle in limousinePublicVehicleRecords(profile)) {
     if (!publicPartnerVehicleAssignedToLimousine(vehicle) &&
         !limousinePublicVehicleIsClassified(vehicle)) {
@@ -225,7 +230,11 @@ Set<String> publicPartnerLimousineMediaUrls(Map<String, dynamic> profile) {
 
 String publicPartnerTaxiHeroUrl(Map<String, dynamic> profile) {
   final media = asStringKeyedMap(profile['media']);
+  final exclusive = limousineCollectExclusiveCoverUrls(profile);
+  final blocked = publicPartnerLimousineMediaUrls(profile);
   for (final raw in <Object?>[
+    profile['publicHeroPhotoUrl'],
+    profile['public_hero_photo_url'],
     media['hero_photo_url'],
     media['heroPhotoUrl'],
     profile['hero_photo_url'],
@@ -233,7 +242,13 @@ String publicPartnerTaxiHeroUrl(Map<String, dynamic> profile) {
   ]) {
     final url = (raw ?? '').toString().trim();
     if (!url.startsWith('https://')) continue;
-    if (publicPartnerLimousineMediaUrls(profile).contains(url)) return '';
+    if (limousineUrlLooksLikeTaxiCompanyHero(url)) return url;
+    if (exclusive.any((item) => limousineSamePublicMediaObject(item, url))) {
+      continue;
+    }
+    if (blocked.any((item) => limousineSamePublicMediaObject(item, url))) {
+      continue;
+    }
     return url;
   }
   return '';
@@ -341,7 +356,7 @@ PublicPartnerMarketCatalog selectPublicPartnerMarketCatalog({
     airportServiceEnabled: airportServiceEnabled,
   );
   if (market == PublicPartnerMarket.limousine) {
-    final hero = resolveLimousineHero(source: profile);
+    final hero = limousineResolvePublishedProfileCover(source: profile);
     return PublicPartnerMarketCatalog(
       market: market,
       vehicles: publicPartnerLimousineCatalogVehicles(profile),

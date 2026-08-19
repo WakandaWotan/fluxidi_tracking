@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -267,16 +268,29 @@ Map<String, dynamic> limousinePublicDisplayPayload({
   required Map<String, String> publishedTitle,
   required Map<String, String> publishedDescription,
   required Map<String, dynamic> publishedHero,
+  Iterable<String> taxiHeroUrls = const <String>[],
 }) {
+  final safeHero = limousineSanitizeProfileCoverMap(
+    hero,
+    taxiHeroUrls: taxiHeroUrls,
+  );
+  final safePublished = limousineSanitizeProfileCoverMap(
+    publishedHero,
+    taxiHeroUrls: taxiHeroUrls,
+  );
+  final snapshot = publish ? safeHero : safePublished;
   return <String, dynamic>{
     'public_title': title,
     'public_description': description,
-    'limousine_hero': hero,
+    kLimousineProfileCoverKey: safeHero,
+    'limousine_hero': safeHero,
     'published_public_title': publish ? title : publishedTitle,
     'published_public_description': publish
         ? description
         : publishedDescription,
-    'published_limousine_hero': publish ? hero : publishedHero,
+    kLimousinePublishedProfileCoverKey: snapshot,
+    'published_limousine_hero': snapshot,
+    kLimousineProfileCoverSchemaKey: kLimousineProfileCoverSchemaVersion,
   };
 }
 

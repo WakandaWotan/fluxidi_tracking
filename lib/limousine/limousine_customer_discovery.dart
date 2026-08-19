@@ -796,19 +796,22 @@ LimousineHeroSelection limousineDiscoveryPublishedCover(
   Map<String, dynamic> partner,
 ) {
   final source = _limousineSectionOf(partner);
-  final publishedHero =
-      source['published_limousine_hero'] ?? source['publishedLimousineHero'];
-  final hasPublishedHeroKey =
-      source.containsKey('published_limousine_hero') ||
-      source.containsKey('publishedLimousineHero');
-  if (hasPublishedHeroKey) {
-    final resolved = _heroFromPublishedValue(publishedHero);
+  final taxiHeroUrls = limousineCollectTaxiHeroUrls(partner)
+    ..addAll(limousineCollectTaxiHeroUrls(source));
+  final publishedHero = limousinePublishedProfileCoverRaw(source);
+  if (limousineHasPublishedProfileCoverKey(source)) {
+    final resolved = limousineSanitizeProfileCover(
+      _heroFromPublishedValue(publishedHero),
+      taxiHeroUrls: taxiHeroUrls,
+    );
     if (resolved.hasPhoto) return resolved;
     return const LimousineHeroSelection(
       sourceKind: kLimousineHeroSourceFallback,
     );
   }
-  final live = resolveLimousineHero(source: source);
+  final live = resolveLimousineHero(
+    source: <String, dynamic>{...partner, ...source},
+  );
   if (live.hasPhoto) return live;
   return const LimousineHeroSelection(sourceKind: kLimousineHeroSourceFallback);
 }
@@ -816,7 +819,10 @@ LimousineHeroSelection limousineDiscoveryPublishedCover(
 LimousineHeroSelection _heroFromPublishedValue(Object? publishedHero) {
   if (publishedHero is Map) {
     return resolveLimousineHero(
-      source: <String, dynamic>{'limousine_hero': publishedHero},
+      source: <String, dynamic>{
+        kLimousineProfileCoverKey: publishedHero,
+        'limousine_hero': publishedHero,
+      },
     );
   }
   final url = (publishedHero ?? '').toString().trim();

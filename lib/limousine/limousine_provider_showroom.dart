@@ -532,7 +532,7 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
         ),
       ),
   ];
-  final hero = resolveLimousineHero(
+  final hero = limousineResolvePublishedProfileCover(
     source: profile,
     fallbackVehiclePhotoUrls: [
       for (final vehicle in vehicles)
