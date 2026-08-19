@@ -419,11 +419,12 @@ void main() {
       ),
     );
     await _reveal(tester, quoteCard);
-    tester
-        .widget<InkWell>(
-          find.descendant(of: quoteCard, matching: find.byType(InkWell)),
-        )
-        .onTap!();
+    await tester.tap(
+      find.descendant(
+        of: quoteCard,
+        matching: find.text(kLimousineBusinessSetupEdit.of(AppLanguage.nl)),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(LimousineSimpleOfferEditor), findsOneWidget);
     expect(find.byType(LimousineOfferEditorDialog), findsNothing);

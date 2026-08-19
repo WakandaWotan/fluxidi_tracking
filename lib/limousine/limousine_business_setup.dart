@@ -122,6 +122,15 @@ const Key kLimousineSimpleOfferScopeAllKey = ValueKey<String>(
 const Key kLimousineSimpleOfferFeaturedKey = ValueKey<String>(
   'limousine_simple_offer_featured',
 );
+const Key kLimousineSimpleOfferVehiclePickerKey = ValueKey<String>(
+  'limousine_simple_offer_vehicle_picker',
+);
+const Key kLimousineSimpleOfferMissingVehicleKey = ValueKey<String>(
+  'limousine_simple_offer_missing_vehicle',
+);
+
+Key limousineSimpleOfferVehicleTileKey(String vehicleId) =>
+    ValueKey<String>('limousine_simple_offer_vehicle_$vehicleId');
 
 Key limousineBusinessSetupVehiclePhotoKey(String vehicleId) =>
     ValueKey<String>('limousine_business_setup_vehicle_photo_$vehicleId');
@@ -571,9 +580,9 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
   final scoped = limousineWriteOfferScope(
     next,
     appliesToAllSelected: draft.appliesToAllSelected,
-    vehicleIds: draft.vehicleIds.isNotEmpty
-        ? draft.vehicleIds
-        : (draft.vehicleId.isEmpty ? const <String>[] : <String>[draft.vehicleId]),
+    vehicleIds: draft.appliesToAllSelected
+        ? const <String>[]
+        : List<String>.from(draft.vehicleIds),
     featured: draft.featured,
     sortOrder: draft.sortOrder,
   );
@@ -652,7 +661,8 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
     if (draft.includedHours != null) {
       hourly['included_hours'] = draft.includedHours;
     }
-    next['display_amount_cents'] = draft.mode == LimousineSimpleOfferMode.package
+    next['display_amount_cents'] =
+        draft.mode == LimousineSimpleOfferMode.package
         ? (draft.packageAmountCents ?? draft.amountCents)
         : (draft.firstHourCents ?? draft.amountCents);
     if (draft.mode == LimousineSimpleOfferMode.package &&

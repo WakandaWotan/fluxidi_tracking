@@ -44,7 +44,6 @@ const LocalizedText kLimousineBusinessSetupTestMessage = LocalizedText(
   es: 'Entorno de prueba: visible para usuarios de prueba autorizados',
 );
 
-
 const LocalizedText kLimousineBusinessSetupTestHint = LocalizedText(
   nl: 'Controleer en publiceer om live te gaan.',
   en: 'Review and publish to go live.',
@@ -107,7 +106,6 @@ const LocalizedText kLimousineBusinessSetupPublishedLocal = LocalizedText(
   fr: 'Publication vérifiée. La visibilité reste autoritaire côté serveur.',
   es: 'Publicación comprobada. La visibilidad sigue siendo del servidor.',
 );
-
 
 const LocalizedText kLimousineBusinessSetupSectionVehicles = LocalizedText(
   nl: 'Voertuigen',
@@ -628,6 +626,13 @@ const LocalizedText kLimousineBusinessSetupOfferLegacyAll = LocalizedText(
   en: 'Existing offer without a vehicle link: treated as all selected limousines until you save it again.',
   fr: 'Offre existante sans lien véhicule : traitée comme toutes les limousines sélectionnées jusqu’à nouvel enregistrement.',
   es: 'Oferta existente sin vínculo de vehículo: se trata como todas las limusinas seleccionadas hasta que la vuelva a guardar.',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferMissingVehicle = LocalizedText(
+  nl: 'Dit prijsmodel verwijst naar een voertuig dat niet meer bestaat. Kies een bestaand actief limousinevoertuig. Het prijsmodel zelf blijft bewaard.',
+  en: 'This price model points to a vehicle that no longer exists. Choose an existing active limousine. The price model itself is kept.',
+  fr: 'Ce modèle de prix pointe vers un véhicule qui n’existe plus. Choisissez une limousine active existante. Le modèle de prix est conservé.',
+  es: 'Este modelo de precio apunta a un vehículo que ya no existe. Elija una limusina activa existente. El modelo de precio se conserva.',
 );
 
 const LocalizedText kLimousineBusinessSetupOfferInactiveLink = LocalizedText(

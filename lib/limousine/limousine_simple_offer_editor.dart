@@ -80,6 +80,14 @@ class _LimousineSimpleOfferEditorState
 
   String _t(LocalizedText text) => text.of(widget.language);
 
+  bool get _unresolvedMissingVehicle {
+    if (_appliesToAll || _vehicleIds.isNotEmpty) return false;
+    return limousineOfferMissingLinkedIds(
+      offer: widget.initialOffer,
+      vehicles: widget.vehicles,
+    ).isNotEmpty;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -93,11 +101,17 @@ class _LimousineSimpleOfferEditorState
     _appliesToAll = scope.appliesToAllSelected;
     _featured = scope.featured;
     _legacyUnbound = scope.legacyUnbound;
-    _vehicleIds = scope.vehicleIds.toSet();
+    final knownIds = <String>{
+      for (final vehicle in widget.vehicles) vehicle.id.trim(),
+    };
+    _vehicleIds = {
+      for (final id in scope.vehicleIds)
+        if (knownIds.contains(id)) id,
+    };
     _targetType = limousineOfferToken(offer['target_type']).isEmpty
         ? LimousineOfferTarget.serviceClass
         : limousineOfferToken(offer['target_type']);
-    _vehicleId = (offer['vehicle_id'] ?? '').toString();
+    _vehicleId = _vehicleIds.isEmpty ? '' : _vehicleIds.first;
     _sortOrder = TextEditingController(text: '${scope.sortOrder}');
     _serviceClassId = limousineOfferToken(offer['service_class_id']);
     if (_serviceClassId.isEmpty && widget.knownClassIds.isNotEmpty) {
@@ -185,7 +199,7 @@ class _LimousineSimpleOfferEditorState
       amountCents: _centsFromText(_amount.text),
       currency: widget.currency,
       targetType: _targetType,
-      vehicleId: _vehicleId,
+      vehicleId: _appliesToAll || _vehicleIds.isEmpty ? '' : _vehicleIds.first,
       serviceClassId: _serviceClassId,
       journeyTypes: _journeyTypes.toList(growable: false),
       primaryLang: widget.primaryLang,
@@ -212,10 +226,11 @@ class _LimousineSimpleOfferEditorState
         knownClassIds: widget.knownClassIds,
       );
       final blocking = errors.where((code) {
-        if (widget.mode == LimousineSimpleOfferMode.quote) {
-          return code == LimousineOfferError.unknownServiceClass ||
-              code == LimousineOfferError.unknownVehicle ||
-              code == LimousineOfferError.vehicleNotLimousine;
+        if (code == LimousineOfferError.unknownVehicle ||
+            code == LimousineOfferError.unknownTarget ||
+            code == LimousineOfferError.vehicleNotLimousine ||
+            code == LimousineOfferError.unknownServiceClass) {
+          return true;
         }
         if (widget.mode == LimousineSimpleOfferMode.fromPrice) {
           return code == LimousineOfferError.missingDisplayAmount;
@@ -343,7 +358,8 @@ class _LimousineSimpleOfferEditorState
                           ),
                         ],
                         if (widget.mode == LimousineSimpleOfferMode.hourly ||
-                            widget.mode == LimousineSimpleOfferMode.package) ...[
+                            widget.mode ==
+                                LimousineSimpleOfferMode.package) ...[
                           TextField(
                             key: kLimousineSimpleOfferFirstHourKey,
                             controller: _firstHour,
@@ -413,73 +429,117 @@ class _LimousineSimpleOfferEditorState
                             fontWeight: FontWeight.w700,
                           ),
                         ),
+                        if (_unresolvedMissingVehicle) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            key: kLimousineSimpleOfferMissingVehicleKey,
+                            _t(kLimousineBusinessSetupOfferMissingVehicle),
+                            style: TextStyle(
+                              color: tokens.danger,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
                         if (_legacyUnbound) ...[
                           const SizedBox(height: 6),
                           Text(
                             _t(kLimousineBusinessSetupOfferLegacyAll),
-                            style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                            style: TextStyle(
+                              color: tokens.muted,
+                              fontSize: 12.5,
+                            ),
                           ),
                         ],
                         FilterChip(
                           key: kLimousineSimpleOfferScopeAllKey,
-                          label: Text(_t(kLimousineBusinessSetupOfferAllSelected)),
+                          label: Text(
+                            _t(kLimousineBusinessSetupOfferAllSelected),
+                          ),
                           selected: _appliesToAll,
                           onSelected: (selected) => setState(() {
                             _appliesToAll = selected;
-                            if (selected) _vehicleIds.clear();
+                            if (selected) {
+                              _vehicleIds.clear();
+                              _vehicleId = '';
+                            }
                           }),
                         ),
                         const SizedBox(height: 8),
-                        for (final vehicle in widget.vehicles)
-                          CheckboxListTile(
-                            contentPadding: EdgeInsets.zero,
-                            value: _appliesToAll || _vehicleIds.contains(vehicle.id),
-                            onChanged: (value) => setState(() {
-                              _appliesToAll = false;
-                              if (value == true) {
-                                _vehicleIds.add(vehicle.id);
-                              } else {
-                                _vehicleIds.remove(vehicle.id);
-                              }
-                            }),
-                            title: Text(
-                              vehicle.vehicleName.isEmpty
-                                  ? vehicle.brandModel
-                                  : vehicle.vehicleName,
-                            ),
-                            subtitle: Text(
-                              [
-                                if (vehicle.serviceClassId.isNotEmpty)
-                                  limousineServiceClassLabel(
-                                    vehicle.serviceClassId,
-                                    widget.language,
+                        KeyedSubtree(
+                          key: kLimousineSimpleOfferVehiclePickerKey,
+                          child: Column(
+                            children: [
+                              for (final vehicle in widget.vehicles)
+                                CheckboxListTile(
+                                  key: limousineSimpleOfferVehicleTileKey(
+                                    vehicle.id,
                                   ),
-                                '${vehicle.passengerCapacity} ${kLimousineDiscoveryPassengers.of(widget.language)}',
-                              ].join(' · '),
-                            ),
-                            secondary: SizedBox(
-                              width: 56,
-                              height: 40,
-                              child: vehicle.publicPhotoUrl != null &&
-                                      vehicle.publicPhotoUrl!.startsWith('https://')
-                                  ? Image.network(
-                                      vehicle.publicPhotoUrl!,
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (_, __, ___) =>
-                                          const Icon(Icons.directions_car),
-                                    )
-                                  : const Icon(Icons.directions_car),
-                            ),
+                                  contentPadding: EdgeInsets.zero,
+                                  value:
+                                      _appliesToAll ||
+                                      _vehicleIds.contains(vehicle.id),
+                                  onChanged: (value) => setState(() {
+                                    _appliesToAll = false;
+                                    if (value == true) {
+                                      _vehicleIds.add(vehicle.id);
+                                      _vehicleId = vehicle.id;
+                                    } else {
+                                      _vehicleIds.remove(vehicle.id);
+                                      _vehicleId = _vehicleIds.isEmpty
+                                          ? ''
+                                          : _vehicleIds.first;
+                                    }
+                                  }),
+                                  title: Text(
+                                    vehicle.vehicleName.isEmpty
+                                        ? vehicle.brandModel
+                                        : vehicle.vehicleName,
+                                  ),
+                                  subtitle: Text(
+                                    [
+                                      if (vehicle.serviceClassId.isNotEmpty)
+                                        limousineServiceClassLabel(
+                                          vehicle.serviceClassId,
+                                          widget.language,
+                                        ),
+                                      '${vehicle.passengerCapacity} ${kLimousineDiscoveryPassengers.of(widget.language)}',
+                                    ].join(' · '),
+                                  ),
+                                  secondary: SizedBox(
+                                    width: 56,
+                                    height: 40,
+                                    child:
+                                        vehicle.publicPhotoUrl != null &&
+                                            vehicle.publicPhotoUrl!.startsWith(
+                                              'https://',
+                                            )
+                                        ? Image.network(
+                                            vehicle.publicPhotoUrl!,
+                                            fit: BoxFit.contain,
+                                            errorBuilder: (_, __, ___) =>
+                                                const Icon(
+                                                  Icons.directions_car,
+                                                ),
+                                          )
+                                        : const Icon(Icons.directions_car),
+                                  ),
+                                ),
+                            ],
                           ),
-                        if (limousineOfferInactiveLinkedIds(
-                          offer: widget.initialOffer,
-                          vehicles: widget.vehicles,
-                        ).isNotEmpty)
+                        ),
+                        if (!_unresolvedMissingVehicle &&
+                            limousineOfferInactiveLinkedIds(
+                              offer: widget.initialOffer,
+                              vehicles: widget.vehicles,
+                            ).isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
                               _t(kLimousineBusinessSetupOfferInactiveLink),
-                              style: TextStyle(color: tokens.danger, fontSize: 12.5),
+                              style: TextStyle(
+                                color: tokens.danger,
+                                fontSize: 12.5,
+                              ),
                             ),
                           ),
                         SwitchListTile(
@@ -488,17 +548,21 @@ class _LimousineSimpleOfferEditorState
                           value: _featured,
                           activeColor: tokens.gold,
                           title: Text(_t(kLimousineBusinessSetupOfferFeatured)),
-                          onChanged: (value) => setState(() => _featured = value),
+                          onChanged: (value) =>
+                              setState(() => _featured = value),
                         ),
                         TextField(
                           controller: _sortOrder,
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(
-                            labelText: _t(kLimousineBusinessSetupOfferSortOrder),
+                            labelText: _t(
+                              kLimousineBusinessSetupOfferSortOrder,
+                            ),
                           ),
                         ),
                         if (widget.mode != LimousineSimpleOfferMode.hourly &&
-                            widget.mode != LimousineSimpleOfferMode.package) ...[
+                            widget.mode !=
+                                LimousineSimpleOfferMode.package) ...[
                           const SizedBox(height: 12),
                           Text(
                             _t(kLimousineBusinessSetupJourneyTypes),
@@ -532,8 +596,7 @@ class _LimousineSimpleOfferEditorState
                             ],
                           ),
                         ],
-                        if (_fieldError != null &&
-                            widget.mode == LimousineSimpleOfferMode.quote)
+                        if (_fieldError != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(

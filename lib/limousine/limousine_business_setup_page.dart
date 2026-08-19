@@ -596,20 +596,9 @@ class _LimousineBusinessSetupPageState
     }
   }
 
-  Future<void> _editOffer({int? index, String? presentation}) async {
-    final existing = index == null
-        ? limousineSimpleOfferDraft(
-            presentation:
-                presentation ?? LimousinePricePresentation.quoteRequired,
-            currency: _currency,
-            serviceClassId: _knownClasses.isEmpty ? '' : _knownClasses.first,
-            title: _publicTitle.toJson(),
-            description: _publicDescription.toJson(),
-            hourlyEnabled:
-                presentation == LimousineJourneyTypeId.hourlyPackage ||
-                presentation == 'hourly',
-          )
-        : Map<String, dynamic>.from(_offers[index]);
+  Future<void> _editOffer({required int index}) async {
+    if (index < 0 || index >= _offers.length) return;
+    final existing = Map<String, dynamic>.from(_offers[index]);
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) => LimousineOfferEditorDialog(
@@ -623,11 +612,7 @@ class _LimousineBusinessSetupPageState
     );
     if (result == null || !mounted) return;
     setState(() {
-      if (index == null) {
-        _offers.add(result);
-      } else {
-        _offers[index] = result;
-      }
+      _offers[index] = result;
     });
     _markDirty();
   }
@@ -1482,14 +1467,6 @@ class _LimousineBusinessSetupPageState
             ),
           ],
         ),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: _saving ? null : () => _editOffer(),
-            icon: const Icon(Icons.add),
-            label: Text(_t(kLimousineBusinessSetupAddOffer)),
-          ),
-        ),
       ],
     );
   }
@@ -1577,12 +1554,11 @@ class _LimousineBusinessSetupPageState
                   ),
                 ),
                 Text(hint, style: TextStyle(color: tokens.muted, fontSize: 12)),
-                if (exists)
-                  TextButton.icon(
-                    onPressed: () => _editSimpleOffer(mode),
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: Text(_t(kLimousineBusinessSetupEdit)),
-                  ),
+                TextButton.icon(
+                  onPressed: () => _editSimpleOffer(mode),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: Text(_t(kLimousineBusinessSetupEdit)),
+                ),
                 if (errors.isNotEmpty)
                   Padding(
                     key: _fieldErrorKeys.putIfAbsent(

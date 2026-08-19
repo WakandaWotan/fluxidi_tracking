@@ -66,11 +66,14 @@ LimousineOfferScope limousineOfferScopeOf(Map<String, dynamic> offer) {
     vehicleIds: ids,
     legacyUnbound: legacyUnbound,
     featured: _boolOf(offer['featured']),
-    sortOrder: int.tryParse('${offer['sort_order'] ?? offer['sortOrder'] ?? 0}') ?? 0,
+    sortOrder:
+        int.tryParse('${offer['sort_order'] ?? offer['sortOrder'] ?? 0}') ?? 0,
   );
 }
 
-LimousineOfferScope limousinePublishedOfferScope(LimousinePublishedOffer offer) {
+LimousineOfferScope limousinePublishedOfferScope(
+  LimousinePublishedOffer offer,
+) {
   return limousineOfferScopeOf(offer.raw);
 }
 
@@ -87,6 +90,19 @@ bool limousineVehicleIsPublishedLimousine(VehicleProfile vehicle) {
   return vehicle.isActive &&
       limousineOfferToken(vehicle.serviceCategory) == 'limousine' &&
       limousineOfferToken(vehicle.serviceClassId).isNotEmpty;
+}
+
+List<String> limousineOfferMissingLinkedIds({
+  required Map<String, dynamic> offer,
+  required Iterable<VehicleProfile> vehicles,
+}) {
+  final scope = limousineOfferScopeOf(offer);
+  if (scope.appliesToAllSelected) return const <String>[];
+  final known = <String>{for (final vehicle in vehicles) vehicle.id.trim()};
+  return [
+    for (final id in scope.vehicleIds)
+      if (id.isNotEmpty && !known.contains(id)) id,
+  ];
 }
 
 List<String> limousineOfferInactiveLinkedIds({
@@ -203,7 +219,8 @@ List<LimousinePublishedOffer> limousineSortPublishedOffers(
     final sa = limousinePublishedOfferScope(a);
     final sb = limousinePublishedOfferScope(b);
     if (sa.featured != sb.featured) return sa.featured ? -1 : 1;
-    if (sa.sortOrder != sb.sortOrder) return sa.sortOrder.compareTo(sb.sortOrder);
+    if (sa.sortOrder != sb.sortOrder)
+      return sa.sortOrder.compareTo(sb.sortOrder);
     return a.offerId.compareTo(b.offerId);
   });
   return out;
@@ -238,10 +255,12 @@ LimousinePublishedOffer? limousineSelectSummaryOffer(
         kind == LimousineOfferDisplayKind.hourly ||
         kind == LimousineOfferDisplayKind.package) {
       if ((offer.displayAmountCents ?? 0) > 0 ||
-          (limousineCentsOf(offer.raw['hourly'] is Map
-                  ? (offer.raw['hourly'] as Map)['package_amount_cents']
-                  : null) ??
-              0) >
+          (limousineCentsOf(
+                    offer.raw['hourly'] is Map
+                        ? (offer.raw['hourly'] as Map)['package_amount_cents']
+                        : null,
+                  ) ??
+                  0) >
               0) {
         return offer;
       }
@@ -377,7 +396,9 @@ String limousineFormatPublishedOfferPrice(
       if (cents == null || cents <= 0) {
         return kLimousineShowroomPriceOnRequest.of(language);
       }
-      final parts = <String>['${_money(cents, currency)} ${kLimousineOfferPerHour.of(language)}'];
+      final parts = <String>[
+        '${_money(cents, currency)} ${kLimousineOfferPerHour.of(language)}',
+      ];
       if (minMinutes != null && minMinutes > 0) {
         final hours = (minMinutes / 60).ceil();
         parts.add('${kLimousineOfferMinimumHours.of(language)} $hours');
