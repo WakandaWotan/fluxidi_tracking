@@ -27,6 +27,7 @@ import {
 import {
   LIMOUSINE_PRICE_PRESENTATIONS,
   normalizeLimousineOffers,
+  normalizeLocalizedText,
   selectLimousineOfferForRequest,
 } from "./limousine_offers.mjs";
 
@@ -251,6 +252,19 @@ function normalizeClassPricing(raw) {
 
 /// Normalizes the optional `limousine` section of a company pricing record.
 /// Absent/invalid input yields a disabled section (no effect on taxi pricing).
+function normalizeSelectedVehicleIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const id = String(item || "").trim();
+    if (!id || id.length > 96 || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export function normalizeLimousinePricingSection(raw) {
   const src = asObject(raw);
   return {
@@ -262,6 +276,14 @@ export function normalizeLimousinePricingSection(raw) {
     // LIMOUSINE-MARKETPLACE-P2B2: commercial offers (additive; P2B1 records
     // without `offers` keep parsing and resolving exactly as before).
     offers: normalizeLimousineOffers(src.offers),
+    selected_vehicle_ids: normalizeSelectedVehicleIds(
+      src.selected_vehicle_ids ?? src.selectedVehicleIds,
+    ),
+    public_title: normalizeLocalizedText(src.public_title ?? src.publicTitle, { max: 120 }),
+    public_description: normalizeLocalizedText(
+      src.public_description ?? src.publicDescription,
+      { max: 400 },
+    ),
   };
 }
 

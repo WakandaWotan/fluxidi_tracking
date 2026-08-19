@@ -180,7 +180,12 @@ function nearbyVehicles(profile) {
     if (!serviceClassId) continue;
     out.push({
       service_category: "limousine",
-      photo_url: httpsOnly(vehicle.photo_url ?? vehicle.photoUrl ?? vehicle.public_photo_url),
+      photo_url: httpsOnly(
+        vehicle.primary_photo_url ??
+          vehicle.photo_url ??
+          vehicle.photoUrl ??
+          vehicle.public_photo_url,
+      ),
       service_class_id: serviceClassId,
       ...(positiveInt(vehicle.passenger_capacity ?? vehicle.passengerCapacity ?? vehicle.pax) != null
         ? {

@@ -178,6 +178,10 @@ import {
   limousineNearbyAllowsUnscopedListing as _limousineNearbyAllowsUnscopedListing,
 } from "./modules/limousine_discovery_preview.mjs";
 import {
+  normalizePublicVehicleGallery as _normalizePublicVehicleGallery,
+  attachPublicVehicleMediaFields as _attachPublicVehicleMediaFields,
+} from "./modules/limousine_public_vehicle_media.mjs";
+import {
   compareLimousineNearbyRank as _compareLimousineNearbyRank,
   limousineNearbyDistanceKm as _limousineNearbyDistanceKm,
   publicLimousineDistanceFields as _publicLimousineDistanceFields,
@@ -79848,6 +79852,18 @@ function _normalizePublicVehicles(raw) {
     )
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
+    const media = _normalizePublicVehicleGallery(row, (value) =>
+      _safePublicHttpsUrl(value, 600),
+    );
+    const fallbackPhotoUrl = _safePublicHttpsUrl(
+      row.photo_url ?? row.photoUrl ?? row.public_photo_url ?? row.publicPhotoUrl,
+      600,
+    );
+    const publicMedia = _attachPublicVehicleMediaFields({
+      serviceCategory,
+      media,
+      fallbackPhotoUrl,
+    });
     out.push({
       name: _safePublicText(row.name, 120),
       brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
@@ -79857,7 +79873,7 @@ function _normalizePublicVehicles(raw) {
       pax: _safePublicInt(row.pax, 0, 0, 99),
       luggage: _safePublicInt(row.luggage, 0, 0, 99),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
-      photo_url: _safePublicHttpsUrl(row.photo_url ?? row.photoUrl, 600),
+      ...publicMedia,
     });
   }
   return out;

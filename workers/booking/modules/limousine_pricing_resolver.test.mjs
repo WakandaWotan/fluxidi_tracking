@@ -353,6 +353,22 @@ test("storage normalizer: absent section is disabled, no taxi impact", () => {
   const s = normalizeLimousinePricingSection(null);
   assert.equal(s.enabled, false);
   assert.deepEqual(s.classes, []);
+  assert.deepEqual(s.selected_vehicle_ids, []);
+});
+
+test("storage normalizer keeps selected vehicle ids and public copy", () => {
+  const s = normalizeLimousinePricingSection({
+    enabled: true,
+    currency: "EUR",
+    source_revision: 4,
+    selected_vehicle_ids: ["vh_party", "vh_party", "vh_hummer"],
+    public_title: { nl: "Maison", en: "Maison" },
+    public_description: { nl: "Limousines" },
+    offers: [],
+  });
+  assert.deepEqual(s.selected_vehicle_ids, ["vh_party", "vh_hummer"]);
+  assert.equal(s.public_title.nl, "Maison");
+  assert.equal(s.public_description.nl, "Limousines");
 });
 
 test("10/26) /quote wiring: gated, eligibility, no taxi fallback, no booking", () => {
