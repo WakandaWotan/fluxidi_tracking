@@ -77,6 +77,13 @@ Key limousineDiscoveryOffersCtaKey(String partnerId) =>
 Key limousineDiscoveryProfileCtaKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_profile_$partnerId');
 
+const Key kLimousineDiscoveryCompanyLogoKey = ValueKey<String>(
+  'limousine_discovery_company_logo',
+);
+const Key kLimousineDiscoveryCompanyNameFallbackKey = ValueKey<String>(
+  'limousine_discovery_company_name_fallback',
+);
+
 /// Alias for [limousineDiscoveryOffersCtaKey]. Kept so existing discovery
 /// tests still press the primary "Bekijk aanbod" action.
 Key limousineDiscoveryViewLimousinesCtaKey(String partnerId) =>

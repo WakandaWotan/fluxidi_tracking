@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
+import 'package:fluxidi_tracking/limousine/limousine_brand_logo.dart';
 import 'package:fluxidi_tracking/limousine/limousine_current_location.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_api.dart';
@@ -16,6 +17,7 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_labels.d
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_quote.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
+import 'package:fluxidi_tracking/limousine/limousine_vehicle_media.dart';
 
 Map<String, dynamic> _publishedLimousinePartner({
   required String id,
@@ -27,6 +29,7 @@ Map<String, dynamic> _publishedLimousinePartner({
   bool verified = true,
   double? operatingBaseLat,
   double? operatingBaseLng,
+  String? logoUrl,
 }) {
   return <String, dynamic>{
     'partner_id': id,
@@ -34,6 +37,7 @@ Map<String, dynamic> _publishedLimousinePartner({
     'is_active': true,
     'limousine_available': true,
     'public_city': city,
+    if (logoUrl != null) 'logo_url': logoUrl,
     if (distanceKm != null) 'distance_km': distanceKm,
     'trust': <String, dynamic>{'verified_partner': verified},
     'hero_photo_url': 'https://cdn.example/cover.jpg',
@@ -842,4 +846,90 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
+
+  test('discovery cards keep partner logos off the vehicle photo', () {
+    final page = File(
+      'lib/limousine/limousine_customer_discovery_page.dart',
+    ).readAsStringSync();
+    final identity = File(
+      'lib/limousine/limousine_brand_logo.dart',
+    ).readAsStringSync();
+    expect(page.contains('LimousineBrandLogoCorner'), isFalse);
+    expect(page.contains('LimousineBrandLogoPlaque'), isFalse);
+    expect(page.contains('LimousineDiscoveryCompanyIdentity'), isTrue);
+    expect(page.contains("'Fluxidi'"), isFalse);
+    expect(page.contains('"Fluxidi"'), isFalse);
+    expect(identity.contains("companyName: 'Fluxidi'"), isFalse);
+    expect(identity.contains("return 'Fluxidi'"), isFalse);
+  });
+
+  test('discovery cards parse the public partner logo URL', () {
+    final withLogo = tryParseLimousineDiscoveryCard(
+      _publishedLimousinePartner(
+        id: 'limo_1',
+        name: 'Maison Noire',
+        logoUrl: 'https://cdn.example/logo.png',
+      ),
+    )!;
+    expect(withLogo.logoUrl, 'https://cdn.example/logo.png');
+    expect(withLogo.companyName, 'Maison Noire');
+
+    final withoutLogo = tryParseLimousineDiscoveryCard(
+      _publishedLimousinePartner(id: 'limo_2', name: 'Atelier Or'),
+    )!;
+    expect(withoutLogo.logoUrl, isEmpty);
+    expect(withoutLogo.companyName, 'Atelier Or');
+  });
+
+  testWidgets(
+    'ready cards show company-name fallback and never overlay the photo',
+    (tester) async {
+      final card = tryParseLimousineDiscoveryCard(
+        _publishedLimousinePartner(id: 'limo_1', name: 'Maison Noire'),
+      )!;
+      final gateway = MemoryLimousineDiscoveryGateway();
+      final controller = LimousineDiscoveryController(gateway: gateway);
+      controller.phase = LimousineDiscoveryPhase.ready;
+      controller.cards = <LimousineDiscoveryCard>[card];
+
+      Future<void> pump(Size size) async {
+        await tester.pumpWidget(
+          _app(
+            _page(gateway: gateway, controller: controller),
+            size: size,
+          ),
+        );
+        await tester.pump();
+        expect(find.byType(LimousineBrandLogoCorner), findsNothing);
+        expect(find.byType(LimousineBrandLogoPlaque), findsNothing);
+        expect(find.byType(LimousineDiscoveryCompanyIdentity), findsOneWidget);
+        expect(
+          find.byKey(kLimousineDiscoveryCompanyNameFallbackKey),
+          findsOneWidget,
+        );
+        expect(find.text('Maison Noire'), findsOneWidget);
+        expect(find.text('Fluxidi'), findsNothing);
+        expect(find.byType(LimousineContainPhoto), findsOneWidget);
+
+        final photo = tester.getRect(find.byType(LimousineContainPhoto));
+        final identity = tester.getRect(
+          find.byType(LimousineDiscoveryCompanyIdentity),
+        );
+        final overlap = photo.overlaps(identity);
+        expect(overlap, isFalse);
+        expect(
+          find.byKey(limousineDiscoveryOffersCtaKey('limo_1')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(limousineDiscoveryProfileCtaKey('limo_1')),
+          findsOneWidget,
+        );
+      }
+
+      await pump(kLimousinePhonePortrait);
+      await pump(kLimousineSmX400Portrait);
+      await pump(kLimousineTabletLandscape);
+    },
+  );
 }

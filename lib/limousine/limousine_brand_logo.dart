@@ -4,7 +4,16 @@
 import 'package:flutter/material.dart';
 
 import '../branding/company_logo_ref.dart';
+import 'limousine_customer_discovery.dart';
 import 'limousine_p2d4c1a_ux.dart';
+
+double limousineDiscoveryCompanyLogoHeight(Size viewport) {
+  return viewport.shortestSide >= 600 ? 52 : 40;
+}
+
+double limousineDiscoveryCompanyLogoMaxWidth(Size viewport) {
+  return viewport.shortestSide >= 600 ? 220 : 160;
+}
 
 const Key kLimousineBrandLogoPlaqueKey = ValueKey<String>(
   'limousine_brand_logo_plaque',
@@ -124,6 +133,75 @@ class LimousineBrandLogoPlaque extends StatelessWidget {
           letterSpacing: 0.6,
           fontSize: 28,
         ),
+      ),
+    );
+  }
+}
+
+/// Discovery-card company mark: logo only, no plate, never over the vehicle photo.
+class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
+  const LimousineDiscoveryCompanyIdentity({
+    super.key,
+    required this.logoUrl,
+    required this.companyName,
+    required this.tokens,
+    this.logoImage,
+  });
+
+  final String logoUrl;
+  final String companyName;
+  final LimousineUxTokens tokens;
+  final ImageProvider? logoImage;
+
+  @override
+  Widget build(BuildContext context) {
+    final viewport = MediaQuery.sizeOf(context);
+    final height = limousineDiscoveryCompanyLogoHeight(viewport);
+    final maxWidth = limousineDiscoveryCompanyLogoMaxWidth(viewport);
+    final name = companyName.trim();
+    final showLogo =
+        logoImage != null || limousinePublicLogoUrlIsRenderable(logoUrl);
+
+    Widget nameFallback() {
+      return Text(
+        name,
+        key: kLimousineDiscoveryCompanyNameFallbackKey,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: tokens.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
+
+    if (!showLogo) return nameFallback();
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: height,
+          maxHeight: height,
+          maxWidth: maxWidth,
+        ),
+        child: logoImage != null
+            ? Image(
+                key: kLimousineDiscoveryCompanyLogoKey,
+                image: logoImage!,
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
+                filterQuality: FilterQuality.medium,
+              )
+            : Image.network(
+                logoUrl.trim(),
+                key: kLimousineDiscoveryCompanyLogoKey,
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => nameFallback(),
+              ),
       ),
     );
   }

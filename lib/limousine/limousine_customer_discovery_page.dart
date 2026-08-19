@@ -642,14 +642,10 @@ class _LimousineCustomerDiscoveryPageState
               tokens: tokens,
               language: _lang,
               horizontal: tablet,
-              onOpenOffers: () => _openPartner(
-                card,
-                LimousineDiscoveryDestination.showroom,
-              ),
-              onOpenProfile: () => _openPartner(
-                card,
-                LimousineDiscoveryDestination.profile,
-              ),
+              onOpenOffers: () =>
+                  _openPartner(card, LimousineDiscoveryDestination.showroom),
+              onOpenProfile: () =>
+                  _openPartner(card, LimousineDiscoveryDestination.profile),
             ),
             const SizedBox(height: 16),
           ],
@@ -670,14 +666,10 @@ class _LimousineCustomerDiscoveryPageState
                 tokens: tokens,
                 language: _lang,
                 horizontal: true,
-                onOpenOffers: () => _openPartner(
-                  card,
-                  LimousineDiscoveryDestination.showroom,
-                ),
-                onOpenProfile: () => _openPartner(
-                  card,
-                  LimousineDiscoveryDestination.profile,
-                ),
+                onOpenOffers: () =>
+                    _openPartner(card, LimousineDiscoveryDestination.showroom),
+                onOpenProfile: () =>
+                    _openPartner(card, LimousineDiscoveryDestination.profile),
               ),
             ),
         ],
@@ -706,27 +698,13 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = _info();
-    final photo = Stack(
-      children: [
-        LimousineContainPhoto(
-          imageUrl: card.coverImageUrl,
-          background: tokens.surfaceAlt,
-          gold: tokens.gold,
-          minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
-          aspectRatio: horizontal ? 16 / 10 : 16 / 9,
-          placeholderLabel: card.companyName,
-        ),
-        LimousineBrandLogoCorner(
-          alignment: Alignment.bottomLeft,
-          child: LimousineBrandLogoPlaque(
-            logoUrl: card.logoUrl,
-            companyName: card.companyName,
-            minExtent: kLimousineLogoDiscoveryMin,
-            maxExtent: kLimousineLogoDiscoveryMax,
-            tokens: tokens,
-          ),
-        ),
-      ],
+    final photo = LimousineContainPhoto(
+      imageUrl: card.coverImageUrl,
+      background: tokens.surfaceAlt,
+      gold: tokens.gold,
+      minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
+      aspectRatio: horizontal ? 16 / 10 : 16 / 9,
+      placeholderLabel: card.companyName,
     );
     final body = horizontal
         ? IntrinsicHeight(
@@ -784,15 +762,10 @@ class _ProviderCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  card.companyName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: tokens.onSurface,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: LimousineDiscoveryCompanyIdentity(
+                  logoUrl: card.logoUrl,
+                  companyName: card.companyName,
+                  tokens: tokens,
                 ),
               ),
               if (card.verifiedPartner)
@@ -826,7 +799,11 @@ class _ProviderCard extends StatelessWidget {
               vehicleLabels.join('\n'),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: tokens.muted, fontSize: 13.5, height: 1.35),
+              style: TextStyle(
+                color: tokens.muted,
+                fontSize: 13.5,
+                height: 1.35,
+              ),
             ),
           ],
           if (price.isNotEmpty) ...[
