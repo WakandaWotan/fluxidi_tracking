@@ -24,6 +24,7 @@ const {
   recordChironTestflowSubmitResult,
   _chironEvaluateSubmitDuplicateGuard,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+  CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
   buildChironExportStatusKey,
   CHIRON_EXPORT_STATUS_SCHEMA,
   safeSegment,
@@ -32,6 +33,9 @@ const {
 const ACC_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit";
 const TENANT = "T1";
 const COMPANY = "C1";
+const FIXTURE_TIMEZONE = "Europe/Brussels";
+const FIXTURE_NOW_ISO = "2026-08-03T16:00:00.000Z";
+const FIXTURE_NOW_MS = Date.parse(FIXTURE_NOW_ISO);
 
 function goodEnv(extra = {}) {
   return {
@@ -317,6 +321,12 @@ test("16) date/timezone does not exclude a post-cutoff Aug 3 ride", () => {
 
 test("17) reconcile prefers newer post-5/5 rides over older history", async () => {
   assert.ok(CHIRON_AUTO_RECONCILE_MAX_PROCESS >= 1);
+  assert.equal(FIXTURE_TIMEZONE, "Europe/Brussels");
+  assert.ok(
+    Date.parse("2026-08-02T10:00:00.000Z") >=
+      FIXTURE_NOW_MS - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
+    "Aug 2 history must stay inside the frozen 14d window",
+  );
   const connection = completeFive();
   const connKey = `tenant:${TENANT}:company:${COMPANY}:chiron_connection:v1`;
   const kv = new Map([[connKey, JSON.stringify(connection)]]);
@@ -370,6 +380,7 @@ test("17) reconcile prefers newer post-5/5 rides over older history", async () =
 
   const outcome = await _chironAutoReconcileScopeBestEffort(env, TENANT, COMPANY, {
     source: "test",
+    nowMs: FIXTURE_NOW_MS,
   });
   assert.equal(outcome.ok, true);
   const touchedNew = (outcome.events || []).some(

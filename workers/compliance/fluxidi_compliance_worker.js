@@ -11781,6 +11781,9 @@ function _chironPairedDepartureIdempotencyKeyForArrivalDraft(
 // hook and the reconciler. Never throws; returns a structured outcome object.
 async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
   const source = cleanText(options.source, 32) || "auto_submit";
+  const nowMs = Number.isFinite(Number(options.nowMs))
+    ? Number(options.nowMs)
+    : Date.now();
   const logMask = (v) => _chironMaskScopeId(cleanText(v, 128));
   // Track a written pending marker so an unexpected exception cannot leave
   // sync_state=pending permanently (conflict_pending forever).
@@ -12083,7 +12086,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     }
     const outboundFingerprint = _chironOutboundFingerprint(chironApiPayload);
 
-    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, Date.now(), {
+    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs, {
       outboundFingerprint,
     });
     if (guard.decision !== "allow") {
@@ -12512,7 +12515,10 @@ async function _chironAutoReconcileScopeBestEffort(
       outcome.reason = "missing_testflow_started_at";
       return outcome;
     }
-    const windowFloorMs = Date.now() - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
+    const nowMs = Number.isFinite(Number(options.nowMs))
+      ? Number(options.nowMs)
+      : Date.now();
+    const windowFloorMs = nowMs - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
     let effectiveFloorMs = windowFloorMs;
     if (reconcileEffective !== "production") {
       const cutoffMs = Date.parse(cutoffRaw);
@@ -12607,6 +12613,7 @@ async function _chironAutoReconcileScopeBestEffort(
       const submitOutcome = await _chironAutoSubmitOneEvent(env, c.event, c.key, {
         source,
         preloadedContextEntries: contextEntries,
+        nowMs,
       });
       // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: already-synced
       // historical events must not consume the per-pass process budget, or

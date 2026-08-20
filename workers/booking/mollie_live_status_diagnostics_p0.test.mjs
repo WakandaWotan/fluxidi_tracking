@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import worker from "./fluxidi_booking_worker.js";
 import {
   buildScopedMollieConnectAuthKey,
+  buildScopedMollieConnectStatusKey,
   encryptMollieConnectTokenPayload,
   createMollieLiveStatusDiag,
   logMollieLiveStatusDiag,
@@ -486,15 +487,16 @@ test("token refresh failure logs token_refresh_failed with sanitized code", asyn
   }
 });
 
-test("direct refresh helper does not mutate payment/OAuth state on upstream failure", async () => {
+test("direct refresh helper preserves OAuth on upstream failure and writes public status snapshot", async () => {
   const bookingKv = makeKV();
+  const scope = { tenant_id: "T1", company_id: "C1" };
   const env = baseEnv(bookingKv);
-  const seeded = await seedMollieConnectRecord(
-    bookingKv,
-    { tenant_id: "T1", company_id: "C1" },
-    { onboardingStatus: "completed", canReceivePayments: true },
-  );
-  const beforeKeys = [...bookingKv.store.keys()].sort();
+  const seeded = await seedMollieConnectRecord(bookingKv, scope, {
+    onboardingStatus: "completed",
+    canReceivePayments: true,
+  });
+  const publicKey = buildScopedMollieConnectStatusKey(scope);
+  assert.equal(bookingKv.store.has(publicKey), false);
   const restoreFetch = mockFetchRouter([
     [
       "api.mollie.com/v2/onboarding/me",
@@ -504,11 +506,9 @@ test("direct refresh helper does not mutate payment/OAuth state on upstream fail
   const diag = createMollieLiveStatusDiag({ authMode: "admin_token" });
   const cap = captureLiveStatusLogs();
   try {
-    const result = await refreshMollieOnboardingCapabilityStatus(
-      env,
-      { tenant_id: "T1", company_id: "C1" },
-      { diag },
-    );
+    const result = await refreshMollieOnboardingCapabilityStatus(env, scope, {
+      diag,
+    });
     assert.equal(result.ok, false);
     assert.equal(result.code, "mollie_onboarding_lookup_failed");
     const stages = stagesOf(cap.events());
@@ -516,12 +516,63 @@ test("direct refresh helper does not mutate payment/OAuth state on upstream fail
     assert.ok(stages.includes("live_status_failed"));
     assertNoSecrets(cap.lines);
 
-    const afterKeys = [...bookingKv.store.keys()].sort();
-    assert.deepEqual(afterKeys, beforeKeys);
     const stored = JSON.parse(bookingKv.store.get(seeded.key));
+    assert.equal(stored.connected, true);
+    assert.equal(stored.status, "connected");
+    assert.equal(stored.organizationId, "org_test_1");
+    assert.equal(stored.profileId, "pfl_test_1");
     assert.equal(stored.onboardingStatus, "completed");
     assert.equal(stored.canReceivePayments, true);
     assert.deepEqual(stored.accessTokenEncrypted, seeded.record.accessTokenEncrypted);
+    assert.deepEqual(stored.refreshTokenEncrypted, seeded.record.refreshTokenEncrypted);
+    assert.equal(stored.lastStatusCheckError, "mollie_onboarding_lookup_failed");
+    assert.equal(typeof stored.lastStatusCheckedAt, "string");
+
+    const snapshot = JSON.parse(bookingKv.store.get(publicKey));
+    assert.equal(snapshot.tenant_id, "T1");
+    assert.equal(snapshot.company_id, "C1");
+    assert.equal(snapshot.status, "connected");
+    assert.equal(snapshot.connected, true);
+    assert.equal(snapshot.mollie_mode, "live");
+    assert.equal(snapshot.accessTokenEncrypted, undefined);
+    assert.equal(snapshot.refreshTokenEncrypted, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(snapshot),
+      /access-token|refresh-token|org_test|pfl_test|secret/i,
+    );
+    const afterKeys = [...bookingKv.store.keys()].sort();
+    assert.deepEqual(afterKeys, [publicKey, seeded.key].sort());
+  } finally {
+    cap.restore();
+    restoreFetch();
+  }
+});
+
+test("first connect without an auth record invents no OAuth connection on live refresh failure", async () => {
+  const bookingKv = makeKV();
+  const scope = { tenant_id: "T1", company_id: "C1" };
+  const env = baseEnv(bookingKv);
+  const restoreFetch = mockFetchRouter([
+    [
+      "api.mollie.com/v2/onboarding/me",
+      async () => new Response("nope", { status: 503 }),
+    ],
+  ]);
+  const diag = createMollieLiveStatusDiag({ authMode: "admin_token" });
+  const cap = captureLiveStatusLogs();
+  try {
+    const result = await refreshMollieOnboardingCapabilityStatus(env, scope, {
+      diag,
+    });
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.code === "company_mollie_credentials_unavailable" ||
+        result.code === "company_mollie_not_connected",
+    );
+    assert.equal(bookingKv.store.has(buildScopedMollieConnectAuthKey(scope)), false);
+    assert.equal(bookingKv.store.has(buildScopedMollieConnectStatusKey(scope)), false);
+    assert.equal(bookingKv.store.size, 0);
+    assertNoSecrets(cap.lines);
   } finally {
     cap.restore();
     restoreFetch();
