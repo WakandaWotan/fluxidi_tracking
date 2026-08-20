@@ -731,7 +731,10 @@ class _LimousineVehicleDetailPageState
         publicPartnerId: widget.partnerId,
         offer: offer,
         companyName: widget.companyName,
-        entryEnabled: _quotesOn,
+        entryEnabled: true,
+        quoteEnabled: widget.quoteEnabled,
+        manualQuoteEnabled: widget.manualQuoteEnabled,
+        bookEnabled: widget.bookEnabled,
       );
       return;
     }
@@ -749,7 +752,10 @@ class _LimousineVehicleDetailPageState
       publicPartnerId: widget.partnerId,
       offer: offer,
       companyName: widget.companyName,
-      entryEnabled: _quotesOn,
+      entryEnabled: true,
+      quoteEnabled: widget.quoteEnabled,
+      manualQuoteEnabled: widget.manualQuoteEnabled,
+      bookEnabled: widget.bookEnabled,
     );
   }
 }

@@ -233,6 +233,11 @@ Map<String, dynamic> _draftToJson(LimousineQuoteCreateDraft draft) {
     if (draft.pax != null) 'pax': draft.pax,
     if (draft.bags != null) 'bags': draft.bags,
     'selected_extra_ids': List<String>.from(draft.selectedExtraIds),
+    if (draft.requestedDurationMinutes != null)
+      'requested_duration_minutes': draft.requestedDurationMinutes,
+    if (draft.customerNote.trim().isNotEmpty)
+      'customer_note': draft.customerNote.trim(),
+    if (draft.occasion.trim().isNotEmpty) 'occasion': draft.occasion.trim(),
     'locale': draft.locale,
   };
 }
@@ -274,6 +279,9 @@ LimousineQuoteCreateDraft? _draftFromJson(
     pax: _intOf(map['pax']),
     bags: _intOf(map['bags']),
     selectedExtraIds: extras,
+    requestedDurationMinutes: _intOf(map['requested_duration_minutes']),
+    customerNote: (map['customer_note'] ?? '').toString(),
+    occasion: (map['occasion'] ?? '').toString(),
     locale: (map['locale'] ?? '').toString(),
   );
 }

@@ -363,7 +363,7 @@ class _LimousinePublicShowroomSectionState
       publicPartnerId: widget.partnerId,
       offer: offer,
       companyName: widget.companyName,
-      entryEnabled: limousineCustomerQuoteCtaEnabled(),
+      entryEnabled: true,
     );
   }
 }

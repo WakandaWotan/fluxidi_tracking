@@ -618,6 +618,10 @@ class LimousineQuoteRequest {
     this.acceptanceAllowed,
     this.acceptanceBlockedReason = '',
     this.missingTerms = const <String>[],
+    this.serviceType = '',
+    this.pricingMode = '',
+    this.occasion = '',
+    this.pricingSnapshot = const <String, dynamic>{},
   });
 
   final String quoteRequestId;
@@ -642,6 +646,10 @@ class LimousineQuoteRequest {
   final bool? acceptanceAllowed;
   final String acceptanceBlockedReason;
   final List<String> missingTerms;
+  final String serviceType;
+  final String pricingMode;
+  final String occasion;
+  final Map<String, dynamic> pricingSnapshot;
 
   bool get isUnread =>
       LimousineQuoteStateId.normalize(state) == LimousineQuoteStateId.requested;
@@ -721,6 +729,20 @@ class LimousineQuoteRequest {
         map['missing_terms'] ?? map['missingTerms'],
         max: 64,
       ),
+      serviceType: _text(
+        map['service_type'] ?? map['serviceType'],
+        max: 32,
+      ),
+      pricingMode: _text(
+        map['pricing_mode'] ?? map['pricingMode'],
+        max: 32,
+      ),
+      occasion: _text(map['occasion'], max: 80),
+      pricingSnapshot: map['pricing_snapshot'] is Map
+          ? Map<String, dynamic>.from(map['pricing_snapshot'] as Map)
+          : (map['pricingSnapshot'] is Map
+                ? Map<String, dynamic>.from(map['pricingSnapshot'] as Map)
+                : const <String, dynamic>{}),
     );
   }
 
@@ -762,6 +784,12 @@ class LimousineQuoteRequest {
       acceptanceAllowed: incoming.acceptanceAllowed ?? acceptanceAllowed,
       acceptanceBlockedReason: incoming.acceptanceBlockedReason,
       missingTerms: incoming.missingTerms,
+      serviceType: incoming.serviceType.isNotEmpty ? incoming.serviceType : serviceType,
+      pricingMode: incoming.pricingMode.isNotEmpty ? incoming.pricingMode : pricingMode,
+      occasion: incoming.occasion.isNotEmpty ? incoming.occasion : occasion,
+      pricingSnapshot: incoming.pricingSnapshot.isNotEmpty
+          ? incoming.pricingSnapshot
+          : pricingSnapshot,
     );
   }
 }

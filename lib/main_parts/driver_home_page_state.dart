@@ -32085,6 +32085,14 @@ class _DriverHomePageState extends State<DriverHomePage>
               .trim()
               .toLowerCase();
       if (raw.isEmpty) return null;
+      if (raw == 'limousine') {
+        return _tr(
+          nl: 'Limousine',
+          en: 'Limousine',
+          fr: 'Limousine',
+          es: 'Limusina',
+        );
+      }
       if (raw.startsWith('airport') || raw.contains('luchthaven')) {
         return _tr(
           nl: 'Luchthavenvervoer',

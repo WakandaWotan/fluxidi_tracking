@@ -78,6 +78,13 @@ class _CompanyBookingOverviewItem {
   // ride_type == direct alone, so it can safely gate the business-invoice
   // action (UI-1B strictness).
   final bool isCanonicalStreetRide;
+  final String serviceType;
+  final String pricingMode;
+  final String occasion;
+  final int? requestedDurationMinutes;
+  final bool companyConfirmationRequired;
+  final String companyConfirmedAt;
+  final Map<String, dynamic> pricingSnapshot;
   final _CompanyBookingsFilter bucket;
 
   const _CompanyBookingOverviewItem({
@@ -122,6 +129,13 @@ class _CompanyBookingOverviewItem {
     required this.currency,
     required this.isStreetRide,
     required this.isCanonicalStreetRide,
+    this.serviceType = '',
+    this.pricingMode = '',
+    this.occasion = '',
+    this.requestedDurationMinutes,
+    this.companyConfirmationRequired = false,
+    this.companyConfirmedAt = '',
+    this.pricingSnapshot = const <String, dynamic>{},
     required this.bucket,
   });
 
@@ -1765,6 +1779,56 @@ class _CompanyBookingOverviewItem {
         normalizedCanonicalSource == 'STREET_RIDE' ||
         normalizedCanonicalSource == 'STREETRIDE' ||
         bookingId.trim().toLowerCase().startsWith('street_');
+    final serviceType = _firstText(raw, const <String>[
+      'service_type',
+      'serviceType',
+      'service_category',
+      'record.service_type',
+      'record.booking.service_type',
+      'booking.service_type',
+    ]);
+    final pricingMode = _firstText(raw, const <String>[
+      'pricing_mode',
+      'pricingMode',
+      'record.pricing_mode',
+      'record.booking.pricing_mode',
+      'booking.pricing_mode',
+    ]);
+    final occasion = _firstText(raw, const <String>[
+      'occasion',
+      'record.occasion',
+      'record.booking.occasion',
+      'booking.occasion',
+    ]);
+    final requestedDurationMinutes = _firstNum(raw, const <String>[
+      'requested_duration_minutes',
+      'requestedDurationMinutes',
+      'record.requested_duration_minutes',
+      'record.booking.requested_duration_minutes',
+      'booking.requested_duration_minutes',
+    ])?.round();
+    final companyConfirmationRequired = _firstBool(raw, const <String>[
+      'company_confirmation_required',
+      'companyConfirmationRequired',
+      'record.company_confirmation_required',
+      'record.booking.company_confirmation_required',
+      'booking.company_confirmation_required',
+    ]);
+    final companyConfirmedAt = _firstText(raw, const <String>[
+      'company_confirmed_at',
+      'companyConfirmedAt',
+      'record.company_confirmed_at',
+      'record.booking.company_confirmed_at',
+    ]);
+    Map<String, dynamic> pricingSnapshot = const <String, dynamic>{};
+    final snapshotRaw =
+        _path(raw, 'pricing_snapshot') ??
+        _path(raw, 'limousine_accepted_price') ??
+        _path(raw, 'record.booking.limousine_accepted_price') ??
+        _path(raw, 'booking.limousine_accepted_price');
+    if (snapshotRaw is Map) {
+      pricingSnapshot = Map<String, dynamic>.from(snapshotRaw);
+    }
     final bucket = _bucketFromStatus(statusRaw: statusRaw);
     if (isOperationalLeg) {
       debugPrint(
@@ -1814,6 +1878,13 @@ class _CompanyBookingOverviewItem {
       currency: currency,
       isStreetRide: isStreetRide,
       isCanonicalStreetRide: isCanonicalStreetRide,
+      serviceType: serviceType,
+      pricingMode: pricingMode,
+      occasion: occasion,
+      requestedDurationMinutes: requestedDurationMinutes,
+      companyConfirmationRequired: companyConfirmationRequired,
+      companyConfirmedAt: companyConfirmedAt,
+      pricingSnapshot: pricingSnapshot,
       bucket: bucket,
     );
   }

@@ -14,6 +14,7 @@ import 'limousine_accepted_booking_resume.dart';
 import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_unified_intent.dart';
 
 typedef LimousineCustomerAuthHeaders = Future<Map<String, String>> Function();
 
@@ -27,7 +28,7 @@ Future<String?> _defaultLimousineResumeCustomerId() async {
   }
 }
 
-abstract class LimousineCustomerQuoteGateway {
+mixin LimousineCustomerQuoteGateway {
   Future<List<LimousineDiscoveredProvider>> discoverNearby({
     String? postcode,
     double? lat,
@@ -40,6 +41,13 @@ abstract class LimousineCustomerQuoteGateway {
   Future<LimousineQuoteCreateResult> createRequest(
     LimousineQuoteCreateDraft draft,
   );
+
+  /// Existing quote-only fakes inherit this. The HTTP gateway posts `/book`.
+  Future<LimousineBookingRequestResult> createBookingRequest(
+    LimousineQuoteCreateDraft draft,
+  ) async {
+    throw UnimplementedError();
+  }
 
   Future<LimousineQuoteRequest> pollStatus(String statusRef);
 
@@ -286,6 +294,39 @@ class HttpLimousineCustomerQuoteGateway
   }
 
   @override
+  Future<LimousineBookingRequestResult> createBookingRequest(
+    LimousineQuoteCreateDraft draft,
+  ) async {
+    final body = limousineCustomerBookBody(draft);
+    if (!limousineCustomerBookBodyIsBounded(body)) {
+      throw const LimousineCustomerQuoteException(code: 'invalid_request');
+    }
+    final uri = Uri.parse('$_base/book');
+    try {
+      final headers = await _authHeaders();
+      final res = await _post(uri, headers, jsonEncode(body));
+      final map = _decode(res);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        _throwFailed(res.statusCode, map);
+      }
+      final bookingId = (map['booking_id'] ?? map['bookingId'] ?? '')
+          .toString()
+          .trim();
+      if (bookingId.isEmpty) {
+        throw const LimousineCustomerQuoteException(code: 'unavailable');
+      }
+      return LimousineBookingRequestResult(
+        bookingId: bookingId,
+        idempotent: map['idempotent'] == true,
+      );
+    } on LimousineCustomerQuoteException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineCustomerQuoteException(code: 'network');
+    }
+  }
+
+  @override
   Future<LimousineQuoteRequest> pollStatus(String statusRef) async {
     if (!looksLikeLimousineStatusRef(statusRef)) {
       throw const LimousineCustomerQuoteException(
@@ -385,6 +426,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   LimousineProviderDetail? selectedProvider;
   LimousinePublishedOffer? selectedOffer;
   LimousineQuoteRequest? request;
+  String bookingRequestId = '';
   LimousineAcceptedQuoteHandoff? handoff;
   LimousineAcceptedBookingReview? secureResumeReview;
   bool restoredFromSecureResume = false;
@@ -569,7 +611,19 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     );
     selectedOffer = offer;
     providerOfferLocked = true;
-    draft = draft.copyWith(publicPartnerId: partnerId, offerId: offer.offerId);
+    draft = draft.copyWith(
+      publicPartnerId: partnerId,
+      offerId: offer.offerId,
+      journeyType:
+          limousineCustomerIntentKindOf(offer) ==
+              LimousineCustomerIntentKind.bookingRequest &&
+          (limousinePublishedPricingModeOf(offer) ==
+                  LimousinePublishedPricingMode.hourly ||
+              limousinePublishedPricingModeOf(offer) ==
+                  LimousinePublishedPricingMode.package)
+          ? 'hourly_package'
+          : draft.journeyType,
+    );
     notifyListeners();
   }
 
@@ -597,19 +651,46 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   void selectOffer(LimousinePublishedOffer offer) {
     if (providerOfferLocked) return;
     selectedOffer = offer;
-    draft = draft.copyWith(offerId: offer.offerId);
+    draft = draft.copyWith(
+      offerId: offer.offerId,
+      journeyType:
+          limousinePublishedPricingModeOf(offer) ==
+                  LimousinePublishedPricingMode.hourly ||
+              limousinePublishedPricingModeOf(offer) ==
+                  LimousinePublishedPricingMode.package
+          ? 'hourly_package'
+          : draft.journeyType,
+    );
     notifyListeners();
   }
 
   Future<bool> submitRequest() async {
     if (submitting) return false;
     if (!validateCurrentDraft()) return false;
-    final body = limousineCustomerCreateBody(draft);
-    if (!limousineCustomerCreateBodyIsBounded(body)) return false;
+    final bookIntent =
+        limousineCustomerIntentKindOf(selectedOffer) ==
+        LimousineCustomerIntentKind.bookingRequest;
+    if (bookIntent) {
+      final body = limousineCustomerBookBody(draft);
+      if (!limousineCustomerBookBodyIsBounded(body)) return false;
+    } else {
+      final body = limousineCustomerCreateBody(draft);
+      if (!limousineCustomerCreateBodyIsBounded(body)) return false;
+    }
     phase = LimousineCustomerQuotePhase.submitting;
     notifyListeners();
     final generation = ++_createGeneration;
     try {
+      if (bookIntent) {
+        final booked = await _gateway.createBookingRequest(draft);
+        if (generation != _createGeneration) return false;
+        bookingRequestId = booked.bookingId;
+        phase = LimousineCustomerQuotePhase.live;
+        step = LimousineCustomerQuoteStep.waitingCompany;
+        _safeLog('booking_request_created');
+        notifyListeners();
+        return true;
+      }
       final result = await _gateway.createRequest(draft);
       if (generation != _createGeneration) return false;
       request = result.request;

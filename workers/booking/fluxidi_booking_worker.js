@@ -171,6 +171,30 @@ import {
   limousineQuoteFingerprint as _limousineQuoteFingerprint,
 } from "./modules/limousine_booking.mjs";
 import {
+  LIMOUSINE_INTENT_KIND as _LIMOUSINE_INTENT_KIND,
+  LIMOUSINE_SERVICE_TYPE as _LIMOUSINE_SERVICE_TYPE,
+  assertLimousineOfferStillPublished as _assertLimousineOfferStillPublished,
+  assertLimousineOfferVehicleScope as _assertLimousineOfferVehicleScope,
+  classifyLimousinePublishedPricingMode as _classifyLimousinePublishedPricingMode,
+  computeLimousineHourlyHireSnapshot as _computeLimousineHourlyHireSnapshot,
+  computeLimousinePackageSnapshot as _computeLimousinePackageSnapshot,
+  enrichLimousineAcceptedSnapshot as _enrichLimousineAcceptedSnapshot,
+  limousineBookingRequestNeedsPassengerRoute as _limousineBookingRequestNeedsPassengerRoute,
+  limousineDocumentLinesFromSnapshot as _limousineDocumentLinesFromSnapshot,
+} from "./modules/limousine_unified_intent.mjs";
+import {
+  LIMOUSINE_ACCEPTANCE_ALREADY_USED as _LIMOUSINE_ACCEPTANCE_ALREADY_USED,
+  applyLimousineCompanyConfirmation as _applyLimousineCompanyConfirmation,
+  bookingRecordLimousineServiceType as _bookingRecordLimousineServiceType,
+  bookingRequiresLimousineCompanyConfirmation as _bookingRequiresLimousineCompanyConfirmation,
+  companyConfirmationBlockedPaymentResult as _companyConfirmationBlockedPaymentResult,
+  isLimousineCompanyConfirmRawStatus as _isLimousineCompanyConfirmRawStatus,
+  limousineAcceptanceAlreadyConsumed as _limousineAcceptanceAlreadyConsumed,
+  limousineInvoiceOrChironBlocked as _limousineInvoiceOrChironBlocked,
+  limousinePaymentBlockedUntilCompanyConfirm as _limousinePaymentBlockedUntilCompanyConfirm,
+  preserveLimousineServiceType as _preserveLimousineServiceType,
+} from "./modules/limousine_operational_handoff.mjs";
+import {
   applyPublicLimousineHeroFields as _applyPublicLimousineHeroFields,
   countPublishedLimousineOffers as _countPublishedLimousineOffers,
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
@@ -918,6 +942,34 @@ async function _resealLimousineStatusRef(env, record) {
 
 /// Company/tenant authorization for a manual-quote record. A record may only be
 /// acted on inside its own tenant/company scope.
+async function _markLimousineAcceptedQuoteConsumed(env, { quoteRequestId, bookingReference } = {}) {
+  const id = sanitizeTenantString(quoteRequestId, 120);
+  if (!id) return { ok: false, error: "unknown_quote_request" };
+  const record = await _loadLimousineQuoteRecord(env, id);
+  if (!record) return { ok: false, error: "unknown_quote_request" };
+  if (_limousineAcceptanceAlreadyConsumed(record) &&
+      String(record.state || "").toLowerCase() === _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED) {
+    return { ok: true, changed: false, reason: "already_consumed" };
+  }
+  const outcome = _applyLimousineQuoteTransition(record, {
+    to: _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED,
+    actorType: "system",
+    reasonCode: "booking_created",
+    nowIso: new Date().toISOString(),
+    patch: {
+      ...(bookingReference ? { booking_reference: sanitizeTenantString(bookingReference, 64) } : {}),
+    },
+  });
+  if (!outcome.ok) return { ok: false, error: outcome.reason };
+  if (outcome.changed) {
+    await _saveLimousineQuoteRecord(
+      env,
+      _appendLimousineQuoteAudit(outcome.record, outcome.audit),
+    );
+  }
+  return { ok: true, changed: outcome.changed === true };
+}
+
 function _limousineQuoteScopeMatches(record, scope) {
   const rec = record && typeof record === "object" ? record : {};
   const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 96);
@@ -1030,6 +1082,34 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   const record = await _loadLimousineQuoteRecord(env, binding.quote_request_id);
   if (!record) return fail("unknown_quote_request");
   if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
+  const customerRef = sanitizeTenantString(
+    scope?.customer_id ??
+      scope?.customerId ??
+      payload?.customer_reference ??
+      payload?.customerReference,
+    160,
+  );
+  const storedFingerprint = sanitizeTenantString(
+    record?.status_access?.customer_fingerprint,
+    160,
+  );
+  if (storedFingerprint && customerRef) {
+    const sessionFingerprint = _buildLimousineCustomerFingerprint({
+      tenantId: scope?.tenant_id,
+      companyId: scope?.company_id,
+      customerRef,
+      quoteRequestId: record.quote_request_id,
+      itineraryFingerprint: record?.request?.itinerary_fingerprint,
+    });
+    if (sessionFingerprint && sessionFingerprint !== storedFingerprint) {
+      return fail("unauthorized_scope");
+    }
+  }
+  if (_limousineAcceptanceAlreadyConsumed(record)) {
+    return fail(_LIMOUSINE_ACCEPTANCE_ALREADY_USED, {
+      state: String(record.state || "").toLowerCase(),
+    });
+  }
 
   // The quote must still be in an acceptable/accepted state and unexpired.
   const state = String(record.state || "").toLowerCase();
@@ -1139,31 +1219,84 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
 async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }) {
   const unavailable = (error, extra = {}) => ({
     ok: false,
-    response: { ok: false, error, service_category: "limousine", ...extra },
+    response: { ok: false, error, service_category: "limousine", service_type: "limousine", ...extra },
   });
   if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
     return unavailable("limousine_unavailable");
   }
 
-  // 1) Server route for the passenger itinerary.
-  let routeOut = null;
-  try {
-    routeOut = await routeFromTextsWithStopsDetailed({
-      fromText: from,
-      toText: to,
-      fromPoint: readExplicitCoordinatePair(payload, "from"),
-      toPoint: readExplicitCoordinatePair(payload, "to"),
-      stopsTexts: Array.isArray(stops) ? stops : [],
-      token: env.MAPBOX_TOKEN,
-    });
-  } catch (_) {
-    return unavailable("limousine_route_failed");
+  const offerId = String(payload?.offer_id ?? payload?.offerId ?? "").trim();
+  const { offer } = await _loadAuthoritativeLimousineOffer(env, scope, offerId);
+  const published = _assertLimousineOfferStillPublished(offer);
+  if (!published.ok) {
+    return unavailable("limousine_unavailable", { reason: published.reason || "offer_unpublished" });
   }
-  if (!routeOut?.route) return unavailable("limousine_route_failed");
-  const mainRoute = {
-    distance_km: round1((routeOut.route.distance || 0) / 1000),
-    duration_min: Math.round((routeOut.route.duration || 0) / 60),
-  };
+  const classified = _classifyLimousinePublishedPricingMode(offer);
+  if (!classified.ok || classified.intent_kind !== _LIMOUSINE_INTENT_KIND.BOOKING_REQUEST) {
+    return unavailable("limousine_manual_quote_required", {
+      reason: classified.reason || classified.pricing_mode || "manual_quote_required",
+    });
+  }
+  const selectedVehicleId = String(
+    payload?.vehicle_id ?? payload?.vehicleId ?? offer.vehicle_id ?? "",
+  ).trim();
+  const vehicleScope = _assertLimousineOfferVehicleScope(offer, selectedVehicleId);
+  if (!vehicleScope.ok) {
+    return unavailable("limousine_unavailable", { reason: vehicleScope.reason });
+  }
+
+  if (classified.pricing_mode === "hourly" || classified.pricing_mode === "package") {
+    payload.journey_type = "hourly_package";
+    payload.journeyType = "hourly_package";
+  }
+  const journeyType = String(payload?.journey_type ?? payload?.journeyType ?? "").trim();
+  const requestedDuration = payload?.requested_duration_minutes ?? payload?.requestedDurationMinutes;
+  let hourlyHire = null;
+  let packageHire = null;
+  if (classified.pricing_mode === "hourly") {
+    hourlyHire = _computeLimousineHourlyHireSnapshot(offer.hourly, requestedDuration);
+    if (!hourlyHire.ok) {
+      return unavailable("limousine_unavailable", { reason: hourlyHire.reason });
+    }
+  }
+  if (classified.pricing_mode === "package") {
+    packageHire = _computeLimousinePackageSnapshot(offer, requestedDuration);
+    if (!packageHire.ok) {
+      return unavailable(
+        packageHire.reason === "package_overage_rule_missing"
+          ? "limousine_manual_quote_required"
+          : "limousine_unavailable",
+        { reason: packageHire.reason },
+      );
+    }
+  }
+
+  const needsPassengerRoute = _limousineBookingRequestNeedsPassengerRoute(offer, journeyType);
+
+  // 1) Server route for the passenger itinerary. Hourly/package may continue
+  // without Mapbox; route-priced offers still fail closed.
+  let routeOut = null;
+  if (from && to) {
+    try {
+      routeOut = await routeFromTextsWithStopsDetailed({
+        fromText: from,
+        toText: to,
+        fromPoint: readExplicitCoordinatePair(payload, "from"),
+        toPoint: readExplicitCoordinatePair(payload, "to"),
+        stopsTexts: Array.isArray(stops) ? stops : [],
+        token: env.MAPBOX_TOKEN,
+      });
+    } catch (_) {
+      routeOut = null;
+    }
+  }
+  if (needsPassengerRoute && !routeOut?.route) return unavailable("limousine_route_failed");
+  const mainRoute = routeOut?.route
+    ? {
+        distance_km: round1((routeOut.route.distance || 0) / 1000),
+        duration_min: Math.round((routeOut.route.duration || 0) / 60),
+      }
+    : null;
 
   // 2) Optional roundtrip return leg (server-calculated, direction aware).
   const roundtrip =
@@ -1181,13 +1314,16 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
         stopsTexts: [],
         token: env.MAPBOX_TOKEN,
       });
-      if (!back?.route) return unavailable("limousine_route_failed");
-      returnRoute = {
-        distance_km: round1((back.route.distance || 0) / 1000),
-        duration_min: Math.round((back.route.duration || 0) / 60),
-      };
+      if (back?.route) {
+        returnRoute = {
+          distance_km: round1((back.route.distance || 0) / 1000),
+          duration_min: Math.round((back.route.duration || 0) / 60),
+        };
+      } else if (needsPassengerRoute) {
+        return unavailable("limousine_route_failed");
+      }
     } catch (_) {
-      return unavailable("limousine_route_failed");
+      if (needsPassengerRoute) return unavailable("limousine_route_failed");
     }
   }
 
@@ -1207,10 +1343,11 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
   // 4) Compare with the quote the client is booking against. A stale or changed
   // quote is rejected with a safe refresh-required result; a different or
   // higher total is never silently accepted.
+  const clientQuoteReference = safeStr(payload?.quote_reference ?? payload?.quoteReference);
   const comparison = _compareLimousineQuoteForBook({
     recomputed: total,
-    clientQuoteReference: safeStr(payload?.quote_reference ?? payload?.quoteReference),
-    requireQuoteReference: true,
+    clientQuoteReference,
+    requireQuoteReference: Boolean(clientQuoteReference),
   });
   if (!comparison.ok) {
     return unavailable("limousine_quote_refresh_required", {
@@ -1219,15 +1356,25 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
     });
   }
 
-  // 5) Immutable accepted-price snapshot.
-  const snapshot = _buildLimousineAcceptedSnapshot({
-    total,
-    quoteReference: comparison.quote_reference,
-    acceptedAtIso: new Date().toISOString(),
-    scheduledPickupIso: safeStr(payload?.pickup_iso),
-    companyId: scope?.company_id || "",
-    publicPartnerId: safeStr(payload?.public_partner_id ?? payload?.publicPartnerId),
-  });
+  // 5) Immutable accepted-price snapshot. A later public-offer edit must not
+  // silently reprice this request.
+  const snapshot = _enrichLimousineAcceptedSnapshot(
+    _buildLimousineAcceptedSnapshot({
+      total,
+      quoteReference: comparison.quote_reference,
+      acceptedAtIso: new Date().toISOString(),
+      scheduledPickupIso: safeStr(payload?.pickup_iso),
+      companyId: scope?.company_id || "",
+      publicPartnerId: safeStr(payload?.public_partner_id ?? payload?.publicPartnerId),
+    }),
+    {
+      offer,
+      request: payload,
+      hourlyHire,
+      packageHire,
+      companyConfirmationRequired: true,
+    },
+  );
 
   const pricing = {
     price_ex_vat: total.price_ex_vat,
@@ -5613,6 +5760,9 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     }
   }
   if (!rec) return { ok: false, skipped: true, reason: "booking_not_found" };
+  if (_limousineInvoiceOrChironBlocked(rec)) {
+    return { ok: true, skipped: true, reason: "limousine_invoice_blocked" };
+  }
   // Soft business_invoice flags without a meaningful billing customer must
   // still receive a private consumer sale (field: 2026-08-165).
   if (canIssueBusinessInvoiceFromRecord(rec)) {
@@ -6207,6 +6357,9 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
   }
   if (!rec || canIssueBusinessInvoiceFromRecord(rec)) {
     return { handled: false };
+  }
+  if (_limousineInvoiceOrChironBlocked(rec)) {
+    return { handled: true, ok: true, skipped: true, reason: "limousine_invoice_blocked" };
   }
 
   // CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: paid lifecycle is SYNC-ONLY when a
@@ -8178,6 +8331,9 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
 
     // Business invoice path stays unchanged. Private/consumer rides fall
     // through to consumer-sale payment sync (never Peppol, never a second sale).
+    if (rec && _limousineInvoiceOrChironBlocked(rec)) {
+      return { ok: true, skipped: true, reason: "limousine_invoice_blocked" };
+    }
     if (rec) {
       const ctx = _invoiceLifecycleContextFromRecord(rec);
       if (!ctx.businessInvoiceIntent) {
@@ -45303,6 +45459,7 @@ export default {
           last_transition_from: "",
           last_transition_to: _LIMOUSINE_QUOTE_STATES.REQUESTED,
           request: validated.request,
+          pricing_snapshot: validated.snapshot || null,
           offer_source_revision: offer?.source_revision ?? 0,
           created_at: nowIso,
           updated_at: nowIso,
@@ -48491,6 +48648,7 @@ export default {
             tenantScope,
             {
               actor_role: statusActorRole,
+              raw_status: rawRequestedStatus,
               source_endpoint: "/bookings/:id/status",
             },
           );
@@ -48984,8 +49142,21 @@ export default {
             }, 403);
           }
           rec.assigned_vehicle_id = vehicleId;
+          rec.assignedVehicleId = vehicleId;
           if (rec.booking && typeof rec.booking === "object") {
             rec.booking.assigned_vehicle_id = vehicleId;
+            rec.booking.assignedVehicleId = vehicleId;
+          }
+          const assignedDriverId = String(
+            body?.driver_id || body?.assigned_driver_id || body?.assignedDriverId || "",
+          ).trim();
+          if (assignedDriverId) {
+            rec.assigned_driver_id = assignedDriverId;
+            rec.assignedDriverId = assignedDriverId;
+            if (rec.booking && typeof rec.booking === "object") {
+              rec.booking.assigned_driver_id = assignedDriverId;
+              rec.booking.assignedDriverId = assignedDriverId;
+            }
           }
           rec.updatedAt = new Date().toISOString();
           await env.BOOKING_KV.put(key, JSON.stringify(rec));
@@ -49014,7 +49185,12 @@ export default {
             rec,
             normalizeFleetTenantScope(tenantScope),
           );
-          return json({ ok: true, booking_id: bookingId, assigned_vehicle_id: vehicleId }, 200);
+          return json({
+            ok: true,
+            booking_id: bookingId,
+            assigned_vehicle_id: vehicleId,
+            ...(assignedDriverId ? { assigned_driver_id: assignedDriverId } : {}),
+          }, 200);
         }
 
         if (
@@ -55268,7 +55444,15 @@ function _deriveCustomerCancellationServiceContext({
     has_ambiguous_higher_tier_signals,
     airport_direction: airportDirection || null,
     airport_transfer: hasAirportTransferSignal || hasAirportIntent,
-    service_type: normalizedService,
+    service_type: _preserveLimousineServiceType(
+      _bookingRecordLimousineServiceType({
+        service_type: rec?.service_type ?? booking?.service_type ?? payloadObj?.service_type,
+        serviceType: rec?.serviceType ?? booking?.serviceType ?? payloadObj?.serviceType,
+        booking,
+        payload: payloadObj,
+      }),
+      normalizedService,
+    ),
   };
 }
 
@@ -64689,6 +64873,7 @@ function buildBookingIntentDescriptor({
   tier,
   pax,
   bags,
+  extra_intent_parts = [],
 } = {}) {
   const tenantPart = _bookingIntentScopePart(tenant_id, "fluxidi");
   const companyPart = _bookingIntentScopePart(company_id || tenant_id, tenantPart);
@@ -64712,6 +64897,9 @@ function buildBookingIntentDescriptor({
   const normalizedTier = _bookingIntentNormalizeText(tier, 32);
   const normalizedPax = String(clampInt(pax, 1, 12));
   const normalizedBags = String(Math.max(0, clampInt(bags, 0, 99)));
+  const extraIntentParts = Array.isArray(extra_intent_parts)
+    ? extra_intent_parts.map((part) => _bookingIntentNormalizeText(part, 120))
+    : [];
   const contact = normalizedEmail || normalizedPhone || "";
   const hash = _bookingIntentHash([
     tenantPart,
@@ -64733,6 +64921,7 @@ function buildBookingIntentDescriptor({
     normalizedTier,
     normalizedPax,
     normalizedBags,
+    ...extraIntentParts,
   ]);
   const key = `booking_intent:${tenantPart}:${companyPart}:${hash}`;
   return {
@@ -65008,7 +65197,9 @@ async function handleBooking(payload, env, request, options = {}) {
       0,
       1,
     );
-    const pax = clampInt(payload?.pax, 1, 3);
+    const pax = _isLimousineServiceRequest(payload)
+      ? clampInt(payload?.pax, 1, 16)
+      : clampInt(payload?.pax, 1, 3);
     const bags = Math.max(0, clampInt(payload?.bags, 0, 99));
     const tier = normalizeTier(payload?.tier || "comfort");
     const service = normalizeService(payload?.service || "passenger");
@@ -65198,7 +65389,13 @@ async function handleBooking(payload, env, request, options = {}) {
       requestedPaymentMode === "online-payments" ||
       requestedPaymentMode === "online_payments" ||
       requestedPaymentProvider === "mollie";
-    const requiresPayment = explicitOnlineCheckoutRequested;
+    const limousineAcceptanceReferenceEarly = safeStr(
+      payload?.limousine_acceptance_reference ?? payload?.limousineAcceptanceReference,
+    );
+    const limousinePendingCompanyConfirm =
+      _isLimousineServiceRequest(payload) && !limousineAcceptanceReferenceEarly;
+    const requiresPayment =
+      explicitOnlineCheckoutRequested && !limousinePendingCompanyConfirm;
     const bookingPaymentMode = requiresPayment ? "mollie" : "manual";
     const bookingPaymentProvider = requiresPayment ? "mollie" : "manual";
     const paymentFields = paymentFieldsFromPayload(payload);
@@ -65252,10 +65449,13 @@ async function handleBooking(payload, env, request, options = {}) {
     }
     const molliePaidConfirmed =
       payload.__mollie_paid === true && paymentFields.payment_status === "paid";
-    const shouldReserveNow = !(requiresPayment && !molliePaidConfirmed);
+    const shouldReserveNow = limousinePendingCompanyConfirm
+      ? false
+      : !(requiresPayment && !molliePaidConfirmed);
 
     // If no payment is required, we mark as "paid" so the flow skips Mollie and confirms immediately.
-    if (!requiresPayment) payload.__mollie_paid = true;
+    // Limousine booking requests wait for company confirmation first.
+    if (!requiresPayment && !limousinePendingCompanyConfirm) payload.__mollie_paid = true;
 
     // Extra service only for PREMIUM
     const extra = normalizeExtraService(payload, tier);
@@ -65334,6 +65534,11 @@ async function handleBooking(payload, env, request, options = {}) {
       : null;
     const _limousineHasReturnLeg = _limousineLegAllocation?.has_return_leg === true;
 
+    if (_limousineAccepted) {
+      payload.service_type = _LIMOUSINE_SERVICE_TYPE;
+      payload.serviceType = _LIMOUSINE_SERVICE_TYPE;
+      payload.service_category = _LIMOUSINE_SERVICE_TYPE;
+    }
     const bookingIntent = buildBookingIntentDescriptor({
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
@@ -65356,6 +65561,18 @@ async function handleBooking(payload, env, request, options = {}) {
       tier,
       pax,
       bags,
+      extra_intent_parts: _limousineAccepted
+        ? [
+            safeStr(_limousineAccepted.total?.offer_id || payload?.offer_id, 64),
+            safeStr(_limousineAccepted.total?.vehicle_id || payload?.vehicle_id, 96),
+            String(
+              _limousineAccepted.snapshot?.requested_duration_minutes ??
+                payload?.requested_duration_minutes ??
+                "",
+            ),
+            safeStr(payload?.occasion, 80),
+          ]
+        : [],
     });
     const idempotencyScope = {
       tenant_id: tenantContext.tenant_id,
@@ -65935,7 +66152,9 @@ async function handleBooking(payload, env, request, options = {}) {
       : null;
     const operationalLegCancellationFields = {
       serviceBucket: persistedCancellationServiceContext.service_bucket,
-      serviceType: persistedCancellationServiceContext.service_type,
+      serviceType: _limousineAccepted
+        ? _LIMOUSINE_SERVICE_TYPE
+        : persistedCancellationServiceContext.service_type,
       airportDirection: outboundAirportDirection,
       returnAirportDirection,
       airportTransfer: persistedCancellationServiceContext.airport_transfer,
@@ -67657,8 +67876,12 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       bags,
       tier,
       service,
-      service_type: persistedCancellationServiceContext.service_type,
-      serviceType: persistedCancellationServiceContext.service_type,
+      service_type: _limousineAccepted
+        ? _LIMOUSINE_SERVICE_TYPE
+        : persistedCancellationServiceContext.service_type,
+      serviceType: _limousineAccepted
+        ? _LIMOUSINE_SERVICE_TYPE
+        : persistedCancellationServiceContext.service_type,
       service_bucket: persistedCancellationServiceContext.service_bucket,
       serviceBucket: persistedCancellationServiceContext.service_bucket,
       ...(outboundAirportDirection
@@ -67941,7 +68164,22 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         // pricing changes, offer disablement, entitlement loss or vehicle
         // suspension.
         ...(_limousineAccepted
-          ? { limousine_accepted_price: _limousineAccepted.snapshot }
+          ? {
+              limousine_accepted_price: _limousineAccepted.snapshot,
+              service_type: _LIMOUSINE_SERVICE_TYPE,
+              serviceType: _LIMOUSINE_SERVICE_TYPE,
+              service_category: _LIMOUSINE_SERVICE_TYPE,
+              pricing_mode:
+                _limousineAccepted.snapshot?.published_pricing_mode ||
+                _limousineAccepted.total?.pricing_mode,
+              occasion: safeStr(payload?.occasion, 80),
+              requested_duration_minutes:
+                _limousineAccepted.snapshot?.requested_duration_minutes ??
+                payload?.requested_duration_minutes ??
+                null,
+              company_confirmation_required:
+                _limousineAccepted.snapshot?.company_confirmation_required === true,
+            }
           : {}),
         pricing_source: bookingPricingSource,
         pricing_source_main: bookingMainPricingSource,
@@ -68021,6 +68259,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         record,
         normalizeFleetTenantScope(tenantContext),
       );
+      const consumedQuoteRequestId = safeStr(
+        _limousineAccepted?.snapshot?.manual_quote_request_id ??
+          _limousineManualQuoteRecord?.quote_request_id,
+        120,
+      );
+      if (consumedQuoteRequestId) {
+        await _markLimousineAcceptedQuoteConsumed(env, {
+          quoteRequestId: consumedQuoteRequestId,
+          bookingReference: publicBookingReference || booking.bookingId,
+        });
+      }
     } catch (persistErr) {
       await releaseAllocatorReservationSafely();
       throw persistErr;
@@ -74287,7 +74536,8 @@ function humanServiceLabel(s) {
     hourly: "Uurservice",
     care: "Zorgvervoer",
     courier: "Spoedkoerier",
-    passenger: "Personenvervoer"
+    passenger: "Personenvervoer",
+    limousine: "Limousine",
   };
   return map[s] || s || "-";
 }
@@ -77760,6 +78010,12 @@ function _bookingChironRecordVehicleClass(rec) {
 
 function _bookingChironEnrichmentForComplianceEvent(rec, options = {}) {
   if (!rec || typeof rec !== "object") return null;
+  if (
+    _bookingRecordLimousineServiceType(rec) &&
+    _bookingRequiresLimousineCompanyConfirmation(rec)
+  ) {
+    return null;
+  }
   const assignmentContext =
     options?.assignmentContext && typeof options.assignmentContext === "object"
       ? options.assignmentContext
@@ -90774,6 +91030,9 @@ async function resumeBookingCheckoutAuthoritative(
       message: "Booking is no longer eligible for online payment resume",
     };
   }
+  if (_limousinePaymentBlockedUntilCompanyConfirm(rec)) {
+    return _companyConfirmationBlockedPaymentResult();
+  }
   if (!_isBookingRecordMollieOnline(rec)) {
     return {
       ok: false,
@@ -91090,6 +91349,12 @@ async function handleBookingInvoicePdfGet(
   const rec = loaded?.rec;
   if (!rec || typeof rec !== "object") {
     return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  if (
+    _bookingRecordLimousineServiceType(rec) &&
+    _bookingRequiresLimousineCompanyConfirmation(rec)
+  ) {
+    return json({ ok: false, error: "company_confirmation_required" }, 409);
   }
   const adminAuthorized = hasValidAdminToken(request, url, env);
   if (adminAuthorized) {
@@ -91510,6 +91775,16 @@ async function updateBookingStatusAuthoritative(
     rec?.booking?.stage,
   );
   const nowIso = new Date().toISOString();
+  const rawRequestedStatus = safeStr(options?.raw_status ?? status, 80);
+  const statusActorRole = safeStr(options?.actor_role, 32).toLowerCase();
+  const canConfirmLimousineRequest =
+    _isLimousineCompanyConfirmRawStatus(rawRequestedStatus) &&
+    (statusActorRole === "admin" ||
+      statusActorRole === "company" ||
+      statusActorRole === "system");
+  if (canConfirmLimousineRequest && _bookingRequiresLimousineCompanyConfirmation(rec)) {
+    _applyLimousineCompanyConfirmation(rec, nowIso);
+  }
   if (normalized === "COMPLETED" && options?.bypass_future_pickup_guard !== true) {
     const nowMs = Date.now();
     const operationalLegs = _bookingOperationalLegsFromRecord(rec)
@@ -92812,6 +93087,9 @@ async function updateBookingPaymentAuthoritative(
   const { key, rec } = await loadBookingRecord(env, bookingId);
   if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
+  }
+  if (_limousinePaymentBlockedUntilCompanyConfirm(rec)) {
+    return _companyConfirmationBlockedPaymentResult();
   }
   const asText = (value) => String(value ?? "").trim();
   const wasAlreadyPaid =
@@ -102143,6 +102421,14 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     : `<strong>Passagiers / Koffers:</strong> ${escapeHtml(
         paxDisplay || missingLabel,
       )} / ${escapeHtml(bagsDisplay || missingLabel)}<br>`;
+  const limousineDocLines = _limousineDocumentLinesFromSnapshot(
+    d.limousineAcceptedPrice || d.limousine_accepted_price || {
+      service_type: d.serviceType || d.service_type,
+    },
+  );
+  const limousineLine = limousineDocLines.length
+    ? `<strong>Limousine:</strong> ${escapeHtml(limousineDocLines.join(" · "))}<br>`
+    : "";
   const logoHtml = LOGO_URL
     ? `<img alt="${escapeHtml(sellerBrand || "Fluxidi")}" src="${escapeHtml(LOGO_URL)}">`
     : "";
@@ -102408,6 +102694,7 @@ ${buildInvoicePrintCss()}
         ${tierLine}
         <strong>Ophaaltijd:</strong> ${escapeHtml(safeStr(d.pickupTime) || missingLabel)}<br>
         ${paxBagsLine}
+        ${limousineLine}
         <strong>Wachttijd:</strong> ${escapeHtml(String(toInt(d.waitMinutes, 0)))} min<br>
         <strong>Retour:</strong> ${d.returnTrip ? "JA" : "NEE"}
       </small>
@@ -103160,6 +103447,11 @@ async function generateAndSendInvoice({
       // service — preserve nulls so the renderer can omit unknown optionals
       tier: bookingInput.tier || "",
       service: bookingInput.service || "",
+      serviceType: bookingInput.serviceType || bookingInput.service_type || "",
+      limousineAcceptedPrice:
+        bookingInput.limousine_accepted_price ||
+        bookingInput.limousineAcceptedPrice ||
+        null,
       pax:
         bookingInput.pax === null || bookingInput.pax === undefined
           ? null

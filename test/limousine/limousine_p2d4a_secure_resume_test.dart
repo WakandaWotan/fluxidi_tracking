@@ -172,7 +172,7 @@ class _BookGateway implements LimousineAcceptedBookingGateway {
   }
 }
 
-class _QuoteGateway implements LimousineCustomerQuoteGateway {
+class _QuoteGateway with LimousineCustomerQuoteGateway {
   LimousineQuoteAcceptResult? acceptResult;
   LimousineCustomerQuoteException? acceptError;
 

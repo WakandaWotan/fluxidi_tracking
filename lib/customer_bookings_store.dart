@@ -799,20 +799,33 @@ class StoredCustomerBooking {
         fallback?.currency,
         'EUR',
       ]),
-      service: _preferNonEmpty(
-        _firstPathValue(merged, const <String>[
-          'service',
-          'extra_service',
-          'extra_service_key',
-          'booking.service',
-          'booking.extra_service',
-          'record.booking.service',
-          'record.booking.extra_service',
-          'payload.service',
-          'quote.inputs.service',
-        ]),
-        fallback?.service ?? '',
-      ),
+      service: () {
+        final limousineType = _firstPathValue(merged, const <String>[
+          'service_type',
+          'serviceType',
+          'record.service_type',
+          'record.serviceType',
+          'record.booking.service_type',
+          'record.booking.serviceType',
+          'booking.service_type',
+          'booking.serviceType',
+        ]);
+        if (limousineType.toLowerCase() == 'limousine') return 'limousine';
+        return _preferNonEmpty(
+          _firstPathValue(merged, const <String>[
+            'service',
+            'extra_service',
+            'extra_service_key',
+            'booking.service',
+            'booking.extra_service',
+            'record.booking.service',
+            'record.booking.extra_service',
+            'payload.service',
+            'quote.inputs.service',
+          ]),
+          fallback?.service ?? '',
+        );
+      }(),
       tier: _preferNonEmpty(
         _firstPathValue(merged, const <String>[
           'tier',
@@ -897,9 +910,31 @@ class StoredCustomerBooking {
         booking['billing_address'],
         fallback?.invoiceAddress,
       ]),
-      quote: quote.isNotEmpty
-          ? quote
-          : (fallback?.quote ?? const <String, dynamic>{}),
+      quote: () {
+        final next = Map<String, dynamic>.from(
+          quote.isNotEmpty
+              ? quote
+              : (fallback?.quote ?? const <String, dynamic>{}),
+        );
+        final confirmationRequired =
+            rec['company_confirmation_required'] == true ||
+            booking['company_confirmation_required'] == true;
+        if (confirmationRequired ||
+            rec.containsKey('company_confirmation_required') ||
+            booking.containsKey('company_confirmation_required')) {
+          next['company_confirmation_required'] = confirmationRequired;
+        }
+        final serviceType = _firstNonEmpty([
+          rec['service_type'],
+          rec['serviceType'],
+          booking['service_type'],
+          booking['serviceType'],
+        ]);
+        if (serviceType.toLowerCase() == 'limousine') {
+          next['service_type'] = 'limousine';
+        }
+        return next;
+      }(),
       updatedAt: DateTime.now().toIso8601String(),
     );
   }

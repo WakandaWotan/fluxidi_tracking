@@ -66,6 +66,28 @@ const Set<String> kLimousineCustomerCreateAllowedKeys = <String>{
   'bags',
   'selected_extra_ids',
   'customer_note',
+  'occasion',
+  'locale',
+};
+
+const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
+  'service_category',
+  'public_partner_id',
+  'offer_id',
+  'journey_type',
+  'from',
+  'to',
+  'stops',
+  'scheduled_pickup_iso',
+  'pickup_iso',
+  'roundtrip',
+  'return_pickup_iso',
+  'requested_duration_minutes',
+  'pax',
+  'bags',
+  'selected_extra_ids',
+  'customer_note',
+  'occasion',
   'locale',
 };
 
@@ -305,6 +327,7 @@ class LimousineQuoteCreateDraft {
     this.bags,
     this.selectedExtraIds = const <String>[],
     this.customerNote = '',
+    this.occasion = '',
     this.locale = '',
   });
 
@@ -322,6 +345,7 @@ class LimousineQuoteCreateDraft {
   final int? bags;
   final List<String> selectedExtraIds;
   final String customerNote;
+  final String occasion;
   final String locale;
 
   LimousineQuoteCreateDraft copyWith({
@@ -339,6 +363,7 @@ class LimousineQuoteCreateDraft {
     int? bags,
     List<String>? selectedExtraIds,
     String? customerNote,
+    String? occasion,
     String? locale,
   }) {
     return LimousineQuoteCreateDraft(
@@ -357,9 +382,20 @@ class LimousineQuoteCreateDraft {
       bags: bags ?? this.bags,
       selectedExtraIds: selectedExtraIds ?? this.selectedExtraIds,
       customerNote: customerNote ?? this.customerNote,
+      occasion: occasion ?? this.occasion,
       locale: locale ?? this.locale,
     );
   }
+}
+
+class LimousineBookingRequestResult {
+  const LimousineBookingRequestResult({
+    required this.bookingId,
+    this.idempotent = false,
+  });
+
+  final String bookingId;
+  final bool idempotent;
 }
 
 class LimousineQuoteCreateResult {
@@ -637,10 +673,36 @@ Map<String, dynamic> limousineCustomerCreateBody(
   if (draft.customerNote.trim().isNotEmpty) {
     body['customer_note'] = draft.customerNote.trim();
   }
+  if (draft.occasion.trim().isNotEmpty) {
+    body['occasion'] = draft.occasion.trim();
+  }
   body.removeWhere(
     (key, value) => value == null || (value is String && value.isEmpty),
   );
   return body;
+}
+
+Map<String, dynamic> limousineCustomerBookBody(LimousineQuoteCreateDraft draft) {
+  final quoteBody = limousineCustomerCreateBody(draft);
+  final body = <String, dynamic>{
+    'service_category': 'limousine',
+    ...quoteBody,
+  };
+  if (draft.scheduledPickupIso.trim().isNotEmpty) {
+    body['pickup_iso'] = draft.scheduledPickupIso.trim();
+  }
+  body.removeWhere(
+    (key, value) => value == null || (value is String && value.isEmpty),
+  );
+  return body;
+}
+
+bool limousineCustomerBookBodyIsBounded(Map<String, dynamic> body) {
+  for (final key in body.keys) {
+    if (!kLimousineCustomerBookAllowedKeys.contains(key)) return false;
+    if (kLimousineCustomerForbiddenSubmitKeys.contains(key)) return false;
+  }
+  return true;
 }
 
 bool limousineCustomerCreateBodyIsBounded(Map<String, dynamic> body) {

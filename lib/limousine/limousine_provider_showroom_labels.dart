@@ -30,11 +30,11 @@ const LocalizedText kLimousineDetailQuoteCta = LocalizedText(
 );
 
 const LocalizedText kLimousineDetailBookCta = LocalizedText(
-  nl: 'Boeken',
-  en: 'Book',
-  fr: 'Réserver',
-  es: 'Reservar',
-  de: 'Buchen',
+  nl: 'Boeking aanvragen',
+  en: 'Request booking',
+  fr: 'Demander une réservation',
+  es: 'Solicitar reserva',
+  de: 'Buchung anfragen',
 );
 
 const LocalizedText kLimousineDetailQuoteComingSoon = LocalizedText(

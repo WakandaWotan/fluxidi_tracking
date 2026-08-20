@@ -218,6 +218,27 @@ const LocalizedText kLimousineReviewSubmit = LocalizedText(
   es: 'Solicitar presupuesto',
 );
 
+const LocalizedText kLimousineReviewSubmitBooking = LocalizedText(
+  nl: 'Boeking aanvragen',
+  en: 'Request booking',
+  fr: 'Demander une réservation',
+  es: 'Solicitar reserva',
+);
+
+const LocalizedText kLimousineReviewBookingRequest = LocalizedText(
+  nl: 'Boekingsaanvraag',
+  en: 'Booking request',
+  fr: 'Demande de réservation',
+  es: 'Solicitud de reserva',
+);
+
+const LocalizedText kLimousineReviewCompanyConfirms = LocalizedText(
+  nl: 'Het bedrijf bevestigt eerst. Daarna volgt de bestaande ritketen.',
+  en: 'The company confirms first. Then the existing ride chain continues.',
+  fr: 'L’entreprise confirme d’abord. Ensuite, la chaîne de trajet existante continue.',
+  es: 'La empresa confirma primero. Después continúa la cadena de viaje existente.',
+);
+
 const LocalizedText kLimousineReturnWhen = LocalizedText(
   nl: 'Wanneer wilt u terug?',
   en: 'When would you like to return?',
@@ -510,6 +531,9 @@ bool limousineP2d4c1cLabelsComplete() {
     kLimousineExtrasContinue,
     kLimousineReviewHeroTitle,
     kLimousineReviewSubmit,
+    kLimousineReviewSubmitBooking,
+    kLimousineReviewBookingRequest,
+    kLimousineReviewCompanyConfirms,
     kLimousineReturnWhen,
     kLimousineReturnWaitTitle,
     kLimousineReturnLaterTitle,
