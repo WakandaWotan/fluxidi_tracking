@@ -18,6 +18,7 @@ import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_customer_status_page.dart';
 import 'limousine_customer_wizard_chrome.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_p2d4c1c_journey.dart';
@@ -804,7 +805,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   List<LimousinePublishedOffer> _filteredOffers() {
     final detail = _controller.selectedProvider;
     if (detail == null) return const [];
-    final ranked = sortLimousineOffersVehicleFirst(detail.offers);
+    final ranked = limousineRankPublicOffers(detail.offers);
     switch (_browseFilter) {
       case LimousineOfferBrowseFilter.exactVehicle:
         return ranked.where((offer) => offer.isVehicleTargeted).toList();

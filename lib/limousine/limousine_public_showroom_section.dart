@@ -5,8 +5,11 @@ import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_page.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
+import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
+import 'limousine_public_offer_card.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
@@ -98,6 +101,7 @@ class _LimousinePublicShowroomSectionState
     final palette = widget.palette;
     final expanded = _expanded.contains(offer.offerId);
     final cta = limousineShowroomCtaFor(offer);
+    final featured = limousinePublishedOfferScope(offer).featured;
     final title = localizedLimousineText(
       offer.title,
       languageCode: widget.language.name,
@@ -110,6 +114,7 @@ class _LimousinePublicShowroomSectionState
       offer.serviceClassId,
       widget.language,
     );
+    final tokens = LimousineUxTokens.fromCustomer(palette);
     return Container(
       key: limousineShowroomCardKey(offer.offerId),
       margin: const EdgeInsets.only(bottom: 10),
@@ -118,15 +123,24 @@ class _LimousinePublicShowroomSectionState
         color: palette.surfaceAlt,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: palette.isDark
-              ? palette.gold.withOpacity(0.2)
-              : palette.border,
+          color: limousinePublicOfferBorderColor(
+            tokens: tokens,
+            featured: featured,
+          ),
         ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (featured) ...[
+            LimousineRecommendedBadge(
+              offerId: offer.offerId,
+              language: widget.language,
+              tokens: tokens,
+            ),
+            const SizedBox(height: 8),
+          ],
           if (offer.isVehicleTargeted)
             _vehiclePhoto(offer)
           else

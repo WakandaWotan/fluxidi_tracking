@@ -106,7 +106,9 @@ class _LimousineSimpleOfferEditorState
         ? LimousineOfferTarget.serviceClass
         : limousineOfferToken(offer['target_type']);
     _vehicleId = _vehicleIds.isEmpty ? '' : _vehicleIds.first;
-    _sortOrder = TextEditingController(text: '${scope.sortOrder}');
+    _sortOrder = TextEditingController(
+      text: scope.sortOrder == null ? '' : '${scope.sortOrder}',
+    );
     _serviceClassId = limousineOfferToken(offer['service_class_id']);
     if (_serviceClassId.isEmpty && widget.knownClassIds.isNotEmpty) {
       _serviceClassId = widget.knownClassIds.first;
@@ -222,7 +224,7 @@ class _LimousineSimpleOfferEditorState
       appliesToAllSelected: _appliesToAll,
       vehicleIds: _vehicleIds.toList(growable: false),
       featured: _featured,
-      sortOrder: _intFromText(_sortOrder.text) ?? 0,
+      sortOrder: parseLimousinePublicSortOrderInput(_sortOrder.text).value,
     );
   }
 
@@ -233,6 +235,13 @@ class _LimousineSimpleOfferEditorState
   }
 
   void _submit() {
+    final sortParsed = parseLimousinePublicSortOrderInput(_sortOrder.text);
+    if (!sortParsed.isValid) {
+      setState(() {
+        _fieldError = _t(kLimousineBusinessSetupOfferSortOrderInvalid);
+      });
+      return;
+    }
     final draft = _draftFromControllers();
     final next = limousineApplySimpleOfferEdits(widget.initialOffer, draft);
     final validation = limousineBusinessSetupOfferValidation(
@@ -586,12 +595,75 @@ class _LimousineSimpleOfferEditorState
                           onChanged: (value) =>
                               setState(() => _featured = value),
                         ),
-                        TextField(
-                          controller: _sortOrder,
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText: _t(
-                              kLimousineBusinessSetupOfferSortOrder,
+                        Row(
+                          children: [
+                            IconButton(
+                              key: kLimousineSimpleOfferSortOrderDecrementKey,
+                              tooltip: _t(
+                                kLimousineBusinessSetupOfferSortOrderAutomatic,
+                              ),
+                              onPressed: () {
+                                final current =
+                                    parseLimousinePublicSortOrderInput(
+                                      _sortOrder.text,
+                                    ).value;
+                                setState(() {
+                                  _fieldError = null;
+                                  if (current == null || current <= 1) {
+                                    _sortOrder.text = '';
+                                  } else {
+                                    _sortOrder.text = '${current - 1}';
+                                  }
+                                });
+                              },
+                              icon: const Icon(Icons.remove_circle_outline),
+                            ),
+                            Expanded(
+                              child: TextField(
+                                key: kLimousineSimpleOfferSortOrderFieldKey,
+                                controller: _sortOrder,
+                                keyboardType: TextInputType.number,
+                                decoration: InputDecoration(
+                                  labelText: _t(
+                                    kLimousineBusinessSetupOfferSortOrder,
+                                  ),
+                                  hintText: _t(
+                                    kLimousineBusinessSetupOfferSortOrderAutomatic,
+                                  ),
+                                ),
+                                onChanged: (_) {
+                                  if (_fieldError != null) {
+                                    setState(() => _fieldError = null);
+                                  }
+                                },
+                              ),
+                            ),
+                            IconButton(
+                              key: kLimousineSimpleOfferSortOrderIncrementKey,
+                              onPressed: () {
+                                final current =
+                                    parseLimousinePublicSortOrderInput(
+                                      _sortOrder.text,
+                                    ).value;
+                                setState(() {
+                                  _fieldError = null;
+                                  _sortOrder.text =
+                                      '${current == null ? 1 : current + 1}';
+                                });
+                              },
+                              icon: const Icon(Icons.add_circle_outline),
+                            ),
+                          ],
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4, bottom: 4),
+                          child: Text(
+                            key: kLimousineSimpleOfferSortOrderHelperKey,
+                            _t(kLimousineBusinessSetupOfferSortOrderHelper),
+                            style: TextStyle(
+                              color: tokens.muted,
+                              fontSize: 12.5,
+                              height: 1.35,
                             ),
                           ),
                         ),

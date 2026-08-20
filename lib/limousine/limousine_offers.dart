@@ -159,6 +159,44 @@ int? limousineMinutesOf(Object? raw) {
 
 int? _intOf(Object? raw) => limousineMinutesOf(raw);
 
+final RegExp _kLimousinePublicSortOrderPattern = RegExp(r'^[1-9][0-9]*$');
+
+class LimousinePublicSortOrderParse {
+  const LimousinePublicSortOrderParse.automatic()
+    : value = null,
+      errorCode = null;
+  const LimousinePublicSortOrderParse.explicit(this.value) : errorCode = null;
+  const LimousinePublicSortOrderParse.invalid()
+    : value = null,
+      errorCode = 'sort_order_invalid';
+
+  final int? value;
+  final String? errorCode;
+  bool get isValid => errorCode == null;
+  bool get isAutomatic => isValid && value == null;
+}
+
+LimousinePublicSortOrderParse parseLimousinePublicSortOrderInput(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return const LimousinePublicSortOrderParse.automatic();
+  if (!_kLimousinePublicSortOrderPattern.hasMatch(text)) {
+    return const LimousinePublicSortOrderParse.invalid();
+  }
+  return LimousinePublicSortOrderParse.explicit(int.parse(text));
+}
+
+/// Stored/backend value. 0, negative, decimal and junk become automatic.
+int? limousinePublicSortOrderOf(Object? raw) {
+  if (raw == null) return null;
+  if (raw is int) return raw >= 1 ? raw : null;
+  if (raw is num) {
+    if (raw != raw.roundToDouble() || raw < 1) return null;
+    return raw.toInt();
+  }
+  final parsed = parseLimousinePublicSortOrderInput(raw.toString());
+  return parsed.isValid ? parsed.value : null;
+}
+
 bool limousineOfferFlag(Object? raw, {bool fallback = false}) =>
     _boolOf(raw, fallback: fallback);
 
@@ -972,7 +1010,9 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
       'target_type': limousineOfferToken(offer['target_type']),
       'applies_to_all_selected_vehicles': appliesToAll,
       'featured': _boolOf(offer['featured']),
-      'sort_order': _intOf(offer['sort_order'] ?? offer['sortOrder']) ?? 0,
+      'sort_order': limousinePublicSortOrderOf(
+        offer['sort_order'] ?? offer['sortOrder'],
+      ),
       if (publicVehicleIds.isNotEmpty) ...{
         'vehicle_ids': publicVehicleIds,
         'vehicle_id': publicVehicleIds.first,
@@ -1050,7 +1090,26 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
       'source_revision': _intOf(offer['source_revision']) ?? 0,
     });
   }
-  return out;
+  if (out.length < 2) return out;
+  final indexed = <({int index, Map<String, dynamic> offer})>[
+    for (var i = 0; i < out.length; i++) (index: i, offer: out[i]),
+  ];
+  indexed.sort((a, b) {
+    final orderA = limousinePublicSortOrderOf(
+      a.offer['sort_order'] ?? a.offer['sortOrder'],
+    );
+    final orderB = limousinePublicSortOrderOf(
+      b.offer['sort_order'] ?? b.offer['sortOrder'],
+    );
+    final explicitA = orderA != null;
+    final explicitB = orderB != null;
+    if (explicitA != explicitB) return explicitA ? -1 : 1;
+    if (explicitA && explicitB && orderA != orderB) {
+      return orderA.compareTo(orderB);
+    }
+    return a.index.compareTo(b.index);
+  });
+  return [for (final item in indexed) item.offer];
 }
 
 /// Monotonic guard: an older revision may never overwrite newer configuration.

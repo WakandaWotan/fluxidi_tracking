@@ -432,8 +432,10 @@ List<LimousinePublishedOffer> _offersForVehicle({
     }
     matched.add(offer);
   }
-  return limousineDeduplicatePublishedOffers(
-    limousineSortPublishedOffers(matched),
+  return limousineSortPublishedOffers(
+    limousineDeduplicatePublishedOffersByOfferId(
+      limousineDeduplicatePublishedOffers(matched),
+    ),
   );
 }
 

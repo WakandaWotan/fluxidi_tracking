@@ -77,6 +77,37 @@ function toInt(value) {
   return Math.trunc(n);
 }
 
+export function normalizeLimousinePublicSortOrder(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 1) return null;
+    return value;
+  }
+  const text = String(value).trim();
+  if (!/^[1-9][0-9]*$/.test(text)) return null;
+  return Number(text);
+}
+
+export function sortPublicLimousineOffers(offers) {
+  if (!Array.isArray(offers) || offers.length < 2) return offers || [];
+  return offers
+    .map((offer, index) => ({ offer, index }))
+    .sort((a, b) => {
+      const orderA = normalizeLimousinePublicSortOrder(
+        a.offer?.sort_order ?? a.offer?.sortOrder,
+      );
+      const orderB = normalizeLimousinePublicSortOrder(
+        b.offer?.sort_order ?? b.offer?.sortOrder,
+      );
+      const explicitA = orderA != null;
+      const explicitB = orderB != null;
+      if (explicitA !== explicitB) return explicitA ? -1 : 1;
+      if (explicitA && explicitB && orderA !== orderB) return orderA - orderB;
+      return a.index - b.index;
+    })
+    .map((item) => item.offer);
+}
+
 /// Integer cents. Returns null for missing/invalid; negatives are preserved as
 /// negative so validation can reject them explicitly (never silently clamped).
 function toCents(value) {
@@ -302,7 +333,7 @@ export function normalizeLimousineOffer(raw) {
     vehicle_ids: appliesToAll ? [] : vehicleIds,
     applies_to_all_selected_vehicles: appliesToAll,
     featured: toBool(src.featured, false),
-    sort_order: toInt(src.sort_order ?? src.sortOrder) ?? 0,
+    sort_order: normalizeLimousinePublicSortOrder(src.sort_order ?? src.sortOrder),
     service_class_id: normalizeId(src.service_class_id ?? src.serviceClassId),
     price_presentation: PRESENTATION_SET.has(presentation) ? presentation : "",
     currency: normalizeCurrency(src.currency),
@@ -780,7 +811,7 @@ export function buildSafePublicLimousineOffers(
       target_type: offer.target_type,
       applies_to_all_selected_vehicles: offer.applies_to_all_selected_vehicles === true,
       featured: offer.featured === true,
-      sort_order: offer.sort_order || 0,
+      sort_order: offer.sort_order ?? null,
       ...(publicVehicleIds.length
         ? { vehicle_ids: publicVehicleIds, vehicle_id: publicVehicleIds[0] }
         : {}),
@@ -834,7 +865,7 @@ export function buildSafePublicLimousineOffers(
       source_revision: offer.source_revision,
     });
   }
-  return out;
+  return sortPublicLimousineOffers(out);
 }
 
 /// Monotonic guard: an older revision may never overwrite newer configuration.

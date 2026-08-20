@@ -954,6 +954,7 @@ const LocalizedText kLimousineBusinessSetupOfferFeatured = LocalizedText(
   en: 'Featured offer',
   fr: 'Offre mise en avant',
   es: 'Oferta destacada',
+  de: 'Hervorgehobenes Angebot',
 );
 
 const LocalizedText kLimousineBusinessSetupOfferSortOrder = LocalizedText(
@@ -961,6 +962,39 @@ const LocalizedText kLimousineBusinessSetupOfferSortOrder = LocalizedText(
   en: 'Public sort order',
   fr: 'Ordre public',
   es: 'Orden público',
+  de: 'Öffentliche Reihenfolge',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferSortOrderAutomatic = LocalizedText(
+  nl: 'Automatisch',
+  en: 'Automatic',
+  fr: 'Automatique',
+  es: 'Automático',
+  de: 'Automatisch',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferSortOrderHelper = LocalizedText(
+  nl: 'Een lager nummer verschijnt eerder. Zonder nummer gebruikt Fluxidi de automatische volgorde.',
+  en: 'A lower number appears first. Without a number, Fluxidi uses the automatic order.',
+  fr: 'Un numéro plus bas apparaît en premier. Sans numéro, Fluxidi utilise l’ordre automatique.',
+  es: 'Un número más bajo aparece primero. Sin número, Fluxidi usa el orden automático.',
+  de: 'Eine niedrigere Nummer erscheint zuerst. Ohne Nummer verwendet Fluxidi die automatische Reihenfolge.',
+);
+
+const LocalizedText kLimousineBusinessSetupOfferSortOrderInvalid = LocalizedText(
+  nl: 'Alleen een geheel getal vanaf 1 is geldig. Laat leeg voor automatisch.',
+  en: 'Only a whole number from 1 is valid. Leave empty for automatic.',
+  fr: 'Seul un nombre entier à partir de 1 est valide. Laissez vide pour l’automatique.',
+  es: 'Solo un número entero desde 1 es válido. Déjelo vacío para automático.',
+  de: 'Nur eine ganze Zahl ab 1 ist gültig. Leer lassen für automatisch.',
+);
+
+const LocalizedText kLimousineOfferRecommendedBadge = LocalizedText(
+  nl: 'Aanbevolen',
+  en: 'Recommended',
+  fr: 'Recommandé',
+  es: 'Recomendado',
+  de: 'Empfohlen',
 );
 
 const LocalizedText kLimousineBusinessSetupPackageCard = LocalizedText(

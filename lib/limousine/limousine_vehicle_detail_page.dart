@@ -16,9 +16,8 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
 import 'limousine_public_copy.dart';
-import 'limousine_public_showroom.dart';
+import 'limousine_public_offer_card.dart';
 import 'limousine_public_showroom_labels.dart';
-import 'limousine_quote_inbox.dart';
 import 'limousine_vehicle_public_copy.dart';
 
 class LimousineVehicleDetailPage extends StatefulWidget {
@@ -544,146 +543,22 @@ class _LimousineVehicleDetailPageState
           )
         else
           for (final offer in offers) ...[
-            _offerCard(tokens, offer),
+            LimousinePublicOfferCard(
+              offer: offer,
+              language: _lang,
+              tokens: tokens,
+              showCta: true,
+              quoteEnabled: _quotesOn,
+              bookEnabled: _bookOn,
+              isSummary:
+                  offer.offerId ==
+                  (widget.vehicle.primaryOffer?.offerId ?? ''),
+              onQuote: () => _handleCta(offer, false),
+              onBook: () => _handleCta(offer, true),
+            ),
             const SizedBox(height: 10),
           ],
       ],
-    );
-  }
-
-  Widget _offerCard(LimousineUxTokens tokens, LimousinePublishedOffer offer) {
-    final kind = limousinePublishedDisplayKind(offer);
-    final title = localizedLimousineText(offer.title, languageCode: _lang.name);
-    final description = localizedLimousineText(
-      offer.description,
-      languageCode: _lang.name,
-    );
-    final included = limousineIncludedServicesLabel(offer, _lang);
-    final generic =
-        title.trim().toLowerCase() == 'limousine' ||
-        description.trim().toLowerCase() ==
-            'limousine / arrangementen / limousine';
-    final kindLabel = limousineDetailOfferKindLabel(kind, _lang);
-    final priceLabel = kind == LimousineOfferDisplayKind.fromPrice
-        ? limousineFormatPublishedOfferAmount(offer, _lang)
-        : limousineFormatPublishedOfferPrice(offer, _lang);
-    final showKindEyebrow = limousineShouldShowOfferKindEyebrow(
-      kindLabel,
-      priceLabel,
-    );
-    final cta = limousineDetailCtaFor(offer);
-    final isBook = cta == LimousineShowroomCta.book;
-    final summaryId = widget.vehicle.primaryOffer?.offerId ?? '';
-    final isSummary = offer.offerId == summaryId;
-    return DecoratedBox(
-      key: limousineDetailOfferCardKey(offer.offerId),
-      decoration: BoxDecoration(
-        color: tokens.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: tokens.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (showKindEyebrow) ...[
-              Text(
-                key: kLimousineDetailOfferKindEyebrowKey,
-                kindLabel,
-                style: TextStyle(
-                  color: tokens.gold,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-              const SizedBox(height: 2),
-            ],
-            if (title.isNotEmpty &&
-                !generic &&
-                !limousinePublicLabelsMatch(title, priceLabel)) ...[
-              Text(
-                title,
-                style: TextStyle(
-                  color: tokens.onSurface,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-            ],
-            if (description.isNotEmpty && !generic) ...[
-              Text(
-                description,
-                style: TextStyle(color: tokens.muted, height: 1.35, fontSize: 13),
-              ),
-              const SizedBox(height: 4),
-            ],
-            Text(
-              key: kLimousineDetailOfferPriceKey,
-              priceLabel,
-              style: TextStyle(
-                color: tokens.gold,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            if (kind == LimousineOfferDisplayKind.fromPrice) ...[
-              const SizedBox(height: 4),
-              Text(
-                _t(kLimousineOfferFromPriceDisclaimer),
-                style: TextStyle(color: tokens.muted, fontSize: 11.5, height: 1.3),
-              ),
-            ],
-            if (included.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                included,
-                style: TextStyle(color: tokens.onSurface, height: 1.3, fontSize: 13),
-              ),
-            ],
-            if (cta != LimousineShowroomCta.none) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton(
-                  key: isSummary
-                      ? (isBook
-                            ? kLimousineDetailBookCtaKey
-                            : kLimousineDetailQuoteCtaKey)
-                      : ValueKey<String>(
-                          'limousine_vehicle_detail_cta_${offer.offerId}',
-                        ),
-                  onPressed: (isBook ? _bookOn : _quotesOn)
-                      ? () => _handleCta(offer, isBook)
-                      : null,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: tokens.gold,
-                    foregroundColor: const Color(0xFF1A1408),
-                    disabledBackgroundColor: tokens.gold.withOpacity(0.28),
-                    disabledForegroundColor: tokens.muted,
-                    minimumSize: const Size(88, 44),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                  ),
-                  child: Text(
-                    isBook
-                        ? (_bookOn
-                              ? _t(kLimousineDetailBookCta)
-                              : _t(kLimousineDetailBookComingSoon))
-                        : (_quotesOn
-                              ? _t(kLimousineDetailQuoteCta)
-                              : _t(kLimousineDetailQuoteComingSoon)),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
