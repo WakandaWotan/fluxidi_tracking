@@ -348,12 +348,27 @@ test("28) Billit and RateHawk coexistence unchanged", () => {
   assert.ok(worker.includes("processBillitDueOutboxIndex"));
   assert.ok(worker.includes("runBillitOutboxDueMigrationStep"));
   assert.ok(wrangler.includes('binding = "RATEHAWK_HOTELS"'));
+  assert.ok(wrangler.includes('binding = "RATEHAWK_HOTELS_TEST"'));
   assert.ok(wrangler.includes('RATEHAWK_TEST_PREBOOK_ENABLED = "0"'));
+  assert.ok(wrangler.includes('RATEHAWK_BOOKING_FORM_ENABLED = "0"'));
+  assert.ok(wrangler.includes('RATEHAWK_BOOKING_FINISH_ENABLED = "0"'));
+  assert.ok(wrangler.includes('RATEHAWK_BOOKING_STATUS_ENABLED = "0"'));
+  assert.ok(wrangler.includes('BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH = "1"'));
+  assert.ok(wrangler.includes('HUMAN_BOOKING_ID_PROBES_ENABLED = "0"'));
+  assert.ok(wrangler.includes('LEGACY_SCOPE_MIGRATION_ENABLED = "0"'));
   assert.ok(!wrangler.includes("LIMOUSINE_TEST_COMPANY_ALLOWLIST"));
   assert.ok(!wrangler.includes("LIMOUSINE_QUOTE_ENABLED"));
+  assert.ok(!wrangler.includes("LIMOUSINE_BOOK_ENABLED"));
+  assert.ok(!wrangler.includes("LIMOUSINE_MANUAL_QUOTE_ENABLED"));
+  assert.match(wrangler, /# MOLLIE_CONNECT_CLIENT_ID/);
+  assert.match(wrangler, /never commit values/);
+  // Provenance: pin 4EDD8061… was the wrangler at 0cd1d00 (RateHawk test
+  // prebook off). 361ce81 added fail-closed RATEHAWK_BOOKING_* = "0" vars
+  // without refreshing this pin. Current file is that intended integrated
+  // config — not a secret/gate/route change.
   assert.equal(
     createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "4EDD8061662826214286A0A3F537EE19A07C248A18F3691252DA9B54DD219DA9",
+    "4D74FEB94E28E57442BCAD80268B906F151BFE5FE4B30B2480CDFB5B70FC9FD3",
   );
   assert.equal(
     createHash("sha256").update(dueIndex, "utf8").digest("hex").toUpperCase(),

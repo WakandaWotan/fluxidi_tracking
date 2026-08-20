@@ -25,6 +25,7 @@ const {
   CHIRON_EXPORT_STATUS_SCHEMA,
   CHIRON_PENDING_STALE_MS,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+  CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
   safeSegment,
 } = __testInternals;
 
@@ -34,6 +35,9 @@ const COMPANY = "fluxidi_fluxidi_ddmh9g";
 const BOOKING = "street_1785766676167_7d1gy8ov";
 const TRIP = "trip_cfc2e8e1-5d7f-47a1-b7ad-9df147c476cd";
 const REG = "0772.931.038";
+const FIXTURE_TIMEZONE = "Europe/Brussels";
+const FIXTURE_NOW_ISO = "2026-08-03T16:00:00.000Z";
+const FIXTURE_NOW_MS = Date.parse(FIXTURE_NOW_ISO);
 
 function goodEnv(extra = {}) {
   return {
@@ -299,6 +303,8 @@ test("10) tenant isolation: export status keys remain scoped", () => {
 
 test("11) reconcile does not burn budget on conflict_pending / waiting_for_departure", async () => {
   assert.ok(CHIRON_AUTO_RECONCILE_MAX_PROCESS >= 1);
+  assert.equal(FIXTURE_TIMEZONE, "Europe/Brussels");
+  assert.ok(Number.isFinite(FIXTURE_NOW_MS));
   const tenantSeg = safeSegment(TENANT, "");
   const companySeg = safeSegment(COMPANY, "");
   const connKey = `tenant:${TENANT}:company:${COMPANY}:chiron_connection:v1`;
@@ -309,6 +315,10 @@ test("11) reconcile does not burn budget on conflict_pending / waiting_for_depar
 
   const start = fieldRideStart();
   const stop = fieldRideStop();
+  assert.ok(
+    Date.parse(start.created_at_utc) >= FIXTURE_NOW_MS - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
+    "fixture ride must stay inside the frozen 14d window",
+  );
   const startKey = `compliance_event_v1/tenant/${tenantSeg}/company/${companySeg}/2026/08/03/1000_start`;
   const stopKey = `compliance_event_v1/tenant/${tenantSeg}/company/${companySeg}/2026/08/03/2000_stop`;
 
@@ -320,7 +330,7 @@ test("11) reconcile does not burn budget on conflict_pending / waiting_for_depar
       depStatusKey,
       JSON.stringify(
         pendingDepartureStatus({
-          last_attempt_at: new Date().toISOString(), // fresh → conflict_pending
+          last_attempt_at: "2026-08-03T15:59:00.000Z", // fresh vs FIXTURE_NOW
         }),
       ),
     ],
@@ -392,6 +402,7 @@ test("11) reconcile does not burn budget on conflict_pending / waiting_for_depar
   // not prevent the newer ride from being considered.
   const outcome = await _chironAutoReconcileScopeBestEffort(env, TENANT, COMPANY, {
     source: "unit_test",
+    nowMs: FIXTURE_NOW_MS,
   });
   assert.ok(outcome.scanned >= 4);
   const reasons = (outcome.events || []).map((e) => e.reason);
