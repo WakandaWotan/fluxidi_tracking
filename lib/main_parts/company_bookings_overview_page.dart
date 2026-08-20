@@ -5,10 +5,12 @@ class CompanyBookingsOverviewPage extends StatefulWidget {
     super.key,
     this.quoteRequestsVisible,
     this.quoteInboxGateway,
+    this.quoteInboxRuntimeEnabled,
   });
 
   final bool? quoteRequestsVisible;
   final LimousineQuoteInboxGateway? quoteInboxGateway;
+  final bool? quoteInboxRuntimeEnabled;
 
   @override
   State<CompanyBookingsOverviewPage> createState() =>
@@ -3780,8 +3782,13 @@ class _CompanyBookingsOverviewPageState
                           _bookingsSection ==
                               LimousineBookingsSection.quoteRequests)
                         Expanded(
-                          child: LimousineQuoteInboxPage(
-                            embedded: true,
+                          // First-frame gate: do not construct
+                          // LimousineQuoteInboxPage when
+                          // limousineQuoteInboxRuntimeEnabled() is false.
+                          child: limousineQuoteRequestsBody(
+                            runtimeEnabled:
+                                widget.quoteInboxRuntimeEnabled ??
+                                limousineQuoteInboxRuntimeEnabled(),
                             gateway: widget.quoteInboxGateway,
                             onUnreadCount: (count) {
                               if (!mounted) return;

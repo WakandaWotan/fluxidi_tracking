@@ -587,7 +587,10 @@ void main() {
     await tester.ensureVisible(find.byKey(kLimousineBusinessSetupCoverUploadKey));
     await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
     await pumpUpload(tester);
-    expect(find.text(kLimousineBusinessSetupCoverUploadFailed.nl), findsWidgets);
+    expect(
+      find.textContaining(kLimousineBusinessSetupCoverNotDurable.nl),
+      findsWidgets,
+    );
     expect(saves, isEmpty);
     expect(
       store.peekMerged(const <String>[kLimousinePricingLocalDefaultScope])

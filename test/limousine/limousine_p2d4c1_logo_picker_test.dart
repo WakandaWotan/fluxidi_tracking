@@ -412,7 +412,7 @@ void main() {
       await tester.tap(find.byKey(kLimousineBusinessSetupLogoReplaceKey));
       await pumpUpload(tester);
       expect(
-        find.text(kLimousineBusinessSetupLogoUploadFailed.nl),
+        find.textContaining(kLimousineBusinessSetupLogoNotDurable.nl),
         findsWidgets,
       );
       expect(logoPreview(tester).imageUrl, _kPrevLogo);

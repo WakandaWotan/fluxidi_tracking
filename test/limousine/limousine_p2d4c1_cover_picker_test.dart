@@ -211,6 +211,7 @@ void main() {
   late List<VehicleProfile> vehicles;
   var pickCalls = 0;
   var returnLocalUri = false;
+  var failDedicatedMediaType = false;
   Completer<LimousineSetupPickedImage?>? delayedPick;
   LimousineSetupPickedImage? nextPick;
   LimousineSetupPickedImage? lostPick;
@@ -223,6 +224,7 @@ void main() {
     uploads = <Map<String, String>>[];
     pickCalls = 0;
     returnLocalUri = false;
+    failDedicatedMediaType = false;
     delayedPick = null;
     nextPick = LimousineSetupPickedImage(
       path: _kContentUri,
@@ -302,6 +304,9 @@ void main() {
       'filename': filename,
       'hasBytes': (fileBytes != null && fileBytes.isNotEmpty).toString(),
     });
+    if (failDedicatedMediaType && mediaType != 'vehicle_photo') {
+      throw Exception('HTTP 400: {"error":"unsupported media_type"}');
+    }
     if (returnLocalUri) return <String, dynamic>{'url': filePath};
     return <String, dynamic>{'url': _kCover};
   }
@@ -527,7 +532,7 @@ void main() {
       await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
       await pumpUpload(tester);
       expect(
-        find.text(kLimousineBusinessSetupCoverUploadFailed.nl),
+        find.textContaining(kLimousineBusinessSetupCoverNotDurable.nl),
         findsWidgets,
       );
       final kept = tester.widget<LimousineContainPhoto>(
@@ -726,4 +731,28 @@ void main() {
     );
     expect(find.text(kLimousineBusinessSetupCoverReplace.nl), findsOneWidget);
   });
+
+  testWidgets(
+    'unsupported dedicated media_type retries vehicle_photo and persists the https URL',
+    (tester) async {
+      failDedicatedMediaType = true;
+      await pumpSetup(tester);
+      await tester.ensureVisible(
+        find.byKey(kLimousineBusinessSetupCoverUploadKey),
+      );
+      await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
+      await pumpUpload(tester);
+
+      expect(uploads.map((item) => item['mediaType']).toList(), <String>[
+        kLimousineProfileCoverMediaType,
+        'vehicle_photo',
+      ]);
+      expect(saves, isNotEmpty);
+      expect(
+        (saves.last[kLimousineProfileCoverKey] as Map)['photo_url'],
+        _kCover,
+      );
+      expect(find.text(kLimousineBusinessSetupCoverUploadSuccess.nl), findsWidgets);
+    },
+  );
 }

@@ -402,6 +402,7 @@ void main() {
     ).readAsStringSync();
     expect(bookings.contains('quote_request_id'), isFalse);
     expect(bookings.contains("kListBookingsPath"), isTrue);
+    expect(bookings.contains('limousineQuoteRequestsBody'), isTrue);
     expect(bookings.contains('LimousineQuoteInboxPage'), isTrue);
     expect(bookings.contains('_all.addAll(_controller.items)'), isFalse);
   });

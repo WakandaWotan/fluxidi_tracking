@@ -5,10 +5,23 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'limousine_hero_contract.dart';
 import 'limousine_profile_identity.dart';
+
+const String kLimousineSetupCoverFallbackEntityId = 'limousine-profile-cover';
+const String kLimousineSetupLogoFallbackEntityId = 'limousine-profile-logo';
+const String kLimousineSetupMediaFallbackType = 'vehicle_photo';
+const int kLimousineSetupMediaServerMaxBytes = 5 * 1024 * 1024;
+
+typedef LimousineSetupMediaSend =
+    Future<Map<String, dynamic>> Function({
+      required String mediaType,
+      String? entityId,
+      String? mediaId,
+    });
 
 enum LimousineSetupMediaKind { cover, logo }
 
@@ -82,6 +95,103 @@ class LimousinePickedMediaException implements Exception {
   String toString() => 'LimousinePickedMediaException($code)';
 }
 
+class LimousineSetupMediaFailure implements Exception {
+  const LimousineSetupMediaFailure({
+    required this.phase,
+    required this.kind,
+    required this.code,
+    this.httpStatus,
+    this.mime = '',
+    this.bytes = 0,
+    this.hasAuth = false,
+    this.hasTenant = false,
+    this.urlPresent = false,
+  });
+
+  final String phase;
+  final LimousineSetupMediaKind kind;
+  final String code;
+  final int? httpStatus;
+  final String mime;
+  final int bytes;
+  final bool hasAuth;
+  final bool hasTenant;
+  final bool urlPresent;
+
+  @override
+  String toString() =>
+      'LimousineSetupMediaFailure(phase=$phase code=$code status=${httpStatus ?? '-'})';
+}
+
+int? limousineSetupMediaHttpStatus(Object error) {
+  final match = RegExp(r'HTTP (\d{3})').firstMatch(error.toString());
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
+String limousineSetupMediaHttpErrorCode(Object error) {
+  final match = RegExp(r'"error"\s*:\s*"([^"]+)"').firstMatch(error.toString());
+  return match?.group(1) ?? '';
+}
+
+bool limousineSetupMediaTypeUnsupported(Object error) {
+  final code = limousineSetupMediaHttpErrorCode(error).toLowerCase();
+  final text = error.toString().toLowerCase();
+  return code.contains('unsupported media') ||
+      text.contains('unsupported media_type') ||
+      text.contains('unsupported media type');
+}
+
+String limousineSetupFallbackEntityId(LimousineSetupMediaKind kind) {
+  return kind == LimousineSetupMediaKind.logo
+      ? kLimousineSetupLogoFallbackEntityId
+      : kLimousineSetupCoverFallbackEntityId;
+}
+
+/// Dedicated limousine media types are not on the live test worker yet.
+/// Retry the proven vehicle_photo route with a reserved entity id so the
+/// returned HTTPS URL can be stored as cover/logo without writing taxi
+/// company_hero / company_logo.
+Future<Map<String, dynamic>> limousineSendSetupMediaWithFallback({
+  required LimousineSetupMediaKind kind,
+  required String dedicatedMediaType,
+  required LimousineSetupMediaSend send,
+  String Function()? newMediaId,
+}) async {
+  try {
+    return await send(
+      mediaType: dedicatedMediaType,
+      entityId: null,
+      mediaId: null,
+    );
+  } catch (error) {
+    if (!limousineSetupMediaTypeUnsupported(error)) rethrow;
+    return send(
+      mediaType: kLimousineSetupMediaFallbackType,
+      entityId: limousineSetupFallbackEntityId(kind),
+      mediaId: newMediaId?.call(),
+    );
+  }
+}
+
+void limousineLogSetupMedia({
+  required LimousineSetupMediaKind kind,
+  required String phase,
+  String mime = '',
+  int bytes = 0,
+  int? status,
+  String code = '',
+  bool hasAuth = false,
+  bool hasTenant = false,
+  bool urlPresent = false,
+  String route = '',
+}) {
+  debugPrint(
+    '[LIMOUSINE_SETUP_MEDIA] target=${kind.name} phase=$phase route=$route '
+    'mime=$mime bytes=$bytes status=${status ?? '-'} code=$code '
+    'auth=$hasAuth tenant=$hasTenant url=$urlPresent',
+  );
+}
+
 /// Survives State recreation after Android Photo Picker returns.
 LimousineSetupMediaKind? limousineSetupPendingMediaKind;
 
@@ -93,7 +203,7 @@ LimousineSetupMediaTarget limousineSetupMediaTarget(
       return const LimousineSetupMediaTarget(
         kind: LimousineSetupMediaKind.cover,
         mediaType: kLimousineProfileCoverMediaType,
-        maxBytes: 8 * 1024 * 1024,
+        maxBytes: kLimousineSetupMediaServerMaxBytes,
         minWidth: 1,
         minHeight: 1,
         maxEdge: 8000,

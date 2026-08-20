@@ -1,6 +1,7 @@
 import '../app_strings.dart';
 import 'limousine_business_setup.dart';
 import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_setup_media_pick.dart';
 
 const LocalizedText kLimousineBusinessSetupTitle = LocalizedText(
   nl: 'Limousine-instellingen',
@@ -802,6 +803,115 @@ const LocalizedText kLimousineBusinessSetupMediaTooSmall = LocalizedText(
   en: 'This image is too small. Choose a sharper JPG, PNG or WEBP.',
   fr: 'Cette image est trop petite. Choisissez un JPG, PNG ou WEBP plus net.',
   es: 'Esta imagen es demasiado pequeña. Elija un JPG, PNG o WEBP más nítido.',
+);
+
+String limousineSetupMediaFailureMessage({
+  required LimousineSetupMediaKind kind,
+  required Object error,
+  required AppLanguage language,
+}) {
+  LocalizedText copy;
+  if (error is LimousinePickedMediaException) {
+    if (error.isUnsupportedFormat || error.isContentUriUnread) {
+      copy = kLimousineBusinessSetupCoverFormatFailed;
+    } else if (error.isTooLarge) {
+      copy = kLimousineBusinessSetupMediaTooLarge;
+    } else if (error.isTooSmall) {
+      copy = kLimousineBusinessSetupMediaTooSmall;
+    } else if (error.isEmptyBytes) {
+      copy = kLimousineBusinessSetupCoverFormatFailed;
+    } else if (error.isUploadNotDurable) {
+      copy = kind == LimousineSetupMediaKind.logo
+          ? kLimousineBusinessSetupLogoNotDurable
+          : kLimousineBusinessSetupCoverNotDurable;
+    } else {
+      copy = kind == LimousineSetupMediaKind.logo
+          ? kLimousineBusinessSetupLogoUploadFailed
+          : kLimousineBusinessSetupCoverUploadFailed;
+    }
+  } else if (error is LimousineSetupMediaFailure) {
+    switch (error.phase) {
+      case 'bytes':
+      case 'validate':
+        copy = error.code.contains('large')
+            ? kLimousineBusinessSetupMediaTooLarge
+            : kLimousineBusinessSetupCoverFormatFailed;
+        break;
+      case 'tenant-scope':
+      case 'auth':
+        copy = kLimousineBusinessSetupMediaAuthFailed;
+        break;
+      case 'persist':
+        copy = kind == LimousineSetupMediaKind.logo
+            ? kLimousineBusinessSetupLogoPersistFailed
+            : kLimousineBusinessSetupCoverPersistFailed;
+        break;
+      case 'response':
+        copy = error.code.contains('durable')
+            ? (kind == LimousineSetupMediaKind.logo
+                  ? kLimousineBusinessSetupLogoNotDurable
+                  : kLimousineBusinessSetupCoverNotDurable)
+            : (kind == LimousineSetupMediaKind.logo
+                  ? kLimousineBusinessSetupLogoUploadFailed
+                  : kLimousineBusinessSetupCoverUploadFailed);
+        break;
+      default:
+        copy = kind == LimousineSetupMediaKind.logo
+            ? kLimousineBusinessSetupLogoUploadFailed
+            : kLimousineBusinessSetupCoverUploadFailed;
+    }
+    final detail = [
+      error.phase,
+      if (error.httpStatus != null) '${error.httpStatus}',
+      if (error.code.isNotEmpty) error.code,
+    ].join(' · ');
+    return '${copy.of(language)} ($detail)';
+  } else {
+    copy = kind == LimousineSetupMediaKind.logo
+        ? kLimousineBusinessSetupLogoUploadFailed
+        : kLimousineBusinessSetupCoverUploadFailed;
+    final status = limousineSetupMediaHttpStatus(error);
+    final code = limousineSetupMediaHttpErrorCode(error);
+    if (status != null || code.isNotEmpty) {
+      return '${copy.of(language)} (${[if (status != null) '$status', if (code.isNotEmpty) code].join(' · ')})';
+    }
+  }
+  return copy.of(language);
+}
+
+const LocalizedText kLimousineBusinessSetupMediaAuthFailed = LocalizedText(
+  nl: 'Upload vereist een geldige bedrijfsessie. Meld opnieuw aan en probeer opnieuw.',
+  en: 'Upload requires a valid company session. Sign in again and retry.',
+  fr: 'Le téléversement nécessite une session entreprise valide. Reconnectez-vous.',
+  es: 'La subida requiere una sesión de empresa válida. Inicie sesión de nuevo.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverNotDurable = LocalizedText(
+  nl: 'De server gaf geen duurzame omslagfoto-URL terug.',
+  en: 'The server did not return a durable cover URL.',
+  fr: 'Le serveur n’a pas renvoyé d’URL durable pour la couverture.',
+  es: 'El servidor no devolvió una URL duradera de portada.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoNotDurable = LocalizedText(
+  nl: 'De server gaf geen duurzame logo-URL terug.',
+  en: 'The server did not return a durable logo URL.',
+  fr: 'Le serveur n’a pas renvoyé d’URL durable pour le logo.',
+  es: 'El servidor no devolvió una URL duradera de logo.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverPersistFailed = LocalizedText(
+  nl: 'De omslagfoto is geüpload maar het concept is niet bewaard.',
+  en: 'The cover uploaded but the draft was not saved.',
+  fr: 'La couverture a été téléversée mais le brouillon n’a pas été enregistré.',
+  es: 'La portada se subió pero el borrador no se guardó.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoPersistFailed = LocalizedText(
+  nl: 'Het logo is geüpload maar het concept is niet bewaard.',
+  en: 'The logo uploaded but the draft was not saved.',
+  fr: 'Le logo a été téléversé mais le brouillon n’a pas été enregistré.',
+  es: 'El logo se subió pero el borrador no se guardó.',
 );
 
 const LocalizedText kLimousineBusinessSetupOfferForVehicles = LocalizedText(

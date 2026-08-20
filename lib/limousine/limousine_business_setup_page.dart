@@ -35,6 +35,7 @@ import 'limousine_pricing_overlay.dart';
 import 'limousine_vehicle_persist.dart';
 import 'limousine_vehicle_public_copy.dart';
 import 'limousine_vehicle_public_copy_editor.dart';
+import '../vehicle_gallery_contract.dart';
 
 export 'limousine_setup_media_pick.dart' show LimousineSetupPickedImage;
 
@@ -581,25 +582,37 @@ class _LimousineBusinessSetupPageState
     }
   }
 
-  Future<Map<String, dynamic>> _uploadSetupMedia({
+  Future<Map<String, dynamic>> _sendSetupMedia({
     required String mediaType,
-    required String filePath,
     required String filename,
     Uint8List? fileBytes,
+    String? entityId,
+    String? mediaId,
   }) {
     final hook = widget.uploadMedia;
-    final safePath = limousinePickedPathIsContentUri(filePath) ? '' : filePath;
     if (hook != null) {
       return hook(
         mediaType: mediaType,
-        filePath: safePath,
+        filePath: '',
         filename: filename,
         fileBytes: fileBytes,
       );
     }
+    final scopeId = resolveActiveCompanyIdForFleetUi();
+    if (scopeId == null || scopeId.isEmpty) {
+      throw const LimousineSetupMediaFailure(
+        phase: 'tenant-scope',
+        kind: LimousineSetupMediaKind.cover,
+        code: 'missing_tenant_scope',
+      );
+    }
     return uploadPublicPartnerMedia(
+      tenantId: scopeId,
+      companyId: scopeId,
       mediaType: mediaType,
-      filePath: (fileBytes != null && fileBytes.isNotEmpty) ? null : safePath,
+      entityId: entityId,
+      mediaId: mediaId,
+      filePath: (fileBytes != null && fileBytes.isNotEmpty) ? null : '',
       fileBytes: fileBytes,
       filename: filename,
       contentType: fileBytes == null
@@ -608,20 +621,124 @@ class _LimousineBusinessSetupPageState
     );
   }
 
-  LocalizedText _setupMediaFailureCopy(
-    LimousineSetupMediaKind kind,
-    Object error,
-  ) {
-    if (error is LimousinePickedMediaException) {
-      if (error.isUnsupportedFormat) {
-        return kLimousineBusinessSetupCoverFormatFailed;
+  Future<Map<String, dynamic>> _uploadSetupMedia({
+    required LimousineSetupMediaKind kind,
+    required String mediaType,
+    required String filename,
+    Uint8List? fileBytes,
+  }) async {
+    final mime = fileBytes == null ? '' : limousineDetectImageMime(fileBytes);
+    final bytes = fileBytes?.length ?? 0;
+    final hasTenant = (resolveActiveCompanyIdForFleetUi() ?? '').isNotEmpty;
+    final hasAuth = hasCompanyOwnerAuthContext();
+    final isHook = widget.uploadMedia != null;
+    if (!isHook) {
+      limousineLogSetupMedia(
+        kind: kind,
+        phase: 'upload',
+        mime: mime,
+        bytes: bytes,
+        hasAuth: hasAuth,
+        hasTenant: hasTenant,
+        route: mediaType,
+      );
+      if (!hasTenant) {
+        throw LimousineSetupMediaFailure(
+          phase: 'tenant-scope',
+          kind: kind,
+          code: 'missing_tenant_scope',
+          mime: mime,
+          bytes: bytes,
+          hasAuth: hasAuth,
+          hasTenant: false,
+        );
       }
-      if (error.isTooLarge) return kLimousineBusinessSetupMediaTooLarge;
-      if (error.isTooSmall) return kLimousineBusinessSetupMediaTooSmall;
+      if (!hasAuth) {
+        throw LimousineSetupMediaFailure(
+          phase: 'auth',
+          kind: kind,
+          code: 'missing_company_session',
+          mime: mime,
+          bytes: bytes,
+          hasAuth: false,
+          hasTenant: hasTenant,
+        );
+      }
     }
-    return kind == LimousineSetupMediaKind.logo
-        ? kLimousineBusinessSetupLogoUploadFailed
-        : kLimousineBusinessSetupCoverUploadFailed;
+    try {
+      return await limousineSendSetupMediaWithFallback(
+        kind: kind,
+        dedicatedMediaType: mediaType,
+        newMediaId: newVehicleGalleryMediaId,
+        send: ({required mediaType, entityId, mediaId}) async {
+          if (!isHook && entityId != null) {
+            limousineLogSetupMedia(
+              kind: kind,
+              phase: 'fallback-vehicle-photo',
+              mime: mime,
+              bytes: bytes,
+              hasAuth: hasAuth,
+              hasTenant: hasTenant,
+              route: mediaType,
+            );
+          }
+          try {
+            final uploaded = await _sendSetupMedia(
+              mediaType: mediaType,
+              filename: filename,
+              fileBytes: fileBytes,
+              entityId: entityId,
+              mediaId: mediaId,
+            );
+            if (!isHook) {
+              limousineLogSetupMedia(
+                kind: kind,
+                phase: entityId == null ? 'upload-ok' : 'fallback-ok',
+                mime: mime,
+                bytes: bytes,
+                status: 200,
+                hasAuth: hasAuth,
+                hasTenant: hasTenant,
+                urlPresent: limousineHeroRefIsDurable(
+                  (uploaded['url'] ?? '').toString(),
+                ),
+                route: mediaType,
+              );
+            }
+            return uploaded;
+          } catch (error) {
+            if (!isHook) {
+              limousineLogSetupMedia(
+                kind: kind,
+                phase: 'upload-http',
+                mime: mime,
+                bytes: bytes,
+                status: limousineSetupMediaHttpStatus(error),
+                code: limousineSetupMediaHttpErrorCode(error),
+                hasAuth: hasAuth,
+                hasTenant: hasTenant,
+                route: mediaType,
+              );
+            }
+            rethrow;
+          }
+        },
+      );
+    } catch (error) {
+      if (error is LimousineSetupMediaFailure) rethrow;
+      throw LimousineSetupMediaFailure(
+        phase: 'upload',
+        kind: kind,
+        code: limousineSetupMediaHttpErrorCode(error).isNotEmpty
+            ? limousineSetupMediaHttpErrorCode(error)
+            : error.toString(),
+        httpStatus: limousineSetupMediaHttpStatus(error),
+        mime: mime,
+        bytes: bytes,
+        hasAuth: hasAuth,
+        hasTenant: hasTenant,
+      );
+    }
   }
 
   void _beginSetupMediaUpload(LimousineSetupMediaKind kind) {
@@ -662,16 +779,32 @@ class _LimousineBusinessSetupPageState
   }
 
   void _setSetupMediaFailure(LimousineSetupMediaKind kind, Object error) {
-    final copy = _setupMediaFailureCopy(kind, error);
+    final message = limousineSetupMediaFailureMessage(
+      kind: kind,
+      error: error,
+      language: _lang,
+    );
+    limousineLogSetupMedia(
+      kind: kind,
+      phase: error is LimousineSetupMediaFailure ? error.phase : 'error',
+      code: error is LimousineSetupMediaFailure
+          ? error.code
+          : error is LimousinePickedMediaException
+          ? error.code
+          : limousineSetupMediaHttpErrorCode(error),
+      status: error is LimousineSetupMediaFailure
+          ? error.httpStatus
+          : limousineSetupMediaHttpStatus(error),
+    );
     setState(() {
       if (kind == LimousineSetupMediaKind.cover) {
-        _coverError = _t(copy);
+        _coverError = message;
         _coverStatus = null;
       } else {
-        _logoError = _t(copy);
+        _logoError = message;
         _logoStatus = null;
       }
-      _error = _t(copy);
+      _error = message;
       _status = null;
     });
   }
@@ -687,14 +820,23 @@ class _LimousineBusinessSetupPageState
     );
     if (!mounted) return;
     final uploaded = await _uploadSetupMedia(
+      kind: kind,
       mediaType: target.mediaType,
-      filePath: '',
       filename: prepared.filename,
       fileBytes: prepared.bytes,
     );
     final url = (uploaded['url'] ?? '').toString().trim();
     if (!limousineHeroRefIsDurable(url)) {
-      throw const LimousinePickedMediaException('upload-not-durable');
+      throw LimousineSetupMediaFailure(
+        phase: 'response',
+        kind: kind,
+        code: 'upload-not-durable',
+        mime: prepared.contentType,
+        bytes: prepared.bytes.length,
+        hasAuth: hasCompanyOwnerAuthContext(),
+        hasTenant: (resolveActiveCompanyIdForFleetUi() ?? '').isNotEmpty,
+        urlPresent: false,
+      );
     }
     if (kind == LimousineSetupMediaKind.logo) {
       final safe = limousineSanitizeProfileLogoOverrideUrl(url);
@@ -727,7 +869,23 @@ class _LimousineBusinessSetupPageState
         _error = null;
       });
     }
-    await _persistWorkingDraft();
+    try {
+      await _persistWorkingDraft();
+    } catch (error) {
+      throw LimousineSetupMediaFailure(
+        phase: 'persist',
+        kind: kind,
+        code: limousineSetupMediaHttpErrorCode(error).isNotEmpty
+            ? limousineSetupMediaHttpErrorCode(error)
+            : 'draft-persist-failed',
+        httpStatus: limousineSetupMediaHttpStatus(error),
+        mime: prepared.contentType,
+        bytes: prepared.bytes.length,
+        hasAuth: hasCompanyOwnerAuthContext(),
+        hasTenant: (resolveActiveCompanyIdForFleetUi() ?? '').isNotEmpty,
+        urlPresent: true,
+      );
+    }
   }
 
   Future<void> _pickAndUploadSetupMedia(LimousineSetupMediaKind kind) async {

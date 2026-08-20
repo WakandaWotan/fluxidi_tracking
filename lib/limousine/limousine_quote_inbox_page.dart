@@ -13,6 +13,55 @@ import 'limousine_quote_inbox_presentation.dart';
 import 'limousine_quote_respond_form.dart';
 import 'limousine_service_capability.dart';
 
+class LimousineQuoteGateOffPanel extends StatelessWidget {
+  const LimousineQuoteGateOffPanel({
+    super.key,
+    this.embedded = true,
+    this.language,
+    this.palette,
+  });
+
+  final bool embedded;
+  final AppLanguage? language;
+  final BusinessThemePalette? palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final lang = language ?? appLanguageNotifier.value;
+    final colors =
+        palette ?? paletteForBusinessTheme(businessThemeNotifier.value);
+    return Padding(
+      key: kLimousineQuoteInboxGateOffKey,
+      padding: EdgeInsets.all(embedded ? 4 : 24),
+      child: Align(
+        alignment: embedded ? Alignment.topCenter : Alignment.center,
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: embedded ? 12 : 16,
+            vertical: embedded ? 10 : 16,
+          ),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.border),
+          ),
+          child: Text(
+            kLimousineQuoteGateOff.of(lang),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colors.textSecondary,
+              height: 1.4,
+              fontSize: embedded ? 13.5 : 16,
+              fontWeight: embedded ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class LimousineQuoteInboxNavEntry extends StatelessWidget {
   const LimousineQuoteInboxNavEntry({
     super.key,
@@ -993,34 +1042,10 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
   }
 
   Widget _gate(BusinessThemePalette palette) {
-    return Padding(
-      key: kLimousineQuoteInboxGateOffKey,
-      padding: EdgeInsets.all(widget.embedded ? 4 : 24),
-      child: Align(
-        alignment: widget.embedded ? Alignment.topCenter : Alignment.center,
-        child: Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(
-            horizontal: widget.embedded ? 12 : 16,
-            vertical: widget.embedded ? 10 : 16,
-          ),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: palette.border),
-          ),
-          child: Text(
-            _t(kLimousineQuoteGateOff),
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: palette.textSecondary,
-              height: 1.4,
-              fontSize: widget.embedded ? 13.5 : 16,
-              fontWeight: widget.embedded ? FontWeight.w600 : FontWeight.w400,
-            ),
-          ),
-        ),
-      ),
+    return LimousineQuoteGateOffPanel(
+      embedded: widget.embedded,
+      language: _lang,
+      palette: palette,
     );
   }
 

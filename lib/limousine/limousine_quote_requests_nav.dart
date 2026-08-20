@@ -12,8 +12,43 @@ import '../business_theme_palette.dart';
 import '../business_theme_store.dart';
 import 'limousine_business_setup.dart';
 import 'limousine_offers.dart';
+import 'limousine_provider_showroom.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_inbox_page.dart';
+
+bool limousineQuoteInboxRuntimeEnabled({
+  bool quoteGate = kLimousineCustomerQuoteGateEnabled,
+  bool manualQuoteGate = kLimousineCustomerManualQuoteGateEnabled,
+}) {
+  return limousineCustomerQuoteCtaEnabled(
+    quoteGate: quoteGate,
+    manualQuoteGate: manualQuoteGate,
+  );
+}
+
+Widget limousineQuoteRequestsBody({
+  required bool runtimeEnabled,
+  LimousineQuoteInboxGateway? gateway,
+  ValueChanged<int?>? onUnreadCount,
+}) {
+  // Compile-time gates are synchronous. Never construct the inbox (or its
+  // HTTP client / controller) when quotes are off — that first frame is the
+  // flash: hero, skeleton, empty list, then a post-frame gate-off redirect.
+  debugPrint(
+    '[LIMOUSINE_QUOTE_TAB] frame=build runtimeEnabled=$runtimeEnabled '
+    'child=${runtimeEnabled ? 'LimousineQuoteInboxPage' : 'LimousineQuoteGateOffPanel'}',
+  );
+  if (!runtimeEnabled) {
+    return const LimousineQuoteGateOffPanel(embedded: true);
+  }
+  return LimousineQuoteInboxPage(
+    embedded: true,
+    gateway: gateway,
+    onUnreadCount: onUnreadCount,
+  );
+}
 
 enum LimousineBookingsSection { bookings, quoteRequests }
 
