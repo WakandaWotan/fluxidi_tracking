@@ -251,6 +251,7 @@ import {
   readBillitPartyIdForScope,
   persistBillitPartyIdOnConnectionRecord,
   startBillitOAuthForScope,
+  completeBillitOAuthCallback,
   disconnectBillitOAuthForScope,
   _resolveBillitConnectionProbePath,
   callBillitSandboxConnectionProbe,
@@ -37957,216 +37958,21 @@ export default {
       // GET /admin/integrations/billit/oauth/callback  (browser redirect from
       // Billit). NOT admin-token protected - Billit cannot send the admin
       // token; the random server-side `state` is the binding/anti-CSRF token.
+      // Existing connections stay untouched until token + account + Party ID
+      // all succeed. Failures only clear TTL state/pending keys.
       if (
         url.pathname === "/admin/integrations/billit/oauth/callback" &&
         request.method === "GET"
       ) {
         try {
-          if (!env?.BOOKING_KV) {
-            return _billitCallbackHtml(
-              "Billit koppeling mislukt. Probeer later opnieuw.",
-              503,
-            );
-          }
-          const code = safeStr(url.searchParams.get("code"), 4000);
-          const state = safeStr(url.searchParams.get("state"), 200);
-          const oauthError = safeStr(url.searchParams.get("error"), 120);
-          const stateKey = buildBillitOAuthStateKey(state);
-          if (!stateKey) {
-            return _billitCallbackHtml("Billit koppeling: ongeldige status.", 400);
-          }
-          let stateRecord = null;
-          try {
-            stateRecord = await env.BOOKING_KV.get(stateKey, { type: "json" });
-          } catch (_) {
-            stateRecord = null;
-          }
-          if (
-            !stateRecord ||
-            typeof stateRecord !== "object" ||
-            safeStr(stateRecord.provider) !== BILLIT_PROVIDER
-          ) {
-            return _billitCallbackHtml(
-              "Billit koppeling: status verlopen of ongeldig.",
-              400,
-            );
-          }
-          const scope = {
-            tenant_id: safeStr(stateRecord.tenant_id, 80),
-            company_id: safeStr(stateRecord.company_id, 80),
-          };
-          const connKey = buildBillitOAuthConnectionKey(scope);
-          const config = resolveBillitOAuthConfig(env);
-          const nowIso = new Date().toISOString();
-
-          const writeErrorRecord = async (errorCode) => {
-            if (!connKey) return;
-            const errorRecord = {
-              provider: BILLIT_PROVIDER,
-              tenant_id: scope.tenant_id,
-              company_id: scope.company_id,
-              environment: config.environment,
-              connected: false,
-              status: "error",
-              connected_at: null,
-              updated_at: nowIso,
-              token_type: null,
-              access_token_encrypted: null,
-              refresh_token_encrypted: null,
-              expires_at: null,
-              scope: config.scope || null,
-              party_id: null,
-              last_error_code: safeStr(errorCode, 80) || "error",
-              last_error_message: null,
-            };
-            try {
-              await env.BOOKING_KV.put(connKey, JSON.stringify(errorRecord));
-            } catch (_) {
-              // non-fatal
-            }
-          };
-
-          // Provider returned an error (user denied / config issue).
-          if (oauthError) {
-            await writeErrorRecord(`provider_error:${oauthError}`);
-            try {
-              await env.BOOKING_KV.delete(stateKey);
-            } catch (_) {}
-            console.log(
-              `[BILLIT_OAUTH][CALLBACK][PROVIDER_ERROR] tenant=${scope.tenant_id} company=${scope.company_id}`,
-            );
-            return _billitCallbackHtml(
-              "Billit koppeling geweigerd of mislukt. Je mag dit venster sluiten.",
-              200,
-            );
-          }
-          if (!code) {
-            await writeErrorRecord("missing_code");
-            return _billitCallbackHtml(
-              "Billit koppeling mislukt: geen autorisatiecode. Je mag dit venster sluiten.",
-              400,
-            );
-          }
-          if (!config.configured) {
-            await writeErrorRecord("not_configured");
-            return _billitCallbackHtml(
-              "Billit koppeling mislukt: configuratie ontbreekt. Je mag dit venster sluiten.",
-              400,
-            );
-          }
-
-          const token = await exchangeBillitOAuthCodeForToken(config, code);
-          if (!token.ok) {
-            await writeErrorRecord(token.error || "token_exchange_failed");
-            try {
-              await env.BOOKING_KV.delete(stateKey);
-            } catch (_) {}
-            console.log(
-              `[BILLIT_OAUTH][CALLBACK][TOKEN_FAIL] tenant=${scope.tenant_id} company=${scope.company_id} reason=${safeStr(token.error, 60) || "unknown"}`,
-            );
-            return _billitCallbackHtml(
-              "Billit koppeling mislukt bij token-uitwisseling. Je mag dit venster sluiten.",
-              200,
-            );
-          }
-
-          // Refuse to persist plaintext tokens: require the encryption key.
-          if (!billitTokenEncryptionAvailable(env)) {
-            await writeErrorRecord("token_encryption_unavailable");
-            try {
-              await env.BOOKING_KV.delete(stateKey);
-            } catch (_) {}
-            console.log(
-              `[BILLIT_OAUTH][CALLBACK][NO_ENCRYPTION_KEY] tenant=${scope.tenant_id} company=${scope.company_id}`,
-            );
-            return _billitCallbackHtml(
-              "Billit koppeling kon niet veilig worden opgeslagen. Neem contact op met support.",
-              200,
-            );
-          }
-
-          let accessTokenEncrypted = null;
-          let refreshTokenEncrypted = null;
-          try {
-            accessTokenEncrypted = await encryptBillitTokenValue(
-              token.access_token,
-              env,
-            );
-            refreshTokenEncrypted = token.refresh_token
-              ? await encryptBillitTokenValue(token.refresh_token, env)
-              : null;
-          } catch (_) {
-            await writeErrorRecord("token_encryption_failed");
-            try {
-              await env.BOOKING_KV.delete(stateKey);
-            } catch (_) {}
-            return _billitCallbackHtml(
-              "Billit koppeling kon niet veilig worden opgeslagen. Neem contact op met support.",
-              200,
-            );
-          }
-
-          const expiresAt =
-            token.expires_in !== null
-              ? new Date(Date.now() + token.expires_in * 1000).toISOString()
-              : null;
-          const connectionRecord = {
-            provider: BILLIT_PROVIDER,
-            tenant_id: scope.tenant_id,
-            company_id: scope.company_id,
-            environment: config.environment,
-            connected: true,
-            status: "connected",
-            connected_at: nowIso,
-            updated_at: nowIso,
-            token_type: token.token_type || "Bearer",
-            access_token_encrypted: accessTokenEncrypted,
-            refresh_token_encrypted: refreshTokenEncrypted,
-            expires_at: expiresAt,
-            scope: token.scope || config.scope || null,
-            party_id: null,
-            last_error_code: null,
-            last_error_message: null,
-          };
-          if (!connKey) {
-            return _billitCallbackHtml(
-              "Billit koppeling mislukt: ongeldige scope. Je mag dit venster sluiten.",
-              400,
-            );
-          }
-          await env.BOOKING_KV.put(connKey, JSON.stringify(connectionRecord));
-          // Auto probe accountInformation and persist PartyID when exactly one
-          // administration exists — customers must not need a manual connection
-          // test to leave the connected-without-party_id state.
-          let partyProbeNote = "";
-          try {
-            const heal = await resolveBillitPartyIdWithSelfHeal(env, scope, config);
-            if (heal.ok && heal.party_id) {
-              partyProbeNote = " party=yes";
-            } else if (heal.error === "billit_administration_selection_required") {
-              partyProbeNote = " party=selection_required";
-            } else if (heal.error === "billit_no_administration") {
-              partyProbeNote = " party=no_admin";
-            } else {
-              partyProbeNote = " party=pending";
-            }
-          } catch (_) {
-            partyProbeNote = " party=probe_skipped";
-          }
-          try {
-            await env.BOOKING_KV.delete(stateKey);
-          } catch (_) {}
-          console.log(
-            `[BILLIT_OAUTH][CALLBACK][OK] tenant=${scope.tenant_id} company=${scope.company_id} env=${config.environment}${partyProbeNote}`,
-          );
-          return _billitCallbackHtml(
-            "Billit koppeling voltooid. Je mag dit venster sluiten.",
-            200,
-          );
-        } catch (err) {
-          console.log(
-            `[BILLIT_OAUTH][CALLBACK][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
-          );
+          const result = await completeBillitOAuthCallback(env, {
+            code: url.searchParams.get("code"),
+            state: url.searchParams.get("state"),
+            oauthError: url.searchParams.get("error"),
+          });
+          return _billitCallbackHtml(result.message, result.status);
+        } catch (_) {
+          console.log("[BILLIT_OAUTH][CALLBACK][ERR] outcome=internal_error");
           return _billitCallbackHtml(
             "Billit koppeling mislukt. Je mag dit venster sluiten.",
             500,
