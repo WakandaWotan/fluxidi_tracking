@@ -22,8 +22,10 @@ import 'package:fluxidi_tracking/limousine/limousine_business_setup_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_dimensions.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_customer_quote.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_offer_card.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_service_persist.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_requests_nav.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
@@ -800,20 +802,33 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               style: TextStyle(color: _textSecondary, fontSize: 12),
             )
           else
-            ...safe.map((o) {
-              final presentation = (o['price_presentation'] ?? '').toString();
-              final cents = limousineCentsOf(o['display_amount_cents']);
-              final currency = (o['currency'] ?? '').toString();
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  '• ${limousineLocalizedFor(o['title'], _lang)} — '
-                  '${limousinePresentationLabel(presentation, _lang)}'
-                  '${cents != null ? ' ${_limousineMoneyLabel(cents, currency)}' : ''}',
-                  style: TextStyle(color: _textSecondary, fontSize: 12),
-                ),
-              );
-            }),
+            Column(
+              key: kLimousineSettingsPublicOfferPreviewKey,
+              children: [
+                for (final map in safe)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: LimousinePublicOfferCard(
+                      offer: LimousinePublishedOffer.fromJson(map),
+                      language: _lang,
+                      tokens: LimousineUxTokens(
+                        background: _pageBg,
+                        surface: _panelBg,
+                        surfaceAlt: _subPanelBg,
+                        onSurface: _textPrimary,
+                        muted: _textMuted,
+                        border: _inputBorderColor,
+                        gold: _accent,
+                        danger: _danger,
+                        fieldFill: _inputFill,
+                        onHero: _textPrimary,
+                        heroScrim: _pageBg.withOpacity(0.42),
+                        isDark: _isDark,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
         ],
       ),
     );

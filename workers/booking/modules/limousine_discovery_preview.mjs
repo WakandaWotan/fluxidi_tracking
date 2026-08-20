@@ -226,19 +226,17 @@ function offerLooksHourlyOrPackage(offer) {
 
 function nearbyPrice(profile) {
   const offers = publishedLimousineOffers(profile);
-  let chosen = offers.find((offer) => looksTruthy(offer.featured)) || null;
-  if (!chosen) {
-    let lowest = null;
-    for (const offer of offers) {
-      if (offerPresentation(offer) !== "from_price") continue;
-      const amount = offerAmountCents(offer);
-      if (amount == null) continue;
-      if (lowest == null || amount < lowest.amount) {
-        lowest = { offer, amount };
-      }
+  let chosen = null;
+  let lowest = null;
+  for (const offer of offers) {
+    if (offerPresentation(offer) !== "from_price") continue;
+    const amount = offerAmountCents(offer);
+    if (amount == null) continue;
+    if (lowest == null || amount < lowest.amount) {
+      lowest = { offer, amount };
     }
-    if (lowest) chosen = lowest.offer;
   }
+  if (lowest) chosen = lowest.offer;
   if (!chosen) {
     chosen =
       offers.find((offer) => {

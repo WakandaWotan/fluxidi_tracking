@@ -95,6 +95,9 @@ LimousinePublishedOffer? tryParseLimousineShowroomOffer(Object? raw) {
   final showsAmount =
       offer.displayAmountCents != null && offer.displayAmountCents! > 0;
   if (showsAmount && offer.currency.isEmpty) return null;
+  if (offer.pricePresentation == LimousinePricePresentation.unavailable) {
+    return null;
+  }
   return offer;
 }
 
@@ -110,9 +113,7 @@ List<LimousinePublishedOffer> collectLimousineShowroomOffers(
     final offer = tryParseLimousineShowroomOffer(item);
     if (offer != null) parsed.add(offer);
   }
-  return limousineDeduplicatePublishedOffers(
-    sortLimousineOffersVehicleFirst(parsed),
-  );
+  return limousineRankPublicOffers(parsed);
 }
 
 LimousineShowroomCta limousineShowroomCtaFor(LimousinePublishedOffer offer) {

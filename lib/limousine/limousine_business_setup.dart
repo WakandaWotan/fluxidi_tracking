@@ -206,6 +206,24 @@ const Key kLimousineSimpleOfferScopeAllKey = ValueKey<String>(
 const Key kLimousineSimpleOfferFeaturedKey = ValueKey<String>(
   'limousine_simple_offer_featured',
 );
+const Key kLimousineSimpleOfferSortOrderFieldKey = ValueKey<String>(
+  'limousine_simple_offer_sort_order_field',
+);
+const Key kLimousineSimpleOfferSortOrderDecrementKey = ValueKey<String>(
+  'limousine_simple_offer_sort_order_decrement',
+);
+const Key kLimousineSimpleOfferSortOrderIncrementKey = ValueKey<String>(
+  'limousine_simple_offer_sort_order_increment',
+);
+const Key kLimousineSimpleOfferSortOrderHelperKey = ValueKey<String>(
+  'limousine_simple_offer_sort_order_helper',
+);
+const Key kLimousineSettingsPublicOfferPreviewKey = ValueKey<String>(
+  'limousine_settings_public_offer_preview',
+);
+
+Key limousineRecommendedBadgeKey(String offerId) =>
+    ValueKey<String>('limousine_offer_recommended_badge_$offerId');
 const Key kLimousineSimpleOfferVehiclePickerKey = ValueKey<String>(
   'limousine_simple_offer_vehicle_picker',
 );
@@ -703,7 +721,7 @@ class LimousineSimpleOfferDraft {
     this.appliesToAllSelected = true,
     this.vehicleIds = const <String>[],
     this.featured = false,
-    this.sortOrder = 0,
+    this.sortOrder,
   });
 
   final LimousineSimpleOfferMode mode;
@@ -729,7 +747,7 @@ class LimousineSimpleOfferDraft {
   final bool appliesToAllSelected;
   final List<String> vehicleIds;
   final bool featured;
-  final int sortOrder;
+  final int? sortOrder;
 }
 
 String limousineSimpleOfferPresentation(LimousineSimpleOfferMode mode) {
@@ -765,6 +783,7 @@ Map<String, dynamic> limousineApplySimpleOfferEdits(
         : List<String>.from(draft.vehicleIds),
     featured: draft.featured,
     sortOrder: draft.sortOrder,
+    persistSortOrder: true,
   );
   next.addAll(scoped);
   if (draft.appliesToAllSelected && draft.serviceClassId.isNotEmpty) {

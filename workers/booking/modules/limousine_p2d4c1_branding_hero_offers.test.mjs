@@ -186,7 +186,7 @@ test("shared and all-selected offers publish for every classified limousine", ()
   assert.equal(all[0].applies_to_all_selected_vehicles, true);
 });
 
-test("nearby summary prefers featured then lowest from-price and never labels a package as from", () => {
+test("nearby summary prefers lowest from-price over featured and never labels a package as from", () => {
   const card = buildLimousineNearbyCardProjection({
     partner_id: "limo_1",
     company_name: "Maison",
@@ -218,6 +218,7 @@ test("nearby summary prefers featured then lowest from-price and never labels a 
         display_amount_cents: 9000,
         currency: "EUR",
         hourly: { enabled: true, package_amount_cents: 65000, package_duration_minutes: 240 },
+        featured: true,
       },
       {
         offer_id: "off_from",
@@ -226,7 +227,6 @@ test("nearby summary prefers featured then lowest from-price and never labels a 
         price_presentation: "from_price",
         display_amount_cents: 25000,
         currency: "EUR",
-        featured: true,
       },
     ],
   });

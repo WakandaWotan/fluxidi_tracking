@@ -13,6 +13,7 @@ import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_resume.dart';
 import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
+import 'limousine_offer_binding.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_unified_intent.dart';
 
@@ -252,7 +253,7 @@ class HttpLimousineCustomerQuoteGateway
       }
       return LimousineProviderDetail(
         provider: provider,
-        offers: sortLimousineOffersVehicleFirst(offers),
+        offers: limousineRankPublicOffers(offers),
       );
     } on LimousineCustomerQuoteException {
       rethrow;
@@ -634,7 +635,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     try {
       final detail = await _gateway.loadProvider(provider.partnerId);
       selectedProvider = detail;
-      final ranked = sortLimousineOffersVehicleFirst(detail.offers);
+      final ranked = limousineRankPublicOffers(detail.offers);
       selectedOffer = ranked.isEmpty ? null : ranked.first;
       draft = draft.copyWith(
         publicPartnerId: detail.provider.partnerId,

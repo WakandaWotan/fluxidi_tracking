@@ -19,14 +19,16 @@ class LimousineOfferScope {
     this.vehicleIds = const <String>[],
     this.legacyUnbound = false,
     this.featured = false,
-    this.sortOrder = 0,
+    this.sortOrder,
   });
 
   final bool appliesToAllSelected;
   final List<String> vehicleIds;
   final bool legacyUnbound;
   final bool featured;
-  final int sortOrder;
+
+  /// Explicit public order (>= 1). Null means automatic.
+  final int? sortOrder;
 }
 
 List<String> limousineNormalizeVehicleIds(Object? raw, {Object? single}) =>
@@ -66,8 +68,9 @@ LimousineOfferScope limousineOfferScopeOf(Map<String, dynamic> offer) {
     vehicleIds: ids,
     legacyUnbound: legacyUnbound,
     featured: _boolOf(offer['featured']),
-    sortOrder:
-        int.tryParse('${offer['sort_order'] ?? offer['sortOrder'] ?? 0}') ?? 0,
+    sortOrder: limousinePublicSortOrderOf(
+      offer['sort_order'] ?? offer['sortOrder'],
+    ),
   );
 }
 
@@ -159,6 +162,7 @@ Map<String, dynamic> limousineWriteOfferScope(
   required List<String> vehicleIds,
   bool? featured,
   int? sortOrder,
+  bool persistSortOrder = false,
 }) {
   final next = Map<String, dynamic>.from(offer);
   final ids = limousineNormalizeVehicleIds(vehicleIds);
@@ -169,7 +173,9 @@ Map<String, dynamic> limousineWriteOfferScope(
       ? LimousineOfferTarget.serviceClass
       : LimousineOfferTarget.vehicle;
   if (featured != null) next['featured'] = featured;
-  if (sortOrder != null) next['sort_order'] = sortOrder;
+  if (persistSortOrder || sortOrder != null) {
+    next['sort_order'] = limousinePublicSortOrderOf(sortOrder);
+  }
   return next;
 }
 
@@ -217,19 +223,90 @@ int? _offerPublicAmountCents(Map<String, dynamic> offer) {
   return limousineCentsOf(offer['display_amount_cents']);
 }
 
+int _compareLimousinePublicSort({
+  required int? orderA,
+  required int? orderB,
+  required int indexA,
+  required int indexB,
+}) {
+  final explicitA = orderA != null;
+  final explicitB = orderB != null;
+  if (explicitA != explicitB) return explicitA ? -1 : 1;
+  if (explicitA && explicitB && orderA != orderB) {
+    return orderA.compareTo(orderB);
+  }
+  return indexA.compareTo(indexB);
+}
+
+List<Map<String, dynamic>> limousineSortPublicOfferMaps(
+  Iterable<Map<String, dynamic>> offers,
+) {
+  final list = [
+    for (final offer in offers) Map<String, dynamic>.from(offer),
+  ];
+  final indexed = <({int index, Map<String, dynamic> offer})>[
+    for (var i = 0; i < list.length; i++) (index: i, offer: list[i]),
+  ];
+  indexed.sort((a, b) {
+    return _compareLimousinePublicSort(
+      orderA: limousinePublicSortOrderOf(
+        a.offer['sort_order'] ?? a.offer['sortOrder'],
+      ),
+      orderB: limousinePublicSortOrderOf(
+        b.offer['sort_order'] ?? b.offer['sortOrder'],
+      ),
+      indexA: a.index,
+      indexB: b.index,
+    );
+  });
+  return [for (final item in indexed) item.offer];
+}
+
+/// Public list order: explicit 1,2,3… first (ascending), then automatic.
+/// Equal values and automatic rows keep the incoming stable order.
+/// Featured never changes this order.
 List<LimousinePublishedOffer> limousineSortPublishedOffers(
   Iterable<LimousinePublishedOffer> offers,
 ) {
-  final out = offers.toList();
-  out.sort((a, b) {
-    final sa = limousinePublishedOfferScope(a);
-    final sb = limousinePublishedOfferScope(b);
-    if (sa.featured != sb.featured) return sa.featured ? -1 : 1;
-    if (sa.sortOrder != sb.sortOrder)
-      return sa.sortOrder.compareTo(sb.sortOrder);
-    return a.offerId.compareTo(b.offerId);
+  final list = offers.toList();
+  final indexed = <({int index, LimousinePublishedOffer offer})>[
+    for (var i = 0; i < list.length; i++) (index: i, offer: list[i]),
+  ];
+  indexed.sort((a, b) {
+    return _compareLimousinePublicSort(
+      orderA: limousinePublishedOfferScope(a.offer).sortOrder,
+      orderB: limousinePublishedOfferScope(b.offer).sortOrder,
+      indexA: a.index,
+      indexB: b.index,
+    );
   });
+  return [for (final item in indexed) item.offer];
+}
+
+List<LimousinePublishedOffer> limousineDeduplicatePublishedOffersByOfferId(
+  Iterable<LimousinePublishedOffer> offers,
+) {
+  final seen = <String>{};
+  final out = <LimousinePublishedOffer>[];
+  for (final offer in offers) {
+    final id = offer.offerId.trim();
+    if (id.isEmpty || !seen.add(id)) continue;
+    out.add(offer);
+  }
   return out;
+}
+
+/// Vehicle-first + commercial dedupe, then public order. Featured is ignored.
+List<LimousinePublishedOffer> limousineRankPublicOffers(
+  Iterable<LimousinePublishedOffer> offers,
+) {
+  return limousineSortPublishedOffers(
+    limousineDeduplicatePublishedOffersByOfferId(
+      limousineDeduplicatePublishedOffers(
+        sortLimousineOffersVehicleFirst(offers),
+      ),
+    ),
+  );
 }
 
 const List<String> kLimousineOfferLineageKeys = <String>[
@@ -463,9 +540,6 @@ LimousinePublishedOffer? limousineSelectSummaryOffer(
 ) {
   final list = limousineSortPublishedOffers(offers);
   if (list.isEmpty) return null;
-  for (final offer in list) {
-    if (limousinePublishedOfferScope(offer).featured) return offer;
-  }
   LimousinePublishedOffer? lowestFrom;
   int? lowestFromCents;
   for (final offer in list) {
@@ -517,27 +591,18 @@ LimousineDiscoveryPrice limousineDiscoveryPriceFromOffers(
       kind: LimousineDiscoveryPriceKind.quoteRequired,
     );
   }
-  Map<String, dynamic>? featured;
+  Map<String, dynamic>? chosen;
+  int? lowest;
   for (final offer in published) {
-    if (_boolOf(offer['featured'])) {
-      featured = offer;
-      break;
+    if (limousineOfferDisplayKindOf(offer) !=
+        LimousineOfferDisplayKind.fromPrice) {
+      continue;
     }
-  }
-  Map<String, dynamic>? chosen = featured;
-  if (chosen == null) {
-    int? lowest;
-    for (final offer in published) {
-      if (limousineOfferDisplayKindOf(offer) !=
-          LimousineOfferDisplayKind.fromPrice) {
-        continue;
-      }
-      final cents = _offerPublicAmountCents(offer);
-      if (cents == null || cents <= 0) continue;
-      if (lowest == null || cents < lowest) {
-        lowest = cents;
-        chosen = offer;
-      }
+    final cents = _offerPublicAmountCents(offer);
+    if (cents == null || cents <= 0) continue;
+    if (lowest == null || cents < lowest) {
+      lowest = cents;
+      chosen = offer;
     }
   }
   if (chosen == null) {
