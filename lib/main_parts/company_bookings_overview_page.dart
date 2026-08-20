@@ -1478,6 +1478,82 @@ class _CompanyBookingsOverviewPageState
     );
   }
 
+  String _confirmBusyKey(_CompanyBookingOverviewItem item) {
+    return 'confirm:${item.bookingId}';
+  }
+
+  bool _shouldShowLimousineConfirmAction(_CompanyBookingOverviewItem item) {
+    if (_filter != _CompanyBookingsFilter.open) return false;
+    if (item.bucket != _CompanyBookingsFilter.open) return false;
+    return item.serviceType.toLowerCase() == 'limousine' &&
+        item.companyConfirmationRequired;
+  }
+
+  Future<void> _confirmLimousineBookingRequest(
+    _CompanyBookingOverviewItem item,
+  ) async {
+    final busyKey = _confirmBusyKey(item);
+    if (item.bookingId.isEmpty || _isCancellingBooking(busyKey)) return;
+    setState(() => _cancellingBookingIds.add(busyKey));
+    final scopeQuery = _activeBookingScopeQuery();
+    final path =
+        '$kUpdateBookingStatusPath/${Uri.encodeComponent(item.bookingId)}/status';
+    final uri = _withActiveBookingScope(kBookingBaseUrl, path);
+    final payload = <String, dynamic>{
+      'booking_id': item.bookingId,
+      'status': 'confirmed',
+      'actor_role': 'admin',
+      'actorRole': 'admin',
+      if (scopeQuery['tenant_id'] != null) 'tenant_id': scopeQuery['tenant_id'],
+      if (scopeQuery['company_id'] != null)
+        'company_id': scopeQuery['company_id'],
+    };
+    try {
+      final res = await http
+          .post(
+            uri,
+            headers: await _companyOwnerHeaders(),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (res.statusCode != 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Bevestigen mislukt. Probeer opnieuw.',
+                en: 'Confirmation failed. Try again.',
+                fr: 'Confirmation échouée. Réessayez.',
+                es: 'La confirmación falló. Inténtelo de nuevo.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      await _loadBookings();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bevestigen mislukt. Probeer opnieuw.',
+              en: 'Confirmation failed. Try again.',
+              fr: 'Confirmation échouée. Réessayez.',
+              es: 'La confirmación falló. Inténtelo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _cancellingBookingIds.remove(busyKey));
+      }
+    }
+  }
+
   bool _shouldShowAdminCancelPaidAction(_CompanyBookingOverviewItem item) {
     if (_filter != _CompanyBookingsFilter.open) return false;
     if (item.bucket != _CompanyBookingsFilter.open) return false;
@@ -2970,6 +3046,68 @@ class _CompanyBookingsOverviewPageState
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (item.serviceType.toLowerCase() == 'limousine')
+                  Text(
+                    _t(
+                      nl: 'Limousine',
+                      en: 'Limousine',
+                      fr: 'Limousine',
+                      es: 'Limusina',
+                    ),
+                    style: TextStyle(color: tokens.textSecondary, fontSize: 11.4),
+                  ),
+                if (item.occasion.trim().isNotEmpty)
+                  Text(
+                    '${_t(nl: 'Gelegenheid', en: 'Occasion', fr: 'Occasion', es: 'Ocasión')}: ${item.occasion}',
+                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                  ),
+                if (item.pricingMode.trim().isNotEmpty)
+                  Text(
+                    '${_t(nl: 'Prijsmode', en: 'Pricing mode', fr: 'Mode de tarif', es: 'Modo de precio')}: ${item.pricingMode}',
+                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                  ),
+                if (item.requestedDurationMinutes != null)
+                  Text(
+                    '${_t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración')}: ${item.requestedDurationMinutes}m',
+                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                  ),
+                if (item.companyConfirmationRequired)
+                  Text(
+                    _t(
+                      nl: 'Boekingsaanvraag in behandeling',
+                      en: 'Booking request pending',
+                      fr: 'Demande de réservation en cours',
+                      es: 'Solicitud de reserva pendiente',
+                    ),
+                    style: TextStyle(
+                      color: tokens.accent,
+                      fontSize: 11.4,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                if (item.serviceType.toLowerCase() == 'limousine' &&
+                    item.pricingSnapshot.isNotEmpty) ...[
+                  if (item.pricingSnapshot['amount_cents'] is num)
+                    Text(
+                      '${_t(nl: 'Onveranderlijke prijssnapshot', en: 'Immutable pricing snapshot', fr: 'Snapshot de prix immuable', es: 'Snapshot de precio inmutable')}: €${((item.pricingSnapshot['amount_cents'] as num) / 100).toStringAsFixed(2).replaceAll('.', ',')}',
+                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    ),
+                  if (item.pricingSnapshot['from_price_cents'] is num)
+                    Text(
+                      '${_t(nl: 'Vanafprijs (informatief)', en: 'From-price (informational)', fr: 'Prix à partir de (indicatif)', es: 'Precio desde (informativo)')}: €${((item.pricingSnapshot['from_price_cents'] as num) / 100).toStringAsFixed(2).replaceAll('.', ',')}',
+                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    ),
+                  if (item.pricingSnapshot['billable_duration_minutes'] is num)
+                    Text(
+                      '${_t(nl: 'Factureerbare duur', en: 'Billable duration', fr: 'Durée facturable', es: 'Duración facturable')}: ${item.pricingSnapshot['billable_duration_minutes']}m',
+                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    ),
+                  if (item.pricingSnapshot['included_duration_minutes'] is num)
+                    Text(
+                      '${_t(nl: 'Inbegrepen duur', en: 'Included duration', fr: 'Durée incluse', es: 'Duración incluida')}: ${item.pricingSnapshot['included_duration_minutes']}m',
+                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    ),
+                ],
               ],
             ),
             const SizedBox(height: 10),
@@ -3112,6 +3250,45 @@ class _CompanyBookingsOverviewPageState
                   ),
               ],
             ),
+            if (_shouldShowLimousineConfirmAction(item)) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isCancellingBooking(_confirmBusyKey(item))
+                      ? null
+                      : () => _confirmLimousineBookingRequest(item),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: tokens.accent.withOpacity(0.96),
+                    side: BorderSide(color: tokens.accent.withOpacity(0.45)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  icon: Icon(
+                    Icons.check_circle_outline,
+                    size: 18,
+                    color: tokens.accent.withOpacity(0.96),
+                  ),
+                  label: Text(
+                    _t(
+                      nl: 'Bevestig aanvraag',
+                      en: 'Confirm request',
+                      fr: 'Confirmer la demande',
+                      es: 'Confirmar solicitud',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 12.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
             if (_shouldShowAdminCancelPaidAction(item)) ...[
               const SizedBox(height: 10),
               SizedBox(

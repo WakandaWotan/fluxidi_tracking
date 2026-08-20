@@ -443,6 +443,19 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
 
   String _statusLabel(StoredCustomerBooking booking) {
     final status = _normalizeCustomerLifecycleStatus(booking.status);
+    final limousinePending =
+        (booking.service.toLowerCase() == 'limousine' ||
+            (booking.quote['service_type']?.toString().toLowerCase() ==
+                'limousine')) &&
+        booking.quote['company_confirmation_required'] == true;
+    if (limousinePending && (status == 'PENDING' || status.isEmpty)) {
+      return _t(
+        nl: 'Boekingsaanvraag in behandeling',
+        en: 'Booking request pending',
+        fr: 'Demande de réservation en cours',
+        es: 'Solicitud de reserva pendiente',
+      );
+    }
     if (status == 'PENDING') {
       return _t(
         nl: 'In behandeling',

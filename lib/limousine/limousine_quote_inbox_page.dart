@@ -9,6 +9,7 @@ import 'limousine_quote_detail_page.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_operational_handoff.dart';
 import 'limousine_quote_inbox_presentation.dart';
 import 'limousine_quote_respond_form.dart';
 import 'limousine_service_capability.dart';
@@ -854,6 +855,30 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                           fontSize: 12,
                         ),
                       ),
+                    if (item.occasion.isNotEmpty)
+                      Text(
+                        item.occasion,
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    if (item.pricingMode.isNotEmpty)
+                      Text(
+                        limousinePricingModeLabel(item.pricingMode, _lang),
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    if (item.fulfilment?.requestedDurationMinutes != null)
+                      Text(
+                        '${item.fulfilment!.requestedDurationMinutes}m',
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
                   ],
                 ),
                 if (extras.isNotEmpty)
@@ -862,6 +887,18 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                     child: Text(
                       extras,
                       style: TextStyle(color: palette.textSecondary),
+                    ),
+                  ),
+                if (limousineSnapshotFromPriceCents(item.pricingSnapshot) !=
+                    null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      '${kLimousineOperationalFromPriceAudit.of(_lang)} ${limousineMoneyCents(limousineSnapshotFromPriceCents(item.pricingSnapshot))}',
+                      style: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 if (amount != null)

@@ -115,6 +115,9 @@ bool limousineQuoteInboxMatchesQuery(
     fulfilment?.to ?? '',
     ...?fulfilment?.stops,
     fulfilment?.customerNote ?? '',
+    record.occasion,
+    record.pricingMode,
+    record.vehicleId,
   ];
   return haystack.any((value) => value.toLowerCase().contains(query));
 }
