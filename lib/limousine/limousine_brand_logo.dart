@@ -297,3 +297,43 @@ class LimousineBrandLogoCorner extends StatelessWidget {
     );
   }
 }
+
+/// Settings-only logo preview: full mark, never cropped.
+class LimousineSetupLogoPreview extends StatelessWidget {
+  const LimousineSetupLogoPreview({
+    super.key,
+    required this.imageUrl,
+    required this.background,
+    this.tablet = false,
+  });
+
+  final String imageUrl;
+  final Color background;
+  final bool tablet;
+
+  Size get box => tablet ? const Size(200, 104) : const Size(152, 84);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = box;
+    final url = imageUrl.trim();
+    return ColoredBox(
+      color: background,
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: url.startsWith('https://')
+            ? Image.network(
+                url,
+                width: size.width,
+                height: size.height,
+                fit: BoxFit.contain,
+                alignment: Alignment.center,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              )
+            : const SizedBox.shrink(),
+      ),
+    );
+  }
+}

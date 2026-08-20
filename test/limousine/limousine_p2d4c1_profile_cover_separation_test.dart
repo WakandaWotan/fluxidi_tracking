@@ -386,7 +386,10 @@ void main() {
     final setup = File(
       'lib/limousine/limousine_business_setup_page.dart',
     ).readAsStringSync();
-    expect(setup.contains('kLimousineProfileCoverMediaType'), isTrue);
+    final media = File(
+      'lib/limousine/limousine_setup_media_pick.dart',
+    ).readAsStringSync();
+    expect(media.contains('kLimousineProfileCoverMediaType'), isTrue);
     expect(
       setup.contains("mediaType: 'company_hero'"),
       isFalse,
@@ -398,7 +401,7 @@ void main() {
     ).readAsStringSync();
     expect(worker.contains('limousine_profile_cover'), isTrue);
     expect(worker.contains('limousine/profile-cover.'), isTrue);
-    expect(setup.contains('kLimousineProfileLogoMediaType'), isTrue);
+    expect(media.contains('kLimousineProfileLogoMediaType'), isTrue);
     expect(setup.contains("mediaType: 'company_logo'"), isFalse);
     expect(worker.contains('limousine_profile_logo'), isTrue);
     expect(worker.contains('limousine/profile-logo.'), isTrue);

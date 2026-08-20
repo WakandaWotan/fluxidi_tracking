@@ -209,8 +209,8 @@ void main() {
     ).readAsStringSync();
     expect(setup.contains("'Fluxidi'"), isFalse);
     expect(setup.contains('"Fluxidi"'), isFalse);
-    expect(setup.contains('resolvePublicPartnerHeroIdentity'), isTrue);
-    expect(setup.contains('LimousinePublicHeroOverlay'), isTrue);
+    expect(setup.contains('LimousinePublicCompanyCard'), isTrue);
+    expect(setup.contains('LimousinePublicHeroOverlay'), isFalse);
     expect(profile.contains('resolvePublicPartnerHeroIdentity'), isTrue);
     expect(profile.contains('LimousinePublicHeroOverlay'), isTrue);
     expect(showroom.contains('resolvePublicPartnerHeroIdentity'), isTrue);

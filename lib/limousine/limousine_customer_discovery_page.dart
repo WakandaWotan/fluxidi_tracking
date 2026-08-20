@@ -15,7 +15,6 @@ import '../customer_theme_store.dart';
 import '../nearby/public_partner_market.dart';
 import 'limousine_address_field.dart';
 import 'limousine_address_lookup.dart';
-import 'limousine_brand_logo.dart';
 import 'limousine_current_location.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_api.dart';
@@ -24,7 +23,7 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom_page.dart';
 import 'limousine_public_profile_page.dart';
 import 'limousine_service_capability.dart';
-import 'limousine_vehicle_media.dart';
+import 'limousine_public_company_card.dart';
 
 enum LimousineDiscoveryDestination { showroom, profile }
 
@@ -650,7 +649,7 @@ class _LimousineCustomerDiscoveryPageState
         key: kLimousineDiscoveryCardListKey,
         children: [
           for (final card in cards) ...[
-            _ProviderCard(
+            LimousinePublicCompanyCard(
               card: card,
               tokens: tokens,
               language: _lang,
@@ -674,7 +673,7 @@ class _LimousineCustomerDiscoveryPageState
           for (final card in cards)
             SizedBox(
               width: (constraints.maxWidth - 16) / columns,
-              child: _ProviderCard(
+              child: LimousinePublicCompanyCard(
                 card: card,
                 tokens: tokens,
                 language: _lang,
@@ -685,207 +684,6 @@ class _LimousineCustomerDiscoveryPageState
                     _openPartner(card, LimousineDiscoveryDestination.profile),
               ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProviderCard extends StatelessWidget {
-  const _ProviderCard({
-    required this.card,
-    required this.tokens,
-    required this.language,
-    required this.horizontal,
-    required this.onOpenOffers,
-    required this.onOpenProfile,
-  });
-
-  final LimousineDiscoveryCard card;
-  final LimousineUxTokens tokens;
-  final AppLanguage language;
-  final bool horizontal;
-  final VoidCallback onOpenOffers;
-  final VoidCallback onOpenProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    final info = _info();
-    final photo = LimousineContainPhoto(
-      key: limousineDiscoveryCardCoverKey(card.publicPartnerId),
-      imageUrl: card.coverImageUrl,
-      background: tokens.surfaceAlt,
-      gold: tokens.gold,
-      minHeight: horizontal ? 240 : kLimousineVehiclePhotoMinHeight,
-      aspectRatio: horizontal ? 16 / 10 : 16 / 9,
-      placeholderLabel: '',
-      fit: card.coverIsExplicit ? BoxFit.cover : BoxFit.contain,
-      alignment: card.coverAlignment,
-    );
-    final body = horizontal
-        ? IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(flex: 11, child: photo),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 9,
-                  child: SingleChildScrollView(
-                    physics: const ClampingScrollPhysics(),
-                    child: info,
-                  ),
-                ),
-              ],
-            ),
-          )
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [photo, const SizedBox(height: 12), info],
-          );
-    return Material(
-      key: limousineDiscoveryCardKey(card.publicPartnerId),
-      color: tokens.surface,
-      elevation: 0,
-      borderRadius: BorderRadius.circular(22),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: tokens.border),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [tokens.surface, tokens.surfaceAlt.withOpacity(0.5)],
-          ),
-        ),
-        child: Padding(padding: const EdgeInsets.all(12), child: body),
-      ),
-    );
-  }
-
-  Widget _info() {
-    final title = limousineDiscoveryCardTitle(card, language);
-    final description = limousineDiscoveryCardDescription(card, language);
-    final vehicles = limousineDiscoveryVehicleSummary(card.vehicles, language);
-    final price = limousineDiscoveryPriceLabel(card.price, language);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: LimousineDiscoveryCompanyIdentity(
-                  logoUrl: card.logoUrl,
-                  companyName: '',
-                  tokens: tokens,
-                  logoImage: card.logoImage,
-                ),
-              ),
-              if (card.verifiedPartner)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Icon(
-                    Icons.verified,
-                    color: tokens.gold,
-                    size: 20,
-                    semanticLabel: kLimousineDiscoveryVerified.of(language),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            key: limousineDiscoveryCardTitleKey(card.publicPartnerId),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: tokens.onSurface,
-              fontWeight: FontWeight.w800,
-              fontSize: 18,
-            ),
-          ),
-          if (description.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              description,
-              key: limousineDiscoveryCardDescriptionKey(card.publicPartnerId),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.muted,
-                fontSize: 13.5,
-                height: 1.35,
-              ),
-            ),
-          ],
-          if (vehicles.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              vehicles,
-              key: limousineDiscoveryCardVehiclesKey(card.publicPartnerId),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.onSurface.withOpacity(0.82),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-          if (price.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              price,
-              key: limousineDiscoveryCardPriceKey(card.publicPartnerId),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.gold,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-          if (card.distanceKm != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              limousineDiscoveryDistanceLabel(card.distanceKm!, language),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: tokens.muted, fontSize: 12.5),
-            ),
-          ],
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              key: limousineDiscoveryOffersCtaKey(card.publicPartnerId),
-              onPressed: onOpenOffers,
-              style: FilledButton.styleFrom(
-                backgroundColor: tokens.gold,
-                foregroundColor: const Color(0xFF1A1408),
-                minimumSize: const Size.fromHeight(46),
-              ),
-              child: Text(kLimousineDiscoveryViewOffers.of(language)),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              key: limousineDiscoveryProfileCtaKey(card.publicPartnerId),
-              onPressed: onOpenProfile,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: tokens.onSurface,
-                side: BorderSide(color: tokens.gold.withOpacity(0.55)),
-                minimumSize: const Size.fromHeight(44),
-              ),
-              child: Text(kLimousineDiscoveryViewProfile.of(language)),
-            ),
-          ),
         ],
       ),
     );

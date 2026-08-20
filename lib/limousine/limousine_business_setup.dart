@@ -48,6 +48,12 @@ const Key kLimousineBusinessSetupAdvancedKey = ValueKey<String>(
 const Key kLimousineBusinessSetupPreviewKey = ValueKey<String>(
   'limousine_business_setup_preview',
 );
+const Key kLimousineBusinessSetupPreviewFleetKey = ValueKey<String>(
+  'limousine_business_setup_preview_fleet',
+);
+const Key kLimousineBusinessSetupPreviewPriceKey = ValueKey<String>(
+  'limousine_business_setup_preview_price',
+);
 const Key kLimousineBusinessSetupLeaveDialogKey = ValueKey<String>(
   'limousine_business_setup_leave_dialog',
 );
@@ -148,6 +154,28 @@ const Key kLimousineBusinessSetupCoverFallbackKey = ValueKey<String>(
 const Key kLimousineBusinessSetupCoverUploadKey = ValueKey<String>(
   'limousine_business_setup_cover_upload',
 );
+const Key kLimousineBusinessSetupCoverPreviewKey = ValueKey<String>(
+  'limousine_business_setup_cover_preview',
+);
+const Key kLimousineBusinessSetupCoverUploadingKey = ValueKey<String>(
+  'limousine_business_setup_cover_uploading',
+);
+const Key kLimousineBusinessSetupCoverGalleryDialogKey = ValueKey<String>(
+  'limousine_business_setup_cover_gallery_dialog',
+);
+const Key kLimousineBusinessSetupCoverGalleryCancelKey = ValueKey<String>(
+  'limousine_business_setup_cover_gallery_cancel',
+);
+const Key kLimousineBusinessSetupCoverGalleryUseKey = ValueKey<String>(
+  'limousine_business_setup_cover_gallery_use',
+);
+
+Key limousineBusinessSetupCoverFocusKey(String alignment) => ValueKey<String>(
+  'limousine_business_setup_cover_focus_$alignment',
+);
+
+Key limousineBusinessSetupCoverGalleryItemKey(String mediaId) =>
+    ValueKey<String>('limousine_business_setup_cover_gallery_item_$mediaId');
 const Key kLimousineBusinessSetupLogoKey = ValueKey<String>(
   'limousine_business_setup_logo',
 );
@@ -159,6 +187,18 @@ const Key kLimousineBusinessSetupLogoReplaceKey = ValueKey<String>(
 );
 const Key kLimousineBusinessSetupLogoClearKey = ValueKey<String>(
   'limousine_business_setup_logo_clear',
+);
+const Key kLimousineBusinessSetupLogoPreviewKey = ValueKey<String>(
+  'limousine_business_setup_logo_preview',
+);
+const Key kLimousineBusinessSetupLogoUploadingKey = ValueKey<String>(
+  'limousine_business_setup_logo_uploading',
+);
+const Key kLimousineBusinessSetupLogoMediaStatusKey = ValueKey<String>(
+  'limousine_business_setup_logo_media_status',
+);
+const Key kLimousineBusinessSetupLogoMediaErrorKey = ValueKey<String>(
+  'limousine_business_setup_logo_media_error',
 );
 const Key kLimousineSimpleOfferScopeAllKey = ValueKey<String>(
   'limousine_simple_offer_scope_all',

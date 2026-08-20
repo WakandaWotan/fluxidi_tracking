@@ -345,7 +345,8 @@ LimousineHeroSelection limousineHeroFromSection(Map<String, dynamic> section) {
   final alignment = _token(
     nested['alignment'] ??
         section['limousine_hero_alignment'] ??
-        section['limousineHeroAlignment'],
+        section['limousineHeroAlignment'] ??
+        section['alignment'],
   );
   return LimousineHeroSelection(
     photoUrl: photo,

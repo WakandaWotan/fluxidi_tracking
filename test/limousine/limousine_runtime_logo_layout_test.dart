@@ -287,7 +287,7 @@ void main() {
         find.byKey(kLimousineDiscoveryCompanyLogoKey),
       );
       expect(photo.overlaps(logo), isFalse);
-      expect(logo.left, greaterThan(photo.right - 1));
+      expect(logo.top, greaterThan(photo.bottom - 1));
       expect(tester.takeException(), isNull);
     },
   );

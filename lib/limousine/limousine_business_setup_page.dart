@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,17 +14,21 @@ import '../app_strings.dart';
 import '../business_theme_palette.dart';
 import '../business_theme_store.dart';
 import '../vehicle_management_page.dart';
-import '../nearby/public_partner_identity.dart';
+import 'limousine_brand_logo.dart';
 import 'limousine_business_setup.dart';
 import 'limousine_business_setup_labels.dart';
+import 'limousine_cover_gallery_picker.dart';
+import 'limousine_customer_discovery.dart';
 import 'limousine_hero_contract.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_offer_editor.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_profile_identity.dart';
-import 'limousine_public_hero_overlay.dart';
+import 'limousine_public_company_card.dart';
+import 'limousine_public_cover_view.dart';
 import 'limousine_quote_requests_nav.dart';
+import 'limousine_setup_media_pick.dart';
 import 'limousine_simple_offer_editor.dart';
 import 'limousine_pricing_local_store.dart';
 import 'limousine_pricing_overlay.dart';
@@ -31,16 +36,21 @@ import 'limousine_vehicle_persist.dart';
 import 'limousine_vehicle_public_copy.dart';
 import 'limousine_vehicle_public_copy_editor.dart';
 
+export 'limousine_setup_media_pick.dart' show LimousineSetupPickedImage;
+
 typedef LimousinePricingLoader = Future<Map<String, dynamic>> Function();
 typedef LimousinePricingSaver =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> section);
-typedef LimousineSetupPickedImage = ({String path, String name});
-typedef LimousineSetupImagePicker = Future<LimousineSetupPickedImage?> Function();
+typedef LimousineSetupImagePicker =
+    Future<LimousineSetupPickedImage?> Function();
+typedef LimousineSetupLostImageRecoverer =
+    Future<LimousineSetupPickedImage?> Function();
 typedef LimousineSetupMediaUploader =
     Future<Map<String, dynamic>> Function({
       required String mediaType,
       required String filePath,
       required String filename,
+      Uint8List? fileBytes,
     });
 
 class LimousineBusinessSetupPage extends StatefulWidget {
@@ -59,6 +69,7 @@ class LimousineBusinessSetupPage extends StatefulWidget {
     this.onConfigureVehicle,
     this.persistVehicles,
     this.pickImage,
+    this.recoverLostImage,
     this.uploadMedia,
   });
 
@@ -75,6 +86,7 @@ class LimousineBusinessSetupPage extends StatefulWidget {
   final VoidCallback? onConfigureVehicle;
   final Future<void> Function(List<VehicleProfile> vehicles)? persistVehicles;
   final LimousineSetupImagePicker? pickImage;
+  final LimousineSetupLostImageRecoverer? recoverLostImage;
   final LimousineSetupMediaUploader? uploadMedia;
 
   @override
@@ -123,6 +135,13 @@ class _LimousineBusinessSetupPageState
       const LimousineProfileLogoSelection();
   bool _heroUploading = false;
   bool _logoUploading = false;
+  int _coverWriteEpoch = 0;
+  int _logoWriteEpoch = 0;
+  String? _coverStatus;
+  String? _coverError;
+  String? _logoStatus;
+  String? _logoError;
+  final ImagePicker _imagePicker = ImagePicker();
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
   String _t(LocalizedText text) => text.of(_lang);
@@ -148,7 +167,9 @@ class _LimousineBusinessSetupPageState
       vehiclesNotifier.addListener(_onVehicles);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_load());
+      if (!mounted) return;
+      unawaited(_recoverLostSetupPick());
+      unawaited(_load());
     });
   }
 
@@ -254,8 +275,12 @@ class _LimousineBusinessSetupPageState
         if (_editEpoch == 0) {
           _applyPersistedPublicText(section);
           _applyPersistedSelectedVehicleIds(section);
-          _applyPersistedHero(section, fromLoad: true);
-          _applyPersistedLogo(section, fromLoad: true);
+          if (_coverWriteEpoch == 0 && !_heroUploading) {
+            _applyPersistedHero(section, fromLoad: true);
+          }
+          if (_logoWriteEpoch == 0 && !_logoUploading) {
+            _applyPersistedLogo(section, fromLoad: true);
+          }
           _applyPersistedVehiclePublicCopy(section);
           _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         }
@@ -430,10 +455,14 @@ class _LimousineBusinessSetupPageState
     Map<String, dynamic> section, {
     bool fromLoad = false,
   }) {
-    _hero = limousineSanitizeProfileCover(
+    final incoming = limousineSanitizeProfileCover(
       limousineHeroFromSection(section),
       taxiHeroUrls: _taxiHeroUrls,
     );
+    if (_coverWriteEpoch > 0 && !incoming.hasPhoto && _hero.hasPhoto) {
+      return;
+    }
+    _hero = incoming;
     if (limousineHasPublishedProfileCoverKey(section)) {
       final publishedRaw = limousinePublishedProfileCoverRaw(section);
       _publishedHero = publishedRaw is Map
@@ -461,7 +490,15 @@ class _LimousineBusinessSetupPageState
     Map<String, dynamic> section, {
     bool fromLoad = false,
   }) {
-    _logo = limousineSanitizeProfileLogo(limousineLogoFromSection(section));
+    final incoming = limousineSanitizeProfileLogo(
+      limousineLogoFromSection(section),
+    );
+    if ((_logoWriteEpoch > 0 || _logoUploading) &&
+        !incoming.hasOverride &&
+        _logo.hasOverride) {
+      return;
+    }
+    _logo = incoming;
     if (limousineHasPublishedProfileLogoKey(section)) {
       _publishedLogo = limousineSanitizeProfileLogo(
         limousinePublishedLogoFromSection(section),
@@ -501,67 +538,182 @@ class _LimousineBusinessSetupPageState
     return resolveLimousineHero(
       source: _hero.toSectionJson(),
       fallbackVehiclePhotoUrls: _fallbackHeroUrls,
-    );
+    ).copyWith(alignment: _hero.alignment);
   }
 
-  Future<LimousineSetupPickedImage?> _pickSetupImage({
-    required double maxWidth,
-    required int imageQuality,
-  }) async {
+  bool get _setupMediaBusy => _heroUploading || _logoUploading;
+
+  Future<LimousineSetupPickedImage?> _pickSetupImage() async {
     final hook = widget.pickImage;
-    if (hook != null) return hook();
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: maxWidth,
-      imageQuality: imageQuality,
-    );
-    if (picked == null) return null;
-    return (path: picked.path, name: picked.name);
+    if (hook != null) {
+      final picked = await hook();
+      if (picked != null) return picked;
+      final recover = widget.recoverLostImage;
+      if (recover != null) return recover();
+      return null;
+    }
+    return limousinePickGalleryImage(picker: _imagePicker);
+  }
+
+  Future<void> _recoverLostSetupPick() async {
+    if (widget.pickImage != null) return;
+    if (_setupMediaBusy) return;
+    final lost = await limousineRecoverLostPickedImage(_imagePicker);
+    if (lost == null || !mounted || _setupMediaBusy) return;
+    final kind =
+        limousineSetupPendingMediaKind ?? LimousineSetupMediaKind.cover;
+    _beginSetupMediaUpload(kind);
+    try {
+      final bytes = await limousineReadXFileBytes(lost);
+      await _completeSetupMediaUpload(
+        LimousineSetupPickedImage(
+          path: lost.path,
+          name: lost.name,
+          bytes: bytes,
+        ),
+        kind,
+      );
+    } catch (error) {
+      if (mounted) _setSetupMediaFailure(kind, error);
+    } finally {
+      limousineSetupPendingMediaKind = null;
+      if (mounted) _endSetupMediaUpload(kind);
+    }
   }
 
   Future<Map<String, dynamic>> _uploadSetupMedia({
     required String mediaType,
     required String filePath,
     required String filename,
+    Uint8List? fileBytes,
   }) {
     final hook = widget.uploadMedia;
+    final safePath = limousinePickedPathIsContentUri(filePath) ? '' : filePath;
     if (hook != null) {
       return hook(
         mediaType: mediaType,
-        filePath: filePath,
+        filePath: safePath,
         filename: filename,
+        fileBytes: fileBytes,
       );
     }
     return uploadPublicPartnerMedia(
       mediaType: mediaType,
-      filePath: filePath,
+      filePath: (fileBytes != null && fileBytes.isNotEmpty) ? null : safePath,
+      fileBytes: fileBytes,
       filename: filename,
+      contentType: fileBytes == null
+          ? null
+          : limousineDetectImageMime(fileBytes),
     );
   }
 
-  Future<void> _uploadLimousineHero() async {
-    if (_heroUploading) return;
+  LocalizedText _setupMediaFailureCopy(
+    LimousineSetupMediaKind kind,
+    Object error,
+  ) {
+    if (error is LimousinePickedMediaException) {
+      if (error.isUnsupportedFormat) {
+        return kLimousineBusinessSetupCoverFormatFailed;
+      }
+      if (error.isTooLarge) return kLimousineBusinessSetupMediaTooLarge;
+      if (error.isTooSmall) return kLimousineBusinessSetupMediaTooSmall;
+    }
+    return kind == LimousineSetupMediaKind.logo
+        ? kLimousineBusinessSetupLogoUploadFailed
+        : kLimousineBusinessSetupCoverUploadFailed;
+  }
+
+  void _beginSetupMediaUpload(LimousineSetupMediaKind kind) {
     setState(() {
-      _heroUploading = true;
+      if (kind == LimousineSetupMediaKind.cover) {
+        _heroUploading = true;
+        _coverError = null;
+        _coverStatus = _t(kLimousineBusinessSetupCoverUploading);
+      } else {
+        _logoUploading = true;
+        _logoError = null;
+        _logoStatus = _t(kLimousineBusinessSetupLogoUploading);
+      }
       _error = null;
     });
-    try {
-      final picked = await _pickSetupImage(maxWidth: 1600, imageQuality: 82);
-      if (picked == null) return;
-      final uploaded = await _uploadSetupMedia(
-        mediaType: kLimousineProfileCoverMediaType,
-        filePath: picked.path,
-        filename: picked.name,
-      );
-      final url = (uploaded['url'] ?? '').toString().trim();
-      if (!url.startsWith('https://')) {
-        if (!mounted) return;
-        setState(() {
-          _error = _t(kLimousineBusinessSetupCoverUploadFailed);
-          _status = null;
-        });
-        return;
+  }
+
+  void _endSetupMediaUpload(LimousineSetupMediaKind kind) {
+    setState(() {
+      if (kind == LimousineSetupMediaKind.cover) {
+        _heroUploading = false;
+      } else {
+        _logoUploading = false;
       }
+    });
+  }
+
+  void _cancelSetupMediaUpload(LimousineSetupMediaKind kind) {
+    setState(() {
+      if (kind == LimousineSetupMediaKind.cover) {
+        _heroUploading = false;
+        _coverStatus = null;
+      } else {
+        _logoUploading = false;
+        _logoStatus = null;
+      }
+    });
+  }
+
+  void _setSetupMediaFailure(LimousineSetupMediaKind kind, Object error) {
+    final copy = _setupMediaFailureCopy(kind, error);
+    setState(() {
+      if (kind == LimousineSetupMediaKind.cover) {
+        _coverError = _t(copy);
+        _coverStatus = null;
+      } else {
+        _logoError = _t(copy);
+        _logoStatus = null;
+      }
+      _error = _t(copy);
+      _status = null;
+    });
+  }
+
+  Future<void> _completeSetupMediaUpload(
+    LimousineSetupPickedImage picked,
+    LimousineSetupMediaKind kind,
+  ) async {
+    final target = limousineSetupMediaTarget(kind);
+    final prepared = await limousinePreparePickedImageUpload(
+      picked,
+      target: target,
+    );
+    if (!mounted) return;
+    final uploaded = await _uploadSetupMedia(
+      mediaType: target.mediaType,
+      filePath: '',
+      filename: prepared.filename,
+      fileBytes: prepared.bytes,
+    );
+    final url = (uploaded['url'] ?? '').toString().trim();
+    if (!limousineHeroRefIsDurable(url)) {
+      throw const LimousinePickedMediaException('upload-not-durable');
+    }
+    if (kind == LimousineSetupMediaKind.logo) {
+      final safe = limousineSanitizeProfileLogoOverrideUrl(url);
+      if (safe.isEmpty) {
+        throw const LimousinePickedMediaException('upload-not-durable');
+      }
+      _logoWriteEpoch += 1;
+      setState(() {
+        _logo = LimousineProfileLogoSelection(
+          photoUrl: safe,
+          sourceRevision: _logo.sourceRevision + 1,
+          explicitOverride: true,
+        );
+        _logoError = null;
+        _logoStatus = _t(kLimousineBusinessSetupLogoUploadSuccess);
+        _error = null;
+      });
+    } else {
+      _coverWriteEpoch += 1;
       setState(() {
         _hero = LimousineHeroSelection(
           photoUrl: url,
@@ -570,129 +722,86 @@ class _LimousineBusinessSetupPageState
           sourceRevision: _hero.sourceRevision + 1,
           explicit: true,
         );
+        _coverError = null;
+        _coverStatus = _t(kLimousineBusinessSetupCoverUploadSuccess);
         _error = null;
-        _status = _t(kLimousineBusinessSetupCoverUploadSuccess);
       });
-      await _persistWorkingDraft();
+    }
+    await _persistWorkingDraft();
+  }
+
+  Future<void> _pickAndUploadSetupMedia(LimousineSetupMediaKind kind) async {
+    if (_setupMediaBusy) return;
+    limousineSetupPendingMediaKind = kind;
+    _beginSetupMediaUpload(kind);
+    try {
+      final picked = await _pickSetupImage();
+      if (picked == null) {
+        if (mounted) _cancelSetupMediaUpload(kind);
+        return;
+      }
+      await _completeSetupMediaUpload(picked, kind);
     } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = limousineFriendlyCompanyError(error, language: _lang);
-        _status = null;
-      });
+      if (mounted) _setSetupMediaFailure(kind, error);
     } finally {
-      if (mounted) setState(() => _heroUploading = false);
+      limousineSetupPendingMediaKind = null;
+      if (mounted) _endSetupMediaUpload(kind);
     }
   }
 
-  Future<void> _uploadLimousineLogo() async {
-    if (_logoUploading) return;
-    setState(() {
-      _logoUploading = true;
-      _error = null;
-    });
-    try {
-      final picked = await _pickSetupImage(maxWidth: 900, imageQuality: 88);
-      if (picked == null) return;
-      final uploaded = await _uploadSetupMedia(
-        mediaType: kLimousineProfileLogoMediaType,
-        filePath: picked.path,
-        filename: picked.name,
-      );
-      final url = (uploaded['url'] ?? '').toString().trim();
-      final safe = limousineSanitizeProfileLogoOverrideUrl(url);
-      if (safe.isEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _error = _t(kLimousineBusinessSetupLogoUploadFailed);
-          _status = null;
-        });
-        return;
-      }
-      setState(() {
-        _logo = LimousineProfileLogoSelection(
-          photoUrl: safe,
-          sourceRevision: _logo.sourceRevision + 1,
-          explicitOverride: true,
-        );
-        _error = null;
-        _status = _t(kLimousineBusinessSetupLogoUploadSuccess);
-      });
-      await _persistWorkingDraft();
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = limousineFriendlyCompanyError(error, language: _lang);
-        _status = null;
-      });
-    } finally {
-      if (mounted) setState(() => _logoUploading = false);
-    }
+  Future<void> _uploadLimousineHero() {
+    return _pickAndUploadSetupMedia(LimousineSetupMediaKind.cover);
+  }
+
+  Future<void> _uploadLimousineLogo() {
+    return _pickAndUploadSetupMedia(LimousineSetupMediaKind.logo);
   }
 
   void _clearLimousineLogoOverride() {
     if (!_logo.hasOverride) return;
+    _logoWriteEpoch += 1;
     setState(() {
       _logo = const LimousineProfileLogoSelection();
+      _logoStatus = null;
+      _logoError = null;
     });
     _persistWorkingDraft();
   }
 
   Future<void> _pickHeroFromGallery() async {
-    final choices = <Map<String, String>>[];
-    for (final vehicle in limousineSetupLimousineVehicles(_vehicles)) {
-      final urls = <String>{
-        if ((vehicle.publicPhotoUrl ?? '').startsWith('https://'))
-          vehicle.publicPhotoUrl!,
-        if (vehicle.primaryPhotoRef.startsWith('https://'))
-          vehicle.primaryPhotoRef,
-        for (final ref in vehicle.galleryPhotoRefs)
-          if (ref.startsWith('https://')) ref,
-      };
-      for (final url in urls) {
-        choices.add(<String, String>{
-          'url': url,
-          'vehicle_id': vehicle.id,
-          'name': vehicle.vehicleName.isEmpty
-              ? vehicle.brandModel
-              : vehicle.vehicleName,
-        });
-      }
-    }
-    if (choices.isEmpty || !mounted) return;
-    final selected = await showDialog<Map<String, String>>(
+    if (_heroUploading) return;
+    final items = limousineCoverGalleryItems(_vehicles);
+    if (items.isEmpty || !mounted) return;
+    final selected = await showLimousineCoverGalleryPicker(
       context: context,
-      builder: (dialogContext) {
-        return SimpleDialog(
-          title: Text(_t(kLimousineBusinessSetupCoverPickGallery)),
-          children: [
-            for (final item in choices)
-              SimpleDialogOption(
-                onPressed: () => Navigator.of(dialogContext).pop(item),
-                child: Text('${item['name']}'),
-              ),
-          ],
-        );
-      },
+      items: items,
+      tokens: _tokens,
+      language: _lang,
+      selectedUrl: _hero.photoUrl,
     );
     if (selected == null || !mounted) return;
-    final url = (selected['url'] ?? '').trim();
-    if (!url.startsWith('https://')) {
+    final url = selected.url.trim();
+    if (!limousineHeroRefIsDurable(url)) {
       setState(() {
+        _coverError = _t(kLimousineBusinessSetupCoverUploadFailed);
+        _coverStatus = null;
         _error = _t(kLimousineBusinessSetupCoverUploadFailed);
         _status = null;
       });
       return;
     }
+    _coverWriteEpoch += 1;
     setState(() {
       _hero = LimousineHeroSelection(
         photoUrl: url,
         sourceKind: kLimousineHeroSourceVehicleMedia,
-        vehicleId: selected['vehicle_id'] ?? '',
+        vehicleId: selected.vehicleId,
         alignment: _hero.alignment,
         sourceRevision: _hero.sourceRevision + 1,
         explicit: true,
       );
+      _coverError = null;
+      _coverStatus = _t(kLimousineBusinessSetupCoverUploadSuccess);
       _error = null;
       _status = _t(kLimousineBusinessSetupCoverUploadSuccess);
     });
@@ -894,13 +1003,29 @@ class _LimousineBusinessSetupPageState
             section.containsKey(kLimousinePublishedProfileCoverKey) ||
             section.containsKey('limousine_hero') ||
             section.containsKey('published_limousine_hero')) {
-          _applyPersistedHero(section, fromLoad: false);
+          _applyPersistedHero(
+            limousineMergePricingOverlay(
+              section: section,
+              overlay: limousinePricingLocalStore.peekMerged(
+                limousineDefaultLocalPricingScopeKeys(),
+              ),
+            ),
+            fromLoad: false,
+          );
         }
         if (section.containsKey(kLimousineProfileLogoKey) ||
             section.containsKey(kLimousinePublishedProfileLogoKey) ||
             section.containsKey('limousine_logo') ||
             section.containsKey('published_limousine_logo')) {
-          _applyPersistedLogo(section, fromLoad: false);
+          _applyPersistedLogo(
+            limousineMergePricingOverlay(
+              section: section,
+              overlay: limousinePricingLocalStore.peekMerged(
+                limousineDefaultLocalPricingScopeKeys(),
+              ),
+            ),
+            fromLoad: false,
+          );
         }
         if (publish) {
           _publishedPublicTitle = _publicTitle.toJson();
@@ -1556,7 +1681,9 @@ class _LimousineBusinessSetupPageState
                         onPressed: () =>
                             unawaited(_openVehiclePublicCopy(vehicle)),
                         icon: const Icon(Icons.notes_outlined, size: 16),
-                        label: Text(_t(kLimousineBusinessSetupEditPublicDetails)),
+                        label: Text(
+                          _t(kLimousineBusinessSetupEditPublicDetails),
+                        ),
                         style: TextButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1566,7 +1693,10 @@ class _LimousineBusinessSetupPageState
                         key: limousineBusinessSetupManagePhotosKey(vehicle.id),
                         onPressed: () =>
                             unawaited(_openVehicleSetup(vehicleId: vehicle.id)),
-                        icon: const Icon(Icons.photo_library_outlined, size: 16),
+                        icon: const Icon(
+                          Icons.photo_library_outlined,
+                          size: 16,
+                        ),
                         label: Text(_t(kLimousineBusinessSetupManagePhotos)),
                         style: TextButton.styleFrom(
                           visualDensity: VisualDensity.compact,
@@ -1951,16 +2081,58 @@ class _LimousineBusinessSetupPageState
           style: TextStyle(color: tokens.muted, fontSize: 12.5),
         ),
         const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(
-            height: 148,
-            width: double.infinity,
-            child: resolved.hasPhoto
-                ? _fillPhoto(tokens, resolved.photoUrl)
-                : ColoredBox(color: tokens.surfaceAlt),
+        KeyedSubtree(
+          key: kLimousineBusinessSetupCoverPreviewKey,
+          child: LimousinePublicCoverFrame(
+            imageUrl: resolved.hasPhoto ? resolved.photoUrl : '',
+            spec: limousinePublicCoverSpec(
+              viewport: MediaQuery.sizeOf(context),
+              explicitCover: resolved.explicit && resolved.hasPhoto,
+              alignment: _hero.flutterAlignment,
+            ),
+            background: tokens.surfaceAlt,
+            gold: tokens.gold,
           ),
         ),
+        if (_heroUploading) ...[
+          const SizedBox(height: 8),
+          Row(
+            key: kLimousineBusinessSetupCoverUploadingKey,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: tokens.gold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(kLimousineBusinessSetupCoverUploading),
+                  style: TextStyle(color: tokens.gold, fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (_coverStatus != null && !_heroUploading) ...[
+          const SizedBox(height: 8),
+          Text(
+            _coverStatus!,
+            key: kLimousineBusinessSetupMediaStatusKey,
+            style: TextStyle(color: tokens.gold, fontSize: 12.5),
+          ),
+        ],
+        if (_coverError != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _coverError!,
+            key: kLimousineBusinessSetupMediaErrorKey,
+            style: TextStyle(color: tokens.danger, fontSize: 12.5),
+          ),
+        ],
         if (!resolved.explicit) ...[
           const SizedBox(height: 8),
           Text(
@@ -1986,7 +2158,7 @@ class _LimousineBusinessSetupPageState
             ),
             OutlinedButton(
               key: kLimousineBusinessSetupCoverPickGalleryKey,
-              onPressed: _pickHeroFromGallery,
+              onPressed: _heroUploading ? null : _pickHeroFromGallery,
               child: Text(_t(kLimousineBusinessSetupCoverPickGallery)),
             ),
           ],
@@ -2016,9 +2188,12 @@ class _LimousineBusinessSetupPageState
           children: [
             for (final alignment in kLimousineHeroAlignments)
               ChoiceChip(
+                key: limousineBusinessSetupCoverFocusKey(alignment),
                 label: Text(alignment),
                 selected: _hero.alignment == alignment,
-                onSelected: (_) => _setHeroAlignment(alignment),
+                onSelected: _heroUploading
+                    ? null
+                    : (_) => _setHeroAlignment(alignment),
               ),
           ],
         ),
@@ -2078,7 +2253,7 @@ class _LimousineBusinessSetupPageState
             if (override)
               OutlinedButton(
                 key: kLimousineBusinessSetupLogoClearKey,
-                onPressed: _clearLimousineLogoOverride,
+                onPressed: _logoUploading ? null : _clearLimousineLogoOverride,
                 child: Text(_t(kLimousineBusinessSetupLogoClear)),
               ),
           ],
@@ -2088,15 +2263,55 @@ class _LimousineBusinessSetupPageState
           alignment: Alignment.centerLeft,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 72,
-              height: 72,
-              child: previewUrl.startsWith('https://')
-                  ? _fillPhoto(tokens, previewUrl)
-                  : ColoredBox(color: tokens.surfaceAlt),
+            child: KeyedSubtree(
+              key: kLimousineBusinessSetupLogoPreviewKey,
+              child: LimousineSetupLogoPreview(
+                imageUrl: previewUrl,
+                background: tokens.surfaceAlt,
+                tablet: MediaQuery.sizeOf(context).shortestSide >= 600,
+              ),
             ),
           ),
         ),
+        if (_logoUploading) ...[
+          const SizedBox(height: 8),
+          Row(
+            key: kLimousineBusinessSetupLogoUploadingKey,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: tokens.gold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(kLimousineBusinessSetupLogoUploading),
+                  style: TextStyle(color: tokens.gold, fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (_logoStatus != null && !_logoUploading) ...[
+          const SizedBox(height: 8),
+          Text(
+            _logoStatus!,
+            key: kLimousineBusinessSetupLogoMediaStatusKey,
+            style: TextStyle(color: tokens.gold, fontSize: 12.5),
+          ),
+        ],
+        if (_logoError != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _logoError!,
+            key: kLimousineBusinessSetupLogoMediaErrorKey,
+            style: TextStyle(color: tokens.danger, fontSize: 12.5),
+          ),
+        ],
         if (!override) ...[
           const SizedBox(height: 8),
           Text(
@@ -2193,142 +2408,35 @@ class _LimousineBusinessSetupPageState
     );
   }
 
-  Widget _preview(LimousineUxTokens tokens) {
-    final safeOffers = limousineSafeSetupPreviewOffers(
-      offers: _offers,
-      vehicles: _vehicles,
-      knownClassIds: _knownClasses,
-      sectionEnabled: _sectionEnabled,
-    );
-    final limousineVehicles = limousineSetupLimousineVehicles(_vehicles);
-    final title = limousineBusinessSetupTextFallback(
-      _publicTitle.toJson(),
-      _lang,
-      primaryLang: _primaryLang,
-    );
-    final description = limousineBusinessSetupTextFallback(
-      _publicDescription.toJson(),
-      _lang,
-      primaryLang: _primaryLang,
-    );
-    final resolvedHero = _resolvedHero;
-    final identity = resolvePublicPartnerHeroIdentity(
+  LimousineDiscoveryCard _setupPreviewCard() {
+    return limousineDiscoveryCardFromSetupPreview(
+      companyName: widget.companyName,
       logoUrl: _effectiveLogoUrl,
-      logoImage: widget.logoImage,
-      companyName: widget.companyName.isNotEmpty ? widget.companyName : title,
-      description: description,
+      publicTitle: _publicTitle.toJson(),
+      publicDescription: _publicDescription.toJson(),
+      cover: _resolvedHero.copyWith(alignment: _hero.alignment),
     );
-    return Container(
+  }
+
+  Widget _preview(LimousineUxTokens tokens) {
+    final card = _setupPreviewCard();
+    return Column(
       key: kLimousineBusinessSetupPreviewKey,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: tokens.surfaceAlt,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: tokens.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            height: 168,
-            width: double.infinity,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (resolvedHero.hasPhoto)
-                  SizedBox.expand(
-                    child: _fillPhoto(tokens, resolvedHero.photoUrl),
-                  )
-                else
-                  ColoredBox(color: tokens.surface),
-                ColoredBox(color: tokens.heroScrim.withOpacity(0.28)),
-                LimousinePublicHeroOverlay(
-                  identity: identity,
-                  tokens: tokens,
-                  compact: true,
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _t(kLimousineBusinessSetupPreviewHint),
-                  style: TextStyle(color: tokens.muted, fontSize: 11.5),
-                ),
-                if (title.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: tokens.onSurface,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: tokens.muted, fontSize: 12.5),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                ...limousineVehicles.map((vehicle) {
-                  final name = vehicle.vehicleName.isEmpty
-                      ? vehicle.brandModel
-                      : vehicle.vehicleName;
-                  final galleryCount = vehicle.galleryPhotoRefs
-                      .where((ref) => ref.trim().isNotEmpty)
-                      .length;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      galleryCount > 0 ? '$name · $galleryCount' : name,
-                      style: TextStyle(color: tokens.onSurface),
-                    ),
-                  );
-                }),
-                ...safeOffers.map((offer) {
-                  final offerTitle = limousineBusinessSetupTextFallback(
-                    offer['title'],
-                    _lang,
-                    primaryLang: _primaryLang,
-                  );
-                  final selectedIds = limousineSelectedLimousineIds(
-                    limousineVehicles,
-                  );
-                  final names = <String>[
-                    for (final vehicle in limousineVehicles)
-                      if (limousineOfferAppliesToVehicleId(
-                        offer: offer,
-                        vehicleId: vehicle.id,
-                        selectedVehicleIds: selectedIds,
-                      ))
-                        vehicle.vehicleName.isEmpty
-                            ? vehicle.brandModel
-                            : vehicle.vehicleName,
-                  ];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      names.isEmpty
-                          ? offerTitle
-                          : '$offerTitle · ${_t(kLimousineBusinessSetupAppliesTo)} ${names.join(', ')}',
-                      style: TextStyle(color: tokens.muted, fontSize: 12.5),
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ],
-      ),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _t(kLimousineBusinessSetupPreviewHint),
+          style: TextStyle(color: tokens.muted, fontSize: 11.5),
+        ),
+        const SizedBox(height: 8),
+        LimousinePublicCompanyCard(
+          card: card,
+          tokens: tokens,
+          language: _lang,
+          onOpenOffers: null,
+          onOpenProfile: null,
+        ),
+      ],
     );
   }
 

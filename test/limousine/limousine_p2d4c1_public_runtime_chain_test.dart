@@ -317,20 +317,28 @@ void main() {
   }
 
   Future<LimousineSetupPickedImage?> pickImage() async {
-    return (path: _kLocalUri, name: 'cover.jpg');
+    return LimousineSetupPickedImage(
+      path: _kLocalUri,
+      name: 'cover.jpg',
+      bytes: _kTinyPng,
+    );
   }
 
   Future<Map<String, dynamic>> uploadMedia({
     required String mediaType,
     required String filePath,
     required String filename,
+    Uint8List? fileBytes,
   }) async {
     uploads.add(<String, String>{
       'mediaType': mediaType,
       'filePath': filePath,
       'filename': filename,
+      'hasBytes': (fileBytes != null && fileBytes.isNotEmpty).toString(),
     });
-    if (returnLocalUri) return <String, dynamic>{'url': filePath};
+    if (returnLocalUri) {
+      return <String, dynamic>{'url': _kLocalUri};
+    }
     if (mediaType == kLimousineProfileLogoMediaType) {
       return <String, dynamic>{'url': _kLimoLogo};
     }
@@ -362,7 +370,14 @@ void main() {
   }) async {
     await tester.binding.setSurfaceSize(size);
     await tester.pumpWidget(setupPage(size: size));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+
+  Future<void> pumpUpload(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
   }
 
   Future<void> fillVisitingCard(WidgetTester tester) async {
@@ -408,10 +423,11 @@ void main() {
     await fillVisitingCard(tester);
     await tester.ensureVisible(find.byKey(kLimousineBusinessSetupCoverUploadKey));
     await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
-    await tester.pumpAndSettle();
+    await pumpUpload(tester);
 
     expect(uploads.single['mediaType'], kLimousineProfileCoverMediaType);
-    expect(uploads.single['filePath'], _kLocalUri);
+    expect(uploads.single['hasBytes'], 'true');
+    expect(uploads.single['filePath'], isNot(contains('file:')));
     expect(saves, isNotEmpty);
     expect(
       (saves.last[kLimousineProfileCoverKey] as Map)['photo_url'],
@@ -544,7 +560,7 @@ void main() {
     expect(button.bottom, lessThanOrEqualTo(footer.top + 1));
 
     await tester.tap(find.byKey(kLimousineBusinessSetupLogoPickKey));
-    await tester.pumpAndSettle();
+    await pumpUpload(tester);
     expect(uploads.single['mediaType'], kLimousineProfileLogoMediaType);
     expect(find.text(kLimousineBusinessSetupLogoReplace.nl), findsOneWidget);
     expect(find.text(kLimousineBusinessSetupLogoStatusOwn.nl), findsOneWidget);
@@ -570,7 +586,7 @@ void main() {
     await pumpSetup(tester);
     await tester.ensureVisible(find.byKey(kLimousineBusinessSetupCoverUploadKey));
     await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
-    await tester.pumpAndSettle();
+    await pumpUpload(tester);
     expect(find.text(kLimousineBusinessSetupCoverUploadFailed.nl), findsWidgets);
     expect(saves, isEmpty);
     expect(
@@ -581,7 +597,7 @@ void main() {
 
     returnLocalUri = false;
     await tester.tap(find.byKey(kLimousineBusinessSetupCoverUploadKey));
-    await tester.pumpAndSettle();
+    await pumpUpload(tester);
     await fillVisitingCard(tester);
     tester
         .widget<ButtonStyleButton>(find.byKey(kLimousineBusinessSetupPublishKey))

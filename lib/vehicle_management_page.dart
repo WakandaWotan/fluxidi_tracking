@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -786,6 +787,28 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     );
   }
 
+  Future<void> _logGalleryUploadEvidence({
+    required String stage,
+    required String vehicleId,
+    required Map<String, dynamic> uploaded,
+    String? filePath,
+  }) async {
+    var hash = '';
+    final path = (filePath ?? '').trim();
+    if (path.isNotEmpty && !kIsWeb) {
+      try {
+        hash = sha256.convert(await File(path).readAsBytes()).toString();
+      } catch (_) {}
+    }
+    logVehicleGalleryEvidence(
+      stage: stage,
+      vehicleId: maskVehicleIdForLog(vehicleId),
+      mediaId: (uploaded['media_id'] ?? '').toString(),
+      bytesSha256: hash,
+      urls: <String>[(uploaded['url'] ?? '').toString()],
+    );
+  }
+
   Future<void> _syncFleetOrShowError() async {
     final scopeId = _activeCompanyIdForFleetUi();
     if (scopeId == null) {
@@ -881,6 +904,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
         mediaId: newVehicleGalleryMediaId(),
         filePath: localPrimary,
       );
+      await _logGalleryUploadEvidence(
+        stage: 'UPLOAD',
+        vehicleId: vehicleId,
+        uploaded: uploaded,
+        filePath: localPrimary,
+      );
       final url = (uploaded['url'] ?? '').toString().trim();
       final resolved = resolvePublicHttpsMediaUrl(url);
       if (resolved.isEmpty) return null;
@@ -941,6 +970,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           mediaType: 'vehicle_photo',
           entityId: vehicleId,
           mediaId: newVehicleGalleryMediaId(),
+          filePath: ref,
+        );
+        await _logGalleryUploadEvidence(
+          stage: 'UPLOAD',
+          vehicleId: vehicleId,
+          uploaded: uploaded,
           filePath: ref,
         );
         final url = resolvePublicHttpsMediaUrl(
@@ -1079,6 +1114,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
         mediaType: 'vehicle_photo',
         entityId: vehicleId,
         mediaId: newVehicleGalleryMediaId(),
+        filePath: clean,
+      );
+      await _logGalleryUploadEvidence(
+        stage: 'UPLOAD',
+        vehicleId: vehicleId,
+        uploaded: uploaded,
         filePath: clean,
       );
       final url = (uploaded['url'] ?? '').toString().trim();
@@ -3998,6 +4039,12 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                         fileBytes: bytes,
                                         filename: picked.name,
                                       );
+                                  await _logGalleryUploadEvidence(
+                                    stage: 'UPLOAD',
+                                    vehicleId: vehicleId,
+                                    uploaded: uploaded,
+                                    filePath: kIsWeb ? null : picked.path,
+                                  );
                                   final url = (uploaded['url'] ?? '')
                                       .toString()
                                       .trim();
@@ -4243,6 +4290,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                   if (resolvedGallery.isNotEmpty) {
                                     galleryPhotoRefs = resolvedGallery;
                                   }
+                                  logVehicleGalleryEvidence(
+                                    stage: 'VEHICLE_SAVE',
+                                    vehicleId: maskVehicleIdForLog(vehicleId),
+                                    urls: galleryPhotoRefs,
+                                  );
                                   final vehicle = VehicleProfile(
                                     id: vehicleId,
                                     vehicleName: nameCtrl.text.trim(),

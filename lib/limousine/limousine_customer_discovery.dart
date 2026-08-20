@@ -677,7 +677,14 @@ String limousineDiscoveryCardDescription(
   LimousineDiscoveryCard card,
   AppLanguage language,
 ) {
-  return limousineDiscoveryLocalizedText(card.publicDescription, language);
+  return limousinePublicCardDescriptionText(
+    limousineDiscoveryLocalizedText(card.publicDescription, language),
+  );
+}
+
+/// Keeps entered paragraphs and line breaks. Only normalizes newlines.
+String limousinePublicCardDescriptionText(String raw) {
+  return raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 }
 
 String limousineDiscoveryLocalizedText(
@@ -755,7 +762,7 @@ List<LimousineDiscoveryVehicleThumb> _publicLimousineThumbs(
         ),
       ),
     );
-    if (thumbs.length == 2) break;
+    if (thumbs.length == kLimousineDiscoveryCardVehicleCap) break;
   }
   return thumbs;
 }
@@ -923,6 +930,101 @@ String limousineDiscoveryServiceClassLabel(String serviceClassId) {
   final token = limousineOfferToken(serviceClassId);
   if (token.isEmpty) return '';
   return token.replaceAll('_', ' ');
+}
+
+const String kLimousineSetupPreviewPartnerId = 'setup_preview';
+const int kLimousineDiscoveryCardVehicleCap = 2;
+
+/// Settings preview and nearby cards share this view-model.
+LimousineDiscoveryCard limousineDiscoveryCardFromSetupPreview({
+  required String companyName,
+  required String logoUrl,
+  required Map<String, String> publicTitle,
+  required Map<String, String> publicDescription,
+  required LimousineHeroSelection cover,
+  List<LimousineDiscoveryVehicleThumb> vehicles =
+      const <LimousineDiscoveryVehicleThumb>[],
+  LimousineDiscoveryPrice price = const LimousineDiscoveryPrice(
+    kind: LimousineDiscoveryPriceKind.none,
+  ),
+}) {
+  return LimousineDiscoveryCard(
+    publicPartnerId: kLimousineSetupPreviewPartnerId,
+    companyName: companyName,
+    publicTitle: publicTitle,
+    publicDescription: publicDescription,
+    coverImageUrl: cover.photoUrl,
+    coverAlignment: cover.flutterAlignment,
+    coverIsExplicit: cover.explicit && cover.hasPhoto,
+    coverSource: cover.hasPhoto
+        ? LimousineDiscoveryCoverSource.publishedHero
+        : LimousineDiscoveryCoverSource.emptyPlaceholder,
+    logoUrl: logoUrl,
+    vehicles: vehicles.length <= kLimousineDiscoveryCardVehicleCap
+        ? vehicles
+        : vehicles
+              .take(kLimousineDiscoveryCardVehicleCap)
+              .toList(growable: false),
+    price: price,
+  );
+}
+
+/// Published offers only. An empty list must not invent "quote required".
+LimousineDiscoveryPrice limousineDiscoveryPublishedPrice(
+  Iterable<Map<String, dynamic>> offers,
+) {
+  final published = [
+    for (final offer in offers)
+      if (offer['published'] == true && offer['enabled'] != false)
+        Map<String, dynamic>.from(offer),
+  ];
+  if (published.isEmpty) {
+    return const LimousineDiscoveryPrice(
+      kind: LimousineDiscoveryPriceKind.none,
+    );
+  }
+  return limousineDiscoveryPriceFromOffers(published);
+}
+
+List<LimousineDiscoveryVehicleThumb> limousineDiscoveryVehicleThumbsFromSetup({
+  required Iterable<Map<String, dynamic>> vehicles,
+}) {
+  final thumbs = <LimousineDiscoveryVehicleThumb>[];
+  for (final vehicle in vehicles) {
+    if (!_vehicleIsAuthoritativeLimousine(vehicle) &&
+        !isLimousineServiceToken(
+          (vehicle['service_category'] ?? vehicle['serviceCategory'] ?? '')
+              .toString(),
+        )) {
+      continue;
+    }
+    thumbs.add(
+      LimousineDiscoveryVehicleThumb(
+        photoUrl: _httpsOnly(
+          vehicle['primary_photo_url'] ??
+              vehicle['primaryPhotoUrl'] ??
+              vehicle['photo_url'] ??
+              vehicle['photoUrl'] ??
+              vehicle['publicPhotoUrl'],
+        ),
+        serviceClassId: limousineOfferToken(
+          vehicle['service_class_id'] ?? vehicle['serviceClassId'],
+        ),
+        passengerCapacity: _positiveInt(
+          vehicle['passenger_capacity'] ??
+              vehicle['passengerCapacity'] ??
+              vehicle['pax'],
+        ),
+        luggageCapacity: _positiveInt(
+          vehicle['luggage_capacity'] ??
+              vehicle['luggageCapacity'] ??
+              vehicle['luggage'],
+        ),
+      ),
+    );
+    if (thumbs.length == kLimousineDiscoveryCardVehicleCap) break;
+  }
+  return thumbs;
 }
 
 String limousineDiscoveryVehicleSummary(

@@ -177,6 +177,23 @@ void main() {
     },
   );
 
+  test('safe gallery evidence labels hide tenant and company path segments', () {
+    const colliding =
+        'https://cdn.example/public/media/public-media/secret-tenant/secret-co/vehicles/vh_1/photo.jpg?v=2';
+    const unique =
+        'https://cdn.example/public/media/public-media/secret-tenant/secret-co/vehicles/vh_1/gallery/m-abc.png?v=9';
+    expect(publicVehicleGallerySafeObjectLabel(colliding), 'photo.jpg');
+    expect(publicVehicleGallerySafeObjectLabel(unique), 'gallery/m-abc.png');
+    final labels = publicVehicleGalleryEvidenceLabels(<String>[
+      unique,
+      unique.replaceAll('?v=9', '?v=10'),
+      colliding,
+    ]);
+    expect(labels, <String>['gallery/m-abc.png', 'photo.jpg']);
+    expect(labels.join(','), isNot(contains('secret-tenant')));
+    expect(labels.join(','), isNot(contains('secret-co')));
+  });
+
   test('public gallery URLs never carry tenant, company or object-key fields', () {
     final urls = orderPublicVehicleGalleryUrls(
       primaryUrl:

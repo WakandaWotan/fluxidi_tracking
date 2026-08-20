@@ -391,8 +391,8 @@ void main() {
         .whereType<String>()
         .toList();
     expect(names.indexOf('Near Coach'), lessThan(names.indexOf('Far Coach')));
-    expect(find.textContaining('4 km van uw zoekgebied'), findsOneWidget);
-    expect(find.textContaining('31 km van uw zoekgebied'), findsOneWidget);
+    expect(find.textContaining('4 km van uw zoekgebied'), findsNothing);
+    expect(find.textContaining('31 km van uw zoekgebied'), findsNothing);
   });
 
   testWidgets('explicit Huidige locatie refines by server distance', (
@@ -430,7 +430,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(location.positionCalls, 1);
     expect(gateway.searchCalls, 2);
-    expect(find.textContaining('6 km van uw zoekgebied'), findsOneWidget);
+    expect(find.textContaining('6 km van uw zoekgebied'), findsNothing);
     expect(find.byKey(kLimousineDiscoveryRecommendedKey), findsNothing);
   });
 

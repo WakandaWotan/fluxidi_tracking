@@ -723,7 +723,7 @@ void main() {
       await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
       await tester.pumpAndSettle();
       expect(find.text('Maison Noire'), findsOneWidget);
-      expect(find.text('Vanaf €450'), findsOneWidget);
+      expect(find.text('Vanaf €450'), findsNothing);
       expect(find.textContaining('★'), findsNothing);
       _press(tester, limousineDiscoveryViewLimousinesCtaKey('limo_1'));
       await tester.pumpAndSettle();
@@ -852,12 +852,15 @@ void main() {
     final page = File(
       'lib/limousine/limousine_customer_discovery_page.dart',
     ).readAsStringSync();
+    final card = File(
+      'lib/limousine/limousine_public_company_card.dart',
+    ).readAsStringSync();
     final identity = File(
       'lib/limousine/limousine_brand_logo.dart',
     ).readAsStringSync();
     expect(page.contains('LimousineBrandLogoCorner'), isFalse);
     expect(page.contains('LimousineBrandLogoPlaque'), isFalse);
-    expect(page.contains('LimousineDiscoveryCompanyIdentity'), isTrue);
+    expect(card.contains('LimousineDiscoveryCompanyIdentity'), isTrue);
     expect(page.contains("'Fluxidi'"), isFalse);
     expect(page.contains('"Fluxidi"'), isFalse);
     expect(identity.contains("companyName: 'Fluxidi'"), isFalse);

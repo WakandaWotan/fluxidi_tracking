@@ -3,6 +3,8 @@
 
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 const int kVehicleGalleryMaxPhotos = 10;
 const int kVehicleGalleryRecommendedPhotos = 5;
 
@@ -14,6 +16,54 @@ String publicMediaObjectIdentity(String raw) {
   final query = text.indexOf('?');
   if (query >= 0) text = text.substring(0, query);
   return text;
+}
+
+/// Safe public label: `gallery/{mediaId}.ext` or `photo.ext`, never tenant/company.
+String publicVehicleGallerySafeObjectLabel(String raw) {
+  final identity = publicMediaObjectIdentity(raw);
+  if (identity.isEmpty) return '';
+  final gallery = identity.lastIndexOf('/gallery/');
+  if (gallery >= 0 && gallery + 9 < identity.length) {
+    return 'gallery/${identity.substring(gallery + 9)}';
+  }
+  final photo = identity.lastIndexOf('/photo.');
+  if (photo >= 0) {
+    return identity.substring(photo + 1);
+  }
+  final slash = identity.lastIndexOf('/');
+  if (slash >= 0 && slash < identity.length - 1) {
+    return identity.substring(slash + 1);
+  }
+  return identity;
+}
+
+List<String> publicVehicleGalleryEvidenceLabels(Iterable<String> urls) {
+  final out = <String>[];
+  final seen = <String>{};
+  for (final raw in urls) {
+    final label = publicVehicleGallerySafeObjectLabel(raw);
+    if (label.isEmpty || !seen.add(label)) continue;
+    out.add(label);
+  }
+  return List<String>.from(out, growable: false);
+}
+
+void logVehicleGalleryEvidence({
+  required String stage,
+  required String vehicleId,
+  String mediaId = '',
+  String bytesSha256 = '',
+  Iterable<String> urls = const <String>[],
+}) {
+  final labels = publicVehicleGalleryEvidenceLabels(urls);
+  final media = mediaId.trim();
+  final hash = bytesSha256.trim();
+  debugPrint(
+    '[VEHICLE_GALLERY][$stage] vehicle=$vehicleId count=${labels.length}'
+    '${media.isEmpty ? '' : ' media_id=$media'}'
+    '${hash.isEmpty ? '' : ' bytes_sha256=$hash'}'
+    ' objects=${labels.join(',')}',
+  );
 }
 
 String newVehicleGalleryMediaId() {

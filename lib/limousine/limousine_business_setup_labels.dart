@@ -675,6 +675,44 @@ const LocalizedText kLimousineBusinessSetupCoverFocus = LocalizedText(
   es: 'Posición de enfoque',
 );
 
+const LocalizedText kLimousineBusinessSetupCoverUploading = LocalizedText(
+  nl: 'Omslagfoto wordt geüpload…',
+  en: 'Uploading cover photo…',
+  fr: 'Téléversement de la photo de couverture…',
+  es: 'Subiendo la foto de portada…',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverFormatFailed = LocalizedText(
+  nl: 'Deze afbeelding wordt niet ondersteund. Gebruik JPG, PNG of WEBP.',
+  en: 'This image is not supported. Use JPG, PNG or WEBP.',
+  fr: 'Cette image n’est pas prise en charge. Utilisez JPG, PNG ou WEBP.',
+  es: 'Esta imagen no es compatible. Use JPG, PNG o WEBP.',
+);
+
+const LocalizedText kLimousineBusinessSetupCoverGalleryUse = LocalizedText(
+  nl: 'Deze foto gebruiken',
+  en: 'Use this photo',
+  fr: 'Utiliser cette photo',
+  es: 'Usar esta foto',
+);
+
+String limousineBusinessSetupCoverGalleryPhotoLabel(
+  int index,
+  AppLanguage language,
+) {
+  switch (language) {
+    case AppLanguage.en:
+      return 'Photo $index';
+    case AppLanguage.fr:
+      return 'Photo $index';
+    case AppLanguage.es:
+      return 'Foto $index';
+    case AppLanguage.nl:
+    default:
+      return 'Foto $index';
+  }
+}
+
 const LocalizedText kLimousineBusinessSetupLogoTitle = LocalizedText(
   nl: 'Logo limousineprofiel',
   en: 'Limousine profile logo',
@@ -743,6 +781,27 @@ const LocalizedText kLimousineBusinessSetupLogoUploadFailed = LocalizedText(
   en: 'Limousine logo upload failed. The logo was not saved.',
   fr: 'Échec du téléversement du logo limousine. Le logo n’a pas été enregistré.',
   es: 'Error al subir el logo de limusina. El logo no se guardó.',
+);
+
+const LocalizedText kLimousineBusinessSetupLogoUploading = LocalizedText(
+  nl: 'Limousinelogo uploaden…',
+  en: 'Uploading limousine logo…',
+  fr: 'Téléversement du logo limousine…',
+  es: 'Subiendo el logo de limusina…',
+);
+
+const LocalizedText kLimousineBusinessSetupMediaTooLarge = LocalizedText(
+  nl: 'Deze afbeelding is te groot. Kies een kleiner JPG-, PNG- of WEBP-bestand.',
+  en: 'This image is too large. Choose a smaller JPG, PNG or WEBP file.',
+  fr: 'Cette image est trop grande. Choisissez un fichier JPG, PNG ou WEBP plus petit.',
+  es: 'Esta imagen es demasiado grande. Elija un archivo JPG, PNG o WEBP más pequeño.',
+);
+
+const LocalizedText kLimousineBusinessSetupMediaTooSmall = LocalizedText(
+  nl: 'Deze afbeelding is te klein. Kies een scherpere JPG, PNG of WEBP.',
+  en: 'This image is too small. Choose a sharper JPG, PNG or WEBP.',
+  fr: 'Cette image est trop petite. Choisissez un JPG, PNG ou WEBP plus net.',
+  es: 'Esta imagen es demasiado pequeña. Elija un JPG, PNG o WEBP más nítido.',
 );
 
 const LocalizedText kLimousineBusinessSetupOfferForVehicles = LocalizedText(

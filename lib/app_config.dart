@@ -9890,6 +9890,8 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         final galleryPhotoRefs = safeVehiclePhotoRefsFromAny(<dynamic>[
           map['gallery_photo_refs'],
           map['galleryPhotoRefs'],
+          map['gallery_photo_urls'],
+          map['galleryPhotoUrls'],
         ]);
         final assignedDriverId = textAny(<dynamic>[
           assignedDriver['driver_id'],
@@ -9996,6 +9998,17 @@ Future<bool> hydrateCompanyStateFromBootstrap(
       );
       mappedVehiclesCount = nextVehicles.length;
       vehiclesNotifier.value = nextVehicles;
+      for (final vehicle in nextVehicles) {
+        logVehicleGalleryEvidence(
+          stage: 'BOOTSTRAP_GET',
+          vehicleId: maskVehicleIdForLog(vehicle.id),
+          urls: <String>[
+            vehicle.publicPhotoUrl ?? '',
+            vehicle.primaryPhotoRef,
+            ...vehicle.galleryPhotoRefs,
+          ],
+        );
+      }
     }
 
     var rawDriversCount = 0;

@@ -234,8 +234,10 @@ void _assertVisitingCardCopy(WidgetTester tester) {
   expect(find.textContaining('8 personen'), findsNothing);
   expect(find.textContaining('3 bagage'), findsNothing);
   expect(find.textContaining('2 bagage'), findsNothing);
-  expect(find.text('2 limousines · tot 16 personen'), findsOneWidget);
-  expect(find.textContaining('Vanaf €250'), findsOneWidget);
+  expect(find.text('2 limousines · tot 16 personen'), findsNothing);
+  expect(find.textContaining('2 limousines'), findsNothing);
+  expect(find.textContaining('tot 16 personen'), findsNothing);
+  expect(find.textContaining('Vanaf €250'), findsNothing);
   expect(find.text('Fluxidi BV'), findsNothing);
   expect(find.text('null'), findsNothing);
   final photo = tester.widget<LimousineContainPhoto>(
@@ -445,8 +447,9 @@ void main() {
     expect(find.text('Voor elke gelegenheid'), findsNothing);
     expect(find.text('More info'), findsOneWidget);
     expect(find.text('View offers'), findsOneWidget);
-    expect(find.text('2 limousines · up to 16 passengers'), findsOneWidget);
-    expect(find.textContaining('From €250'), findsOneWidget);
+    expect(find.text('2 limousines · up to 16 passengers'), findsNothing);
+    expect(find.textContaining('up to 16 passengers'), findsNothing);
+    expect(find.textContaining('From €250'), findsNothing);
   });
 
   testWidgets('Bekijk aanbod opens this company showroom with vehicle data', (
