@@ -324,7 +324,11 @@ test("25) no taxi fallback introduced", () => {
 });
 
 test("26) nothing marked paid by the allowlist path", () => {
-  assert.ok(!worker.includes("payment_status: \"paid\"") || worker.includes("if (!requiresPayment) payload.__mollie_paid = true;"));
+  assert.ok(
+    !worker.includes("payment_status: \"paid\"") ||
+      worker.includes("if (!requiresPayment && !limousinePendingCompanyConfirm) payload.__mollie_paid = true;") ||
+      worker.includes("if (!requiresPayment) payload.__mollie_paid = true;"),
+  );
   const allowFn = worker.slice(
     worker.indexOf("function _limousineTestCompanyAllowlisted"),
     worker.indexOf("function _limousineQuoteRecordKey"),

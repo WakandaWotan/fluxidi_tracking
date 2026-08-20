@@ -183,6 +183,18 @@ import {
   limousineDocumentLinesFromSnapshot as _limousineDocumentLinesFromSnapshot,
 } from "./modules/limousine_unified_intent.mjs";
 import {
+  LIMOUSINE_ACCEPTANCE_ALREADY_USED as _LIMOUSINE_ACCEPTANCE_ALREADY_USED,
+  applyLimousineCompanyConfirmation as _applyLimousineCompanyConfirmation,
+  bookingRecordLimousineServiceType as _bookingRecordLimousineServiceType,
+  bookingRequiresLimousineCompanyConfirmation as _bookingRequiresLimousineCompanyConfirmation,
+  companyConfirmationBlockedPaymentResult as _companyConfirmationBlockedPaymentResult,
+  isLimousineCompanyConfirmRawStatus as _isLimousineCompanyConfirmRawStatus,
+  limousineAcceptanceAlreadyConsumed as _limousineAcceptanceAlreadyConsumed,
+  limousineInvoiceOrChironBlocked as _limousineInvoiceOrChironBlocked,
+  limousinePaymentBlockedUntilCompanyConfirm as _limousinePaymentBlockedUntilCompanyConfirm,
+  preserveLimousineServiceType as _preserveLimousineServiceType,
+} from "./modules/limousine_operational_handoff.mjs";
+import {
   applyPublicLimousineHeroFields as _applyPublicLimousineHeroFields,
   countPublishedLimousineOffers as _countPublishedLimousineOffers,
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
@@ -930,6 +942,34 @@ async function _resealLimousineStatusRef(env, record) {
 
 /// Company/tenant authorization for a manual-quote record. A record may only be
 /// acted on inside its own tenant/company scope.
+async function _markLimousineAcceptedQuoteConsumed(env, { quoteRequestId, bookingReference } = {}) {
+  const id = sanitizeTenantString(quoteRequestId, 120);
+  if (!id) return { ok: false, error: "unknown_quote_request" };
+  const record = await _loadLimousineQuoteRecord(env, id);
+  if (!record) return { ok: false, error: "unknown_quote_request" };
+  if (_limousineAcceptanceAlreadyConsumed(record) &&
+      String(record.state || "").toLowerCase() === _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED) {
+    return { ok: true, changed: false, reason: "already_consumed" };
+  }
+  const outcome = _applyLimousineQuoteTransition(record, {
+    to: _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED,
+    actorType: "system",
+    reasonCode: "booking_created",
+    nowIso: new Date().toISOString(),
+    patch: {
+      ...(bookingReference ? { booking_reference: sanitizeTenantString(bookingReference, 64) } : {}),
+    },
+  });
+  if (!outcome.ok) return { ok: false, error: outcome.reason };
+  if (outcome.changed) {
+    await _saveLimousineQuoteRecord(
+      env,
+      _appendLimousineQuoteAudit(outcome.record, outcome.audit),
+    );
+  }
+  return { ok: true, changed: outcome.changed === true };
+}
+
 function _limousineQuoteScopeMatches(record, scope) {
   const rec = record && typeof record === "object" ? record : {};
   const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 96);
@@ -1042,6 +1082,34 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   const record = await _loadLimousineQuoteRecord(env, binding.quote_request_id);
   if (!record) return fail("unknown_quote_request");
   if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
+  const customerRef = sanitizeTenantString(
+    scope?.customer_id ??
+      scope?.customerId ??
+      payload?.customer_reference ??
+      payload?.customerReference,
+    160,
+  );
+  const storedFingerprint = sanitizeTenantString(
+    record?.status_access?.customer_fingerprint,
+    160,
+  );
+  if (storedFingerprint && customerRef) {
+    const sessionFingerprint = _buildLimousineCustomerFingerprint({
+      tenantId: scope?.tenant_id,
+      companyId: scope?.company_id,
+      customerRef,
+      quoteRequestId: record.quote_request_id,
+      itineraryFingerprint: record?.request?.itinerary_fingerprint,
+    });
+    if (sessionFingerprint && sessionFingerprint !== storedFingerprint) {
+      return fail("unauthorized_scope");
+    }
+  }
+  if (_limousineAcceptanceAlreadyConsumed(record)) {
+    return fail(_LIMOUSINE_ACCEPTANCE_ALREADY_USED, {
+      state: String(record.state || "").toLowerCase(),
+    });
+  }
 
   // The quote must still be in an acceptable/accepted state and unexpired.
   const state = String(record.state || "").toLowerCase();
@@ -5692,6 +5760,9 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     }
   }
   if (!rec) return { ok: false, skipped: true, reason: "booking_not_found" };
+  if (_limousineInvoiceOrChironBlocked(rec)) {
+    return { ok: true, skipped: true, reason: "limousine_invoice_blocked" };
+  }
   // Soft business_invoice flags without a meaningful billing customer must
   // still receive a private consumer sale (field: 2026-08-165).
   if (canIssueBusinessInvoiceFromRecord(rec)) {
@@ -6286,6 +6357,9 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
   }
   if (!rec || canIssueBusinessInvoiceFromRecord(rec)) {
     return { handled: false };
+  }
+  if (_limousineInvoiceOrChironBlocked(rec)) {
+    return { handled: true, ok: true, skipped: true, reason: "limousine_invoice_blocked" };
   }
 
   // CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: paid lifecycle is SYNC-ONLY when a
@@ -8257,6 +8331,9 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
 
     // Business invoice path stays unchanged. Private/consumer rides fall
     // through to consumer-sale payment sync (never Peppol, never a second sale).
+    if (rec && _limousineInvoiceOrChironBlocked(rec)) {
+      return { ok: true, skipped: true, reason: "limousine_invoice_blocked" };
+    }
     if (rec) {
       const ctx = _invoiceLifecycleContextFromRecord(rec);
       if (!ctx.businessInvoiceIntent) {
@@ -48571,6 +48648,7 @@ export default {
             tenantScope,
             {
               actor_role: statusActorRole,
+              raw_status: rawRequestedStatus,
               source_endpoint: "/bookings/:id/status",
             },
           );
@@ -49064,8 +49142,21 @@ export default {
             }, 403);
           }
           rec.assigned_vehicle_id = vehicleId;
+          rec.assignedVehicleId = vehicleId;
           if (rec.booking && typeof rec.booking === "object") {
             rec.booking.assigned_vehicle_id = vehicleId;
+            rec.booking.assignedVehicleId = vehicleId;
+          }
+          const assignedDriverId = String(
+            body?.driver_id || body?.assigned_driver_id || body?.assignedDriverId || "",
+          ).trim();
+          if (assignedDriverId) {
+            rec.assigned_driver_id = assignedDriverId;
+            rec.assignedDriverId = assignedDriverId;
+            if (rec.booking && typeof rec.booking === "object") {
+              rec.booking.assigned_driver_id = assignedDriverId;
+              rec.booking.assignedDriverId = assignedDriverId;
+            }
           }
           rec.updatedAt = new Date().toISOString();
           await env.BOOKING_KV.put(key, JSON.stringify(rec));
@@ -49094,7 +49185,12 @@ export default {
             rec,
             normalizeFleetTenantScope(tenantScope),
           );
-          return json({ ok: true, booking_id: bookingId, assigned_vehicle_id: vehicleId }, 200);
+          return json({
+            ok: true,
+            booking_id: bookingId,
+            assigned_vehicle_id: vehicleId,
+            ...(assignedDriverId ? { assigned_driver_id: assignedDriverId } : {}),
+          }, 200);
         }
 
         if (
@@ -55348,7 +55444,15 @@ function _deriveCustomerCancellationServiceContext({
     has_ambiguous_higher_tier_signals,
     airport_direction: airportDirection || null,
     airport_transfer: hasAirportTransferSignal || hasAirportIntent,
-    service_type: normalizedService,
+    service_type: _preserveLimousineServiceType(
+      _bookingRecordLimousineServiceType({
+        service_type: rec?.service_type ?? booking?.service_type ?? payloadObj?.service_type,
+        serviceType: rec?.serviceType ?? booking?.serviceType ?? payloadObj?.serviceType,
+        booking,
+        payload: payloadObj,
+      }),
+      normalizedService,
+    ),
   };
 }
 
@@ -68155,6 +68259,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         record,
         normalizeFleetTenantScope(tenantContext),
       );
+      const consumedQuoteRequestId = safeStr(
+        _limousineAccepted?.snapshot?.manual_quote_request_id ??
+          _limousineManualQuoteRecord?.quote_request_id,
+        120,
+      );
+      if (consumedQuoteRequestId) {
+        await _markLimousineAcceptedQuoteConsumed(env, {
+          quoteRequestId: consumedQuoteRequestId,
+          bookingReference: publicBookingReference || booking.bookingId,
+        });
+      }
     } catch (persistErr) {
       await releaseAllocatorReservationSafely();
       throw persistErr;
@@ -77895,6 +78010,12 @@ function _bookingChironRecordVehicleClass(rec) {
 
 function _bookingChironEnrichmentForComplianceEvent(rec, options = {}) {
   if (!rec || typeof rec !== "object") return null;
+  if (
+    _bookingRecordLimousineServiceType(rec) &&
+    _bookingRequiresLimousineCompanyConfirmation(rec)
+  ) {
+    return null;
+  }
   const assignmentContext =
     options?.assignmentContext && typeof options.assignmentContext === "object"
       ? options.assignmentContext
@@ -90909,6 +91030,9 @@ async function resumeBookingCheckoutAuthoritative(
       message: "Booking is no longer eligible for online payment resume",
     };
   }
+  if (_limousinePaymentBlockedUntilCompanyConfirm(rec)) {
+    return _companyConfirmationBlockedPaymentResult();
+  }
   if (!_isBookingRecordMollieOnline(rec)) {
     return {
       ok: false,
@@ -91225,6 +91349,12 @@ async function handleBookingInvoicePdfGet(
   const rec = loaded?.rec;
   if (!rec || typeof rec !== "object") {
     return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  if (
+    _bookingRecordLimousineServiceType(rec) &&
+    _bookingRequiresLimousineCompanyConfirmation(rec)
+  ) {
+    return json({ ok: false, error: "company_confirmation_required" }, 409);
   }
   const adminAuthorized = hasValidAdminToken(request, url, env);
   if (adminAuthorized) {
@@ -91645,6 +91775,16 @@ async function updateBookingStatusAuthoritative(
     rec?.booking?.stage,
   );
   const nowIso = new Date().toISOString();
+  const rawRequestedStatus = safeStr(options?.raw_status ?? status, 80);
+  const statusActorRole = safeStr(options?.actor_role, 32).toLowerCase();
+  const canConfirmLimousineRequest =
+    _isLimousineCompanyConfirmRawStatus(rawRequestedStatus) &&
+    (statusActorRole === "admin" ||
+      statusActorRole === "company" ||
+      statusActorRole === "system");
+  if (canConfirmLimousineRequest && _bookingRequiresLimousineCompanyConfirmation(rec)) {
+    _applyLimousineCompanyConfirmation(rec, nowIso);
+  }
   if (normalized === "COMPLETED" && options?.bypass_future_pickup_guard !== true) {
     const nowMs = Date.now();
     const operationalLegs = _bookingOperationalLegsFromRecord(rec)
@@ -92947,6 +93087,9 @@ async function updateBookingPaymentAuthoritative(
   const { key, rec } = await loadBookingRecord(env, bookingId);
   if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
     return { ok: false, error: "forbidden" };
+  }
+  if (_limousinePaymentBlockedUntilCompanyConfirm(rec)) {
+    return _companyConfirmationBlockedPaymentResult();
   }
   const asText = (value) => String(value ?? "").trim();
   const wasAlreadyPaid =

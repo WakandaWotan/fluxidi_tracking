@@ -79,6 +79,7 @@ import {
   isTerminalLifecycleStatus,
 } from "./booking_utils.js";
 import { _resolveBookingRecordPaymentStatusForProjection } from "./booking_payment_classify.js";
+import { projectLimousineOperationalListFields } from "./limousine_operational_handoff.mjs";
 
 /* =====================================================================
  * PRIVATE MODULE-LOCAL COPIES (byte-identical to main).
@@ -1504,6 +1505,7 @@ export function _flattenBookingForRidesList(bookingId, rec) {
     // row so the driver planned/open filter and the Flutter safety net can
     // decide on canonical fields instead of a display label.
     ..._streetDirectIdentityFieldsForRow(rec),
+    ...projectLimousineOperationalListFields(rec),
   };
 }
 
