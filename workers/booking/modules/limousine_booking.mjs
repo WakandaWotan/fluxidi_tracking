@@ -19,6 +19,10 @@ import {
 } from "./limousine_offers.mjs";
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
 import {
+  LIMOUSINE_INTENT_KIND,
+  classifyLimousinePublishedPricingMode,
+} from "./limousine_unified_intent.mjs";
+import {
   computeOfferHourlyCents,
   normalizeLimousinePricingSection,
 } from "./limousine_pricing_resolver.mjs";
@@ -495,11 +499,17 @@ export function composeLimousineTotal({
   offer = normalizeLimousineOffer(offer);
   if (!offer.enabled) return failed(R.OFFER_DISABLED);
 
-  // Only directly calculable presentations may produce a total.
+  // Only directly calculable presentations may produce a total. Hourly and
+  // package hires are bookable even when the marketing presentation is not
+  // exact_fixed — those modes are classified separately.
   if (offer.price_presentation === LIMOUSINE_PRICE_PRESENTATIONS.UNAVAILABLE) {
     return failed(R.UNAVAILABLE);
   }
-  if (!offerCanProduceResolvedPrice(offer)) {
+  const classified = classifyLimousinePublishedPricingMode(offer);
+  if (
+    !offerCanProduceResolvedPrice(offer) &&
+    classified.intent_kind !== LIMOUSINE_INTENT_KIND.BOOKING_REQUEST
+  ) {
     return failed(R.MANUAL_QUOTE_REQUIRED);
   }
 

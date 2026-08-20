@@ -11,6 +11,13 @@
 // and a customer-supplied total is never trusted.
 
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
+import {
+  LIMOUSINE_INTENT_KIND,
+  LIMOUSINE_SERVICE_TYPE,
+  assertLimousineOfferStillPublished,
+  buildLimousineQuoteIntentSnapshot,
+  classifyLimousinePublishedPricingMode,
+} from "./limousine_unified_intent.mjs";
 
 export const LIMOUSINE_QUOTE_STATES = Object.freeze({
   REQUESTED: "requested",
@@ -549,6 +556,7 @@ export function itineraryFingerprint(request) {
     toInt(r.requested_duration_minutes) ?? "",
     toInt(r.pax) ?? "",
     toInt(r.bags) ?? "",
+    safeText(r.occasion, 80).toLowerCase(),
     (Array.isArray(r.selected_extra_ids) ? [...r.selected_extra_ids] : [])
       .map((e) => normalizeLimousineToken(e))
       .sort()
@@ -583,8 +591,11 @@ export function validateLimousineQuoteRequest(input, {
 
   const authoritativeOffer = asObject(offer);
   if (!authoritativeOffer.offer_id) return { ok: false, reason: R.UNKNOWN_OFFER };
-  if (authoritativeOffer.enabled !== true || authoritativeOffer.published !== true) {
-    return { ok: false, reason: R.OFFER_UNPUBLISHED };
+  const published = assertLimousineOfferStillPublished(authoritativeOffer);
+  if (!published.ok) return { ok: false, reason: R.OFFER_UNPUBLISHED };
+  const classified = classifyLimousinePublishedPricingMode(authoritativeOffer);
+  if (!classified.ok || classified.intent_kind !== LIMOUSINE_INTENT_KIND.QUOTE_REQUEST) {
+    return { ok: false, reason: R.OFFER_NOT_BOOKABLE_MANUALLY };
   }
 
   const from = safeText(src.from, 240);
@@ -640,11 +651,19 @@ export function validateLimousineQuoteRequest(input, {
     bags: toInt(src.bags),
     selected_extra_ids: selected,
     customer_note: safeText(src.customer_note ?? src.customerNote, 500),
+    occasion: safeText(src.occasion, 80),
     locale: normalizeLimousineToken(src.locale).slice(0, 8),
     requires_manual_extra: requiresManualExtra,
+    service_type: LIMOUSINE_SERVICE_TYPE,
+    pricing_mode: classified.pricing_mode,
+    intent_kind: classified.intent_kind,
   };
   request.itinerary_fingerprint = itineraryFingerprint(request);
-  return { ok: true, request };
+  const snapshot = buildLimousineQuoteIntentSnapshot({
+    offer: authoritativeOffer,
+    request,
+  });
+  return { ok: true, request, snapshot: snapshot.ok ? snapshot : null };
 }
 
 /// Deterministic request identity so a retried submission is idempotent.
@@ -938,6 +957,12 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     service_class_id: safeText(req.service_class_id, 64),
     ...(req.vehicle_id ? { vehicle_id: safeText(req.vehicle_id, 96) } : {}),
     journey_type: safeText(req.journey_type, 32),
+    service_type: LIMOUSINE_SERVICE_TYPE,
+    ...(req.pricing_mode ? { pricing_mode: safeText(req.pricing_mode, 32) } : {}),
+    ...(req.occasion ? { occasion: safeText(req.occasion, 80) } : {}),
+    ...(rec.pricing_snapshot
+      ? { pricing_snapshot: asObject(rec.pricing_snapshot) }
+      : {}),
     scheduled_pickup_iso: safeText(req.scheduled_pickup_iso, 40),
     roundtrip: req.roundtrip === true,
     pax: toInt(req.pax),
