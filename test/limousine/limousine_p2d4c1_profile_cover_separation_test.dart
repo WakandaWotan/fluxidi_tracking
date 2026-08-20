@@ -399,11 +399,13 @@ void main() {
     final worker = File(
       'workers/booking/fluxidi_booking_worker.js',
     ).readAsStringSync();
-    expect(worker.contains('limousine_profile_cover'), isTrue);
-    expect(worker.contains('limousine/profile-cover.'), isTrue);
+    final identity = File(
+      'workers/booking/modules/limousine_published_identity.mjs',
+    ).readAsStringSync();
+    expect(worker.contains('_publicPublishedLimousineIdentityFields'), isTrue);
+    expect(identity.contains('published_limousine_profile_cover'), isTrue);
+    expect(identity.contains('published_limousine_profile_logo'), isTrue);
     expect(media.contains('kLimousineProfileLogoMediaType'), isTrue);
     expect(setup.contains("mediaType: 'company_logo'"), isFalse);
-    expect(worker.contains('limousine_profile_logo'), isTrue);
-    expect(worker.contains('limousine/profile-logo.'), isTrue);
   });
 }

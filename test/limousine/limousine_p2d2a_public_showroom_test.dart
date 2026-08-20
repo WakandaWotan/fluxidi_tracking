@@ -593,13 +593,17 @@ void main() {
     expect(find.byIcon(Icons.directions_car_filled_outlined), findsWidgets);
   });
 
-  test('P2D4C1 does not port Worker showroom seams into this Flutter tree', () {
+  test('public profile keeps Worker showroom seams for published identity', () {
     final worker = File(
       'workers/booking/fluxidi_booking_worker.js',
     ).readAsStringSync();
     expect(
       worker.contains('_publicLimousineShowroomFieldsFromStoredProfile'),
-      isFalse,
+      isTrue,
+    );
+    expect(
+      worker.contains('_publicPublishedLimousineIdentityFields'),
+      isTrue,
     );
   });
 

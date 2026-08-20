@@ -339,12 +339,27 @@ Map<String, dynamic> limousineHydratePublicPartnerOverlay(
   return next;
 }
 
+bool limousineBackendPublishedIdentityIsPresent(Map<String, dynamic> source) {
+  final identity = limousinePublishedIdentitySource(source);
+  if (_localizedHasText(identity['published_public_title']) ||
+      _localizedHasText(identity['published_public_description'])) {
+    return true;
+  }
+  if (limousinePublishedLogoOverrideUrl(identity).isNotEmpty) return true;
+  return _coverHasPhoto(identity[kLimousinePublishedProfileCoverKey]) ||
+      _coverHasPhoto(identity['published_limousine_hero']);
+}
+
 /// Customer pages: published snapshot only. Never copies a working draft
-/// logo/cover onto the public partner payload.
+/// logo/cover onto the public partner payload. A local overlay is never
+/// canonical once the backend already returned published identity.
 Map<String, dynamic> limousineHydratePublishedPartnerOverlay(
   Map<String, dynamic> partner, {
   LimousinePricingLocalStore? store,
 }) {
+  if (limousineBackendPublishedIdentityIsPresent(partner)) {
+    return Map<String, dynamic>.from(partner);
+  }
   final overlay = limousinePeekPublishedOverlayForPartner(
     store ?? limousinePricingLocalStore,
     partner,

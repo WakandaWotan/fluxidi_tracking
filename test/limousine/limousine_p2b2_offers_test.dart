@@ -540,9 +540,9 @@ void main() {
         ).readAsStringSync();
         expect(
           worker.contains('normalized.limousine = preservedLimousine'),
-          isFalse,
+          isTrue,
         );
-        expect(worker.contains('_loadRawTenantPricingProfileObject'), isFalse);
+        expect(worker.contains('_loadRawTenantPricingProfileObject'), isTrue);
       },
     );
   });

@@ -383,13 +383,13 @@ void main() {
       ).readAsStringSync();
       expect(
         worker.contains('normalized.limousine = preservedLimousine'),
-        isFalse,
+        isTrue,
       );
       expect(
         worker.contains(
           'const mergedProfile = { ...rawProfile, limousine: nextSection };',
         ),
-        isFalse,
+        isTrue,
       );
       expect(worker.contains('buildScopedAirportFixedFaresKey'), isTrue);
     });

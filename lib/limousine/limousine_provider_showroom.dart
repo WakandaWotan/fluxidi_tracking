@@ -485,9 +485,10 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
   final tagline = publishedDescription.isNotEmpty
       ? publishedDescription
       : (profile['tagline'] ?? '').toString().trim();
-  final description = (profile['about_short'] ?? profile['aboutShort'] ?? '')
+  final genericAbout = (profile['about_short'] ?? profile['aboutShort'] ?? '')
       .toString()
       .trim();
+  final description = publishedDescription.isNotEmpty ? '' : genericAbout;
   final trust = asStringKeyedMap(profile['trust']);
   final verified =
       profile['verified_partner'] == true || trust['verified_partner'] == true;

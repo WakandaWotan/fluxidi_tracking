@@ -96,6 +96,117 @@ import {
   stampBusinessProfileRecord,
 } from "./modules/business_profile_revision.mjs";
 import {
+  isEligibleLimousineProvider as _isEligibleLimousineProvider,
+  isLimousineServiceToken,
+  projectLimousineEntitled as _projectLimousineEntitled,
+  publicLimousineSignals as _publicLimousineSignals,
+  resolveNearbyServiceFilter as _resolveNearbyServiceFilter,
+} from "./modules/limousine_provider_eligibility.mjs";
+import {
+  isStalePartnerPublish as _isStalePartnerPublish,
+  mergeBusinessProfilePublicServices as _mergeBusinessProfilePublicServices,
+  mergePublicPartnerProfilePreserveOmitted as _mergePublicPartnerProfilePreserveOmitted,
+} from "./modules/limousine_public_service_persist.mjs";
+import {
+  applyLimousinePublicFieldsToProfileEntry as _applyLimousinePublicFieldsToProfileEntry,
+  buildLimousineProjection as _buildLimousineProjection,
+  limousinePublicContentDigest as _limousinePublicContentDigest,
+  limousinePublicContentDigestFromProfile as _limousinePublicContentDigestFromProfile,
+  resolveLimousineProjectionRevision as _resolveLimousineProjectionRevision,
+  stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
+} from "./modules/limousine_projection.mjs";
+import {
+  buildSafePublicLimousineOffers as _buildSafePublicLimousineOffers,
+  normalizeLimousineOffers as _normalizeLimousineOffers,
+} from "./modules/limousine_offers.mjs";
+import {
+  LIMOUSINE_QUOTE_STATES as _LIMOUSINE_QUOTE_STATES,
+  appendLimousineQuoteAudit as _appendLimousineQuoteAudit,
+  applyLimousineCompanyQuoteAction as _applyLimousineCompanyQuoteAction,
+  applyLimousineQuoteTransition as _applyLimousineQuoteTransition,
+  assertLimousineQuoteAcceptable as _assertLimousineQuoteAcceptable,
+  buildLimousineAcceptanceBinding as _buildLimousineAcceptanceBinding,
+  buildLimousineCustomerFingerprint as _buildLimousineCustomerFingerprint,
+  buildLimousineDecline as _buildLimousineDecline,
+  buildLimousineQuoteAuditEntry as _buildLimousineQuoteAuditEntry,
+  isLimousineCommercialCompanyAction as _isLimousineCommercialCompanyAction,
+  limousineManualQuoteGateEnabled as _limousineManualQuoteGateEnabledRaw,
+  limousineQuoteRequestKey as _limousineQuoteRequestKey,
+  observeLimousineQuoteExpiry as _observeLimousineQuoteExpiry,
+  publicLimousineQuoteView as _publicLimousineQuoteView,
+  validateLimousineCompanyQuote as _validateLimousineCompanyQuote,
+  validateLimousineQuoteRequest as _validateLimousineQuoteRequest,
+} from "./modules/limousine_manual_quote.mjs";
+import {
+  limousineAcceptanceBindingMatches as _limousineAcceptanceBindingMatches,
+  sealLimousineAcceptance as _sealLimousineAcceptance,
+  unsealLimousineAcceptance as _unsealLimousineAcceptance,
+} from "./modules/limousine_acceptance_token.mjs";
+import {
+  sealLimousineStatusRef as _sealLimousineStatusRef,
+  ttlMinutesFromRange as _limousineStatusTtlMinutesFromRange,
+} from "./modules/limousine_status_token.mjs";
+import {
+  buildLimousineCompanyInboxView as _buildLimousineCompanyInboxView,
+  emptyLimousineInboxIndex as _emptyLimousineInboxIndex,
+  executeLimousineStatusRead as _executeLimousineStatusRead,
+  limousineInboxIndexKey as _limousineInboxIndexKey,
+  limousineStatusRateKey as _limousineStatusRateKey,
+  LIMOUSINE_STATUS_RATE_MAX as _LIMOUSINE_STATUS_RATE_MAX,
+  LIMOUSINE_STATUS_RATE_WINDOW_SECONDS as _LIMOUSINE_STATUS_RATE_WINDOW_SECONDS,
+  normalizeLimousineInboxIndex as _normalizeLimousineInboxIndex,
+  pageLimousineInboxEntries as _pageLimousineInboxEntries,
+  parseLimousineInboxQuery as _parseLimousineInboxQuery,
+  upsertLimousineInboxEntry as _upsertLimousineInboxEntry,
+} from "./modules/limousine_quote_inbox.mjs";
+import {
+  allocateLimousineOperationalLegs as _allocateLimousineOperationalLegs,
+} from "./modules/limousine_operational_legs.mjs";
+import {
+  buildLimousineAcceptedSnapshot as _buildLimousineAcceptedSnapshot,
+  buildLimousineQuoteResult as _buildLimousineQuoteResult,
+  compareLimousineQuoteForBook as _compareLimousineQuoteForBook,
+  composeLimousineTotal as _composeLimousineTotal,
+  limousineBookGateEnabled as _limousineBookGateEnabledRaw,
+  limousineQuoteFingerprint as _limousineQuoteFingerprint,
+} from "./modules/limousine_booking.mjs";
+import {
+  applyPublicLimousineHeroFields as _applyPublicLimousineHeroFields,
+  countPublishedLimousineOffers as _countPublishedLimousineOffers,
+  limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
+  mergeLimousinePricingSection as _mergeLimousinePricingSection,
+  normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
+  resolveLimousineQuote as _resolveLimousineQuote,
+} from "./modules/limousine_pricing_resolver.mjs";
+import {
+  applyPublishedLimousineIdentityToProfile as _applyPublishedLimousineIdentityToProfile,
+  publishedLimousineIdentityDigest as _publishedLimousineIdentityDigest,
+  publishedLimousineIdentityHasContent as _publishedLimousineIdentityHasContent,
+  publicPublishedLimousineIdentityFields as _publicPublishedLimousineIdentityFields,
+} from "./modules/limousine_published_identity.mjs";
+import {
+  isTrustedLimousineTestCompany as _isTrustedLimousineTestCompany,
+  limousineTestCompanyAllowlistConfigured as _limousineTestCompanyAllowlistConfiguredRaw,
+} from "./modules/limousine_test_company_allowlist.mjs";
+import {
+  LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW as _LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW,
+  buildLimousineNearbyCardProjection as _buildLimousineNearbyCardProjection,
+  isLimousineDiscoveryListable as _isLimousineDiscoveryListable,
+  limousineNearbyAllowsUnscopedListing as _limousineNearbyAllowsUnscopedListing,
+} from "./modules/limousine_discovery_preview.mjs";
+import {
+  normalizePublicVehicleGallery as _normalizePublicVehicleGallery,
+  attachPublicVehicleMediaFields as _attachPublicVehicleMediaFields,
+  newVehicleGalleryMediaId as _newVehicleGalleryMediaId,
+  sanitizeVehicleGalleryMediaId as _sanitizeVehicleGalleryMediaId,
+  publicMediaObjectIdentity as _publicMediaObjectIdentity,
+} from "./modules/limousine_public_vehicle_media.mjs";
+import {
+  compareLimousineNearbyRank as _compareLimousineNearbyRank,
+  limousineNearbyDistanceKm as _limousineNearbyDistanceKm,
+  publicLimousineDistanceFields as _publicLimousineDistanceFields,
+} from "./modules/limousine_distance_rank.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -105,17 +216,11 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
-  buildLimousinePublicVisitingCard as _buildLimousinePublicVisitingCard,
-} from "./modules/limousine_public_visiting_card.mjs";
-import {
   fetchRatehawkHotelsStatus,
   handleAdminRatehawkTestHotelpage,
   handleAdminRatehawkTestPrebook,
   handleAdminRatehawkTestPrebookAccept,
   handleAdminRatehawkTestSearch,
-  handlePublicRatehawkBookingConfirm,
-  handlePublicRatehawkBookingForm,
-  handlePublicRatehawkBookingStatus,
   handlePublicRatehawkHotelpage,
   handlePublicRatehawkPrebook,
   handlePublicRatehawkPrebookAccept,
@@ -187,6 +292,19 @@ import {
   requeueExhaustedBillitOutbox,
   IN_PROGRESS_STALL_MS as BILLIT_IN_PROGRESS_STALL_MS,
 } from "./modules/billit_export_recovery.js";
+import {
+  BILLIT_OUTBOX_PREFIX,
+  BILLIT_OUTBOX_DUE_PREFIX,
+  BILLIT_OUTBOX_DUE_MIGRATION_KEY,
+  BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+  advanceBillitOutboxMigrationState,
+  billitOutboxDueAtMs,
+  buildBillitOutboxDueMarkerKey,
+  buildBillitOutboxDueMarkerMetadata,
+  desiredBillitDueMarkerKey,
+  normalizeBillitOutboxMigrationState,
+  selectDueBillitMarkers,
+} from "./modules/billit_outbox_due_index.js";
 import {
   todayNLBrussels,
   DEFAULT_COMPANY_TIMEZONE,
@@ -655,6 +773,571 @@ import {
   readSafeMollieCancelWireFields,
   sanitizeMollieCancelProviderError,
 } from "./modules/mollie_hosted_cancel_wire_evidence.mjs";
+
+/// LIMOUSINE-MARKETPLACE-P2B1: server-owned quote gate. Default OFF; missing or
+/// non-truthy means no Limousine quote. Taxi/airport quoting is unaffected.
+function _limousineQuoteGateEnabled(env) {
+  return _limousineQuoteGateEnabledRaw(env?.LIMOUSINE_QUOTE_ENABLED ?? "0");
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C1: INDEPENDENT server-owned book gate. Default OFF.
+/// Gate-off makes zero Limousine booking writes.
+function _limousineBookGateEnabled(env) {
+  return _limousineBookGateEnabledRaw(env?.LIMOUSINE_BOOK_ENABLED ?? "0");
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C2: INDEPENDENT manual-quote lifecycle gate.
+/// Default OFF; gate-off performs zero manual-quote reads or writes.
+function _limousineManualQuoteGateEnabled(env) {
+  return _limousineManualQuoteGateEnabledRaw(env?.LIMOUSINE_MANUAL_QUOTE_ENABLED ?? "0");
+}
+
+function _limousineTestCompanyAllowlisted(env, companyId) {
+  return _isTrustedLimousineTestCompany(env, companyId);
+}
+
+function _limousineAllowlistConfigured(env) {
+  return _limousineTestCompanyAllowlistConfiguredRaw(env?.LIMOUSINE_TEST_COMPANY_ALLOWLIST);
+}
+
+function _limousineAllowlistUnavailableQuote() {
+  return {
+    status: 200,
+    out: {
+      ok: true,
+      service_category: "limousine",
+      pricing_source: "limousine_unavailable",
+      limousine: {
+        resolved: false,
+        manual_quote_required: false,
+        unavailable: true,
+        reason: "unavailable",
+      },
+    },
+  };
+}
+
+function _limousineAllowlistDenied() {
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
+function _limousineQuoteRecordKey(quoteRequestId) {
+  return `limousine_quote_record:${sanitizeTenantString(quoteRequestId, 120)}`;
+}
+
+async function _loadLimousineQuoteRecord(env, quoteRequestId) {
+  try {
+    const raw = await env.BOOKING_KV.get(_limousineQuoteRecordKey(quoteRequestId), {
+      type: "json",
+    });
+    return raw && typeof raw === "object" ? raw : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _saveLimousineQuoteRecord(env, record) {
+  await env.BOOKING_KV.put(
+    _limousineQuoteRecordKey(record.quote_request_id),
+    JSON.stringify(record),
+  );
+  await _upsertLimousineInboxIndex(env, record);
+  return record;
+}
+
+/// Company-scoped inbox index. One KV document per tenant/company — never a
+/// namespace list(). Tombstones and history stay in the index; entries are
+/// not removed when a company is suspended or deleted.
+async function _loadLimousineInboxIndex(env, scope) {
+  const key = _limousineInboxIndexKey(scope?.tenant_id, scope?.company_id);
+  if (!key || !env?.BOOKING_KV) return _emptyLimousineInboxIndex(scope?.tenant_id, scope?.company_id);
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    return _normalizeLimousineInboxIndex(raw, scope?.tenant_id, scope?.company_id);
+  } catch (_) {
+    return _emptyLimousineInboxIndex(scope?.tenant_id, scope?.company_id);
+  }
+}
+
+async function _upsertLimousineInboxIndex(env, record) {
+  const rec = record && typeof record === "object" ? record : {};
+  const key = _limousineInboxIndexKey(rec.tenant_id, rec.company_id);
+  if (!key || !env?.BOOKING_KV) return;
+  const current = await _loadLimousineInboxIndex(env, rec);
+  const upserted = _upsertLimousineInboxEntry(current, {
+    tenant_id: rec.tenant_id,
+    company_id: rec.company_id,
+    quote_request_id: rec.quote_request_id,
+    updated_at: rec.updated_at,
+    revision: rec.revision,
+    state: rec.state,
+  });
+  if (!upserted.changed) return;
+  await env.BOOKING_KV.put(key, JSON.stringify(upserted.index));
+}
+
+async function _observeAndPersistLimousineExpiry(env, record, nowIso) {
+  const observed = _observeLimousineQuoteExpiry(record, { nowIso });
+  if (!observed.ok || !observed.changed) {
+    return { record: observed.record || record, wrote: false };
+  }
+  const next = _appendLimousineQuoteAudit(observed.record, observed.audit);
+  try {
+    await _saveLimousineQuoteRecord(env, next);
+    return { record: next, wrote: true };
+  } catch (_) {
+    return { record: next, wrote: false };
+  }
+}
+
+function _limousineInboxNotFound() {
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
+async function _resealLimousineStatusRef(env, record) {
+  const access = record?.status_access && typeof record.status_access === "object"
+    ? record.status_access
+    : null;
+  if (!access?.customer_fingerprint || !access?.issued_at) return null;
+  const sealed = await _sealLimousineStatusRef({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    binding: {
+      purpose: "customer_status",
+      tenant_id: record.tenant_id,
+      company_id: record.company_id,
+      quote_request_id: record.quote_request_id,
+      customer_fingerprint: access.customer_fingerprint,
+      created_revision: access.created_revision ?? 1,
+    },
+    issuedAtIso: access.issued_at,
+    ttlMinutes: _limousineStatusTtlMinutesFromRange(access.issued_at, access.expires_at),
+  });
+  return sealed.ok ? sealed : null;
+}
+
+/// Company/tenant authorization for a manual-quote record. A record may only be
+/// acted on inside its own tenant/company scope.
+function _limousineQuoteScopeMatches(record, scope) {
+  const rec = record && typeof record === "object" ? record : {};
+  const tenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 96);
+  const company = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 96);
+  return (
+    !!tenant &&
+    !!company &&
+    sanitizeTenantString(rec.tenant_id, 96) === tenant &&
+    sanitizeTenantString(rec.company_id, 96) === company
+  );
+}
+
+/// Loads the authoritative published offer for a manual-quote request.
+async function _loadAuthoritativeLimousineOffer(env, scope, offerId) {
+  const section = await _loadLimousinePricingSection(env, scope);
+  const offers = _normalizeLimousineOffers(section?.offers);
+  const needle = String(offerId ?? "").trim().toLowerCase();
+  const offer = offers.find((o) => o.offer_id === needle) || null;
+  return { offer, section };
+}
+
+/// True when the request carries explicit Limousine intent. Taxi, airport,
+/// hotel, event and business rides never match.
+function _isLimousineServiceRequest(body) {
+  const src = body && typeof body === "object" ? body : {};
+  return (
+    isLimousineServiceToken(src.service_category ?? src.serviceCategory) ||
+    isLimousineServiceToken(src.service)
+  );
+}
+
+/// Authoritative provider eligibility for the scoped company.
+async function _resolveLimousineProviderEligibility(env, scope) {
+  try {
+    const partnerKeys = buildScopedPartnerKeys(scope);
+    if (!partnerKeys) return false;
+    const record = await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" });
+    const profile = record?.partner_profile;
+    if (!profile) return false;
+    return _isEligibleLimousineProvider(profile);
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Server-calculated mobilisation legs: operating base -> pickup and
+/// dropoff -> operating base. The private base address is read Worker-side only
+/// and never returned to Flutter or any public payload. Missing base or route
+/// failure fails closed.
+async function _computeLimousineMobilisationRoutes(env, offer, { from, to }) {
+  const mob = (offer && typeof offer === "object" ? offer.mobilisation : null) || {};
+  const method = String(mob.method || "").trim().toLowerCase();
+  const charged = mob.outbound_charged === true || mob.return_charged === true;
+  if (!charged || method !== "distance_time") return { ok: true, routes: {} };
+  const baseAddress = String(mob.operating_base_address || "").trim();
+  if (!baseAddress) return { ok: false, reason: "mobilisation_incomplete" };
+  try {
+    const routes = {};
+    if (mob.outbound_charged === true) {
+      const out = await routeFromTextsWithStopsDetailed({
+        fromText: baseAddress,
+        toText: from,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      routes.mobilisation_outbound = {
+        distance_km: round1((out?.route?.distance || 0) / 1000),
+        duration_min: Math.round((out?.route?.duration || 0) / 60),
+      };
+    }
+    if (mob.return_charged === true) {
+      const back = await routeFromTextsWithStopsDetailed({
+        fromText: to,
+        toText: baseAddress,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      routes.mobilisation_return = {
+        distance_km: round1((back?.route?.distance || 0) / 1000),
+        duration_min: Math.round((back?.route?.duration || 0) / 60),
+      };
+    }
+    return { ok: true, routes };
+  } catch (_) {
+    return { ok: false, reason: "mobilisation_incomplete" };
+  }
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C2: accepted MANUAL quote pre-flight. Unseals and
+/// verifies the opaque acceptance reference, re-reads the authoritative quote
+/// record, revalidates eligibility for NEW bookings, checks expiry and the
+/// exact revision binding, and returns the human-approved total unchanged.
+/// A client total is never read; taxi pricing is never used.
+async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceReference }) {
+  const fail = (error, extra = {}) => ({
+    ok: false,
+    response: { ok: false, error, service_category: "limousine", ...extra },
+  });
+
+  const unsealed = await _unsealLimousineAcceptance({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    reference: acceptanceReference,
+  });
+  if (!unsealed.ok) return fail(unsealed.error);
+
+  const binding = unsealed.binding || {};
+  if (!_limousineTestCompanyAllowlisted(env, binding.company_id)) {
+    return fail("limousine_unavailable");
+  }
+  const record = await _loadLimousineQuoteRecord(env, binding.quote_request_id);
+  if (!record) return fail("unknown_quote_request");
+  if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
+
+  // The quote must still be in an acceptable/accepted state and unexpired.
+  const state = String(record.state || "").toLowerCase();
+  if (state !== _LIMOUSINE_QUOTE_STATES.ACCEPTED) {
+    return fail("limousine_quote_not_accepted", { state });
+  }
+
+  // The sealed binding must still match the authoritative record exactly.
+  const expected = _buildLimousineAcceptanceBinding(record);
+  const match = _limousineAcceptanceBindingMatches(binding, expected);
+  if (!match.ok) {
+    return fail("limousine_quote_refresh_required", { mismatched_field: match.mismatched_field });
+  }
+
+  // Company must still be allowed to take NEW bookings.
+  const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+  if (!suspensionGuard.ok) return fail("subscription_suspended");
+  const stillEligible = await _resolveLimousineProviderEligibility(env, scope);
+  if (!stillEligible) return fail("not_eligible");
+
+  const quote = record.quote || {};
+  const totalCents = Number(quote.total_incl_vat_cents) || 0;
+  const vatRate = Number(quote.vat_rate) || 0;
+  const currency = String(quote.currency || "").toUpperCase();
+  if (!(totalCents > 0) || !currency) return fail("limousine_unavailable");
+
+  // The human total is authoritative: split VAT from it, never recompute it.
+  const inclVat = totalCents / 100;
+  const exVat = vatRate > 0 ? Math.round((inclVat / (1 + vatRate)) * 100) / 100 : inclVat;
+  const total = {
+    ok: true,
+    offer_id: binding.offer_id,
+    offer_source_revision: binding.offer_source_revision,
+    pricing_section_revision: binding.pricing_section_revision,
+    service_category: "limousine",
+    journey_type: String(record.request?.journey_type || ""),
+    service_class_id: binding.service_class_id,
+    vehicle_id: binding.vehicle_id,
+    pricing_mode: "manual_quote",
+    pricing_modes: ["manual"],
+    components: [
+      {
+        type: "manual_quote",
+        reference: `${binding.quote_request_id}:r${binding.quote_revision}`,
+        amount_cents: totalCents,
+        currency,
+        vat_rate: vatRate,
+        pricing_source: "limousine_manual_quote",
+        source_revision: binding.quote_revision,
+      },
+    ],
+    legs: [],
+    selected_extras: Array.isArray(binding.selected_extra_ids)
+      ? binding.selected_extra_ids.map((id) => ({ extra_id: id }))
+      : [],
+    mobilisation: { included: false, charged_separately: false, disclosure: binding.mobilisation_disclosure || {} },
+    currency,
+    subtotal_cents: totalCents,
+    total_incl_vat_cents: totalCents,
+    price_incl_vat: inclVat,
+    price_ex_vat: exVat,
+    price_vat: Math.round((inclVat - exVat) * 100) / 100,
+    vat_rate: vatRate,
+  };
+
+  const snapshot = _buildLimousineAcceptedSnapshot({
+    total,
+    quoteReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
+    acceptedAtIso: unsealed.accepted_at || new Date().toISOString(),
+    scheduledPickupIso: String(record.request?.scheduled_pickup_iso || ""),
+    companyId: scope?.company_id || "",
+    termsRevision: binding.terms_revision,
+  });
+
+  return {
+    ok: true,
+    record,
+    accepted: {
+      total,
+      snapshot: { ...snapshot, manual_quote_request_id: binding.quote_request_id },
+      pricing: {
+        price_ex_vat: total.price_ex_vat,
+        price_vat: total.price_vat,
+        price_incl_vat: total.price_incl_vat,
+        note: "limousine:manual_quote",
+        breakdown: {
+          kind: "limousine_manual_quote",
+          quote_request_id: binding.quote_request_id,
+          quote_revision: binding.quote_revision,
+          terms_revision: binding.terms_revision,
+          currency,
+          total_incl_vat_cents: totalCents,
+        },
+      },
+      pricingSource: "limousine_manual_quote",
+      ruleReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
+    },
+  };
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C1: /book pre-flight. Runs BEFORE booking-intent
+/// idempotency and reference allocation, so a rejected request performs zero
+/// writes and allocates no reference. It re-resolves entitlement/readiness,
+/// re-loads the authoritative offer, recalculates routes, recomputes the
+/// complete price and compares it with the quote the client is booking against.
+/// Client totals are ignored entirely.
+async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }) {
+  const unavailable = (error, extra = {}) => ({
+    ok: false,
+    response: { ok: false, error, service_category: "limousine", ...extra },
+  });
+  if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
+    return unavailable("limousine_unavailable");
+  }
+
+  // 1) Server route for the passenger itinerary.
+  let routeOut = null;
+  try {
+    routeOut = await routeFromTextsWithStopsDetailed({
+      fromText: from,
+      toText: to,
+      fromPoint: readExplicitCoordinatePair(payload, "from"),
+      toPoint: readExplicitCoordinatePair(payload, "to"),
+      stopsTexts: Array.isArray(stops) ? stops : [],
+      token: env.MAPBOX_TOKEN,
+    });
+  } catch (_) {
+    return unavailable("limousine_route_failed");
+  }
+  if (!routeOut?.route) return unavailable("limousine_route_failed");
+  const mainRoute = {
+    distance_km: round1((routeOut.route.distance || 0) / 1000),
+    duration_min: Math.round((routeOut.route.duration || 0) / 60),
+  };
+
+  // 2) Optional roundtrip return leg (server-calculated, direction aware).
+  const roundtrip =
+    payload?.roundtrip === true ||
+    payload?.return_enabled === true ||
+    payload?.returnEnabled === true;
+  let returnRoute = null;
+  if (roundtrip) {
+    const returnFrom = safeStr(payload?.return_from ?? payload?.returnFrom) || to;
+    const returnTo = safeStr(payload?.return_to ?? payload?.returnTo) || from;
+    try {
+      const back = await routeFromTextsWithStopsDetailed({
+        fromText: returnFrom,
+        toText: returnTo,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      if (!back?.route) return unavailable("limousine_route_failed");
+      returnRoute = {
+        distance_km: round1((back.route.distance || 0) / 1000),
+        duration_min: Math.round((back.route.duration || 0) / 60),
+      };
+    } catch (_) {
+      return unavailable("limousine_route_failed");
+    }
+  }
+
+  // 3) Authoritative recompute from server state only.
+  const { total } = await _resolveAuthoritativeLimousineTotal(env, scope, payload, {
+    mainRoute,
+    returnRoute,
+  });
+  if (!total || total.ok !== true) {
+    const reason = total?.reason || "unavailable";
+    if (total?.manual_quote_required === true) {
+      return unavailable("limousine_manual_quote_required", { reason });
+    }
+    return unavailable("limousine_unavailable", { reason });
+  }
+
+  // 4) Compare with the quote the client is booking against. A stale or changed
+  // quote is rejected with a safe refresh-required result; a different or
+  // higher total is never silently accepted.
+  const comparison = _compareLimousineQuoteForBook({
+    recomputed: total,
+    clientQuoteReference: safeStr(payload?.quote_reference ?? payload?.quoteReference),
+    requireQuoteReference: true,
+  });
+  if (!comparison.ok) {
+    return unavailable("limousine_quote_refresh_required", {
+      reason: comparison.reason,
+      quote_reference: comparison.quote_reference,
+    });
+  }
+
+  // 5) Immutable accepted-price snapshot.
+  const snapshot = _buildLimousineAcceptedSnapshot({
+    total,
+    quoteReference: comparison.quote_reference,
+    acceptedAtIso: new Date().toISOString(),
+    scheduledPickupIso: safeStr(payload?.pickup_iso),
+    companyId: scope?.company_id || "",
+    publicPartnerId: safeStr(payload?.public_partner_id ?? payload?.publicPartnerId),
+  });
+
+  const pricing = {
+    price_ex_vat: total.price_ex_vat,
+    price_vat: total.price_vat,
+    price_incl_vat: total.price_incl_vat,
+    note: `limousine:${total.pricing_mode}`,
+    breakdown: {
+      kind: "limousine",
+      pricing_mode: total.pricing_mode,
+      components: total.components,
+      legs: total.legs,
+      currency: total.currency,
+      subtotal_cents: total.subtotal_cents,
+      total_incl_vat_cents: total.total_incl_vat_cents,
+    },
+  };
+
+  return {
+    ok: true,
+    routeOut,
+    accepted: {
+      total,
+      snapshot,
+      pricing,
+      quoteReference: comparison.quote_reference,
+      pricingSource: `limousine_${total.pricing_mode}`,
+      ruleReference: total.components[0]?.reference || "",
+    },
+  };
+}
+
+/// Shared authoritative Limousine resolution used by BOTH /quote and /book.
+/// Loads the offer, company eligibility and pricing revision server-side and
+/// composes the itemized total from SERVER routes only. Never reads a client
+/// total, per-km value, VAT, mobilisation amount or presentation.
+async function _resolveAuthoritativeLimousineTotal(env, scope, body, { mainRoute, returnRoute }) {
+  const eligible = await _resolveLimousineProviderEligibility(env, scope);
+  if (!eligible) {
+    return { total: { ok: false, unavailable: true, reason: "not_eligible" }, eligible: false };
+  }
+  const section = await _loadLimousinePricingSection(env, scope);
+  const offerId = String(body.offer_id ?? body.offerId ?? "").trim();
+  const normalizedOffers = _normalizeLimousineOffers(section?.offers);
+  const matchedOffer = normalizedOffers.find(
+    (o) => o.offer_id === offerId.toLowerCase(),
+  );
+  const mobilisationRoutes = matchedOffer
+    ? await _computeLimousineMobilisationRoutes(env, matchedOffer, {
+        from: body.from,
+        to: body.to,
+      })
+    : { ok: true, routes: {} };
+  if (!mobilisationRoutes.ok) {
+    return {
+      total: { ok: false, unavailable: true, reason: mobilisationRoutes.reason },
+      eligible: true,
+    };
+  }
+  const total = _composeLimousineTotal({
+    section,
+    offerId,
+    request: {
+      service_category: "limousine",
+      service_class_id: body.service_class_id ?? body.serviceClassId,
+      vehicle_id: body.vehicle_id ?? body.vehicleId,
+      journey_type: body.journey_type ?? body.journeyType,
+      direction: body.airport_direction ?? body.direction,
+      return_direction: body.return_direction ?? body.returnDirection,
+      airport_iata: body.airport_iata ?? body.airportIata,
+      currency: body.currency,
+      requested_duration_minutes:
+        body.requested_duration_minutes ?? body.requestedDurationMinutes,
+      return_requested_duration_minutes:
+        body.return_requested_duration_minutes ?? body.returnRequestedDurationMinutes,
+      selected_extra_ids: body.selected_extra_ids ?? body.selectedExtraIds,
+      roundtrip:
+        body.roundtrip === true ||
+        body.return_enabled === true ||
+        body.returnEnabled === true,
+    },
+    routes: {
+      main: mainRoute,
+      return: returnRoute,
+      ...mobilisationRoutes.routes,
+    },
+  });
+  return { total, eligible: true };
+}
+
+/// Reads the optional `limousine` pricing section from the raw company
+/// `pricing:v1` record WITHOUT touching the taxi profile normalization (taxi
+/// quotes remain byte-for-byte unchanged). Returns a disabled section on any
+/// failure (fail closed).
+async function _loadLimousinePricingSection(env, scope) {
+  try {
+    if (!env?.BOOKING_KV) return _normalizeLimousinePricingSection(null);
+    const scopedKeys = buildScopedSettingsKeys(scope);
+    let raw = null;
+    if (scopedKeys?.pricingProfileKey) {
+      raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
+    }
+    if (!raw) {
+      raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+    }
+    const profile = raw?.pricing_profile ?? raw ?? null;
+    const section = profile?.limousine ?? profile?.limousine_pricing ?? null;
+    return _normalizeLimousinePricingSection(section);
+  } catch (_) {
+    return _normalizeLimousinePricingSection(null);
+  }
+}
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -1407,6 +2090,98 @@ async function persistDocumentPaymentMethodTruthMetadata(
   }
 }
 
+/* ===================== BILLIT-KV-COST-P0 due-marker maintenance ===================== */
+
+// Write the ordered due marker for an authoritative outbox record.
+//
+// Marker keys are deterministic (due-at + outbox ref), so re-arming the same
+// due time is an idempotent overwrite rather than a duplicate. The marker value
+// is empty: identity travels in KV metadata, which list() returns for free.
+//
+// Callers MUST arm before persisting the authoritative record. A crash between
+// the two leaves a marker whose record is older or absent, which processing
+// self-heals; the reverse order could leave due work with no marker at all.
+async function _armBillitOutboxDueMarker(env, outboxKey, record) {
+  if (!env?.BOOKING_KV || !outboxKey) return null;
+  const dueAtMs = billitOutboxDueAtMs(record);
+  if (dueAtMs === null) return null;
+  const markerKey = buildBillitOutboxDueMarkerKey(dueAtMs, outboxKey);
+  const metadata = buildBillitOutboxDueMarkerMetadata(record);
+  if (!markerKey || !metadata) return null;
+  try {
+    await env.BOOKING_KV.put(markerKey, "", { metadata });
+    return markerKey;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _deleteBillitOutboxDueMarker(env, markerKey) {
+  if (!env?.BOOKING_KV || !markerKey) return false;
+  try {
+    await env.BOOKING_KV.delete(markerKey);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Retire specific due markers. Bounded to the keys the caller already owns;
+// never lists the marker keyspace. Deletes are idempotent.
+async function _retireBillitOutboxDueMarkers(env, markerKeys = []) {
+  const seen = new Set();
+  let removed = 0;
+  for (const candidate of markerKeys) {
+    const key = safeStr(candidate, 512);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (await _deleteBillitOutboxDueMarker(env, key)) removed += 1;
+  }
+  return removed;
+}
+
+// Crash-safe write of an authoritative outbox record plus its due marker.
+//
+// Order is: arm new marker -> persist authoritative record -> retire the
+// superseded marker. Every interruption point leaves either a duplicate or a
+// stale marker, both harmless because processing re-reads the authoritative
+// record and reconciles. Due work is never left unmarked.
+async function _persistBillitOutboxRecordWithDueMarker(env, outboxKey, nextRecord, {
+  previousMarkerKey = null,
+} = {}) {
+  if (!env?.BOOKING_KV || !outboxKey || !nextRecord) {
+    return { ok: false, error: "missing_input" };
+  }
+  const markerKey = await _armBillitOutboxDueMarker(env, outboxKey, nextRecord);
+  const stored = { ...nextRecord, due_marker_key: markerKey || null };
+  try {
+    await env.BOOKING_KV.put(outboxKey, JSON.stringify(stored));
+  } catch (_) {
+    return { ok: false, error: "outbox_persist_failed", marker_key: markerKey };
+  }
+  const superseded =
+    safeStr(previousMarkerKey, 512) || safeStr(nextRecord.due_marker_key, 512);
+  if (superseded && superseded !== markerKey) {
+    await _deleteBillitOutboxDueMarker(env, superseded);
+  }
+  return { ok: true, record: stored, marker_key: markerKey };
+}
+
+// Authoritative record wins over the marker. Called when a due marker resolved
+// to a record that is NOT actually due (stale duplicate, reschedule race, or a
+// terminal state that raced the marker delete). Performs no Billit work.
+async function _reconcileBillitOutboxDueMarker(env, outboxKey, markerKey, record) {
+  const wantKey = desiredBillitDueMarkerKey(outboxKey, record);
+  if (!wantKey) {
+    await _retireBillitOutboxDueMarkers(env, [markerKey, record?.due_marker_key]);
+    return "retired";
+  }
+  if (wantKey === markerKey) return "kept";
+  await _armBillitOutboxDueMarker(env, outboxKey, record);
+  await _deleteBillitOutboxDueMarker(env, markerKey);
+  return "rescheduled";
+}
+
 /* Persist envelope-only billit_link_status on an issued invoice and optionally
  * write/clear a durable create outbox entry. Never stores tokens/secrets.
  * Always re-reads the latest registry record before writing so a concurrent
@@ -1466,10 +2241,25 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
   const outboxKey = buildBillitCreateOutboxKey(scope, documentId);
   if (outboxKey) {
     if (options.clearOutbox === true || options.state === BILLIT_LINK_STATES.LINKED) {
+      // BILLIT-KV-COST-P0: learn the owned due marker before the authoritative
+      // record disappears so the ordered index does not accumulate orphans.
+      // This is a once-per-export success transition, never a cron steady read.
+      let clearedMarkerKey = null;
+      try {
+        const existingForClear = await env.BOOKING_KV.get(outboxKey, {
+          type: "json",
+        });
+        clearedMarkerKey = safeStr(existingForClear?.due_marker_key, 512) || null;
+      } catch (_) {
+        clearedMarkerKey = null;
+      }
       try {
         await env.BOOKING_KV.delete(outboxKey);
       } catch (_) {
         // non-fatal
+      }
+      if (clearedMarkerKey) {
+        await _retireBillitOutboxDueMarkers(env, [clearedMarkerKey]);
       }
     } else if (options.retryable === true) {
       // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: outbox failure writes use the
@@ -1517,11 +2307,11 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
         if (!merged.booking_id && options.bookingId) {
           merged.booking_id = safeStr(options.bookingId, 200);
         }
-        try {
-          await env.BOOKING_KV.put(outboxKey, JSON.stringify(merged));
-        } catch (_) {
-          // non-fatal
-        }
+        // BILLIT-KV-COST-P0: the authoritative backoff computed above is what
+        // schedules the ordered due marker. Marker first, record second.
+        await _persistBillitOutboxRecordWithDueMarker(env, outboxKey, merged, {
+          previousMarkerKey: safeStr(existingRaw?.due_marker_key, 512) || null,
+        });
       }
     }
   }
@@ -1565,12 +2355,15 @@ async function persistPendingBillitExportOutboxOnce(env, scope, opts = {}) {
     invoiceIdempotencyKey: options.invoiceIdempotencyKey,
   });
   if (!rec) return { ok: false, error: "invalid_pending_record" };
-  try {
-    await env.BOOKING_KV.put(outboxKey, JSON.stringify(rec));
-    return { ok: true, existed: false };
-  } catch (_) {
-    return { ok: false, error: "outbox_persist_failed" };
+  // BILLIT-KV-COST-P0: a pending record is immediately due, so arm its ordered
+  // marker in the same step. Marker-first ordering means a crash can only leave
+  // a marker without a record (self-healing), never recovery work the scheduled
+  // pass cannot see.
+  const persisted = await _persistBillitOutboxRecordWithDueMarker(env, outboxKey, rec);
+  if (!persisted.ok) {
+    return { ok: false, error: persisted.error || "outbox_persist_failed" };
   }
+  return { ok: true, existed: false };
 }
 
 /**
@@ -1697,12 +2490,29 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
           idempotencyKey: buildBillitSandboxOrderCreateIdempotencyKey(documentId),
           invoiceIdempotencyKey: options.invoiceIdempotencyKey,
         });
+    // BILLIT-KV-COST-P0: track which ordered due marker this attempt owns so a
+    // terminal outcome can retire it without scanning the marker keyspace.
+    const priorMarkerKey =
+      safeStr(existingRaw?.due_marker_key, 512) ||
+      safeStr(options.dueMarkerKey, 512) ||
+      null;
+    let ownedMarkerKey = priorMarkerKey;
     if (previous && typeof previous === "object") {
       const st = safeStr(previous.state, 40);
+      // A terminal record must own no due marker, so a marker that raced the
+      // terminal transition is retired here instead of being re-read forever.
       if (st === BILLIT_EXPORT_STATES.SYNCED) {
+        await _retireBillitOutboxDueMarkers(env, [
+          priorMarkerKey,
+          safeStr(options.dueMarkerKey, 512) || null,
+        ]);
         return { ok: true, skipped: true, reason: "already_synced" };
       }
       if (st === BILLIT_EXPORT_STATES.PERMANENT_ERROR) {
+        await _retireBillitOutboxDueMarkers(env, [
+          priorMarkerKey,
+          safeStr(options.dueMarkerKey, 512) || null,
+        ]);
         return {
           ok: false,
           skipped: true,
@@ -1713,11 +2523,16 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
     }
     if (outboxKey && previous) {
       const inProgress = markOutboxInProgress(previous);
-      try {
-        await env.BOOKING_KV.put(outboxKey, JSON.stringify(inProgress));
-      } catch (_) {
-        // non-fatal
-      }
+      // in_progress reschedules the marker to the stall deadline, so an isolate
+      // that dies mid-attempt is recovered by the ordered index rather than by
+      // re-reading every outbox value.
+      const persisted = await _persistBillitOutboxRecordWithDueMarker(
+        env,
+        outboxKey,
+        inProgress,
+        { previousMarkerKey: priorMarkerKey },
+      );
+      if (persisted.ok) ownedMarkerKey = persisted.marker_key || null;
     }
 
     // Invoke the existing idempotent orchestrator. It internally re-issues
@@ -1748,6 +2563,13 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
           // non-fatal
         }
       }
+      // BILLIT-KV-COST-P0: synced work owns no due marker. Deletes are
+      // idempotent, so retiring an already-retired marker is harmless.
+      await _retireBillitOutboxDueMarkers(env, [
+        ownedMarkerKey,
+        priorMarkerKey,
+        safeStr(options.dueMarkerKey, 512) || null,
+      ]);
       return {
         ok: true,
         skipped: false,
@@ -1775,12 +2597,16 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
   }
 }
 
-/**
- * Sweep due Billit export outbox entries and retry each once. Called from
- * the cron-triggered `scheduled` handler and (for the current booking only)
- * from the documents-list refresh handler. Idempotent and bounded: capped
- * by `limit` per pass so a single run cannot exhaust the isolate.
- */
+// Explicit full-scan sweep of the Billit export outbox. Retries each due entry
+// once, bounded by `limit`.
+//
+// BILLIT-KV-COST-P0 — DO NOT wire this into the cron or any request path. It
+// value-GETs every key on the listed page just to discover due-ness, which cost
+// roughly 3,450 BOOKING_KV reads per scheduled run (about 2.16M reads/day with
+// no customers). The scheduled pass now uses processBillitDueOutboxIndex and
+// the documents route uses nudgeBillitDueOutboxForBooking; both read only
+// records already proven due. This remains solely an operator/diagnostic
+// escape hatch and is covered by the pre-existing recovery regressions.
 async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
   const opts = options && typeof options === "object" ? options : {};
   const source = safeStr(opts.source, 64) || "durable_recovery_sweep";
@@ -1882,6 +2708,353 @@ async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
   };
 }
 
+/* ===================== BILLIT-KV-COST-P0 bounded scheduled recovery ===================== */
+
+// Process due Billit export work through the ordered due-marker index.
+//
+// One list() of the marker keyspace resolves candidate work with zero value
+// reads because identity rides in KV metadata. Markers sort by due time, so the
+// first future marker ends the scan. Only records already proven due are read.
+async function processBillitDueOutboxIndex(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 64) || "due_index";
+  const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const nowMs = now.getTime();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding", listed: 0, due: 0, retried: 0 };
+  }
+  // Small over-read past `limit` so one pass can also retire stale/duplicate
+  // markers it happens to observe. Still a single bounded list operation.
+  const listLimit = Math.min(1000, limit * 2 + 5);
+  let page = null;
+  try {
+    page = await env.BOOKING_KV.list({
+      prefix: BILLIT_OUTBOX_DUE_PREFIX,
+      limit: listLimit,
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      error: "due_index_list_failed",
+      listed: 0,
+      due: 0,
+      retried: 0,
+    };
+  }
+  const entries = Array.isArray(page?.keys) ? page.keys : [];
+  const selection = selectDueBillitMarkers(entries, { nowMs, limit });
+
+  let orphaned = 0;
+  for (const orphan of selection.orphans) {
+    if (await _deleteBillitOutboxDueMarker(env, orphan.markerKey)) orphaned += 1;
+  }
+  let deduped = 0;
+  for (const duplicate of selection.duplicates) {
+    if (await _deleteBillitOutboxDueMarker(env, duplicate.markerKey)) deduped += 1;
+  }
+
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+  let permanent = 0;
+  let reconciled = 0;
+  const errors = [];
+
+  for (const marker of selection.selected) {
+    // Only markers already proven due ever reach a value read.
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(marker.outboxKey, { type: "json" });
+    } catch (_) {
+      raw = null;
+    }
+    if (!raw || typeof raw !== "object") {
+      // The authoritative record is gone (exported and cleared, or a crash
+      // landed between marker and record). Retire the orphan marker.
+      if (await _deleteBillitOutboxDueMarker(env, marker.markerKey)) orphaned += 1;
+      continue;
+    }
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    if (!isBillitOutboxDue(normalized, { now })) {
+      // Authoritative state wins over the marker. Never a Billit call here.
+      await _reconcileBillitOutboxDueMarker(env, marker.outboxKey, marker.markerKey, {
+        ...normalized,
+        due_marker_key: safeStr(raw.due_marker_key, 512) || null,
+      });
+      reconciled += 1;
+      continue;
+    }
+    const scope = {
+      tenant_id: normalized.tenant_id,
+      company_id: normalized.company_id,
+    };
+    const documentId = normalized.document_id;
+    const bookingId = normalized.booking_id;
+    if (!scope.tenant_id || !scope.company_id || !documentId || !bookingId) {
+      skipped += 1;
+      continue;
+    }
+    attempted += 1;
+    try {
+      const outcome = await runBillitDurableExportAttempt(env, scope, {
+        documentId,
+        documentNumber: normalized.document_number,
+        bookingId,
+        invoiceIdempotencyKey: normalized.invoice_idempotency_key,
+        source,
+        dueMarkerKey: marker.markerKey,
+      });
+      if (outcome.ok && !outcome.skipped) {
+        succeeded += 1;
+      } else if (outcome.skipped) {
+        skipped += 1;
+      } else {
+        failed += 1;
+        if (outcome.permanent) permanent += 1;
+        if (outcome.error_code) errors.push(outcome.error_code);
+      }
+    } catch (_) {
+      failed += 1;
+      errors.push("recovery_exception");
+    }
+  }
+
+  console.log(
+    `[BILLIT_DUE_INDEX][PASS] source=${source} listed=${entries.length} selected=${selection.selected.length} attempted=${attempted} ok=${succeeded} failed=${failed} skipped=${skipped} permanent=${permanent} reconciled=${reconciled} orphaned=${orphaned} deduped=${deduped} stopped_future=${selection.stoppedAtFuture} stopped_limit=${selection.stoppedAtLimit} errors=${errors.slice(0, 5).join(",")}`,
+  );
+  return {
+    ok: true,
+    listed: entries.length,
+    inspected: selection.inspected,
+    due: selection.selected.length,
+    retried: attempted,
+    succeeded,
+    failed,
+    skipped,
+    permanent,
+    reconciled,
+    orphaned,
+    deduped,
+    stopped_at_future: selection.stoppedAtFuture === true,
+    stopped_at_limit: selection.stoppedAtLimit === true,
+  };
+}
+
+// Bounded, resumable migration that arms due markers for legacy outbox records
+// written before the index existed.
+//
+// Contract: at most BILLIT_OUTBOX_DUE_MIGRATION_BATCH legacy value reads per
+// invocation, a server-owned monotonic cursor, each record examined at most
+// once, idempotent completion, and no deletion or rewrite of any authoritative
+// legacy record. After completion the scheduled pass never lists outbox values
+// again — only the single migration-state read remains.
+async function runBillitOutboxDueMigrationStep(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const batch = Math.max(
+    1,
+    Math.min(
+      BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+      Number(opts.batch) || BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+    ),
+  );
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding", completed: false, scanned: 0, marked: 0 };
+  }
+  let storedState = null;
+  try {
+    storedState = await env.BOOKING_KV.get(BILLIT_OUTBOX_DUE_MIGRATION_KEY, {
+      type: "json",
+    });
+  } catch (_) {
+    storedState = null;
+  }
+  const state = normalizeBillitOutboxMigrationState(storedState, { now });
+  if (state.completed) {
+    return {
+      ok: true,
+      completed: true,
+      scanned: 0,
+      marked: 0,
+      skipped: "already_complete",
+    };
+  }
+
+  let page = null;
+  try {
+    page = await env.BOOKING_KV.list({
+      prefix: BILLIT_OUTBOX_PREFIX,
+      limit: batch,
+      ...(state.cursor ? { cursor: state.cursor } : {}),
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      error: "migration_list_failed",
+      completed: false,
+      scanned: 0,
+      marked: 0,
+    };
+  }
+  const keys = Array.isArray(page?.keys) ? page.keys : [];
+  let scanned = 0;
+  let marked = 0;
+  let terminal = 0;
+  for (const entry of keys) {
+    const outboxKey = safeStr(entry?.name, 512);
+    if (!outboxKey || !outboxKey.startsWith(BILLIT_OUTBOX_PREFIX)) continue;
+    // Bounded by the list limit above, so this can never exceed `batch`.
+    scanned += 1;
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+    } catch (_) {
+      continue;
+    }
+    if (!raw || typeof raw !== "object") continue;
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    if (billitOutboxDueAtMs(normalized) === null) {
+      // synced / permanent_error records get no active due marker.
+      terminal += 1;
+      continue;
+    }
+    // Marker-only: the authoritative legacy record is never rewritten here, so
+    // a concurrent live attempt can never be clobbered by a stale snapshot.
+    if (await _armBillitOutboxDueMarker(env, outboxKey, normalized)) marked += 1;
+  }
+
+  const next = advanceBillitOutboxMigrationState(state, {
+    cursor: safeStr(page?.cursor, 1024) || null,
+    listComplete: page?.list_complete === true,
+    scanned,
+    marked,
+    now,
+  });
+  try {
+    await env.BOOKING_KV.put(
+      BILLIT_OUTBOX_DUE_MIGRATION_KEY,
+      JSON.stringify(next),
+    );
+  } catch (_) {
+    // Non-fatal: the same bounded batch is retried next invocation. Marker
+    // writes are deterministic, so the replay re-derives identical markers.
+  }
+  console.log(
+    `[BILLIT_DUE_INDEX][MIGRATION] scanned=${scanned} marked=${marked} terminal=${terminal} batches=${next.batches} completed=${next.completed}`,
+  );
+  return {
+    ok: true,
+    completed: next.completed === true,
+    scanned,
+    marked,
+    terminal,
+    batches: next.batches,
+  };
+}
+
+// One scheduled recovery pass: advance the bounded legacy migration, then
+// process due work through the ordered index. Replaces the former full-scan
+// sweep on the cron path.
+async function runBillitDurableRecoveryScheduledPass(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 64) || "cron";
+  const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding" };
+  }
+  const migration = await runBillitOutboxDueMigrationStep(env, { now });
+  const processed = await processBillitDueOutboxIndex(env, { source, limit, now });
+  return { ok: processed.ok !== false, migration, processed };
+}
+
+// Targeted Billit recovery nudge for ONE booking's documents.
+//
+// BILLIT-KV-COST-P0: the previous implementation called the global outbox sweep
+// with a booking filter, which still listed and value-GET the entire first page
+// on every documents refresh. This resolves the deterministic outbox key for
+// each document already listed for THIS booking and reads only those records.
+// No prefix list, no global first page, no unrelated value read.
+async function nudgeBillitDueOutboxForBooking(env, scope, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const bookingId = safeStr(opts.bookingId, 200);
+  const source = safeStr(opts.source, 64) || "documents_refresh_nudge";
+  const limit = Math.max(1, Math.min(10, Number(opts.limit) || 4));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding", retried: 0 };
+  if (!bookingId) return { ok: false, error: "missing_booking_id", retried: 0 };
+  const nudgeScope = {
+    tenant_id: safeStr(scope?.tenant_id ?? scope?.tenantId, 96),
+    company_id: safeStr(scope?.company_id ?? scope?.companyId, 96),
+  };
+  if (!nudgeScope.tenant_id || !nudgeScope.company_id) {
+    return { ok: false, error: "missing_tenant_scope", retried: 0 };
+  }
+  const documentIds = [];
+  const seenDocumentIds = new Set();
+  for (const doc of Array.isArray(opts.documents) ? opts.documents : []) {
+    const documentId = safeStr(doc?.document_id ?? doc?.documentId, 200);
+    if (!documentId || seenDocumentIds.has(documentId)) continue;
+    seenDocumentIds.add(documentId);
+    documentIds.push(documentId);
+    if (documentIds.length >= limit) break;
+  }
+
+  let inspected = 0;
+  let due = 0;
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+  const errors = [];
+  for (const documentId of documentIds) {
+    const outboxKey = buildBillitCreateOutboxKey(nudgeScope, documentId);
+    if (!outboxKey) continue;
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+    } catch (_) {
+      raw = null;
+    }
+    inspected += 1;
+    if (!raw || typeof raw !== "object") continue;
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    // Tenant/company came from the caller's authorized scope; the booking bind
+    // is re-checked so a mis-indexed document can never nudge another ride.
+    if (safeStr(normalized.booking_id, 200) !== bookingId) continue;
+    if (!isBillitOutboxDue(normalized, { now })) continue;
+    due += 1;
+    attempted += 1;
+    try {
+      const outcome = await runBillitDurableExportAttempt(env, nudgeScope, {
+        documentId,
+        documentNumber: normalized.document_number,
+        bookingId,
+        invoiceIdempotencyKey: normalized.invoice_idempotency_key,
+        source,
+        dueMarkerKey: safeStr(raw.due_marker_key, 512) || null,
+      });
+      if (outcome.ok && !outcome.skipped) {
+        succeeded += 1;
+      } else if (outcome.skipped) {
+        skipped += 1;
+      } else {
+        failed += 1;
+        if (outcome.error_code) errors.push(outcome.error_code);
+      }
+    } catch (_) {
+      failed += 1;
+      errors.push("recovery_exception");
+    }
+  }
+  console.log(
+    `[BILLIT_DUE_INDEX][DOC_NUDGE] source=${source} inspected=${inspected} due=${due} retried=${attempted} ok=${succeeded} failed=${failed} skipped=${skipped} errors=${errors.slice(0, 3).join(",")}`,
+  );
+  return { ok: true, inspected, due, retried: attempted, succeeded, failed, skipped };
+}
+
 /* ===================== END BILLIT-DURABLE-EXPORT-RECOVERY-P0-1 ===================== */
 
 /**
@@ -1949,9 +3122,15 @@ async function handleAdminBillitExportRequeue({ request, url, env, documentId })
   if (!requeued) {
     return json({ ok: false, error: "requeue_failed" }, 409);
   }
-  try {
-    await env.BOOKING_KV.put(outboxKey, JSON.stringify(requeued));
-  } catch (_) {
+  // BILLIT-KV-COST-P0: a requeue is immediately due, so it must own an ordered
+  // marker or the bounded scheduled pass would never see it again.
+  const requeuePersist = await _persistBillitOutboxRecordWithDueMarker(
+    env,
+    outboxKey,
+    requeued,
+    { previousMarkerKey: safeStr(raw?.due_marker_key, 512) || null },
+  );
+  if (!requeuePersist.ok) {
     return json({ ok: false, error: "outbox_persist_failed" }, 500);
   }
   // Best-effort immediate attempt (same idempotency key). Failure leaves the
@@ -8107,6 +9286,14 @@ export {
   sweepBillitDurableRecoveryOutbox,
   persistPendingBillitExportOutboxOnce,
 };
+// BILLIT-KV-COST-P0 bounded recovery surface. Hermetic counting-KV tests only;
+// production paths call these internally.
+export {
+  processBillitDueOutboxIndex,
+  runBillitOutboxDueMigrationStep,
+  runBillitDurableRecoveryScheduledPass,
+  nudgeBillitDueOutboxForBooking,
+};
 export { reconcileConsumerSaleForCompletedBooking };
 // Hermetic CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0 concurrency tests only.
 export {
@@ -12097,6 +13284,10 @@ const DEFAULT_BUSINESS_PROFILE = {
   publicCoverageLng: "",
   publicServiceRadiusKm: "",
   publicPaymentOptions: ["cash", "qr_code", "online_payment"],
+  publicServiceIds: [],
+  public_service_ids: [],
+  publicServicesConfigured: false,
+  public_services_configured: false,
   publicPartnerProfilePublishedAt: "",
   publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
@@ -12169,6 +13360,10 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
     public_booking: false,
     receipt_pdf: true,
     whatsapp_email_receipts: true,
+    // LIMOUSINE-MARKETPLACE-P1: included in the existing Fluxidi business
+    // subscription. Explicit in the produced feature map; an explicit false
+    // (admin revoke) fails closed. No new plan/SKU/checkout is introduced.
+    limousine: true,
   },
   // Additive subscription-foundation fields (Patch 1). All optional; when a
   // legacy record lacks them they default safely and existing behaviour for
@@ -12829,6 +14024,18 @@ function normalizeBusinessProfile(input = {}) {
       source.public_payment_options ??
       DEFAULT_BUSINESS_PROFILE.publicPaymentOptions
     ),
+    ...(() => {
+      const mergedServices = _mergeBusinessProfilePublicServices(
+        DEFAULT_BUSINESS_PROFILE,
+        source,
+      );
+      return {
+        publicServiceIds: mergedServices.publicServiceIds,
+        public_service_ids: mergedServices.public_service_ids,
+        publicServicesConfigured: mergedServices.publicServicesConfigured,
+        public_services_configured: mergedServices.public_services_configured,
+      };
+    })(),
     publicPartnerProfilePublishedAt: sanitizeTenantString(
       source.publicPartnerProfilePublishedAt ??
       source.public_partner_profile_published_at ??
@@ -13211,6 +14418,7 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
       public_booking: typeof inFeatures.public_booking === "boolean" ? inFeatures.public_booking : defaultFeatures.public_booking,
       receipt_pdf: typeof inFeatures.receipt_pdf === "boolean" ? inFeatures.receipt_pdf : defaultFeatures.receipt_pdf,
       whatsapp_email_receipts: typeof inFeatures.whatsapp_email_receipts === "boolean" ? inFeatures.whatsapp_email_receipts : defaultFeatures.whatsapp_email_receipts,
+      limousine: typeof inFeatures.limousine === "boolean" ? inFeatures.limousine : defaultFeatures.limousine,
     },
     warnings,
     created_at: sanitizeTenantString(source.created_at ?? source.createdAt ?? DEFAULT_SUBSCRIPTION_PROFILE.created_at, 48),
@@ -13877,14 +15085,22 @@ async function saveBusinessProfile(
     existing || DEFAULT_BUSINESS_PROFILE,
     profile,
   );
+  const mergedPublicServices = _mergeBusinessProfilePublicServices(
+    existing || DEFAULT_BUSINESS_PROFILE,
+    preserved,
+  );
+  const preservedWithServices = {
+    ...preserved,
+    ...mergedPublicServices,
+  };
   const nowIso = new Date().toISOString();
   const emailChange = applyEmailChangePolicy
     ? applyPrimaryCompanyEmailChange(
         existing || DEFAULT_BUSINESS_PROFILE,
-        preserved,
+        preservedWithServices,
         nowIso,
       )
-    : { profile: preserved };
+    : { profile: preservedWithServices };
   const normalized = normalizeBusinessProfile(emailChange.profile);
   const revision = resolveBusinessProfileRevision({
     existingRecord,
@@ -14072,6 +15288,16 @@ async function saveSubscriptionProfile(
       updated_at: nowIso,
     },
   }));
+  // LIMOUSINE-MARKETPLACE-P2A: entitlement can change on any subscription write
+  // (activate / suspend / cancel / recurring / admin edit). Recompute the safe
+  // public Limousine projection so a revoke/restore propagates without a manual
+  // republish. Best-effort + fingerprint-guarded: a no-op when nothing changed
+  // and never allowed to break the subscription save.
+  try {
+    await refreshPartnerLimousineProjection(env, scope);
+  } catch (_) {
+    // non-fatal
+  }
   return {
     ...normalized,
     created_at: normalized.created_at || nowIso,
@@ -19019,9 +20245,12 @@ function _normalizeVehiclePhotoRef(value) {
 function _normalizeVehiclePhotoRefList(value) {
   if (!Array.isArray(value)) return [];
   const out = [];
+  const seen = new Set();
   for (const entry of value) {
     const ref = _normalizeVehiclePhotoRef(entry);
-    if (!ref || out.includes(ref)) continue;
+    const identity = _publicMediaObjectIdentity(ref);
+    if (!ref || !identity || seen.has(identity)) continue;
+    seen.add(identity);
     out.push(ref);
     if (out.length >= 12) break;
   }
@@ -26130,6 +27359,29 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         }
       : {}),
   };
+  const _isLimousineQuoteRequestEarly =
+    isLimousineServiceToken(body.service_category ?? body.serviceCategory) ||
+    isLimousineServiceToken(body.service);
+  if (_isLimousineQuoteRequestEarly && _limousineQuoteGateEnabled(env)) {
+    let _limousineTrustedQuoteCompany = routedPublicPartner?.ok
+      ? sanitizeTenantString(routedPublicPartner.company_id, 80)
+      : "";
+    if (!_limousineTrustedQuoteCompany && _limousineAllowlistConfigured(env)) {
+      try {
+        const _limousineQuoteSession = await _loadCompanySessionFromRequest(request, env);
+        const sessionCompany = sanitizeTenantString(_limousineQuoteSession?.company_id, 80);
+        const claimedCompany = sanitizeTenantString(quoteScope.company_id, 80);
+        if (sessionCompany && (!claimedCompany || claimedCompany === sessionCompany)) {
+          _limousineTrustedQuoteCompany = sessionCompany;
+        }
+      } catch (_) {
+        _limousineTrustedQuoteCompany = "";
+      }
+    }
+    if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedQuoteCompany)) {
+      return _limousineAllowlistUnavailableQuote();
+    }
+  }
   const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
   const vat_rate = clampNumber(
     pricingProfile?.vat_rate,
@@ -26181,6 +27433,95 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
 
   const distance_km = round1(route.distance / 1000);
   const duration_route_min = Math.round(route.duration / 60);
+
+  // LIMOUSINE-MARKETPLACE-P2B1: explicit Limousine quote path. Gated OFF by
+  // default. Only taken for an explicit limousine service category; taxi and
+  // airport-transfer requests never enter here. Uses the same server route,
+  // never the taxi profile, and never falls back to taxi pricing.
+  const _isLimousineQuoteRequest =
+    isLimousineServiceToken(body.service_category ?? body.serviceCategory) ||
+    isLimousineServiceToken(body.service);
+  if (_isLimousineQuoteRequest) {
+    const gateEnabled = _limousineQuoteGateEnabled(env);
+    // Gate off => zero Limousine pricing execution.
+    if (!gateEnabled) {
+      return {
+        status: 200,
+        out: {
+          ok: true,
+          service_category: "limousine",
+          distance_km,
+          duration_min: duration_route_min,
+          pricing_source: "limousine_unavailable",
+          limousine: {
+            resolved: false,
+            manual_quote_required: false,
+            unavailable: true,
+            reason: "gate_off",
+          },
+        },
+      };
+    }
+    // LIMOUSINE-MARKETPLACE-P2C1: itemized authoritative total. An offer_id
+    // uses the full composer (extras, mobilisation, roundtrip); without one we
+    // keep the P2B1 class/offer resolution for backwards compatibility.
+    const hasOfferId = String(body.offer_id ?? body.offerId ?? "").trim().length > 0;
+    let limoResolution;
+    if (hasOfferId) {
+      const { total } = await _resolveAuthoritativeLimousineTotal(env, quoteScope, body, {
+        mainRoute: { distance_km, duration_min: duration_route_min },
+        returnRoute: null,
+      });
+      limoResolution = _buildLimousineQuoteResult(total, {
+        distanceKm: distance_km,
+        durationMin: duration_route_min,
+        scheduledPickupIso: `${body.date}T${body.time}`,
+        pax,
+        bags,
+      });
+    } else {
+      const limoEligible = await _resolveLimousineProviderEligibility(env, quoteScope);
+      limoResolution = _resolveLimousineQuote({
+        gateEnabled,
+        eligible: limoEligible,
+        section: await _loadLimousinePricingSection(env, quoteScope),
+        request: {
+          service_category: "limousine",
+          service_class_id: body.service_class_id ?? body.serviceClassId,
+          journey_type: body.journey_type ?? body.journeyType,
+          direction: body.airport_direction ?? body.direction,
+          airport_iata: body.airport_iata ?? body.airportIata,
+          postcode: body.postcode ?? body.fixed_fare_zone_value,
+          city: body.city,
+          country: body.country ?? body.country_code,
+          lat: routeResolvedPickupCoords?.lat,
+          lng: routeResolvedPickupCoords?.lng,
+          currency: body.currency,
+        },
+        route: { distance_km, duration_min: duration_route_min },
+      });
+    }
+    const limoOut = {
+      ok: true,
+      service_category: "limousine",
+      distance_km,
+      duration_min: duration_route_min,
+      limousine: limoResolution,
+    };
+    if (limoResolution.resolved) {
+      limoOut.price_ex_vat = limoResolution.price_ex_vat;
+      limoOut.price_vat = limoResolution.price_vat;
+      limoOut.price_incl_vat = limoResolution.price_incl_vat;
+      limoOut.currency = limoResolution.currency;
+      limoOut.pricing_source = `limousine_${limoResolution.pricing_mode}`;
+    } else {
+      // Manual/unavailable carry NO numeric customer price.
+      limoOut.pricing_source = limoResolution.manual_quote_required
+        ? "limousine_manual_quote"
+        : "limousine_unavailable";
+    }
+    return { status: 200, out: limoOut };
+  }
 
   const mainWhen = normalizeWhen(body.date, body.time);
   const quoteReturnRequested = _fixedFareReturnRequested(body);
@@ -34540,7 +35881,7 @@ export default {
           ? `cron:${event.cron}`
           : "cron";
       ctx.waitUntil(
-        sweepBillitDurableRecoveryOutbox(env, ctx, {
+        runBillitDurableRecoveryScheduledPass(env, {
           source,
           limit: 20,
         }).catch((err) => {
@@ -37524,9 +38865,10 @@ export default {
             // depends on the cron sweep. Bounded to at most 4 attempts per
             // refresh so the request stays fast.
             try {
-              const swept = await sweepBillitDurableRecoveryOutbox(env, null, {
+              const swept = await nudgeBillitDueOutboxForBooking(env, scope, {
                 source: "documents_refresh_nudge",
                 bookingId: sourceBookingId,
+                documents: listed.documents,
                 limit: 4,
               });
               if (swept?.retried > 0) {
@@ -40722,63 +42064,6 @@ export default {
           return json({ ok: false, error: acceptDto.error }, 400);
         }
         return json(acceptDto);
-      }
-
-      if (url.pathname === "/public/hotels/ratehawk/booking/form") {
-        if (request.method !== "POST") {
-          return json({ ok: false, error: "method_not_allowed" }, 405);
-        }
-        const parsedBookingForm = await readPublicRatehawkJsonBody(request);
-        if (parsedBookingForm.ok !== true) {
-          return json({ ok: false, error: parsedBookingForm.error }, 400);
-        }
-        const bookingFormDto = await handlePublicRatehawkBookingForm({
-          env,
-          request,
-          body: parsedBookingForm.body,
-        });
-        if (bookingFormDto?.http_status === 400 && bookingFormDto?.error) {
-          return json({ ok: false, error: bookingFormDto.error }, 400);
-        }
-        return json(bookingFormDto);
-      }
-
-      if (url.pathname === "/public/hotels/ratehawk/booking/confirm") {
-        if (request.method !== "POST") {
-          return json({ ok: false, error: "method_not_allowed" }, 405);
-        }
-        const parsedBookingConfirm = await readPublicRatehawkJsonBody(request);
-        if (parsedBookingConfirm.ok !== true) {
-          return json({ ok: false, error: parsedBookingConfirm.error }, 400);
-        }
-        const bookingConfirmDto = await handlePublicRatehawkBookingConfirm({
-          env,
-          request,
-          body: parsedBookingConfirm.body,
-        });
-        if (bookingConfirmDto?.http_status === 400 && bookingConfirmDto?.error) {
-          return json({ ok: false, error: bookingConfirmDto.error }, 400);
-        }
-        return json(bookingConfirmDto);
-      }
-
-      if (url.pathname === "/public/hotels/ratehawk/booking/status") {
-        if (request.method !== "POST") {
-          return json({ ok: false, error: "method_not_allowed" }, 405);
-        }
-        const parsedBookingStatus = await readPublicRatehawkJsonBody(request);
-        if (parsedBookingStatus.ok !== true) {
-          return json({ ok: false, error: parsedBookingStatus.error }, 400);
-        }
-        const bookingStatusDto = await handlePublicRatehawkBookingStatus({
-          env,
-          request,
-          body: parsedBookingStatus.body,
-        });
-        if (bookingStatusDto?.http_status === 400 && bookingStatusDto?.error) {
-          return json({ ok: false, error: bookingStatusDto.error }, 400);
-        }
-        return json(bookingStatusDto);
       }
 
       if (url.pathname === "/public/hotels/google-place-photo") {
@@ -44092,6 +45377,441 @@ export default {
         return json(out, out?.ok ? 200 : 400);
       }
 
+      // =====================================================================
+      // LIMOUSINE-MARKETPLACE-P2C2 — manual quote lifecycle.
+      // Every route is behind LIMOUSINE_MANUAL_QUOTE_ENABLED (default OFF) and
+      // performs zero reads/writes while the gate is off.
+      // =====================================================================
+      if (url.pathname === "/limousine/quote-requests" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const requestedPartnerId = _extractRequestedPublicPartnerId({ url, body });
+        let scope = null;
+        if (requestedPartnerId) {
+          const routed = await resolvePublicPartnerBookingScope(env, requestedPartnerId);
+          if (!routed?.ok) {
+            return json({ ok: false, error: routed?.error || "invalid public partner" }, routed?.status || 400);
+          }
+          scope = { tenant_id: routed.tenant_id, company_id: routed.company_id, hasScope: true };
+        } else {
+          scope = resolveExplicitBookingRequestScope({ request, url, body, allowLegacyFallback: false });
+        }
+        if (!scope?.hasScope) return json(missingTenantScopeError(), 400);
+        if (!requestedPartnerId) {
+          const companySession = await _loadCompanySessionFromRequest(request, env);
+          const sessionCompany = sanitizeTenantString(companySession?.company_id, 80);
+          const sessionTenant = sanitizeTenantString(companySession?.tenant_id, 80);
+          if (
+            !sessionCompany ||
+            sessionCompany !== sanitizeTenantString(scope.company_id, 80) ||
+            sessionTenant !== sanitizeTenantString(scope.tenant_id, 80)
+          ) {
+            return _limousineAllowlistDenied();
+          }
+        }
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        // New requests are blocked for suspended companies, exactly like /book.
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        if (!suspensionGuard.ok) return _subscriptionBlockedResponse({ scope: "public" });
+
+        const eligible = await _resolveLimousineProviderEligibility(env, scope);
+        const { offer } = await _loadAuthoritativeLimousineOffer(
+          env,
+          scope,
+          body?.offer_id ?? body?.offerId,
+        );
+        const validated = _validateLimousineQuoteRequest(body, {
+          eligible,
+          offer,
+          gateEnabled: true,
+        });
+        if (!validated.ok) {
+          return json({ ok: false, error: validated.reason, field: validated.field }, 400);
+        }
+        const nowIso = new Date().toISOString();
+        const customerSession = await _loadCustomerSessionFromRequest(request, env);
+        const customerRef = sanitizeTenantString(
+          customerSession?.customer_id ||
+            body?.customer_reference ||
+            body?.customerReference,
+          160,
+        );
+        const requestKey = _limousineQuoteRequestKey({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          customerRef,
+          request: validated.request,
+        });
+        // Idempotent submission: the same intent returns the same record.
+        const existingId = safeStr(await env.BOOKING_KV.get(requestKey));
+        if (existingId) {
+          const existing = await _loadLimousineQuoteRecord(env, existingId);
+          if (existing && _limousineQuoteScopeMatches(existing, scope)) {
+            await _upsertLimousineInboxIndex(env, existing);
+            const replayed = await _resealLimousineStatusRef(env, existing);
+            return json(
+              {
+                ok: true,
+                idempotent: true,
+                quote_request: _publicLimousineQuoteView(existing),
+                ...(replayed
+                  ? { status_ref: replayed.reference, status_expires_at: replayed.expires_at }
+                  : {}),
+              },
+              200,
+            );
+          }
+        }
+        const quoteRequestId = `limq_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+        const customerFingerprint = _buildLimousineCustomerFingerprint({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          customerRef,
+          quoteRequestId,
+          itineraryFingerprint: validated.request.itinerary_fingerprint,
+        });
+        const sealedStatus = await _sealLimousineStatusRef({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            purpose: "customer_status",
+            tenant_id: scope.tenant_id,
+            company_id: scope.company_id,
+            quote_request_id: quoteRequestId,
+            customer_fingerprint: customerFingerprint,
+            created_revision: 1,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealedStatus.ok) return json({ ok: false, error: sealedStatus.error }, 500);
+        let record = {
+          quote_request_id: quoteRequestId,
+          tenant_id: scope.tenant_id,
+          company_id: scope.company_id,
+          state: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+          revision: 1,
+          last_transition_from: "",
+          last_transition_to: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+          request: validated.request,
+          offer_source_revision: offer?.source_revision ?? 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          audit: [],
+          status_access: {
+            customer_fingerprint: customerFingerprint,
+            issued_at: sealedStatus.issued_at,
+            expires_at: sealedStatus.expires_at,
+            created_revision: 1,
+          },
+        };
+        record = _appendLimousineQuoteAudit(
+          record,
+          _buildLimousineQuoteAuditEntry({
+            from: "",
+            to: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+            revision: 1,
+            actorType: "customer",
+            reasonCode: "requested",
+            nowIso,
+          }),
+        );
+        await _saveLimousineQuoteRecord(env, record);
+        await env.BOOKING_KV.put(requestKey, quoteRequestId, { expirationTtl: 60 * 60 * 24 * 30 });
+        return json(
+          {
+            ok: true,
+            quote_request: _publicLimousineQuoteView(record),
+            status_ref: sealedStatus.reference,
+            status_expires_at: sealedStatus.expires_at,
+          },
+          200,
+        );
+      }
+
+      if (url.pathname === "/admin/limousine/quote-requests/respond" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTE_RESPOND",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const record = await _loadLimousineQuoteRecord(
+          env,
+          body?.quote_request_id ?? body?.quoteRequestId,
+        );
+        if (!record) return json({ ok: false, error: "unknown_quote_request" }, 404);
+        // Tenant/company authorization is enforced server-side.
+        if (!_limousineQuoteScopeMatches(record, scope)) {
+          return json({ ok: false, error: "unauthorized_scope" }, 403);
+        }
+        const action = sanitizeTenantString(body?.action, 32).toLowerCase();
+        // Suspended companies may read history but cannot quote/decline/withdraw.
+        if (_isLimousineCommercialCompanyAction(action)) {
+          const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+          if (!suspensionGuard.ok) return _subscriptionBlockedResponse({ scope: "company" });
+        }
+        const expectedRevision = body?.expected_revision ?? body?.expectedRevision;
+        const nowIso = new Date().toISOString();
+
+        if (action === "decline") {
+          const outcome = _applyLimousineQuoteTransition(record, {
+            to: _LIMOUSINE_QUOTE_STATES.DECLINED,
+            expectedRevision,
+            actorType: "company",
+            reasonCode: "company_declined",
+            nowIso,
+            patch: { decline: _buildLimousineDecline(body) },
+          });
+          if (!outcome.ok) return json({ ok: false, error: outcome.reason, current_revision: outcome.current_revision }, 409);
+          if (outcome.changed) {
+            await _saveLimousineQuoteRecord(env, _appendLimousineQuoteAudit(outcome.record, outcome.audit));
+          }
+          return json({ ok: true, quote_request: _publicLimousineQuoteView(outcome.record) }, 200);
+        }
+
+        if (action === "viewed") {
+          const outcome = _applyLimousineQuoteTransition(record, {
+            to: _LIMOUSINE_QUOTE_STATES.VIEWED_BY_COMPANY,
+            expectedRevision,
+            actorType: "company",
+            reasonCode: "viewed",
+            nowIso,
+          });
+          if (!outcome.ok) return json({ ok: false, error: outcome.reason, current_revision: outcome.current_revision }, 409);
+          if (outcome.changed) {
+            await _saveLimousineQuoteRecord(env, _appendLimousineQuoteAudit(outcome.record, outcome.audit));
+          }
+          return json({ ok: true, quote_request: _publicLimousineQuoteView(outcome.record) }, 200);
+        }
+
+        if (action !== "quote") return json({ ok: false, error: "unknown_action" }, 400);
+
+        const validatedQuote = _validateLimousineCompanyQuote(body?.quote ?? body, { nowIso });
+        if (!validatedQuote.ok) {
+          return json({
+            ok: false,
+            error: validatedQuote.reason,
+            missing: validatedQuote.missing,
+            unknown: validatedQuote.unknown,
+          }, 400);
+        }
+        const quoted = _applyLimousineCompanyQuoteAction(record, {
+          expectedRevision,
+          quote: validatedQuote.quote,
+          nowIso,
+        });
+        if (!quoted.ok) {
+          return json({
+            ok: false,
+            error: quoted.reason,
+            current_revision: quoted.current_revision,
+            current_terms_revision: quoted.current_terms_revision,
+          }, 409);
+        }
+        let next = quoted.record;
+        if (quoted.changed) {
+          for (const audit of quoted.audits || (quoted.audit ? [quoted.audit] : [])) {
+            next = _appendLimousineQuoteAudit(next, audit);
+          }
+          await _saveLimousineQuoteRecord(env, next);
+        }
+        return json({ ok: true, quote_request: _publicLimousineQuoteView(next) }, 200);
+      }
+
+      if (url.pathname === "/limousine/quote-requests/accept" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const record = await _loadLimousineQuoteRecord(
+          env,
+          body?.quote_request_id ?? body?.quoteRequestId,
+        );
+        if (!record) return json({ ok: false, error: "unknown_quote_request" }, 404);
+        if (!_limousineTestCompanyAllowlisted(env, record.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const nowIso = new Date().toISOString();
+        const acceptable = _assertLimousineQuoteAcceptable(record, {
+          expectedRevision: body?.expected_revision ?? body?.expectedRevision,
+          nowIso,
+        });
+        if (!acceptable.ok) {
+          return json(
+            { ok: false, error: acceptable.reason, current_revision: acceptable.current_revision },
+            409,
+          );
+        }
+        const accepted = _applyLimousineQuoteTransition(record, {
+          to: _LIMOUSINE_QUOTE_STATES.ACCEPTED,
+          expectedRevision: body?.expected_revision ?? body?.expectedRevision,
+          actorType: "customer",
+          reasonCode: "customer_accepted",
+          nowIso,
+        });
+        if (!accepted.ok) {
+          return json({ ok: false, error: accepted.reason, current_revision: accepted.current_revision }, 409);
+        }
+        // The binding must reflect the ACCEPTED revision.
+        const binding = _buildLimousineAcceptanceBinding(accepted.record);
+        const sealed = await _sealLimousineAcceptance({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding,
+          acceptedAtIso: nowIso,
+          ttlMinutes: 60,
+        });
+        if (!sealed.ok) return json({ ok: false, error: sealed.error }, 500);
+        const next = _appendLimousineQuoteAudit(accepted.record, accepted.audit);
+        await _saveLimousineQuoteRecord(env, next);
+        return json(
+          {
+            ok: true,
+            quote_request: _publicLimousineQuoteView(next),
+            acceptance_reference: sealed.reference,
+            expires_at: sealed.expires_at,
+          },
+          200,
+        );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — company inbox list (scoped, cursor page).
+      if (url.pathname === "/admin/limousine/quote-requests" && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: null,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTE_INBOX",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const parsed = _parseLimousineInboxQuery(url.searchParams);
+        if (!parsed.ok) {
+          return json({ ok: false, error: parsed.reason }, 400);
+        }
+        const nowIso = new Date().toISOString();
+        const index = await _loadLimousineInboxIndex(env, scope);
+        const page = _pageLimousineInboxEntries(index, parsed);
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        const transitionsBlocked = !suspensionGuard.ok;
+        const items = [];
+        for (const entry of page.entries) {
+          const loaded = await _loadLimousineQuoteRecord(env, entry.quote_request_id);
+          if (!loaded || !_limousineQuoteScopeMatches(loaded, scope)) continue;
+          const observed = await _observeAndPersistLimousineExpiry(env, loaded, nowIso);
+          if (parsed.state && observed.record.state !== parsed.state) continue;
+          items.push(
+            _buildLimousineCompanyInboxView(observed.record, {
+              activity_seq: entry.activity_seq,
+              transitions_blocked: transitionsBlocked,
+            }),
+          );
+        }
+        return json(
+          {
+            ok: true,
+            items,
+            next_cursor: page.next_cursor,
+            has_more: page.has_more,
+          },
+          200,
+        );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — company quote-request detail.
+      // Missing and cross-scope records share the same non-enumerating 404.
+      const _limousineInboxDetail = url.pathname.match(
+        /^\/admin\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})$/,
+      );
+      if (_limousineInboxDetail && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: null,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTE_DETAIL",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const record = await _loadLimousineQuoteRecord(env, _limousineInboxDetail[1]);
+        if (!record || !_limousineQuoteScopeMatches(record, scope)) {
+          return _limousineInboxNotFound();
+        }
+        const nowIso = new Date().toISOString();
+        const observed = await _observeAndPersistLimousineExpiry(env, record, nowIso);
+        const index = await _loadLimousineInboxIndex(env, scope);
+        const indexed = (index.entries || []).find(
+          (e) => e.quote_request_id === observed.record.quote_request_id,
+        );
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        return json(
+          {
+            ok: true,
+            quote_request: _buildLimousineCompanyInboxView(observed.record, {
+              activity_seq: indexed?.activity_seq ?? null,
+              transitions_blocked: !suspensionGuard.ok,
+            }),
+          },
+          200,
+        );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — customer status poll via opaque ref.
+      // Malformed bodies are rejected before KV. Rate-limit denial performs
+      // zero quote-record reads. Polling never issues an acceptance reference.
+      if (url.pathname === "/limousine/quote-requests/status" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const body = await safeJson(request);
+        const result = await _executeLimousineStatusRead({
+          body,
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          bookingKvPresent: !!env.BOOKING_KV,
+          loadCustomerSession: () => _loadCustomerSessionFromRequest(request, env),
+          rateLimit: async (statusRef) => _incrementSimpleRateLimit({
+            env,
+            rateKey: await _limousineStatusRateKey(statusRef),
+            maxCount: _LIMOUSINE_STATUS_RATE_MAX,
+            windowSeconds: _LIMOUSINE_STATUS_RATE_WINDOW_SECONDS,
+          }),
+          loadRecord: (id) => _loadLimousineQuoteRecord(env, id),
+          persistExpired: (next) => _saveLimousineQuoteRecord(env, next),
+          isCompanyAllowlisted: (companyId) => _limousineTestCompanyAllowlisted(env, companyId),
+        });
+        return json(result.body, result.status);
+      }
+
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
       if (url.pathname === "/partners/nearby" && request.method === "GET") {
         const postcode = String(url.searchParams.get("postcode") || "").trim();
@@ -44104,13 +45824,22 @@ export default {
         const lat = hasGeoInput ? _safePublicNumber(latRaw, { min: -90, max: 90 }) : null;
         const lng = hasGeoInput ? _safePublicNumber(lngRaw, { min: -180, max: 180 }) : null;
         const radiusKm = _normalizeNearbyRadiusKm(url.searchParams.get("radius_km"));
+        // LIMOUSINE-MARKETPLACE-P1: optional vertical filter. Unknown values
+        // resolve to null (no filter) via _resolveNearbyServiceFilter and never
+        // silently become limousine. Existing airport/taxi discovery unchanged.
+        const service = url.searchParams.get("service");
+        const serviceFilter = _resolveNearbyServiceFilter(service);
         if (!hasGeoInput && hasAnyGeoParam) {
           return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
         if (hasGeoInput && (lat == null || lng == null)) {
           return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
-        if (!hasGeoInput && !postcode) {
+        if (
+          !hasGeoInput &&
+          !postcode &&
+          !_limousineNearbyAllowsUnscopedListing({ service: serviceFilter })
+        ) {
           return json({ ok: false, error: "postcode or lat/lng is required" }, 400);
         }
         const partners = await listNearbyPartners(env, {
@@ -44118,12 +45847,17 @@ export default {
           lat,
           lng,
           radiusKm,
+          service: serviceFilter,
         });
         return json({
           ok: true,
           postcode,
           ...(lat != null && lng != null ? { lat, lng } : {}),
           ...(radiusKm != null ? { radius_km: radiusKm } : {}),
+          ...(serviceFilter ? { service: serviceFilter } : {}),
+          ...(serviceFilter === "limousine"
+            ? { limousine_listing_mode: _LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW }
+            : {}),
           count: partners.length,
           partners,
         }, 200);
@@ -44351,6 +46085,16 @@ export default {
         console.log(
           `[KV_WRITE][PUT] route=/admin/fleet/vehicles changed=true scope=${scopeMasked} revision=${sourceRevision} deleted=${deletedIdList.length}`,
         );
+        // LIMOUSINE-MARKETPLACE-P2A: a fleet change can affect readiness.
+        // Recompute the safe public projection (fingerprint-guarded no-op when
+        // unchanged; never breaks the fleet write).
+        if (_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          try {
+            await refreshPartnerLimousineProjection(env, scope);
+          } catch (_) {
+            // non-fatal
+          }
+        }
         return json({
           ok: true,
           changed: true,
@@ -44434,6 +46178,160 @@ export default {
           changed: true,
           key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
           pricing_profile: normalized,
+        }, 200);
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2B2 — read/write ONLY the additive `limousine`
+      // section of pricing:v1. Every unrelated pricing field is preserved
+      // byte-for-byte; the taxi profile and airport fixed-fare store are never
+      // touched. The source revision is server-owned and monotonic.
+      if (url.pathname === "/admin/pricing/limousine" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_PRICING_LIMOUSINE_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, explicitScope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const rawProfile = await _loadRawTenantPricingProfileObject(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const section = _normalizeLimousinePricingSection(rawProfile?.limousine ?? null);
+        let publicProjectedOfferCount = 0;
+        let discoveryListable = false;
+        let discoveryReason = "no_profile";
+        try {
+          const partnerKeys = buildScopedPartnerKeys(explicitScope);
+          const record = partnerKeys
+            ? await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" })
+            : null;
+          const profile = record && typeof record === "object" ? record.partner_profile : null;
+          if (profile && typeof profile === "object") {
+            publicProjectedOfferCount = Array.isArray(profile.limousine_offers)
+              ? profile.limousine_offers.length
+              : 0;
+            discoveryListable = _isLimousineDiscoveryListable(profile);
+            discoveryReason = discoveryListable
+              ? "listable"
+              : publicProjectedOfferCount === 0
+                ? "no_published_offer"
+                : String(profile.limousine_projection?.reason || "not_listable");
+          }
+        } catch (_) {
+          discoveryReason = "error";
+        }
+        return json({
+          ok: true,
+          key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
+          limousine: section,
+          source_revision: section.source_revision,
+          published_offer_count: _countPublishedLimousineOffers(section),
+          public_projected_offer_count: publicProjectedOfferCount,
+          discovery_listable: discoveryListable,
+          discovery_reason: discoveryReason,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/pricing/limousine" && request.method === "POST") {
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_PRICING_LIMOUSINE_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, explicitScope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingSection = body?.limousine && typeof body.limousine === "object"
+          ? body.limousine
+          : null;
+        if (!incomingSection) {
+          return json({ ok: false, error: "limousine object is required" }, 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        if (!scopedKeys?.pricingProfileKey) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const rawProfile = (await _loadRawTenantPricingProfileObject(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        })) || {};
+        const existingSection = _normalizeLimousinePricingSection(rawProfile.limousine ?? null);
+        const nextSection = _mergeLimousinePricingSection(existingSection, incomingSection);
+        // Monotonic: an older revision may never overwrite newer configuration.
+        const clientRevision = Number(incomingSection.source_revision ?? 0) || 0;
+        if (clientRevision > 0 && clientRevision < existingSection.source_revision) {
+          return json({
+            ok: false,
+            error: "stale_source_revision",
+            current_source_revision: existingSection.source_revision,
+          }, 409);
+        }
+        const nowIso = new Date().toISOString();
+        nextSection.source_revision = existingSection.source_revision + 1;
+        nextSection.updated_at = nowIso;
+        nextSection.tenant_id = explicitScope.tenant_id;
+        nextSection.company_id = explicitScope.company_id;
+        nextSection.partner_id = _canonicalPublicPartnerIdFromScope(explicitScope);
+        const previousIdentityDigest = _publishedLimousineIdentityDigest({
+          ...existingSection,
+          published_at: "",
+        });
+        const nextIdentityDigest = _publishedLimousineIdentityDigest({
+          ...nextSection,
+          published_at: "",
+        });
+        if (
+          _publishedLimousineIdentityHasContent(nextSection) &&
+          previousIdentityDigest !== nextIdentityDigest
+        ) {
+          nextSection.published_at = nowIso;
+        } else if (existingSection.published_at) {
+          nextSection.published_at = existingSection.published_at;
+        }
+        // Preserve every unrelated pricing:v1 field byte-for-byte.
+        const mergedProfile = { ...rawProfile, limousine: nextSection };
+        await env.BOOKING_KV.put(
+          scopedKeys.pricingProfileKey,
+          JSON.stringify({ version: 1, updated_at: nowIso, pricing_profile: mergedProfile }),
+        );
+        let refreshResult = { ok: false, reason: "not_attempted" };
+        try {
+          refreshResult = await refreshPartnerLimousineProjection(env, explicitScope);
+        } catch (_) {
+          refreshResult = { ok: false, reason: "error" };
+        }
+        const publishedOfferCount = _countPublishedLimousineOffers(nextSection);
+        const publicProjectedOfferCount = Number(refreshResult.public_projected_offer_count) || 0;
+        const discoveryListable = refreshResult.discovery_listable === true;
+        return json({
+          ok: true,
+          changed: true,
+          key: scopedKeys.pricingProfileKey,
+          limousine: nextSection,
+          published_at: nextSection.published_at || "",
+          source_revision: nextSection.source_revision,
+          published_offer_count: publishedOfferCount,
+          public_projected_offer_count: publicProjectedOfferCount,
+          projection_refresh: {
+            ok: refreshResult.ok === true,
+            changed: refreshResult.changed === true,
+            reason: refreshResult.reason || (refreshResult.ok ? "ok" : "error"),
+          },
+          discovery_listable: discoveryListable,
+          discovery_reason: refreshResult.discovery_reason || (discoveryListable ? "listable" : "not_listable"),
+          visibility_ok: discoveryListable && publicProjectedOfferCount > 0,
         }, 200);
       }
 
@@ -45191,12 +47089,14 @@ export default {
           return json({ ok: false, error: "content_type_mismatch" }, 400);
         }
 
+        const requestedMediaId = _sanitizeVehicleGalleryMediaId(form.get("media_id"));
         const objectKey = _buildPublicCompanyMediaKey({
           tenantId,
           companyId,
           mediaType: normalizedMediaType,
           entityId: entityIdValidation.entity_id,
           ext: detected.ext,
+          mediaId: requestedMediaId,
         });
         await env.PUBLIC_MEDIA.put(objectKey, bytes, {
           httpMetadata: {
@@ -45207,10 +47107,14 @@ export default {
         const uploadedAt = Date.now();
         const mediaUrl =
           `${url.origin}/public/media/${_encodePublicMediaKeyForUrl(objectKey)}?v=${uploadedAt}`;
+        const storedMediaId = normalizedMediaType === "vehicle_photo"
+          ? (objectKey.split("/").pop() || "").replace(/\.[^.]+$/, "")
+          : "";
         return json({
           ok: true,
           media_type: normalizedMediaType,
           entity_id: entityIdValidation.entity_id || "",
+          media_id: storedMediaId,
           key: objectKey,
           url: mediaUrl,
           uploaded_at: uploadedAt,
@@ -45250,14 +47154,74 @@ export default {
         if (!canonicalPartnerId) {
           return json({ ok: false, error: "invalid_partner_scope" }, 400);
         }
+        let _existingScopedPartnerRecord = null;
+        try {
+          _existingScopedPartnerRecord = await env.BOOKING_KV.get(
+            scopedPartnerKeys.profileKey,
+            { type: "json" },
+          );
+        } catch (_) {
+          _existingScopedPartnerRecord = null;
+        }
+        const _existingPartnerProfile =
+          _existingScopedPartnerRecord?.partner_profile &&
+          typeof _existingScopedPartnerRecord.partner_profile === "object"
+            ? _existingScopedPartnerRecord.partner_profile
+            : null;
+        if (
+          _isStalePartnerPublish({
+            existingRevision:
+              _existingScopedPartnerRecord?.source_revision ??
+              _existingPartnerProfile?.source_revision,
+            incomingRevision: incoming.source_revision ?? incoming.sourceRevision,
+          })
+        ) {
+          return json(
+            {
+              ok: false,
+              error: "stale_partner_profile_revision",
+              source_revision:
+                _existingScopedPartnerRecord?.source_revision ??
+                _existingPartnerProfile?.source_revision ??
+                0,
+            },
+            409,
+          );
+        }
         const incomingPartnerAlias = _safePublicText(
           incoming.partner_id ?? incoming.partnerId,
           120,
         );
-        const normalizedProfile = _normalizePublicPartnerProfileEntry({
-          ...incoming,
+        // LIMOUSINE-MARKETPLACE-P1: derive the entitlement from the
+        // authoritative subscription profile (server-owned). Never trust a
+        // client-submitted entitlement value.
+        let _limousineEntitledProjection = false;
+        const _limousinePublishAllowlisted = _limousineTestCompanyAllowlisted(
+          env,
+          explicitScope.company_id,
+        );
+        try {
+          const _subscriptionForLimousine = _limousinePublishAllowlisted
+            ? await loadSubscriptionProfile(env, explicitScope)
+            : null;
+          _limousineEntitledProjection = _projectLimousineEntitled({
+            features: _subscriptionForLimousine?.features,
+            subscriptionStatus:
+              _subscriptionForLimousine?.subscription_status ??
+              _subscriptionForLimousine?.status,
+          });
+        } catch (_) {
+          _limousineEntitledProjection = false;
+        }
+        const _mergedIncoming = _mergePublicPartnerProfilePreserveOmitted(
+          _existingPartnerProfile || {},
+          incoming,
+        );
+        let normalizedProfile = _normalizePublicPartnerProfileEntry({
+          ..._mergedIncoming,
           partner_id: canonicalPartnerId,
           partnerId: canonicalPartnerId,
+          limousine_entitled: _limousineEntitledProjection,
           ...(incomingPartnerAlias && incomingPartnerAlias !== canonicalPartnerId
             ? {
                 legacy_partner_id: incomingPartnerAlias,
@@ -45271,6 +47235,42 @@ export default {
         if (!normalizedProfile) {
           return json({ ok: false, error: "invalid partner_profile payload" }, 400);
         }
+        // LIMOUSINE-MARKETPLACE-P2A: stamp the safe readiness projection with a
+        // server-owned monotonic source_revision (reuses the existing revision
+        // contract). Older republishes cannot lower the revision.
+        // Full safe offer array, computed from authoritative server state only.
+        const _limousinePublicOffers = _limousinePublishAllowlisted
+          ? await _buildAuthoritativeLimousinePublicOffers(
+          env,
+          explicitScope,
+          normalizedProfile,
+        )
+          : [];
+        const _limousinePricingSection = _limousinePublishAllowlisted
+          ? await _loadLimousinePricingSection(env, explicitScope)
+          : null;
+        normalizedProfile = _applyPublicLimousineHeroFields(
+          {
+            ...normalizedProfile,
+            limousine_offers: _limousinePublicOffers,
+          },
+          _limousinePricingSection,
+        );
+        const _limousineProjection = _buildLimousineProjection(normalizedProfile, {
+          safeOfferCount: _limousinePublicOffers.length,
+        });
+        const _limousineRevision = _resolveLimousineProjectionRevision({
+          existingRecord: _existingScopedPartnerRecord,
+          existingProfile: _existingScopedPartnerRecord?.partner_profile ?? null,
+          nextProjection: _limousineProjection,
+          entitled: _limousineEntitledProjection,
+        });
+        normalizedProfile = _stampLimousineProjectionOnProfile({
+          profile: normalizedProfile,
+          entitled: _limousineEntitledProjection,
+          projection: _limousineProjection,
+          sourceRevision: _limousineRevision.source_revision,
+        });
 
         const rawProfiles = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
         const currentProfiles = Array.isArray(rawProfiles)
@@ -45337,6 +47337,7 @@ export default {
           JSON.stringify({
             version: 1,
             updated_at: partnerScopedUpdatedAt,
+            source_revision: normalizedProfile.source_revision,
             tenant_id: explicitScope.tenant_id,
             company_id: explicitScope.company_id,
             partner_profile: normalizedProfile,
@@ -63464,6 +65465,69 @@ async function handleBooking(payload, env, request, options = {}) {
 
     if (!pickup_iso) return { ok: false, error: "Could not create pickup_iso" };
 
+    // LIMOUSINE-MARKETPLACE-P2C1: explicit Limousine booking pre-flight. Runs
+    // BEFORE idempotency mapping and reference allocation so a rejected request
+    // performs zero writes. Gate is INDEPENDENT of the quote gate and default
+    // OFF; taxi, airport, hotel, event and business rides never enter here.
+    let _limousineAccepted = null;
+    let _limousineRouteCache = null;
+    let _limousineManualQuoteRecord = null;
+    const _limousineAcceptanceReference = safeStr(
+      payload?.limousine_acceptance_reference ?? payload?.limousineAcceptanceReference,
+    );
+    if (_isLimousineServiceRequest(payload) || _limousineAcceptanceReference) {
+      if (!_limousineBookGateEnabled(env)) {
+        return { ok: false, error: "limousine_book_disabled" };
+      }
+      let _limousineTrustedBookCompany = "";
+      if (tenantContext.tenant_resolution_mode === "trusted_route") {
+        _limousineTrustedBookCompany = sanitizeTenantString(tenantContext.company_id, 80);
+      } else if (_limousineAllowlistConfigured(env)) {
+        try {
+          const _limousineBookSession = await _loadCompanySessionFromRequest(request, env);
+          const sessionCompany = sanitizeTenantString(_limousineBookSession?.company_id, 80);
+          const claimedCompany = sanitizeTenantString(tenantContext.company_id, 80);
+          if (sessionCompany && sessionCompany === claimedCompany) {
+            _limousineTrustedBookCompany = sessionCompany;
+          }
+        } catch (_) {
+          _limousineTrustedBookCompany = "";
+        }
+      }
+      if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedBookCompany)) {
+        return { ok: false, error: "limousine_unavailable" };
+      }
+      if (_limousineAcceptanceReference) {
+        // LIMOUSINE-MARKETPLACE-P2C2: accepted MANUAL quote. The human-approved
+        // total is authoritative and is NEVER recomputed with taxi pricing.
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return { ok: false, error: "manual_quote_gate_off" };
+        }
+        const manual = await _prepareLimousineManualBooking(env, tenantContext, payload, {
+          acceptanceReference: _limousineAcceptanceReference,
+        });
+        if (!manual.ok) return manual.response;
+        _limousineAccepted = manual.accepted;
+        _limousineManualQuoteRecord = manual.record;
+      } else {
+        const limousinePreflight = await _prepareLimousineBooking(env, tenantContext, payload, {
+          from,
+          to,
+          stops,
+        });
+        if (!limousinePreflight.ok) return limousinePreflight.response;
+        _limousineAccepted = limousinePreflight.accepted;
+        _limousineRouteCache = limousinePreflight.routeOut;
+      }
+    }
+    // LIMOUSINE-MARKETPLACE-P2C2: per-leg allocation. Outbound and return each
+    // carry their own authoritative components; the two leg totals reconcile
+    // exactly with the single-rounded booking total.
+    const _limousineLegAllocation = _limousineAccepted
+      ? _allocateLimousineOperationalLegs(_limousineAccepted.total)
+      : null;
+    const _limousineHasReturnLeg = _limousineLegAllocation?.has_return_leg === true;
+
     const bookingIntent = buildBookingIntentDescriptor({
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
@@ -63619,7 +65683,10 @@ async function handleBooking(payload, env, request, options = {}) {
     // Compute server-side quote (source of truth)
     const fromPoint = readExplicitCoordinatePair(payload, "from");
     const toPoint = readExplicitCoordinatePair(payload, "to");
-    const routeOut = await routeFromTextsWithStopsDetailed({
+    // LIMOUSINE-MARKETPLACE-P2C1: reuse the route already computed by the
+    // Limousine pre-flight so the same authoritative distance/duration is used
+    // and Mapbox is not called twice.
+    const routeOut = _limousineRouteCache || await routeFromTextsWithStopsDetailed({
       fromText: from,
       toText: to,
       fromPoint,
@@ -63740,6 +65807,12 @@ async function handleBooking(payload, env, request, options = {}) {
     if (!pricingProfile.return_enabled) {
       ret.enabled = false;
     }
+    // LIMOUSINE-MARKETPLACE-P2C1: a Limousine roundtrip is priced by the
+    // authoritative composer (both legs + mobilisation, no duplication), so the
+    // taxi return-leg calculation must never run for it.
+    if (_limousineAccepted) {
+      ret.enabled = false;
+    }
 
     // If UI provides a separate return date/time, we treat the return leg as a separate trip moment.
     const return_date = safeStr(payload?.return_date || payload?.returnDate);
@@ -63749,6 +65822,7 @@ async function handleBooking(payload, env, request, options = {}) {
     const bookingReturnRequested = ret.enabled || hasReturnSchedule;
     const bookingExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(payload, tenantContext);
     const bookingFixedFareEligible =
+      !_limousineAccepted &&
       _isAirportFixedFareEligiblePayload(payload) &&
       bookingExplicitScopeAllowed;
     let fixedFareBookingResult = {
@@ -63767,7 +65841,11 @@ async function handleBooking(payload, env, request, options = {}) {
       });
     }
     const bookingMainUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
-    const bookingMainPricingSource = bookingMainUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+    const bookingMainPricingSource = _limousineAccepted
+      ? _limousineAccepted.pricingSource
+      : bookingMainUsesFixedFare
+      ? "airport_fixed_fare"
+      : "route_calc";
     const bookingMainFixedFareApplied = bookingMainUsesFixedFare;
     const bookingMainFixedFareRuleId = bookingMainUsesFixedFare
       ? (fixedFareBookingResult.fixed_fare_rule_id || null)
@@ -63965,7 +66043,11 @@ async function handleBooking(payload, env, request, options = {}) {
     }
 
     const when = normalizeWhen(date, time);
-    const mainPricing = bookingMainUsesFixedFare
+    // LIMOUSINE-MARKETPLACE-P2C1: an accepted Limousine total replaces the taxi
+    // calculation entirely — never calcPrice, never an airport taxi fixed fare.
+    const mainPricing = _limousineAccepted
+      ? _limousineAccepted.pricing
+      : bookingMainUsesFixedFare
       ? fixedFareBookingResult.pricing
       : calcPrice({
         distance_km,
@@ -63985,6 +66067,15 @@ async function handleBooking(payload, env, request, options = {}) {
 
     // Total pricing = main + (optional) return
     const totalPricing = (() => {
+      // LIMOUSINE-MARKETPLACE-P2C1: the authoritative Limousine total is already
+      // itemized and rounded exactly once by the composer.
+      if (_limousineAccepted) {
+        return {
+          price_ex_vat: _limousineAccepted.total.price_ex_vat,
+          price_vat: _limousineAccepted.total.price_vat,
+          price_incl_vat: _limousineAccepted.total.price_incl_vat,
+        };
+      }
       const main = mainPricing || {};
       const retp = (ret.enabled && returnPricing) ? returnPricing : null;
 
@@ -64003,7 +66094,9 @@ async function handleBooking(payload, env, request, options = {}) {
 
       return { price_ex_vat: ex, price_vat: vat, price_incl_vat: incl };
     })();
-    const bookingPricingSource = ret.enabled
+    const bookingPricingSource = _limousineAccepted
+      ? _limousineAccepted.pricingSource
+      : ret.enabled
       ? (bookingMainFixedFareApplied && bookingReturnUsesFixedFare
         ? "airport_fixed_fare"
         : (bookingMainFixedFareApplied || bookingReturnUsesFixedFare
@@ -65640,20 +67733,44 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       pickupIso: pickup_iso,
       distanceKm: distance_km,
       durationMin: duration_route_min,
-      returnEnabled: ret.enabled,
-      hasReturnSchedule,
-      waitMin: wait_min,
-      returnFrom: return_from,
-      returnTo: return_to,
-      returnPickupIso: return_pickup_iso,
-      returnDistanceKm: return_distance_km,
-      returnDurationMin: return_duration_min,
-      priceMainInclVat: mainPricing?.price_incl_vat,
-      priceMainExVat: mainPricing?.price_ex_vat,
-      priceMainVat: mainPricing?.price_vat,
-      priceReturnInclVat: returnPricing?.price_incl_vat,
-      priceReturnExVat: returnPricing?.price_ex_vat,
-      priceReturnVat: returnPricing?.price_vat,
+      // LIMOUSINE-MARKETPLACE-P2C2: a Limousine roundtrip splits into distinct
+      // outbound/return operational legs with their own authoritative amounts.
+      returnEnabled: _limousineHasReturnLeg ? true : ret.enabled,
+      hasReturnSchedule: _limousineHasReturnLeg ? true : hasReturnSchedule,
+      waitMin: _limousineHasReturnLeg ? 0 : wait_min,
+      returnFrom: _limousineHasReturnLeg
+        ? (safeStr(payload?.return_from ?? payload?.returnFrom) || to)
+        : return_from,
+      returnTo: _limousineHasReturnLeg
+        ? (safeStr(payload?.return_to ?? payload?.returnTo) || from)
+        : return_to,
+      returnPickupIso: _limousineHasReturnLeg
+        ? (safeStr(payload?.return_pickup_iso ?? payload?.returnPickupIso) || return_pickup_iso)
+        : return_pickup_iso,
+      returnDistanceKm: _limousineHasReturnLeg
+        ? (_limousineAccepted?.total?.legs?.[1]?.distance_km ?? return_distance_km)
+        : return_distance_km,
+      returnDurationMin: _limousineHasReturnLeg
+        ? (_limousineAccepted?.total?.legs?.[1]?.duration_min ?? return_duration_min)
+        : return_duration_min,
+      priceMainInclVat: _limousineLegAllocation
+        ? _limousineLegAllocation.outbound.price_incl_vat
+        : mainPricing?.price_incl_vat,
+      priceMainExVat: _limousineLegAllocation
+        ? _limousineLegAllocation.outbound.price_ex_vat
+        : mainPricing?.price_ex_vat,
+      priceMainVat: _limousineLegAllocation
+        ? _limousineLegAllocation.outbound.price_vat
+        : mainPricing?.price_vat,
+      priceReturnInclVat: _limousineHasReturnLeg
+        ? _limousineLegAllocation.return.price_incl_vat
+        : returnPricing?.price_incl_vat,
+      priceReturnExVat: _limousineHasReturnLeg
+        ? _limousineLegAllocation.return.price_ex_vat
+        : returnPricing?.price_ex_vat,
+      priceReturnVat: _limousineHasReturnLeg
+        ? _limousineLegAllocation.return.price_vat
+        : returnPricing?.price_vat,
       fixedFareAppliedMain: bookingMainFixedFareApplied,
       fixedFareAppliedReturn: bookingReturnUsesFixedFare,
       fixedFareRuleIdMain: bookingMainFixedFareRuleId,
@@ -66013,6 +68130,13 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         pricing_main: mainPricing,
         pricing_return: returnPricing,
         pricing_profile: pricingProfile,
+        // LIMOUSINE-MARKETPLACE-P2C1: immutable accepted-price snapshot with
+        // full provenance. It must never be recomputed from later company
+        // pricing changes, offer disablement, entitlement loss or vehicle
+        // suspension.
+        ...(_limousineAccepted
+          ? { limousine_accepted_price: _limousineAccepted.snapshot }
+          : {}),
         pricing_source: bookingPricingSource,
         pricing_source_main: bookingMainPricingSource,
         pricing_source_return: bookingReturnPricingSource,
@@ -66139,6 +68263,27 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             `[CUSTOMER_PHONE_LINK][SCOPE_LINK_WARN] booking=${_bookingIntentMask(booking.bookingId)} reason=${reason}`,
           );
         }
+      }
+    }
+    // LIMOUSINE-MARKETPLACE-P2C2: close the manual quote lifecycle once the
+    // booking exists. Best-effort and idempotent: a replay of the same booking
+    // intent finds the record already in booking_created and writes nothing.
+    if (_limousineManualQuoteRecord) {
+      try {
+        const closed = _applyLimousineQuoteTransition(_limousineManualQuoteRecord, {
+          to: _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED,
+          actorType: "system",
+          reasonCode: "booking_created",
+          patch: { booking_reference: booking.bookingId },
+        });
+        if (closed.ok && closed.changed) {
+          await _saveLimousineQuoteRecord(
+            env,
+            _appendLimousineQuoteAudit(closed.record, closed.audit),
+          );
+        }
+      } catch (_) {
+        // Never break a persisted booking on lifecycle bookkeeping.
       }
     }
     const maskedScope = _bookingIntentScopeMask(idempotencyScope);
@@ -73106,6 +75251,24 @@ async function _loadTenantPricingProfile(
   return _normalizeTenantPricingProfile(incoming);
 }
 
+/// Reads the raw stored pricing_profile object (unnormalized) so additive
+/// sections such as `limousine` survive a taxi-only save.
+async function _loadRawTenantPricingProfileObject(env, scope, { allowTenantLegacyFallback = true } = {}) {
+  if (!env?.BOOKING_KV) return null;
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys?.pricingProfileKey) {
+    raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
+  }
+  if (!raw && allowTenantLegacyFallback) {
+    raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+  }
+  if (!raw || typeof raw !== "object") return null;
+  return raw.pricing_profile && typeof raw.pricing_profile === "object"
+    ? raw.pricing_profile
+    : raw;
+}
+
 async function _saveTenantPricingProfile(
   env,
   incoming,
@@ -73114,6 +75277,27 @@ async function _saveTenantPricingProfile(
 ) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = _normalizeTenantPricingProfile(incoming);
+  // LIMOUSINE-MARKETPLACE-P2B2: `_normalizeTenantPricingProfile` whitelists taxi
+  // keys, so a taxi-only save would otherwise DROP the additive `limousine`
+  // section. Preserve it verbatim unless the caller explicitly supplies one.
+  const incomingLimousine =
+    incoming && typeof incoming === "object" ? incoming.limousine : undefined;
+  let preservedLimousine = incomingLimousine;
+  if (preservedLimousine === undefined) {
+    try {
+      const existingRaw = await _loadRawTenantPricingProfileObject(env, scope, {
+        allowTenantLegacyFallback: allowTenantLegacyWrite,
+      });
+      if (existingRaw && existingRaw.limousine !== undefined) {
+        preservedLimousine = existingRaw.limousine;
+      }
+    } catch (_) {
+      preservedLimousine = undefined;
+    }
+  }
+  if (preservedLimousine !== undefined) {
+    normalized.limousine = preservedLimousine;
+  }
   const scopedKeys = buildScopedSettingsKeys(scope);
   const targetKey = scopedKeys?.pricingProfileKey ||
     (allowTenantLegacyWrite ? TENANT_PRICING_PROFILE_KEY : "");
@@ -76900,11 +79084,227 @@ function _logNearbyCapabilitiesDiagnostics(partnerId, payload) {
   );
 }
 
-async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null } = {}) {
+// Sync the sanitized limousine sub-document onto one partner entry inside a
+// stored profile array. Other partners and non-limousine fields stay as-is.
+async function _syncLimousinePublicFieldsInProfileArray(env, key, partnerId, stamped, wrapper) {
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray(raw.profiles)
+      ? raw.profiles
+      : null;
+  if (!Array.isArray(list)) return false;
+  let changed = false;
+  const next = list.map((entry) => {
+    if (entry && typeof entry === "object" && entry.partner_id === partnerId) {
+      const updated = _applyLimousinePublicFieldsToProfileEntry(entry, stamped);
+      if (JSON.stringify(updated) !== JSON.stringify(entry)) changed = true;
+      return updated;
+    }
+    return entry;
+  });
+  if (!changed) return false;
+  const payload = wrapper
+    ? { ...wrapper, profiles: next }
+    : { profiles: next };
+  await env.BOOKING_KV.put(key, JSON.stringify(payload));
+  return true;
+}
+
+/// LIMOUSINE-MARKETPLACE-P2B2C: builds the customer-safe public offer array
+/// entirely from AUTHORITATIVE server state — the company's `pricing:v1`
+/// limousine offers joined against the scoped fleet record. Flutter-submitted
+/// public vehicle/offer fields are never trusted here. Fails closed to [].
+async function _buildAuthoritativeLimousinePublicOffers(env, scope, profile) {
+  try {
+    const section = await _loadLimousinePricingSection(env, scope);
+    const offers = _normalizeLimousineOffers(section?.offers);
+    if (offers.length === 0) return [];
+    let fleetVehicles = [];
+    try {
+      const fleetRaw = await env.BOOKING_KV.get(
+        fleetInventoryScopedKeyForScope(scope),
+        { type: "json" },
+      );
+      fleetVehicles = _fleetVehiclesRawFromKv(fleetRaw)
+        .map((entry) => _normalizeVehicleEntry(entry, { scope }))
+        .filter((v) => v !== null);
+    } catch (_) {
+      fleetVehicles = [];
+    }
+    const eligible = _isEligibleLimousineProvider(profile);
+    return _buildSafePublicLimousineOffers(offers, {
+      eligible,
+      knownVehicles: fleetVehicles,
+      knownClassIds: fleetVehicles
+        .map((v) => v.service_class)
+        .filter((c) => !!c),
+      readiness: eligible,
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
+/// Shared, server-owned recomputation of the public Limousine readiness
+/// projection for a company. Reuses the authoritative subscription entitlement
+/// and the eligibility resolver — it never duplicates composition logic. It is
+/// a safe no-op when the company has no published public profile, only touches
+/// limousine fields (+ monotonic revision), and never throws into callers.
+async function refreshPartnerLimousineProjection(env, scope) {
+  try {
+    if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
+      return { ok: false, reason: "test_company_not_allowlisted" };
+    }
+    if (!env?.BOOKING_KV) return { ok: false, reason: "no_kv" };
+    const scopedKeys = buildScopedPartnerKeys(scope);
+    if (!scopedKeys) return { ok: false, reason: "no_scope" };
+    const record = await env.BOOKING_KV.get(scopedKeys.profileKey, { type: "json" });
+    const existingProfile =
+      record && typeof record === "object" ? record.partner_profile : null;
+    if (!existingProfile || typeof existingProfile !== "object") {
+      return { ok: false, reason: "no_profile" };
+    }
+    let entitled = false;
+    try {
+      const sub = await loadSubscriptionProfile(env, scope);
+      entitled = _projectLimousineEntitled({
+        features: sub?.features,
+        subscriptionStatus: sub?.subscription_status ?? sub?.status,
+      });
+    } catch (_) {
+      entitled = false;
+    }
+    const publicOffers = await _buildAuthoritativeLimousinePublicOffers(
+      env,
+      scope,
+      { ...existingProfile, limousine_entitled: entitled },
+    );
+    const pricingSection = await _loadLimousinePricingSection(env, scope);
+    const nextProfileBase = _applyPublishedLimousineIdentityToProfile(
+      _applyPublicLimousineHeroFields(
+        {
+          ...existingProfile,
+          limousine_entitled: entitled,
+          limousine_offers: publicOffers,
+        },
+        pricingSection,
+      ),
+      pricingSection,
+      { scope, publicSurface: true },
+    );
+    const projection = _buildLimousineProjection(nextProfileBase, {
+      safeOfferCount: publicOffers.length,
+    });
+    const nextDigest = _limousinePublicContentDigest({
+      offers: publicOffers,
+      hero: pricingSection?.limousine_hero,
+      selectedVehicleIds: pricingSection?.selected_vehicle_ids,
+      publishedIdentity: pricingSection,
+    });
+    const existingDigest = _limousinePublicContentDigestFromProfile(existingProfile);
+    const revision = _resolveLimousineProjectionRevision({
+      existingRecord: record,
+      existingProfile,
+      nextProjection: projection,
+      entitled,
+      existingContentDigest: existingDigest,
+      nextContentDigest: nextDigest,
+    });
+    const stamped = revision.changed
+      ? _stampLimousineProjectionOnProfile({
+          profile: nextProfileBase,
+          entitled,
+          projection,
+          sourceRevision: revision.source_revision,
+        })
+      : {
+          ...nextProfileBase,
+          limousine_entitled: entitled === true,
+          limousine_projection: existingProfile.limousine_projection,
+          source_revision: revision.source_revision,
+        };
+    const toSync = _applyLimousinePublicFieldsToProfileEntry(
+      stamped,
+      { ...stamped, limousine_offers: publicOffers },
+    );
+    if (revision.changed) {
+      await env.BOOKING_KV.put(
+        scopedKeys.profileKey,
+        JSON.stringify({
+          ...(record && typeof record === "object" ? record : {}),
+          version: record?.version ?? 1,
+          updated_at: revision.updated_at,
+          source_revision: revision.source_revision,
+          partner_profile: toSync,
+        }),
+      );
+    } else {
+      const scopedNeedsOffers =
+        JSON.stringify(existingProfile.limousine_offers || []) !==
+        JSON.stringify(publicOffers);
+      if (scopedNeedsOffers) {
+        await env.BOOKING_KV.put(
+          scopedKeys.profileKey,
+          JSON.stringify({
+            ...(record && typeof record === "object" ? record : {}),
+            version: record?.version ?? 1,
+            updated_at: revision.updated_at,
+            source_revision: revision.source_revision,
+            partner_profile: toSync,
+          }),
+        );
+      }
+    }
+    // Heal v1/v2 even when the fingerprint is unchanged so a previous
+    // entitled-only write cannot leave public offers empty.
+    await _syncLimousinePublicFieldsInProfileArray(
+      env,
+      PARTNER_PROFILES_KEY,
+      existingProfile.partner_id,
+      toSync,
+      null,
+    );
+    await _syncLimousinePublicFieldsInProfileArray(
+      env,
+      PUBLIC_PARTNER_PROFILES_V2_KEY,
+      existingProfile.partner_id,
+      toSync,
+      { version: 2, updated_at: revision.updated_at },
+    );
+    const discoveryListable = _isLimousineDiscoveryListable(toSync);
+    return {
+      ok: true,
+      changed: revision.changed === true,
+      source_revision: revision.source_revision,
+      public_projected_offer_count: publicOffers.length,
+      discovery_listable: discoveryListable,
+      discovery_reason: discoveryListable
+        ? "listable"
+        : publicOffers.length === 0
+          ? "no_published_offer"
+          : String(projection.reason || "not_listable"),
+    };
+  } catch (_) {
+    return { ok: false, reason: "error" };
+  }
+}
+
+async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null, service = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
-  if (!hasGeoQuery && !needle) return [];
+  const serviceFilter = _resolveNearbyServiceFilter(service);
+  const unscopedLimousine = _limousineNearbyAllowsUnscopedListing({
+    service: serviceFilter,
+    postcode: needle,
+    lat,
+    lng,
+  });
+  if (!hasGeoQuery && !needle && !unscopedLimousine) return [];
   const normalizedQueryRadiusKm = _normalizeNearbyRadiusKm(radiusKm);
+  // LIMOUSINE-MARKETPLACE-P1: optional server-side vertical filter. Unknown /
+  // empty `service` values resolve to null (no filter) and never become
+  // limousine. Airport filtering and default taxi discovery are unaffected.
   const partners = await _loadPartnerDirectory(env);
   const profiles = await _loadPublicPartnerProfiles(env);
   const routes = await _loadPartnerBookingRoutes(env);
@@ -76914,6 +79314,21 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       .map((entry) => [entry.partner_id, entry]),
   );
   const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
+  const profileByPartnerId = new Map(
+    visibleProfiles.map((profile) => [profile.partner_id, profile]),
+  );
+  // Authoritative limousine eligibility per visible profile. Location is used
+  // only for distance ranking when service=limousine. Fails closed.
+  const limousineEligibleByPartnerId = new Map(
+    visibleProfiles.map((profile) => [
+      profile.partner_id,
+      _isEligibleLimousineProvider(profile) &&
+        _isLimousineDiscoveryListable(profile),
+    ]),
+  );
+  const limousineSignalsByPartnerId = new Map(
+    visibleProfiles.map((profile) => [profile.partner_id, _publicLimousineSignals(profile)]),
+  );
   const publicMediaByPartnerId = new Map(
     visibleProfiles
       .map((profile) => {
@@ -76922,12 +79337,6 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         const logoUrl = _safePublicHttpsUrl(media.logo_url ?? media.logoUrl, 600);
         return [profile.partner_id, { hero_photo_url: heroUrl, logo_url: logoUrl }];
       }),
-  );
-  const visitingCardByPartnerId = new Map(
-    visibleProfiles.map((profile) => [
-      profile.partner_id,
-      _publicLimousineVisitingCardFields(profile),
-    ]),
   );
   const nearbyCapabilitySignalsByPartnerId = new Map(
     visibleProfiles
@@ -77034,6 +79443,21 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       };
     })
     .map((entry) => {
+      if (serviceFilter === "limousine") {
+        return {
+          ...entry,
+          matches: true,
+          distanceKm: _limousineNearbyDistanceKm({
+            postcode: needle,
+            lat,
+            lng,
+            coverageLat: entry.coverageLat,
+            coverageLng: entry.coverageLng,
+            primaryPostcode: entry.primaryPostcode,
+            supportedPostcodes: entry.supportedPostcodes,
+          }),
+        };
+      }
       if (hasGeoQuery) {
         const hasPartnerCoverage =
           Number.isFinite(entry.coverageLat) &&
@@ -77064,7 +79488,22 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       };
     })
     .filter((entry) => entry.matches)
+    .filter((entry) => {
+      // LIMOUSINE-MARKETPLACE-P1: when service=limousine, keep only providers
+      // that pass authoritative limousine eligibility. Without the filter,
+      // discovery is unchanged.
+      if (serviceFilter !== "limousine") return true;
+      if (limousineEligibleByPartnerId.get(entry.p.partner_id) !== true) return false;
+      const nearbyCompanyId =
+        entry.routeCompanyId ||
+        _scopeFromCanonicalPublicPartnerId(entry.p.partner_id)?.company_id ||
+        "";
+      return _limousineTestCompanyAllowlisted(env, nearbyCompanyId);
+    })
     .sort((a, b) => {
+      if (serviceFilter === "limousine") {
+        return _compareLimousineNearbyRank(a, b);
+      }
       if (hasGeoQuery) {
         return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
       }
@@ -77092,6 +79531,21 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
       const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
+      const nearbySignalCompanyId =
+        entry.routeCompanyId ||
+        _scopeFromCanonicalPublicPartnerId(p.partner_id)?.company_id ||
+        "";
+      const limousineSignals =
+        serviceFilter === "limousine" &&
+        _limousineTestCompanyAllowlisted(env, nearbySignalCompanyId)
+        ? {
+            ...(limousineSignalsByPartnerId.get(p.partner_id) || {}),
+            ..._buildLimousineNearbyCardProjection(
+              profileByPartnerId.get(p.partner_id),
+              { testPreview: true },
+            ),
+          }
+        : {};
       _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
       return {
         partner_id: p.partner_id,
@@ -77099,13 +79553,15 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         is_active: true,
         subscription_status: p.subscription_status,
         supported_postcodes: entry.supportedPostcodes,
-        ...(entry.distanceKm != null
-          ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
-          : {}),
+        ...(serviceFilter === "limousine"
+          ? _publicLimousineDistanceFields(entry.distanceKm)
+          : entry.distanceKm != null && hasGeoQuery
+            ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
+            : {}),
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
         ...capabilitySignals,
-        ...(visitingCardByPartnerId.get(p.partner_id) || {}),
+        ...limousineSignals,
       };
     });
 }
@@ -77413,8 +79869,6 @@ function _validateCompanyMediaType(mediaType) {
   if (
     normalizedMediaType === "company_logo" ||
     normalizedMediaType === "company_hero" ||
-    normalizedMediaType === "limousine_profile_cover" ||
-    normalizedMediaType === "limousine_profile_logo" ||
     normalizedMediaType === "vehicle_photo" ||
     normalizedMediaType === "driver_photo"
   ) {
@@ -77446,7 +79900,7 @@ function _validatePublicMediaEntityId(mediaType, entityIdRaw) {
   return { ok: true, entity_id: safe };
 }
 
-function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId, ext }) {
+function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId, ext, mediaId }) {
   const tenantSeg = _sanitizePublicMediaSegment(tenantId);
   const companySeg = _sanitizePublicMediaSegment(companyId);
   if (!tenantSeg || !companySeg) {
@@ -77457,16 +79911,11 @@ function _buildPublicCompanyMediaKey({ tenantId, companyId, mediaType, entityId,
     const fileName = mediaType === "company_logo" ? `logo.${safeExt}` : `hero.${safeExt}`;
     return `public-media/${tenantSeg}/${companySeg}/company/${fileName}`;
   }
-  if (mediaType === "limousine_profile_cover") {
-    return `public-media/${tenantSeg}/${companySeg}/limousine/profile-cover.${safeExt}`;
-  }
-  if (mediaType === "limousine_profile_logo") {
-    return `public-media/${tenantSeg}/${companySeg}/limousine/profile-logo.${safeExt}`;
-  }
   if (mediaType === "vehicle_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);
     if (!entitySeg) throw new Error("invalid vehicle entity scope");
-    return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/photo.${safeExt}`;
+    const mediaSeg = _sanitizeVehicleGalleryMediaId(mediaId) || _newVehicleGalleryMediaId();
+    return `public-media/${tenantSeg}/${companySeg}/vehicles/${entitySeg}/gallery/${mediaSeg}.${safeExt}`;
   }
   if (mediaType === "driver_photo") {
     const entitySeg = _sanitizePublicMediaSegment(entityId);
@@ -77598,14 +80047,44 @@ function _normalizePublicVehicles(raw) {
   const out = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
+    // LIMOUSINE-MARKETPLACE-P1: authoritative, configured classification only.
+    // `category` remains the human tier label; `service_category` /
+    // `service_class` are the machine-authoritative identifiers used by
+    // eligibility. Empty when not configured (fails closed downstream).
+    const serviceCategory = _safePublicText(row.service_category ?? row.serviceCategory, 40)
+      .toLowerCase();
+    const serviceClass = _safePublicText(
+      row.service_class ?? row.serviceClass ?? row.service_class_id ?? row.serviceClassId,
+      64,
+    )
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    const media = _normalizePublicVehicleGallery(row, (value) =>
+      _safePublicHttpsUrl(value, 600),
+    );
+    const fallbackPhotoUrl = _safePublicHttpsUrl(
+      row.photo_url ?? row.photoUrl ?? row.public_photo_url ?? row.publicPhotoUrl,
+      600,
+    );
+    const publicMedia = _attachPublicVehicleMediaFields({
+      serviceCategory,
+      media,
+      fallbackPhotoUrl,
+    });
+    const publicVehicleId = _safePublicText(row.vehicle_id ?? row.vehicleId, 96);
     out.push({
       name: _safePublicText(row.name, 120),
       brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
       category: _safePublicText(row.category, 80),
+      ...(serviceCategory ? { service_category: serviceCategory } : {}),
+      ...(serviceClass ? { service_class: serviceClass } : {}),
+      ...(serviceCategory === "limousine" && publicVehicleId
+        ? { vehicle_id: publicVehicleId }
+        : {}),
       pax: _safePublicInt(row.pax, 0, 0, 99),
       luggage: _safePublicInt(row.luggage, 0, 0, 99),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
-      photo_url: _safePublicHttpsUrl(row.photo_url ?? row.photoUrl, 600),
+      ...publicMedia,
     });
   }
   return out;
@@ -77661,53 +80140,171 @@ function _normalizePublicBookingCapabilities(raw, profileEnabled) {
     online_payments: _safePublicBool(src.online_payments ?? src.onlinePayments, false),
     instant_quote: _safePublicBool(src.instant_quote ?? src.instantQuote, false),
     profile_enabled: !!profileEnabled,
+    // LIMOUSINE-MARKETPLACE-P1: safe, non-private company-enable signal. Taxi
+    // and airport capabilities are unaffected.
+    limousine: _safePublicBool(src.limousine ?? src.limousine_service, false),
   };
 }
 
-function _publicLimousineVehicleCopyFields(raw) {
-  const src = raw && typeof raw === "object" ? raw : {};
-  const visiting =
-    src.published_limousine_visiting_card &&
-    typeof src.published_limousine_visiting_card === "object"
-      ? src.published_limousine_visiting_card
-      : {};
-  const rawCopy =
-    visiting.vehicle_public_copy ??
-    src.published_limousine_vehicle_public_copy ??
-    src.publishedLimousineVehiclePublicCopy;
-  if (!rawCopy || typeof rawCopy !== "object" || Array.isArray(rawCopy)) return {};
-  const out = {};
-  for (const [id, value] of Object.entries(rawCopy)) {
-    const vehicleId = String(id || "").trim();
-    if (!vehicleId) continue;
-    const localized = {};
-    const map = value && typeof value === "object" ? value : {};
-    for (const lang of ["nl", "en", "fr", "es", "de"]) {
-      const text = String(map[lang] ?? "").trim().slice(0, 600);
-      if (text) localized[lang] = text;
+/// LIMOUSINE-MARKETPLACE-P2B2C: bounded whitelist for the published safe offer
+/// array. Anything not listed here is dropped, so a private vehicle field can
+/// never survive a profile round-trip.
+function _sanitizePublicLimousineOffersForProfile(raw) {
+  if (!Array.isArray(raw)) return [];
+  const localized = (value) => {
+    const src = value && typeof value === "object" ? value : {};
+    const out = {};
+    for (const lang of ["nl", "en", "fr", "es"]) {
+      const text = _safePublicText(src[lang], 600);
+      if (text) out[lang] = text;
     }
-    if (Object.keys(localized).length) out[vehicleId] = localized;
+    return out;
+  };
+  const out = [];
+  for (const entry of raw.slice(0, 40)) {
+    if (!entry || typeof entry !== "object") continue;
+    const offerId = _safePublicText(entry.offer_id, 64);
+    if (!offerId) continue;
+    const vehicle = entry.vehicle && typeof entry.vehicle === "object" ? entry.vehicle : null;
+    const vehicleIds = _safePublicStringList(entry.vehicle_ids ?? entry.vehicleIds, {
+      maxItems: 20,
+      maxItemLen: 96,
+    });
+    const singleVehicleId = _safePublicText(entry.vehicle_id ?? entry.vehicleId, 96);
+    out.push({
+      offer_id: offerId,
+      target_type: _safePublicText(entry.target_type, 24),
+      service_class_id: _safePublicText(entry.service_class_id, 64),
+      applies_to_all_selected_vehicles: _safePublicBool(
+        entry.applies_to_all_selected_vehicles ?? entry.appliesToAllSelectedVehicles,
+        false,
+      ),
+      featured: _safePublicBool(entry.featured, false),
+      sort_order: _safePublicInt(entry.sort_order ?? entry.sortOrder, 0, 0, 9999),
+      ...(vehicleIds.length ? { vehicle_ids: vehicleIds } : {}),
+      ...(singleVehicleId ? { vehicle_id: singleVehicleId } : {}),
+      ...(vehicle
+        ? {
+            vehicle: {
+              vehicle_id: _safePublicText(vehicle.vehicle_id, 96),
+              service_class_id: _safePublicText(vehicle.service_class_id, 64),
+              ...(vehicle.passenger_capacity != null
+                ? { passenger_capacity: _safePublicInt(vehicle.passenger_capacity, 0, 0, 99) }
+                : {}),
+              ...(vehicle.luggage_capacity != null
+                ? { luggage_capacity: _safePublicInt(vehicle.luggage_capacity, 0, 0, 99) }
+                : {}),
+              ...(vehicle.color ? { color: _safePublicText(vehicle.color, 40) } : {}),
+              ...(vehicle.photo_url
+                ? { photo_url: _safePublicHttpsUrl(vehicle.photo_url, 600) }
+                : {}),
+            },
+            vehicle_id: _safePublicText(entry.vehicle_id ?? vehicle.vehicle_id, 96),
+          }
+        : {}),
+      title: localized(entry.title),
+      description: localized(entry.description),
+      ...(entry.important_information
+        ? { important_information: localized(entry.important_information) }
+        : {}),
+      pricing_modes: _safePublicStringList(entry.pricing_modes, {
+        maxItems: 4,
+        maxItemLen: 24,
+      }),
+      price_presentation: _safePublicText(entry.price_presentation, 24),
+      ...(entry.display_amount_cents != null
+        ? {
+            display_amount_cents: _safePublicInt(
+              entry.display_amount_cents,
+              0,
+              0,
+              100000000,
+            ),
+          }
+        : {}),
+      currency: _safePublicText(entry.currency, 3).toUpperCase(),
+      journey_types: _safePublicStringList(entry.journey_types, {
+        maxItems: 8,
+        maxItemLen: 32,
+      }),
+      ...(entry.hourly && typeof entry.hourly === "object"
+        ? {
+            hourly: {
+              first_hour_cents: _safePublicInt(entry.hourly.first_hour_cents, 0, 0, 100000000),
+              additional_hour_cents: _safePublicInt(
+                entry.hourly.additional_hour_cents,
+                0,
+                0,
+                100000000,
+              ),
+              minimum_duration_minutes: _safePublicInt(
+                entry.hourly.minimum_duration_minutes,
+                0,
+                0,
+                100000,
+              ),
+              ...(entry.hourly.included_hours != null
+                ? { included_hours: _safePublicInt(entry.hourly.included_hours, 0, 0, 1000) }
+                : {}),
+              ...(entry.hourly.package_duration_minutes != null
+                ? {
+                    package_duration_minutes: _safePublicInt(
+                      entry.hourly.package_duration_minutes,
+                      0,
+                      0,
+                      100000,
+                    ),
+                  }
+                : {}),
+              ...(entry.hourly.package_amount_cents != null
+                ? {
+                    package_amount_cents: _safePublicInt(
+                      entry.hourly.package_amount_cents,
+                      0,
+                      0,
+                      100000000,
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      included_services: (Array.isArray(entry.included_services)
+        ? entry.included_services
+        : []
+      )
+        .slice(0, 20)
+        .map((s) => ({
+          item_id: _safePublicText(s?.item_id, 64),
+          label: localized(s?.label),
+        })),
+      paid_extras: (Array.isArray(entry.paid_extras) ? entry.paid_extras : [])
+        .slice(0, 20)
+        .map((e) => ({
+          extra_id: _safePublicText(e?.extra_id, 64),
+          label: localized(e?.label),
+          quote_required: _safePublicBool(e?.quote_required, false),
+          ...(e?.amount_cents != null
+            ? { amount_cents: _safePublicInt(e.amount_cents, 0, 0, 100000000) }
+            : {}),
+          currency: _safePublicText(e?.currency, 3).toUpperCase(),
+        })),
+      ...(entry.mobilisation && typeof entry.mobilisation === "object"
+        ? {
+            mobilisation: {
+              included: _safePublicBool(entry.mobilisation.included, false),
+              charged_separately: _safePublicBool(
+                entry.mobilisation.charged_separately,
+                false,
+              ),
+              disclosure: localized(entry.mobilisation.disclosure),
+            },
+          }
+        : {}),
+      source_revision: _safePublicInt(entry.source_revision, 0, 0, 1000000000),
+    });
   }
-  return Object.keys(out).length
-    ? { published_limousine_vehicle_public_copy: out }
-    : {};
-}
-
-function _publicLimousineVisitingCardFields(raw) {
-  const card = _buildLimousinePublicVisitingCard(raw);
-  const hasText = (map) =>
-    map && typeof map === "object" && Object.values(map).some((value) => String(value || "").trim());
-  const copy = _publicLimousineVehicleCopyFields(raw);
-  if (
-    !hasText(card.published_public_title) &&
-    !hasText(card.published_public_description) &&
-    !card.published_limousine_profile_cover?.photo_url &&
-    !card.published_limousine_profile_logo?.photo_url &&
-    !copy.published_limousine_vehicle_public_copy
-  ) {
-    return {};
-  }
-  return { ...card, ...copy };
+  return out;
 }
 
 function _normalizePublicPartnerProfileEntry(raw) {
@@ -77748,6 +80345,68 @@ function _normalizePublicPartnerProfileEntry(raw) {
     is_active: isActive,
     subscription_status: subscriptionStatus,
     ...(publishedAt ? { published_at: publishedAt } : {}),
+    // LIMOUSINE-MARKETPLACE-P1: server-projected entitlement (safe boolean).
+    // The publish handler stamps `limousine_entitled` from the authoritative
+    // subscription profile; any client-submitted value is overwritten there.
+    // Missing => false (fail closed).
+    limousine_entitled: raw.limousine_entitled === true,
+    // LIMOUSINE-MARKETPLACE-P2A: preserve the safe readiness projection +
+    // monotonic source_revision through re-normalization (no private data).
+    ...(raw.source_revision != null
+      ? { source_revision: _safePublicInt(raw.source_revision, 0, 0, 1000000000) }
+      : {}),
+    ...(Array.isArray(raw.limousine_offers)
+      ? { limousine_offers: _sanitizePublicLimousineOffersForProfile(raw.limousine_offers) }
+      : {}),
+    ...(_safePublicHttpsUrl(raw.limousine_hero_url ?? raw.limousineHeroUrl, 600)
+      ? {
+          limousine_hero_url: _safePublicHttpsUrl(
+            raw.limousine_hero_url ?? raw.limousineHeroUrl,
+            600,
+          ),
+          limousine_hero_source: _safePublicText(
+            raw.limousine_hero_source ?? raw.limousineHeroSource,
+            24,
+          ),
+          limousine_hero_alignment: _safePublicText(
+            raw.limousine_hero_alignment ?? raw.limousineHeroAlignment,
+            24,
+          ),
+          limousine_hero_revision: _safePublicInt(
+            raw.limousine_hero_revision ?? raw.limousineHeroRevision,
+            0,
+            0,
+            1000000000,
+          ),
+        }
+      : {}),
+    ...(raw.limousine_projection && typeof raw.limousine_projection === "object"
+      ? {
+          limousine_projection: {
+            limousine_service_enabled: _safePublicBool(
+              raw.limousine_projection.limousine_service_enabled,
+              false,
+            ),
+            limousine_available: _safePublicBool(
+              raw.limousine_projection.limousine_available,
+              false,
+            ),
+            eligible_vehicle_count: _safePublicInt(
+              raw.limousine_projection.eligible_vehicle_count,
+              0,
+              0,
+              9999,
+            ),
+            reason: _safePublicText(raw.limousine_projection.reason, 48),
+            source_revision: _safePublicInt(
+              raw.limousine_projection.source_revision,
+              0,
+              0,
+              1000000000,
+            ),
+          },
+        }
+      : {}),
     tagline: _safePublicText(raw.tagline, 180),
     about_short: _safePublicText(raw.about_short ?? raw.aboutShort, 400),
     about_long: _safePublicText(raw.about_long ?? raw.aboutLong, 2000),
@@ -77766,8 +80425,7 @@ function _normalizePublicPartnerProfileEntry(raw) {
       raw.booking_capabilities ?? raw.bookingCapabilities,
       profileEnabled,
     ),
-    ..._publicLimousineVisitingCardFields(raw),
-    ..._publicLimousineVehicleCopyFields(raw),
+    ..._publicPublishedLimousineIdentityFields(raw, { publicSurface: true }),
   };
 }
 
@@ -77927,6 +80585,57 @@ async function _loadPublicPartnerProfiles(env) {
   return Array.isArray(out?.profiles) ? out.profiles : [];
 }
 
+/// LIMOUSINE-MARKETPLACE-P2D2A — GET /partners/profile must pass through the
+/// already-sanitized public limousine projection. Entitlement internals stay
+/// off this whitelist.
+function _publicLimousineShowroomFieldsFromStoredProfile(profile) {
+  const src = profile && typeof profile === "object" ? profile : {};
+  const out = {};
+  const projection =
+    src.limousine_projection && typeof src.limousine_projection === "object"
+      ? src.limousine_projection
+      : null;
+  if (projection) {
+    out.limousine_projection = {
+      limousine_service_enabled: projection.limousine_service_enabled === true,
+      limousine_available: projection.limousine_available === true,
+      ...(projection.eligible_vehicle_count != null
+        ? { eligible_vehicle_count: _safePublicInt(projection.eligible_vehicle_count, 0, 0, 999) }
+        : {}),
+      ...(projection.published_offer_count != null
+        ? { published_offer_count: _safePublicInt(projection.published_offer_count, 0, 0, 999) }
+        : {}),
+      ...(projection.reason ? { reason: _safePublicText(projection.reason, 80) } : {}),
+    };
+    if (projection.limousine_available === true) out.limousine_available = true;
+    if (projection.limousine_service_enabled === true) out.limousine_service_enabled = true;
+  }
+  if (src.limousine_available === true) out.limousine_available = true;
+  if (src.limousine_service_enabled === true) out.limousine_service_enabled = true;
+  if (Array.isArray(src.limousine_offers)) {
+    out.limousine_offers = _sanitizePublicLimousineOffersForProfile(src.limousine_offers);
+  }
+  const heroUrl = _safePublicHttpsUrl(src.limousine_hero_url ?? src.limousineHeroUrl, 600);
+  if (heroUrl) {
+    out.limousine_hero_url = heroUrl;
+    out.limousine_hero_source = _safePublicText(
+      src.limousine_hero_source ?? src.limousineHeroSource,
+      24,
+    );
+    out.limousine_hero_alignment = _safePublicText(
+      src.limousine_hero_alignment ?? src.limousineHeroAlignment,
+      24,
+    );
+    out.limousine_hero_revision = _safePublicInt(
+      src.limousine_hero_revision ?? src.limousineHeroRevision,
+      0,
+      0,
+      1000000000,
+    );
+  }
+  return out;
+}
+
 async function getPublicPartnerProfileById(env, partnerId) {
   const needle = _safePublicText(partnerId, 120);
   if (!needle) return null;
@@ -77975,6 +80684,14 @@ async function getPublicPartnerProfileById(env, partnerId) {
     drivers: profile.drivers,
     trust: profile.trust,
     booking_capabilities: profile.booking_capabilities,
+    ...(_limousineTestCompanyAllowlisted(
+      env,
+      _scopeFromCanonicalPublicPartnerId(profile.partner_id)?.company_id ||
+        sanitizeTenantString(profile.company_id ?? profile.companyId, 80),
+    )
+      ? _publicLimousineShowroomFieldsFromStoredProfile(profile)
+      : {}),
+    ..._publicPublishedLimousineIdentityFields(profile, { publicSurface: true }),
   };
   try {
     const ratingScope = await _resolvePublicPartnerRatingScope(env, needle);
@@ -78137,6 +80854,19 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
     120,
   );
   const color = sanitizeTenantString(raw.color, 80);
+  // LIMOUSINE-MARKETPLACE-P2B2C: preserve the authoritative limousine
+  // classification on the scoped fleet record. `tier` keeps its existing taxi
+  // matching semantics and is never used to infer a limousine class.
+  const serviceCategory = sanitizeTenantString(
+    raw.service_category ?? raw.serviceCategory,
+    40,
+  ).toLowerCase();
+  const serviceClassId = sanitizeTenantString(
+    raw.service_class ?? raw.serviceClass ?? raw.service_class_id ?? raw.serviceClassId,
+    64,
+  )
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   const primaryPhotoRef = _normalizeVehiclePhotoRef(
     raw.primary_photo_ref ?? raw.primaryPhotoRef ?? raw.photo_ref ?? raw.photoRef,
   );
@@ -78204,6 +80934,8 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
           brandModel: brandModel,
         }
       : {}),
+    ...(serviceCategory ? { service_category: serviceCategory } : {}),
+    ...(serviceClassId ? { service_class: serviceClassId } : {}),
     ...(licensePlate
       ? {
           license_plate: licensePlate,
