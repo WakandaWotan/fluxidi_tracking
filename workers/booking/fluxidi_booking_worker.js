@@ -52,6 +52,10 @@ import {
   resolveRecurringAddonUnitsFromLocks,
 } from "./modules/subscription_locked_addon_units.mjs";
 import {
+  executeOperatorAddonUnitContractChange,
+  normalizeContractSnapshot,
+} from "./modules/subscription_operator_contract_change.mjs";
+import {
   grantPurchasedPdfCredits,
   consumePdfCreation,
   withLegacyPdfAllowanceProjection,
@@ -13449,6 +13453,11 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   locked_extra_vehicle_unit_cents: null,
   locked_extra_driver_unit_cents: null,
   locked_total_recurring_cents: null,
+  recurring_total_vat_cents: null,
+  recurring_total_incl_vat_cents: null,
+  lock_effective_at: "",
+  contract_change_id: "",
+  contract_snapshot: null,
   price_provenance: null,
   source_revision: null,
   normal_price_cents: null,
@@ -14380,6 +14389,23 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
       source.locked_total_recurring_cents,
       source.lockedTotalRecurringCents,
     ),
+    recurring_total_vat_cents: nullableCents(
+      source.recurring_total_vat_cents,
+      source.recurringTotalVatCents,
+    ),
+    recurring_total_incl_vat_cents: nullableCents(
+      source.recurring_total_incl_vat_cents,
+      source.recurringTotalInclVatCents,
+    ),
+    lock_effective_at: sanitizeTenantString(
+      source.lock_effective_at ?? source.lockEffectiveAt ?? DEFAULT_SUBSCRIPTION_PROFILE.lock_effective_at,
+      48,
+    ),
+    contract_change_id: sanitizeTenantString(
+      source.contract_change_id ?? source.contractChangeId ?? DEFAULT_SUBSCRIPTION_PROFILE.contract_change_id,
+      160,
+    ),
+    contract_snapshot: normalizeContractSnapshot(source.contract_snapshot ?? source.contractSnapshot),
     price_provenance: normalizePriceProvenance(source.price_provenance ?? source.priceProvenance),
     ...(Number.isInteger(source.source_revision) && source.source_revision >= 1
       ? { source_revision: source.source_revision }
@@ -15333,6 +15359,65 @@ async function saveSubscriptionProfile(
     created_at: normalized.created_at || nowIso,
     updated_at: nowIso,
   };
+}
+
+function _subscriptionContractChangeStore(env) {
+  return {
+    async get(key) {
+      if (!env?.BOOKING_KV || !key) return null;
+      return env.BOOKING_KV.get(key, { type: "json" });
+    },
+    async put(key, value) {
+      if (!env?.BOOKING_KV || !key) throw new Error("BOOKING_KV binding is missing");
+      await env.BOOKING_KV.put(key, JSON.stringify(value));
+    },
+  };
+}
+
+async function handleAdminSubscriptionContractChange(request, url, env, { mode } = {}) {
+  _requireAdmin(request, url, env);
+  const body = await safeJson(request);
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) {
+    return json(missingTenantScopeError(), 400);
+  }
+  const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+  if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+  const profile = await loadSubscriptionProfile(env, explicitScope, {
+    allowTenantLegacyFallback: false,
+  });
+  const result = await executeOperatorAddonUnitContractChange({
+    mode,
+    request: body && typeof body === "object" ? body : {},
+    scope: explicitScope,
+    profile,
+    nowIso: new Date().toISOString(),
+    store: _subscriptionContractChangeStore(env),
+    persistProfile: mode === "apply"
+      ? async (next) => saveSubscriptionProfile(env, next, explicitScope, {
+        allowTenantLegacyWrite: false,
+      })
+      : null,
+  });
+  if (
+    result?.ok
+    && result.applied
+    && !result.replayed
+    && mode === "apply"
+    && result.profile
+  ) {
+    try {
+      const synced = await _syncFluxidiConsolidatedRecurringAmount(
+        env,
+        explicitScope,
+        result.profile,
+      );
+      if (synced?.profile) result.profile = synced.profile;
+    } catch (_) {
+      // Best-effort local/Mollie amount sync. Locks are already persisted.
+    }
+  }
+  return json(result, result?.http_status || (result?.ok ? 200 : 400));
 }
 
 // =========================
@@ -47499,6 +47584,18 @@ export default {
           key: scopedKeys?.subscriptionProfileKey || TENANT_SUBSCRIPTION_PROFILE_KEY,
           subscription_profile: profile,
         }, 200);
+      }
+
+      if (url.pathname === "/admin/subscription/contract-change/dry-run" && request.method === "POST") {
+        return await handleAdminSubscriptionContractChange(request, url, env, {
+          mode: "dry_run",
+        });
+      }
+
+      if (url.pathname === "/admin/subscription/contract-change" && request.method === "POST") {
+        return await handleAdminSubscriptionContractChange(request, url, env, {
+          mode: "apply",
+        });
       }
 
       if (url.pathname === "/admin/communication/templates" && request.method === "GET") {

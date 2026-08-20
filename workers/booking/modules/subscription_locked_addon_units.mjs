@@ -127,6 +127,15 @@ export function normalizePriceProvenance(input) {
       unit_cents: unit.value,
       recorded_at: text(row.recorded_at ?? row.recordedAt, 48),
     };
+    if (out[code].source === "contract_snapshot") {
+      out[code].effective_at = text(row.effective_at ?? row.effectiveAt, 48);
+      out[code].retroactive = false;
+      out[code].historical_proof = false;
+      out[code].contract_change_id = text(
+        row.contract_change_id ?? row.contractChangeId,
+        160,
+      );
+    }
   }
   return Object.keys(out).length ? out : null;
 }
