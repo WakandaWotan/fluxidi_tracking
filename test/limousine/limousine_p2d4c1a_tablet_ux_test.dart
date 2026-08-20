@@ -47,7 +47,7 @@ LimousineQuoteCreateDraft _validDraft() {
   );
 }
 
-class _FakeGateway implements LimousineCustomerQuoteGateway {
+class _FakeGateway with LimousineCustomerQuoteGateway {
   int discoverCalls = 0;
   int createCalls = 0;
 

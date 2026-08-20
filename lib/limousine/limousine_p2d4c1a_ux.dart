@@ -12,6 +12,7 @@ import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_unified_intent.dart';
 
 const Size kLimousineSmX400Portrait = Size(1320, 2112);
 const Size kLimousineTabletLandscape = Size(2112, 1320);
@@ -186,6 +187,41 @@ const LocalizedText kLimousineReviewExtras = LocalizedText(
   en: 'Extras',
   fr: 'Options',
   es: 'Extras',
+);
+
+const LocalizedText kLimousineReviewOccasion = LocalizedText(
+  nl: 'Gelegenheid',
+  en: 'Occasion',
+  fr: 'Occasion',
+  es: 'Ocasión',
+);
+
+const LocalizedText kLimousineReviewDuration = LocalizedText(
+  nl: 'Duur',
+  en: 'Duration',
+  fr: 'Durée',
+  es: 'Duración',
+);
+
+const LocalizedText kLimousineReviewPriceStatusQuote = LocalizedText(
+  nl: 'Prijs op aanvraag — nog geen boeking of betaling',
+  en: 'Price on request — no booking or payment yet',
+  fr: 'Prix sur demande — pas encore de réservation ni de paiement',
+  es: 'Precio bajo petición — aún no hay reserva ni pago',
+);
+
+const LocalizedText kLimousineReviewPriceStatusFrom = LocalizedText(
+  nl: 'Vanafprijs ter informatie — het bedrijf bevestigt de eindprijs',
+  en: 'From-price is informational — the company confirms the final price',
+  fr: 'Prix à partir de est indicatif — l’entreprise confirme le prix final',
+  es: 'El precio desde es informativo — la empresa confirma el precio final',
+);
+
+const LocalizedText kLimousineReviewPriceStatusBook = LocalizedText(
+  nl: 'Vastgelegde prijs na bevestiging door het bedrijf',
+  en: 'Price is frozen after the company confirms',
+  fr: 'Prix figé après confirmation de l’entreprise',
+  es: 'Precio fijado tras la confirmación de la empresa',
 );
 
 const LocalizedText kLimousineReviewPriceEvidence = LocalizedText(
@@ -580,6 +616,25 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
       value: '${draft.bags ?? 0}',
     ),
   );
+  if (draft.requestedDurationMinutes != null &&
+      draft.requestedDurationMinutes! > 0) {
+    rows.add(
+      LimousineRequestReviewRow(
+        id: 'duration',
+        label: kLimousineReviewDuration.of(language),
+        value: '${draft.requestedDurationMinutes} min',
+      ),
+    );
+  }
+  if (draft.occasion.trim().isNotEmpty) {
+    rows.add(
+      LimousineRequestReviewRow(
+        id: 'occasion',
+        label: kLimousineReviewOccasion.of(language),
+        value: draft.occasion.trim(),
+      ),
+    );
+  }
   if (draft.selectedExtraIds.isNotEmpty) {
     rows.add(
       LimousineRequestReviewRow(
@@ -589,6 +644,25 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
       ),
     );
   }
+  final mode = offer == null
+      ? LimousinePublishedPricingMode.quoteRequired
+      : limousinePublishedPricingModeOf(offer);
+  rows.add(
+    LimousineRequestReviewRow(
+      id: 'price_status',
+      label: kLimousineReviewPriceEvidence.of(language),
+      value: switch (mode) {
+        LimousinePublishedPricingMode.fromPrice =>
+          kLimousineReviewPriceStatusFrom.of(language),
+        LimousinePublishedPricingMode.exactFixed ||
+        LimousinePublishedPricingMode.hourly ||
+        LimousinePublishedPricingMode.package =>
+          kLimousineReviewPriceStatusBook.of(language),
+        LimousinePublishedPricingMode.quoteRequired =>
+          kLimousineReviewPriceStatusQuote.of(language),
+      },
+    ),
+  );
   final price = _displayedPriceEvidence(offer, language);
   if (price.isNotEmpty) {
     rows.add(

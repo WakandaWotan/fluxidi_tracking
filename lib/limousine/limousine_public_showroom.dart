@@ -11,6 +11,7 @@ import 'limousine_offers.dart';
 import 'limousine_pricing_overlay.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_unified_intent.dart';
 
 const Key kLimousinePublicShowroomSectionKey = ValueKey<String>(
   'limousine_public_showroom_section',
@@ -115,18 +116,14 @@ List<LimousinePublishedOffer> collectLimousineShowroomOffers(
 }
 
 LimousineShowroomCta limousineShowroomCtaFor(LimousinePublishedOffer offer) {
-  switch (offer.pricePresentation) {
-    case LimousinePricePresentation.unavailable:
-      return LimousineShowroomCta.none;
-    case LimousinePricePresentation.exactFixed:
-      return LimousineShowroomCta.book;
-    case LimousinePricePresentation.fromPrice:
-    case LimousinePricePresentation.indicative:
-    case LimousinePricePresentation.quoteRequired:
-      return LimousineShowroomCta.requestQuote;
-    default:
-      return LimousineShowroomCta.none;
+  if (limousineOfferToken(offer.pricePresentation) ==
+      LimousinePricePresentation.unavailable) {
+    return LimousineShowroomCta.none;
   }
+  return limousineCustomerIntentKindOf(offer) ==
+          LimousineCustomerIntentKind.bookingRequest
+      ? LimousineShowroomCta.book
+      : LimousineShowroomCta.requestQuote;
 }
 
 String limousineShowroomPriceLabel(

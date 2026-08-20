@@ -71,17 +71,17 @@ const LocalizedText kLimousineShowroomView = LocalizedText(
 );
 
 const LocalizedText kLimousineShowroomRequestQuote = LocalizedText(
-  nl: 'Vraag offerte aan',
-  en: 'Request a quote',
+  nl: 'Offerte aanvragen',
+  en: 'Request quote',
   fr: 'Demander un devis',
   es: 'Solicitar presupuesto',
 );
 
 const LocalizedText kLimousineShowroomBook = LocalizedText(
-  nl: 'Boek deze limousine',
-  en: 'Book this limousine',
-  fr: 'Réserver cette limousine',
-  es: 'Reservar esta limusina',
+  nl: 'Boeking aanvragen',
+  en: 'Request booking',
+  fr: 'Demander une réservation',
+  es: 'Solicitar reserva',
 );
 
 const LocalizedText kLimousineShowroomQuoteComingSoon = LocalizedText(

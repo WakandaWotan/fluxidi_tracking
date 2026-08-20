@@ -148,7 +148,7 @@ class _BookGateway implements LimousineAcceptedBookingGateway {
   }
 }
 
-class _QuoteGateway implements LimousineCustomerQuoteGateway {
+class _QuoteGateway with LimousineCustomerQuoteGateway {
   @override
   Future<List<LimousineDiscoveredProvider>> discoverNearby({
     String? postcode,
@@ -606,13 +606,12 @@ void main() {
     }
   });
 
-  test('18) showroom and quote-request files stay off /book', () {
-    expect(
-      File(
-        'lib/limousine/limousine_customer_quote_api.dart',
-      ).readAsStringSync().contains('/book'),
-      isFalse,
-    );
+  test('18) showroom stays off /book; quote API reuses existing /book only for booking requests', () {
+    final quoteApi = File(
+      'lib/limousine/limousine_customer_quote_api.dart',
+    ).readAsStringSync();
+    expect(quoteApi.contains('/limousine/quote-requests'), isTrue);
+    expect(quoteApi.contains("Uri.parse('\$_base/book')"), isTrue);
     expect(
       File(
         'lib/limousine/limousine_public_showroom.dart',

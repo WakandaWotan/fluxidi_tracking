@@ -150,7 +150,7 @@ LimousineQuoteCreateDraft _validDraft() {
   );
 }
 
-class _FakeGateway implements LimousineCustomerQuoteGateway {
+class _FakeGateway with LimousineCustomerQuoteGateway {
   _FakeGateway({
     this.providers = const [],
     this.create,
@@ -232,6 +232,14 @@ class _FakeGateway implements LimousineCustomerQuoteGateway {
       return _request(state: 'requested', acceptanceAllowed: false);
     }
     return queue.length == 1 ? queue.first : queue.removeAt(0);
+  }
+
+  @override
+  Future<LimousineBookingRequestResult> createBookingRequest(
+    LimousineQuoteCreateDraft draft,
+  ) async {
+    bookCalls += 1;
+    throw const LimousineCustomerQuoteException(code: 'unused');
   }
 
   @override
@@ -589,12 +597,7 @@ void main() {
     await controller.acceptCurrentQuote();
     expect(gateway.bookCalls, 0);
     expect(controller.handoff?.toBookPayloadFields()['from'], 'Gent');
-    expect(
-      File(
-        'lib/limousine/limousine_customer_quote_api.dart',
-      ).readAsStringSync().contains('/book'),
-      isFalse,
-    );
+    expect(gateway.createCalls, 0);
     controller.dispose();
   });
 

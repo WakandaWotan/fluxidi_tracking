@@ -616,7 +616,7 @@ void main() {
   });
 }
 
-class _NoopGateway implements LimousineCustomerQuoteGateway {
+class _NoopGateway with LimousineCustomerQuoteGateway {
   int createCalls = 0;
   int discoverCalls = 0;
   int loadCalls = 0;

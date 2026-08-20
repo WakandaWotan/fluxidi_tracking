@@ -202,6 +202,7 @@ class LimousineWizardFooter extends StatelessWidget {
     required this.onBack,
     required this.onNext,
     required this.maxWidth,
+    this.primaryAction,
   });
 
   final LimousineUxTokens tokens;
@@ -213,6 +214,7 @@ class LimousineWizardFooter extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback? onNext;
   final double maxWidth;
+  final LocalizedText? primaryAction;
 
   @override
   Widget build(BuildContext context) {
@@ -268,9 +270,9 @@ class LimousineWizardFooter extends StatelessWidget {
                             minimumSize: const Size(48, 48),
                           ),
                           child: Text(
-                            limousineRequestWizardPrimaryAction(
-                              step,
-                            ).of(language),
+                            (primaryAction ??
+                                    limousineRequestWizardPrimaryAction(step))
+                                .of(language),
                           ),
                         ),
                       ),

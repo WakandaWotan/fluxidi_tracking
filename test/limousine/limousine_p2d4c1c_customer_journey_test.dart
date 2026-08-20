@@ -85,7 +85,7 @@ class _Lookup extends LimousinePlaceLookup {
       );
 }
 
-class _FakeGateway implements LimousineCustomerQuoteGateway {
+class _FakeGateway with LimousineCustomerQuoteGateway {
   int discoverCalls = 0;
   int createCalls = 0;
   LimousineQuoteCreateDraft? lastDraft;
@@ -732,7 +732,8 @@ void main() {
       'lib/limousine/limousine_customer_quote_api.dart',
     ).readAsStringSync();
     expect(page.contains('/book'), isFalse);
-    expect(api.contains('/book'), isFalse);
+    expect(api.contains('/limousine/quote-requests'), isTrue);
+    expect(api.contains("Uri.parse('\$_base/book')"), isTrue);
     expect(page.toLowerCase().contains('taxi_price'), isFalse);
     controller.dispose();
   });

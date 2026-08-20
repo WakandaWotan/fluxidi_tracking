@@ -58,7 +58,7 @@ class _RecordingLookup extends LimousinePlaceLookup {
        );
 }
 
-class _SilentGateway implements LimousineCustomerQuoteGateway {
+class _SilentGateway with LimousineCustomerQuoteGateway {
   @override
   Future<List<LimousineDiscoveredProvider>> discoverNearby({
     String? postcode,

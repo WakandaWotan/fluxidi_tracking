@@ -22,6 +22,7 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_p2d4c1c_journey.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_unified_intent.dart';
 
 class LimousineCustomerQuotePage extends StatefulWidget {
   const LimousineCustomerQuotePage({
@@ -64,6 +65,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   late final LimousineAddressFieldController _returnDestination;
   final _postcode = TextEditingController();
   final _note = TextEditingController();
+  final _occasion = TextEditingController();
   final _duration = TextEditingController();
   final List<LimousineAddressFieldController> _stops =
       <LimousineAddressFieldController>[];
@@ -123,6 +125,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       _addStop(initialText: _controller.draft.stops[i], listen: false);
     }
     _note.text = _controller.draft.customerNote;
+    _occasion.text = _controller.draft.occasion;
     if (_controller.draft.roundtrip &&
         _controller.draft.returnPickupIso.trim().isNotEmpty) {
       _returnKind = LimousineReturnTripKind.later;
@@ -202,6 +205,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     _returnPickup.dispose();
     _returnDestination.dispose();
     _note.dispose();
+    _occasion.dispose();
     _duration.dispose();
     for (final stop in _stops) {
       stop.dispose();
@@ -240,6 +244,18 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
 
   bool get _canAdvance => _gaps.isEmpty;
 
+  bool get _needsDuration {
+    if (_controller.draft.journeyType == 'hourly_package') return true;
+    final offer = _controller.selectedOffer;
+    if (offer == null) return false;
+    final mode = limousinePublishedPricingModeOf(offer);
+    return mode == LimousinePublishedPricingMode.hourly ||
+        mode == LimousinePublishedPricingMode.package;
+  }
+
+  LimousineCustomerIntentKind get _intentKind =>
+      limousineCustomerIntentKindOf(_controller.selectedOffer);
+
   @override
   Widget build(BuildContext context) {
     if (!_entryEnabled && widget.controller == null && widget.gateway == null) {
@@ -275,6 +291,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     final draftMode =
         _controller.phase != LimousineCustomerQuotePhase.unavailable &&
         _controller.request == null &&
+        _controller.bookingRequestId.isEmpty &&
         !(_controller.restoredFromSecureResume && _controller.handoff != null);
     return Column(
       key: kLimousineRequestWizardKey,
@@ -336,6 +353,18 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                           LimousineCustomerQuotePhase.unavailable ||
                       _controller.safeError == 'unavailable')
                     LimousineCustomerUnavailableBanner(language: _lang)
+                  else if (_controller.bookingRequestId.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _t(kLimousineBookingRequestReceived),
+                        style: TextStyle(
+                          color: tokens.onSurface,
+                          height: 1.4,
+                          fontSize: 15,
+                        ),
+                      ),
+                    )
                   else if (_controller.request != null)
                     LimousineCustomerStatusView(
                       controller: _controller,
@@ -365,6 +394,10 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                 : _goBack,
             onNext: () => unawaited(_goNext()),
             maxWidth: columnWidth,
+            primaryAction: _wizardStep == LimousineRequestWizardStep.review &&
+                    _intentKind == LimousineCustomerIntentKind.bookingRequest
+                ? kLimousineReviewSubmitBooking
+                : null,
           ),
       ],
     );
@@ -460,7 +493,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         onChanged: _setRoundtrip,
       ),
       if (_controller.draft.roundtrip) _returnCard(tokens),
-      if (_controller.draft.journeyType == 'hourly_package')
+      if (_needsDuration)
         _field(
           _t(kLimousineCustomerDuration),
           _duration,
@@ -856,6 +889,13 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           ],
         ),
       _field(
+        _t(kLimousineCustomerOccasion),
+        _occasion,
+        onChanged: (value) {
+          _controller.updateDraft(_syncedDraft().copyWith(occasion: value));
+        },
+      ),
+      _field(
         _t(kLimousineCustomerNote),
         _note,
         maxLines: 3,
@@ -916,7 +956,13 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             editLabel: _t(kLimousineReviewEdit),
             onEdit: () =>
                 _controller.goTo(LimousineCustomerQuoteStep.detailsExtras),
-            child: _reviewLines(rows, const ['pax', 'bags', 'extras']),
+            child: _reviewLines(rows, const [
+              'pax',
+              'bags',
+              'duration',
+              'extras',
+              'occasion',
+            ]),
           ),
           Container(
             key: kLimousineReviewQuoteStateKey,
@@ -930,7 +976,11 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _t(kLimousineReviewQuoteOnRequest),
+                  _t(
+                    _intentKind == LimousineCustomerIntentKind.bookingRequest
+                        ? kLimousineReviewBookingRequest
+                        : kLimousineReviewQuoteOnRequest,
+                  ),
                   style: TextStyle(
                     color: _tokens.onSurface,
                     fontWeight: FontWeight.w800,
@@ -942,13 +992,19 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                   style: TextStyle(color: _tokens.muted),
                 ),
                 Text(
-                  _t(kLimousineReviewDecideLater),
+                  _t(
+                    _intentKind == LimousineCustomerIntentKind.bookingRequest
+                        ? kLimousineReviewCompanyConfirms
+                        : kLimousineReviewDecideLater,
+                  ),
                   style: TextStyle(color: _tokens.muted),
                 ),
-                if (rows.any((row) => row.id == 'price_evidence')) ...[
-                  const SizedBox(height: 8),
-                  _reviewLines(rows, const ['price_evidence', 'vat_terms']),
-                ],
+                const SizedBox(height: 8),
+                _reviewLines(rows, const [
+                  'price_status',
+                  'price_evidence',
+                  'vat_terms',
+                ]),
               ],
             ),
           ),
@@ -1119,6 +1175,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           ? _destination.value.routeText
           : (onJourney ? '' : _controller.draft.to),
       customerNote: _note.text,
+      occasion: _occasion.text,
       stops: _stops
           .map((controller) => controller.value.routeText)
           .where((text) => text.isNotEmpty)
@@ -1206,11 +1263,25 @@ void openLimousineCustomerQuoteFlow(
   LimousinePublishedOffer? offer,
   String companyName = '',
   bool? entryEnabled,
+  bool? quoteEnabled,
+  bool? manualQuoteEnabled,
+  bool? bookEnabled,
 }) {
+  final intent = limousineCustomerIntentKindOf(offer);
+  final allowed = intent == LimousineCustomerIntentKind.bookingRequest
+      ? limousineCustomerBookCtaEnabled(
+          bookGate: bookEnabled ?? kLimousineCustomerBookGateEnabled,
+        )
+      : limousineCustomerQuoteCtaEnabled(
+          quoteGate: quoteEnabled ?? kLimousineCustomerQuoteGateEnabled,
+          manualQuoteGate:
+              manualQuoteEnabled ?? kLimousineCustomerManualQuoteGateEnabled,
+        );
+  if (!allowed) return;
   Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => LimousineCustomerQuotePage(
-        entryEnabled: entryEnabled,
+        entryEnabled: entryEnabled ?? true,
         initialPublicPartnerId: publicPartnerId,
         initialOffer: offer,
         initialCompanyName: companyName,

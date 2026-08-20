@@ -198,6 +198,20 @@ const LocalizedText kLimousineCustomerBags = LocalizedText(
   es: 'Equipaje',
 );
 
+const LocalizedText kLimousineCustomerOccasion = LocalizedText(
+  nl: 'Gelegenheid (optioneel)',
+  en: 'Occasion (optional)',
+  fr: 'Occasion (facultatif)',
+  es: 'Ocasión (opcional)',
+);
+
+const LocalizedText kLimousineBookingRequestReceived = LocalizedText(
+  nl: 'Uw boekingsaanvraag is ontvangen. Het bedrijf bevestigt eerst, daarna volgt de bestaande ritketen.',
+  en: 'Your booking request was received. The company confirms first, then the existing ride chain continues.',
+  fr: 'Votre demande de réservation a été reçue. L’entreprise confirme d’abord, puis la chaîne de trajet existante continue.',
+  es: 'Su solicitud de reserva se ha recibido. La empresa confirma primero y después continúa la cadena de viaje existente.',
+);
+
 const LocalizedText kLimousineCustomerNote = LocalizedText(
   nl: 'Opmerking voor de chauffeur (optioneel)',
   en: 'Note for the chauffeur (optional)',
