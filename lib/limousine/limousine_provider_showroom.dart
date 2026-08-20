@@ -18,6 +18,7 @@ import 'limousine_public_showroom.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_service_capability.dart';
 import 'limousine_pricing_local_store.dart';
+import 'limousine_pricing_overlay.dart';
 import 'limousine_vehicle_public_copy.dart';
 
 const String kLimousineCustomerQuoteGateDefineKey = 'LIMOUSINE_QUOTE_ENABLED';
@@ -466,22 +467,11 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
                   companyNameFallback)
               .toString(),
         );
-  final media = asStringKeyedMap(profile['media']);
-  var logoUrl = limousineDiscoveryEffectiveLogoUrl(profile);
-  if (logoUrl.isEmpty && discoveryCard != null) {
-    logoUrl = discoveryCard.logoUrl;
-  }
-  if (logoUrl.isEmpty) {
-    logoUrl = limousineEffectiveLogoUrl(
-      overrideUrl: '',
-      companyLogoUrl: _httpsOnly(
-        profile['logo_url'] ??
-            profile['logoUrl'] ??
-            media['logo_url'] ??
-            media['logoUrl'],
-      ),
-    );
-  }
+  final hydrated = limousineHydratePublishedPartnerOverlay(profile);
+  final logoUrl = limousineResolvePublishedLogoUrl(
+    source: hydrated,
+    discoveryLogoUrl: discoveryCard?.logoUrl ?? '',
+  );
   var publishedDescription = limousineDiscoveryLocalizedText(
     limousineDiscoveryPublishedDescriptionMap(profile),
     language,

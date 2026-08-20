@@ -223,6 +223,95 @@ Map<String, dynamic> limousinePublishedVisitingCardOverlayFields({
   return fields;
 }
 
+Map<String, dynamic> limousineMergePublishedVisitingCardOverlay({
+  required Map<String, dynamic> section,
+  required Map<String, dynamic> overlay,
+}) {
+  if (overlay.isEmpty) return Map<String, dynamic>.from(section);
+  final next = Map<String, dynamic>.from(section);
+  final serverRev = _revisionOf(section);
+  final overlayRev = _revisionOf(overlay);
+
+  void takeLocalized(String key) {
+    _takeIfWins(
+      next,
+      overlay: overlay,
+      key: key,
+      overlayHasValue: _localizedHasText(overlay[key]),
+      serverHasValue: _localizedHasText(section[key]),
+      overlayRev: overlayRev,
+      serverRev: serverRev,
+    );
+  }
+
+  void takeCover(String key) {
+    _takeIfWins(
+      next,
+      overlay: overlay,
+      key: key,
+      overlayHasValue: _coverHasPhoto(overlay[key]),
+      serverHasValue: _coverHasPhoto(section[key]),
+      overlayRev: overlayRev,
+      serverRev: serverRev,
+    );
+  }
+
+  void takeLogo(String key) {
+    _takeIfWins(
+      next,
+      overlay: overlay,
+      key: key,
+      overlayHasValue: _logoHasPhoto(overlay[key]),
+      serverHasValue: _logoHasPhoto(section[key]),
+      overlayRev: overlayRev,
+      serverRev: serverRev,
+    );
+  }
+
+  void takeCard(String key) {
+    final overlayCard = overlay[key];
+    final serverCard = section[key];
+    final overlayHas =
+        overlayCard is Map &&
+        (_localizedHasText(overlayCard['public_title']) ||
+            _localizedHasText(overlayCard['public_description']) ||
+            _coverHasPhoto(overlayCard['cover']) ||
+            _logoHasPhoto(overlayCard['logo']));
+    final serverHas =
+        serverCard is Map &&
+        (_localizedHasText(serverCard['public_title']) ||
+            _localizedHasText(serverCard['public_description']) ||
+            _coverHasPhoto(serverCard['cover']) ||
+            _logoHasPhoto(serverCard['logo']));
+    _takeIfWins(
+      next,
+      overlay: overlay,
+      key: key,
+      overlayHasValue: overlayHas,
+      serverHasValue: serverHas,
+      overlayRev: overlayRev,
+      serverRev: serverRev,
+    );
+  }
+
+  takeLocalized('published_public_title');
+  takeLocalized('published_public_description');
+  takeCover(kLimousinePublishedProfileCoverKey);
+  takeCover('published_limousine_hero');
+  takeLogo(kLimousinePublishedProfileLogoKey);
+  takeLogo('published_limousine_logo');
+  takeCard(kLimousinePublishedVisitingCardKey);
+  final overlayOffers = _offerMapsOf(
+    overlay[kLimousinePublishedOffersOverlayKey],
+  );
+  if (overlayOffers.isNotEmpty) {
+    next[kLimousinePublishedOffersOverlayKey] = overlayOffers;
+    next['limousine_offers'] = overlayOffers;
+    next['offers'] = overlayOffers;
+  }
+  return next;
+}
+
 Map<String, dynamic> limousineHydratePublicPartnerOverlay(
   Map<String, dynamic> partner, {
   LimousinePricingLocalStore? store,
@@ -247,6 +336,28 @@ Map<String, dynamic> limousineHydratePublicPartnerOverlay(
     next['limousine_offers'] = overlayOffers;
     next['offers'] = overlayOffers;
   }
+  return next;
+}
+
+/// Customer pages: published snapshot only. Never copies a working draft
+/// logo/cover onto the public partner payload.
+Map<String, dynamic> limousineHydratePublishedPartnerOverlay(
+  Map<String, dynamic> partner, {
+  LimousinePricingLocalStore? store,
+}) {
+  final overlay = limousinePeekPublishedOverlayForPartner(
+    store ?? limousinePricingLocalStore,
+    partner,
+  );
+  if (overlay.isEmpty) return Map<String, dynamic>.from(partner);
+  var next = limousineMergePublishedVisitingCardOverlay(
+    section: partner,
+    overlay: overlay,
+  );
+  next = limousineMergeVehiclePublicCopyOverlay(
+    section: next,
+    overlay: overlay,
+  );
   return next;
 }
 

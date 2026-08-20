@@ -198,6 +198,71 @@ String limousineEffectiveLogoUrl({
   return company;
 }
 
+/// Settings / working draft only. Customer pages must not call this.
+String limousineResolveWorkingLogoUrl({
+  required String workingOverrideUrl,
+  required String companyLogoUrl,
+}) {
+  return limousineEffectiveLogoUrl(
+    overrideUrl: workingOverrideUrl,
+    companyLogoUrl: companyLogoUrl,
+  );
+}
+
+Map<String, dynamic> limousinePublishedIdentitySource(
+  Map<String, dynamic> source,
+) {
+  final nested = _mapOf(source['limousine'] ?? source['pricing']);
+  final merged = nested.isEmpty
+      ? Map<String, dynamic>.from(source)
+      : <String, dynamic>{...source, ...nested};
+  final visiting = _mapOf(
+    merged[kLimousinePublishedVisitingCardKey] ??
+        merged['publishedLimousineVisitingCard'] ??
+        source[kLimousinePublishedVisitingCardKey],
+  );
+  if (visiting.isEmpty) return merged;
+  if (visiting['logo'] != null) {
+    merged[kLimousinePublishedProfileLogoKey] = visiting['logo'];
+    merged['published_limousine_logo'] = visiting['logo'];
+  }
+  return merged;
+}
+
+String limousinePublishedLogoOverrideUrl(Map<String, dynamic> source) {
+  final identity = limousinePublishedIdentitySource(source);
+  if (!limousineHasPublishedProfileLogoKey(identity)) return '';
+  return limousinePublishedLogoFromSection(identity).photoUrl;
+}
+
+/// Customer-facing mark. Reads published override (+ optional discovery
+/// snapshot) and falls back to the general company logo. Never reads a
+/// working `limousine_profile_logo` draft.
+String limousineResolvePublishedLogoUrl({
+  Map<String, dynamic>? source,
+  String publishedOverrideUrl = '',
+  String discoveryLogoUrl = '',
+  String companyLogoUrl = '',
+}) {
+  final fromSource = source == null
+      ? ''
+      : limousinePublishedLogoOverrideUrl(source);
+  final override = <String>[
+    publishedOverrideUrl,
+    fromSource,
+    discoveryLogoUrl,
+  ]
+      .map(limousineSanitizeProfileLogoOverrideUrl)
+      .firstWhere((url) => url.isNotEmpty, orElse: () => '');
+  final company = companyLogoUrl.isNotEmpty
+      ? companyLogoUrl
+      : (source == null ? '' : limousineCompanyLogoUrl(source));
+  return limousineEffectiveLogoUrl(
+    overrideUrl: override,
+    companyLogoUrl: company,
+  );
+}
+
 bool limousineLogoFallbackMutatesOverride({
   required Map<String, dynamic> workingLogo,
   required String companyLogoUrl,

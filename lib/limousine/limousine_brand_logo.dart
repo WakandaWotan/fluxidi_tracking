@@ -207,8 +207,12 @@ class LimousineCompanyIdentity extends StatelessWidget {
     final height = limousineCompanyIdentityLogoHeight(viewport, surface);
     final maxWidth = limousineCompanyIdentityLogoMaxWidth(viewport, surface);
     final name = sanitizePublicPartnerBrandName(companyName);
-    final showLogo =
-        logoImage != null || limousinePublicLogoUrlIsRenderable(logoUrl);
+    final urlWins = limousinePublicLogoUrlIsRenderable(logoUrl);
+    final staleNetworkImage =
+        logoImage is NetworkImage &&
+        (logoImage as NetworkImage).url.trim() != logoUrl.trim();
+    final resolvedImage = staleNetworkImage ? null : logoImage;
+    final showLogo = urlWins || resolvedImage != null;
 
     Widget nameFallback() {
       if (name.isEmpty) return const SizedBox.shrink();
@@ -235,10 +239,10 @@ class LimousineCompanyIdentity extends StatelessWidget {
           maxHeight: height,
           maxWidth: maxWidth,
         ),
-        child: logoImage != null
+        child: resolvedImage != null
             ? Image(
                 key: _logoKey,
-                image: logoImage!,
+                image: resolvedImage,
                 fit: BoxFit.contain,
                 alignment: Alignment.centerLeft,
                 filterQuality: FilterQuality.medium,

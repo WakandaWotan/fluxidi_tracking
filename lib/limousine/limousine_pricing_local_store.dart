@@ -441,6 +441,23 @@ void _writeOverlay(
     final next = Map<String, dynamic>.from(store.peekSection(key));
     next.addAll(fields);
     next['_scope_key'] = key;
+    try {
+      final scope = adminTenantCompanyScope();
+      final tenant = (scope['tenant_id'] ?? '').toString().trim();
+      final company = (scope['company_id'] ?? '').toString().trim();
+      if (tenant.isNotEmpty &&
+          (next['tenant_id'] ?? '').toString().trim().isEmpty) {
+        next['tenant_id'] = tenant;
+      }
+      if (company.isNotEmpty &&
+          (next['company_id'] ?? '').toString().trim().isEmpty) {
+        next['company_id'] = company;
+      }
+      if ((next['partner_id'] ?? '').toString().trim().isEmpty &&
+          company.isNotEmpty) {
+        next['partner_id'] = company;
+      }
+    } catch (_) {}
     next['source_revision'] = revision;
     next[kLimousinePricingLocalWorkingUpdatedAtKey] = now;
     if (fields.containsKey(kLimousinePublishedVehiclePublicCopyKey) ||
@@ -486,6 +503,129 @@ bool _sectionHasOverlayContent(Map<String, dynamic> section) {
       hasPhoto(section['published_limousine_profile_logo']) ||
       (section['published_limousine_offers'] is List &&
           (section['published_limousine_offers'] as List).isNotEmpty);
+}
+
+String _overlayIdentity(Map<String, dynamic> source, List<String> keys) {
+  for (final key in keys) {
+    final value = (source[key] ?? '').toString().trim();
+    if (value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+bool limousinePublishedOverlayMatchesPartner({
+  required Map<String, dynamic> overlay,
+  required Map<String, dynamic> partner,
+  String scopeKey = '',
+}) {
+  final partnerId = _overlayIdentity(partner, const ['partner_id', 'partnerId']);
+  final tenantId = _overlayIdentity(partner, const ['tenant_id', 'tenantId']);
+  final companyId = _overlayIdentity(partner, const ['company_id', 'companyId']);
+  final overlayPartner = _overlayIdentity(overlay, const [
+    'partner_id',
+    'partnerId',
+  ]);
+  final overlayTenant = _overlayIdentity(overlay, const [
+    'tenant_id',
+    'tenantId',
+  ]);
+  final overlayCompany = _overlayIdentity(overlay, const [
+    'company_id',
+    'companyId',
+  ]);
+  final key = scopeKey.trim().isNotEmpty
+      ? scopeKey.trim()
+      : (overlay['_scope_key'] ?? '').toString().trim();
+
+  if (overlayPartner.isNotEmpty &&
+      partnerId.isNotEmpty &&
+      overlayPartner != partnerId) {
+    return false;
+  }
+  if (overlayTenant.isNotEmpty &&
+      tenantId.isNotEmpty &&
+      overlayTenant != tenantId) {
+    return false;
+  }
+  if (overlayCompany.isNotEmpty &&
+      companyId.isNotEmpty &&
+      overlayCompany != companyId) {
+    return false;
+  }
+
+  if (key.isNotEmpty && key != kLimousinePricingLocalDefaultScope) {
+    if (key.startsWith('company:')) {
+      if (tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          key != 'company:$tenantId:$companyId') {
+        return false;
+      }
+    } else if (key.contains(':')) {
+      if (tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          key != '$tenantId:$companyId') {
+        return false;
+      }
+    } else if (partnerId.isNotEmpty && key != partnerId) {
+      return false;
+    }
+  }
+
+  if (key == kLimousinePricingLocalDefaultScope &&
+      overlayPartner.isEmpty &&
+      overlayTenant.isEmpty &&
+      overlayCompany.isEmpty) {
+    if (tenantId.isEmpty && companyId.isEmpty) return true;
+    try {
+      final admin = adminTenantCompanyScope();
+      final adminTenant = (admin['tenant_id'] ?? '').toString().trim();
+      final adminCompany = (admin['company_id'] ?? '').toString().trim();
+      if (tenantId.isNotEmpty &&
+          companyId.isNotEmpty &&
+          adminTenant == tenantId &&
+          adminCompany == companyId) {
+        return true;
+      }
+      if (partnerId.isNotEmpty &&
+          (partnerId == adminCompany || partnerId == adminTenant)) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  return true;
+}
+
+Map<String, dynamic> limousinePeekPublishedOverlayForPartner(
+  LimousinePricingLocalStore store,
+  Map<String, dynamic> partner,
+) {
+  final partnerId = _overlayIdentity(partner, const ['partner_id', 'partnerId']);
+  final tenantId = _overlayIdentity(partner, const ['tenant_id', 'tenantId']);
+  final companyId = _overlayIdentity(partner, const ['company_id', 'companyId']);
+  final keys = <String>[
+    if (partnerId.isNotEmpty) partnerId,
+    if (tenantId.isNotEmpty && companyId.isNotEmpty)
+      'company:$tenantId:$companyId',
+    if (tenantId.isNotEmpty || companyId.isNotEmpty) '$tenantId:$companyId',
+    ...limousineDefaultLocalPricingScopeKeys(partnerId: partnerId),
+  ];
+  final seen = <String>{};
+  for (final key in keys) {
+    if (key.trim().isEmpty || !seen.add(key)) continue;
+    final section = store.peekSection(key);
+    if (!_sectionHasOverlayContent(section)) continue;
+    if (!limousinePublishedOverlayMatchesPartner(
+      overlay: section,
+      partner: partner,
+      scopeKey: key,
+    )) {
+      continue;
+    }
+    return section;
+  }
+  return <String, dynamic>{};
 }
 
 Map<String, dynamic> _peekMerged(

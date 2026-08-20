@@ -528,7 +528,7 @@ List<LimousineDiscoveryCard> limousineDiscoveryCardsFromNearbyPartners(
 LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
   Map<String, dynamic> partner,
 ) {
-  partner = limousineHydratePublicPartnerOverlay(partner);
+  partner = limousineHydratePublishedPartnerOverlay(partner);
   if (!limousineDiscoveryPartnerIsIncludable(partner)) return null;
   final id = (partner['partner_id'] ?? partner['partnerId'] ?? '')
       .toString()
@@ -599,20 +599,11 @@ Map<String, dynamic> _limousineSectionOf(Map<String, dynamic> partner) {
 }
 
 String limousineDiscoveryPublishedLogoOverride(Map<String, dynamic> partner) {
-  final source = _limousineSectionOf(partner);
-  if (!limousineHasPublishedProfileLogoKey(source)) return '';
-  return limousinePublishedLogoFromSection(source).photoUrl;
+  return limousinePublishedLogoOverrideUrl(_limousineSectionOf(partner));
 }
 
 String limousineDiscoveryEffectiveLogoUrl(Map<String, dynamic> partner) {
-  final computed = limousineEffectiveLogoUrl(
-    overrideUrl: limousineDiscoveryPublishedLogoOverride(partner),
-    companyLogoUrl: limousineCompanyLogoUrl(partner),
-  );
-  if (computed.isNotEmpty) return computed;
-  return _httpsOnly(
-    partner['limousine_logo_url'] ?? partner['limousineLogoUrl'],
-  );
+  return limousineResolvePublishedLogoUrl(source: _limousineSectionOf(partner));
 }
 
 Map<String, String> _publishedOrLiveLocalized(

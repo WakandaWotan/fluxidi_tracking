@@ -387,8 +387,20 @@ class _LimousineBusinessSetupPageState
   }
 
   void _rememberPricingOverlay({required bool updatePublished}) {
+    var partnerId = '';
+    var tenantId = '';
+    var companyId = '';
+    try {
+      final scope = adminTenantCompanyScope();
+      tenantId = (scope['tenant_id'] ?? '').toString().trim();
+      companyId = (scope['company_id'] ?? '').toString().trim();
+      partnerId = companyId.isNotEmpty ? companyId : tenantId;
+    } catch (_) {}
+    final scopeKeys = limousineDefaultLocalPricingScopeKeys(
+      partnerId: partnerId,
+    );
     limousinePricingLocalStore.writeVehiclePublicCopy(
-      scopeKeys: limousineDefaultLocalPricingScopeKeys(),
+      scopeKeys: scopeKeys,
       working: _vehiclePublicCopy,
       published: updatePublished
           ? _vehiclePublicCopy
@@ -397,14 +409,19 @@ class _LimousineBusinessSetupPageState
       revision: _revision,
     );
     limousinePricingLocalStore.writeOverlay(
-      scopeKeys: limousineDefaultLocalPricingScopeKeys(),
-      fields: limousinePublishedVisitingCardOverlayFields(
-        displayPayload: _displayPayload(publish: updatePublished),
-        publishedOffers: updatePublished
-            ? _authoritativePublishedOffers()
-            : const <Map<String, dynamic>>[],
-        updatePublished: updatePublished,
-      ),
+      scopeKeys: scopeKeys,
+      fields: <String, dynamic>{
+        if (partnerId.isNotEmpty) 'partner_id': partnerId,
+        if (tenantId.isNotEmpty) 'tenant_id': tenantId,
+        if (companyId.isNotEmpty) 'company_id': companyId,
+        ...limousinePublishedVisitingCardOverlayFields(
+          displayPayload: _displayPayload(publish: updatePublished),
+          publishedOffers: updatePublished
+              ? _authoritativePublishedOffers()
+              : const <Map<String, dynamic>>[],
+          updatePublished: updatePublished,
+        ),
+      },
       revision: _revision,
     );
   }
@@ -518,8 +535,8 @@ class _LimousineBusinessSetupPageState
   }
 
   String get _effectiveLogoUrl {
-    return limousineEffectiveLogoUrl(
-      overrideUrl: _logo.photoUrl,
+    return limousineResolveWorkingLogoUrl(
+      workingOverrideUrl: _logo.photoUrl,
       companyLogoUrl: _companyLogoUrl,
     );
   }

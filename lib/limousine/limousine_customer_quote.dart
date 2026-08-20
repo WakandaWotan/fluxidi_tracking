@@ -5,6 +5,8 @@
 import 'package:flutter/foundation.dart';
 
 import 'limousine_offers.dart';
+import 'limousine_pricing_overlay.dart';
+import 'limousine_profile_identity.dart';
 import 'limousine_quote_inbox.dart';
 
 const Key kLimousineCustomerQuotePageKey = ValueKey<String>(
@@ -162,7 +164,9 @@ class LimousineDiscoveredProvider {
           .toString()
           .trim(),
       heroPhotoUrl: _httpsOnly(map['hero_photo_url'] ?? map['heroPhotoUrl']),
-      logoUrl: _httpsOnly(map['logo_url'] ?? map['logoUrl']),
+      logoUrl: limousineResolvePublishedLogoUrl(
+        source: limousineHydratePublishedPartnerOverlay(map),
+      ),
       serviceArea: area,
       limousineAvailable:
           map['limousine_available'] == true ||

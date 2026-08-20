@@ -406,7 +406,6 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           partnerId: data.partnerId,
           verifiedPartner: data.verifiedPartner,
           logoUrl: data.logoUrl,
-          logoImage: logoImage,
           market: market,
         ),
       ),

@@ -170,17 +170,20 @@ class LimousinePublicHeroOverlay extends StatelessWidget {
   }
 
   Widget _logo() {
-    final image = identity.logoImage;
-    final child = image != null
+    final url = identity.logoUrl.trim();
+    final provided = identity.logoImage;
+    final staleNetwork =
+        provided is NetworkImage && provided.url.trim() != url;
+    final child = provided != null && !staleNetwork
         ? Image(
             key: kLimousinePublicHeroLogoKey,
-            image: image,
+            image: provided,
             fit: BoxFit.contain,
             alignment: Alignment.centerRight,
             filterQuality: FilterQuality.medium,
           )
         : Image.network(
-            identity.logoUrl,
+            url,
             key: kLimousinePublicHeroLogoKey,
             fit: BoxFit.contain,
             alignment: Alignment.centerRight,

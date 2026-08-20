@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import '../app_config.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_pricing_local_store.dart';
+import 'limousine_pricing_overlay.dart';
 import 'limousine_public_showroom.dart';
 import 'limousine_service_capability.dart';
 import 'limousine_vehicle_public_copy.dart';
@@ -258,9 +259,10 @@ class LimousineDiscoveryController extends ChangeNotifier {
         return null;
       }
       await limousinePricingLocalStore.warm();
+      final hydrated = limousineHydratePublishedPartnerOverlay(map);
       return limousineAttachPublishedVehiclePublicCopy(
-        map,
-        limousinePricingLocalStore.publishedCopyForProfile(map),
+        hydrated,
+        limousinePricingLocalStore.publishedCopyForProfile(hydrated),
       );
     } on TimeoutException {
       profileUnavailablePartnerId = card.publicPartnerId;
