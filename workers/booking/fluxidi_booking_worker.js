@@ -42,9 +42,15 @@ import {
   scheduleCancelOneExtraDriver,
   undoCancelOneExtraDriver,
   undoBaseCancellation,
-  DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
-  DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
 } from "./modules/recurring_billing.mjs";
+import {
+  applyAuthorizedAddonUnitLock,
+  applyAuthorizedCheckoutLocks,
+  normalizePriceProvenance,
+  preserveLocksOnQuantityChange,
+  resolveAddonCheckoutUnitFromContract,
+  resolveRecurringAddonUnitsFromLocks,
+} from "./modules/subscription_locked_addon_units.mjs";
 import {
   grantPurchasedPdfCredits,
   consumePdfCreation,
@@ -13440,6 +13446,11 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   current_period_start: "",
   current_period_end: "",
   locked_price_cents: null,
+  locked_extra_vehicle_unit_cents: null,
+  locked_extra_driver_unit_cents: null,
+  locked_total_recurring_cents: null,
+  price_provenance: null,
+  source_revision: null,
   normal_price_cents: null,
   founder_price_cents: null,
   is_founder_customer: false,
@@ -14357,6 +14368,24 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     current_period_start: sanitizeTenantString(source.current_period_start ?? source.currentPeriodStart ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_start, 48),
     current_period_end: sanitizeTenantString(source.current_period_end ?? source.currentPeriodEnd ?? DEFAULT_SUBSCRIPTION_PROFILE.current_period_end, 48),
     locked_price_cents: nullableCents(source.locked_price_cents, source.lockedPriceCents),
+    locked_extra_vehicle_unit_cents: nullableCents(
+      source.locked_extra_vehicle_unit_cents,
+      source.lockedExtraVehicleUnitCents,
+    ),
+    locked_extra_driver_unit_cents: nullableCents(
+      source.locked_extra_driver_unit_cents,
+      source.lockedExtraDriverUnitCents,
+    ),
+    locked_total_recurring_cents: nullableCents(
+      source.locked_total_recurring_cents,
+      source.lockedTotalRecurringCents,
+    ),
+    price_provenance: normalizePriceProvenance(source.price_provenance ?? source.priceProvenance),
+    ...(Number.isInteger(source.source_revision) && source.source_revision >= 1
+      ? { source_revision: source.source_revision }
+      : Number.isInteger(source.sourceRevision) && source.sourceRevision >= 1
+        ? { source_revision: source.sourceRevision }
+        : {}),
     normal_price_cents: nullableCents(source.normal_price_cents, source.normalPriceCents),
     founder_price_cents: nullableCents(source.founder_price_cents, source.founderPriceCents),
     is_founder_customer: source.is_founder_customer === true || source.isFounderCustomer === true,
@@ -16030,6 +16059,12 @@ async function saveFluxidiSubscriptionPendingActivation(env, record, { ttlSecond
     normal_price_cents: _fluxidiSubscriptionNullableCents(record.normal_price_cents),
     founder_price_cents: _fluxidiSubscriptionNullableCents(record.founder_price_cents),
     expected_amount_cents: _fluxidiSubscriptionNullableCents(record.expected_amount_cents),
+    locked_extra_vehicle_unit_cents: _fluxidiSubscriptionNullableCents(
+      record.locked_extra_vehicle_unit_cents,
+    ),
+    locked_extra_driver_unit_cents: _fluxidiSubscriptionNullableCents(
+      record.locked_extra_driver_unit_cents,
+    ),
     provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
     provider_payment_id: _fluxidiSubscriptionSafeStr(record.provider_payment_id, 128),
     provider_customer_id: _fluxidiSubscriptionSafeStr(record.provider_customer_id, 128),
@@ -17031,13 +17066,17 @@ function _fluxidiRecurringStartDateFromIso(iso) {
 }
 
 function _recurringAddonUnitCentsForProfile(profile) {
-  const market = normalizeSubscriptionMarket(profile?.market);
-  const catalog = resolveSubscriptionAddonCatalog(market);
+  const resolved = resolveRecurringAddonUnitsFromLocks(profile);
+  if (!resolved?.ok) {
+    return {
+      vehicleUnitCents: null,
+      driverUnitCents: null,
+      error: resolved?.error || "locked_extra_addon_unit_absent",
+    };
+  }
   return {
-    vehicleUnitCents:
-      catalog?.extra_vehicle_price_cents ?? DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
-    driverUnitCents:
-      catalog?.extra_driver_price_cents ?? DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+    vehicleUnitCents: resolved.vehicleUnitCents,
+    driverUnitCents: resolved.driverUnitCents,
   };
 }
 
@@ -17049,6 +17088,9 @@ async function _syncFluxidiConsolidatedRecurringAmount(
   { vehicleUnitCents, driverUnitCents } = {},
 ) {
   const units = _recurringAddonUnitCentsForProfile(profile);
+  if (units?.error && vehicleUnitCents == null && driverUnitCents == null) {
+    return { ok: false, skipped: true, reason: units.error, profile };
+  }
   const vUnit = vehicleUnitCents ?? units.vehicleUnitCents;
   const dUnit = driverUnitCents ?? units.driverUnitCents;
   const desired = computeConsolidatedRecurringCentsFromProfile(profile, {
@@ -17738,7 +17780,7 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
 
   // Last transform clears prior cancel/dunning lifecycle so a subsequent
   // materializeDueBaseSubscriptionCancellation cannot undo this paid activate.
-  const updatedProfile = clearCancellationLifecycleOnPaidActivation({
+  let updatedProfile = clearCancellationLifecycleOnPaidActivation({
     ...currentProfile,
     plan_code: _fluxidiSubscriptionSafeStr(pending.plan_code, 32) ||
       currentProfile.plan_code || "fluxidi_pro",
@@ -17770,6 +17812,31 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     warnings,
     updated_at: nowIso,
   });
+
+  const checkoutLock = applyAuthorizedCheckoutLocks(updatedProfile, {
+    locked_extra_vehicle_unit_cents: pending.locked_extra_vehicle_unit_cents,
+    locked_extra_driver_unit_cents: pending.locked_extra_driver_unit_cents,
+    locked_price_cents: lockedCents,
+    currency: pendingCurrency || currentProfile.currency || "EUR",
+    source: "checkout_snapshot",
+    activation_id: cleanActivationId,
+    nowIso,
+  });
+  if (!checkoutLock?.ok) {
+    const alreadyLocked =
+      Number.isInteger(currentProfile?.locked_extra_vehicle_unit_cents)
+      && currentProfile.locked_extra_vehicle_unit_cents >= 1
+      && Number.isInteger(currentProfile?.locked_extra_driver_unit_cents)
+      && currentProfile.locked_extra_driver_unit_cents >= 1;
+    if (!alreadyLocked) {
+      console.log(
+        `[SUBSCRIPTION_ACTIVATE][ERROR] tenant=${tenantMask} company=${companyMask} stage=addon_unit_lock msg=${_fluxidiSubscriptionSafeStr(checkoutLock?.error, 80)}`,
+      );
+      return { ok: false, error: checkoutLock?.error || "checkout_snapshot_addon_units_missing" };
+    }
+  } else {
+    updatedProfile = checkoutLock.profile;
+  }
 
   let savedProfile;
   try {
@@ -18524,14 +18591,36 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
 
   if (addonCode === "extra_vehicle") {
     const priorActive = deriveExtraVehicleActiveQuantity(currentProfile);
-    updatedProfile.extra_vehicle_active_quantity = priorActive + quantity;
+    const qtyLock = preserveLocksOnQuantityChange(updatedProfile, {
+      extra_vehicle_active_quantity: priorActive + quantity,
+    });
+    if (!qtyLock?.ok) return await rejectAndIgnore(qtyLock?.error || "addon_quantity_lock_failed");
+    updatedProfile = qtyLock.profile;
   }
   // Patch 2.8: extra_driver uses an explicit active-quantity counter that is
   // incremented here and decremented only when a scheduled cancellation
   // materializes.
   if (addonCode === "extra_driver") {
     const priorActive = deriveExtraDriverActiveQuantity(currentProfile);
-    updatedProfile.extra_driver_active_quantity = priorActive + quantity;
+    const qtyLock = preserveLocksOnQuantityChange(updatedProfile, {
+      extra_driver_active_quantity: priorActive + quantity,
+    });
+    if (!qtyLock?.ok) return await rejectAndIgnore(qtyLock?.error || "addon_quantity_lock_failed");
+    updatedProfile = qtyLock.profile;
+  }
+  if (addonCode === "extra_vehicle" || addonCode === "extra_driver") {
+    const lockResult = applyAuthorizedAddonUnitLock(updatedProfile, {
+      addon_code: addonCode,
+      unit_price_cents: pending.unit_price_cents,
+      currency: pendingCurrency || currentProfile.currency,
+      source: "addon_checkout_snapshot",
+      activation_id: cleanActivationId,
+      lock_effective_at: nowIso,
+    });
+    if (!lockResult?.ok) {
+      return await rejectAndIgnore(lockResult?.error || "unit_price_absent");
+    }
+    updatedProfile = lockResult.profile;
   }
   // Patch 2.9: PDF bundles track explicit active quantity per pack code.
   if (addonCode === "pdf_500") {
@@ -39300,6 +39389,27 @@ export default {
             return json({ ok: false, error: "invalid_subscription_price" }, 422);
           }
 
+          // Authorized contract snapshot: persist the add-on unit prices that
+          // are in force at checkout-start. Activation copies these onto the
+          // profile and never re-reads the live catalog.
+          const addonCatalog = resolveSubscriptionAddonCatalog(market);
+          const extraVehicleUnitCents = resolveAddonUnitPriceCents(
+            addonCatalog,
+            "extra_vehicle",
+          );
+          const extraDriverUnitCents = resolveAddonUnitPriceCents(
+            addonCatalog,
+            "extra_driver",
+          );
+          if (
+            !Number.isFinite(Number(extraVehicleUnitCents)) ||
+            Number(extraVehicleUnitCents) < 1 ||
+            !Number.isFinite(Number(extraDriverUnitCents)) ||
+            Number(extraDriverUnitCents) < 1
+          ) {
+            return json({ ok: false, error: "checkout_snapshot_addon_units_missing" }, 422);
+          }
+
           // Resolve billing email: profile first, then business profile.
           let billingEmail = _fluxidiSubscriptionSafeStr(profile?.billing_email, 160);
           let companyName = "";
@@ -39499,6 +39609,8 @@ export default {
                 normal_price_cents: normalPriceCents,
                 founder_price_cents: founderPriceCents,
                 expected_amount_cents: expectedAmountCents,
+                locked_extra_vehicle_unit_cents: extraVehicleUnitCents,
+                locked_extra_driver_unit_cents: extraDriverUnitCents,
                 provider: FLUXIDI_SUBSCRIPTION_PROVIDER_NAME,
                 provider_payment_id: providerPaymentId,
                 provider_customer_id: customerId,
@@ -39657,7 +39769,15 @@ export default {
           if (!addonCatalog) {
             return json({ ok: false, error: "unsupported_market" }, 422);
           }
-          const unitPriceCents = resolveAddonUnitPriceCents(addonCatalog, addonCode);
+          const catalogUnitPriceCents = resolveAddonUnitPriceCents(addonCatalog, addonCode);
+          const contractUnit = resolveAddonCheckoutUnitFromContract(profile, {
+            addonCode,
+            snapshotUnitCents: catalogUnitPriceCents,
+          });
+          if (!contractUnit?.ok) {
+            return json({ ok: false, error: contractUnit?.error || "invalid_addon_price" }, 422);
+          }
+          const unitPriceCents = contractUnit.unit_price_cents;
           if (
             !Number.isFinite(Number(unitPriceCents)) ||
             Number(unitPriceCents) <= 0
@@ -39702,12 +39822,16 @@ export default {
                 deriveExtraDriverActiveQuantity(profile) + quantity;
             }
             const nextRenewalMonthlyCents = computeConsolidatedRecurringCentsFromProfile(
-              hypotheticalProfile,
               {
-                vehicleUnitCents:
-                  addonCatalog.extra_vehicle_price_cents ?? DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
-                driverUnitCents:
-                  addonCatalog.extra_driver_price_cents ?? DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+                ...hypotheticalProfile,
+                locked_extra_vehicle_unit_cents:
+                  addonCode === "extra_vehicle"
+                    ? Number(unitPriceCents)
+                    : hypotheticalProfile.locked_extra_vehicle_unit_cents,
+                locked_extra_driver_unit_cents:
+                  addonCode === "extra_driver"
+                    ? Number(unitPriceCents)
+                    : hypotheticalProfile.locked_extra_driver_unit_cents,
               },
             );
             proration = {

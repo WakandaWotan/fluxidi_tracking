@@ -56,16 +56,26 @@ export function computeConsolidatedRecurringCents({
 }
 
 export function computeConsolidatedRecurringCentsFromProfile(profile, {
-  vehicleUnitCents = DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
-  driverUnitCents = DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+  vehicleUnitCents,
+  driverUnitCents,
 } = {}) {
   const q = futureRecurringAddonQuantities(profile);
+  const vLock = Number.isInteger(profile?.locked_extra_vehicle_unit_cents)
+    ? profile.locked_extra_vehicle_unit_cents
+    : null;
+  const dLock = Number.isInteger(profile?.locked_extra_driver_unit_cents)
+    ? profile.locked_extra_driver_unit_cents
+    : null;
+  const vUnit = vehicleUnitCents ?? vLock;
+  const dUnit = driverUnitCents ?? dLock;
+  if (q.vehicle_qty > 0 && !(Number.isInteger(vUnit) && vUnit >= 1)) return null;
+  if (q.driver_qty > 0 && !(Number.isInteger(dUnit) && dUnit >= 1)) return null;
   return computeConsolidatedRecurringCents({
     lockedPriceCents: profile?.locked_price_cents,
     vehicleQty: q.vehicle_qty,
     driverQty: q.driver_qty,
-    vehicleUnitCents,
-    driverUnitCents,
+    vehicleUnitCents: vUnit ?? 0,
+    driverUnitCents: dUnit ?? 0,
   });
 }
 

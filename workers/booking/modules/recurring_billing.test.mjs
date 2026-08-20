@@ -35,6 +35,8 @@ test("consolidated total €69 and €59 bases with vehicle/driver mixes", () =>
 test("PDF never affects consolidated recurring total", () => {
   const profile = {
     locked_price_cents: 6900,
+    locked_extra_vehicle_unit_cents: 1900,
+    locked_extra_driver_unit_cents: 900,
     extra_vehicle_active_quantity: 1,
     extra_vehicle_cancel_at_period_end_quantity: 0,
     extra_driver_active_quantity: 0,
@@ -93,6 +95,14 @@ test("deterministic proration cent rounding", () => {
   assert.ok(tiny >= 0 && tiny <= 1900);
 });
 
+test("FromProfile fails closed when future qty exists without locked units", () => {
+  assert.equal(computeConsolidatedRecurringCentsFromProfile({
+    locked_price_cents: 6900,
+    extra_vehicle_active_quantity: 3,
+    extra_driver_active_quantity: 1,
+  }), null);
+});
+
 test("centsToMollieAmountValue", () => {
   assert.equal(centsToMollieAmountValue(8800), "88.00");
   assert.equal(centsToMollieAmountValue(6900), "69.00");
@@ -104,6 +114,8 @@ test("cancel one vehicle retains active qty; future qty drops; undo restores", (
     extra_vehicle_cancel_at_period_end_quantity: 0,
     current_period_end: "2026-09-11T16:44:36.124Z",
     locked_price_cents: 6900,
+    locked_extra_vehicle_unit_cents: 1900,
+    locked_extra_driver_unit_cents: 900,
   };
   const scheduled = scheduleCancelOneExtraVehicle(p, {
     nowIso: "2026-08-13T10:00:00.000Z",
@@ -139,6 +151,8 @@ test("cancel/undo driver; purchase vs undo remain distinct", () => {
     extra_driver_cancel_at_period_end_quantity: 0,
     current_period_end: "2026-09-11T16:44:36.124Z",
     locked_price_cents: 6900,
+    locked_extra_vehicle_unit_cents: 1900,
+    locked_extra_driver_unit_cents: 900,
     extra_vehicle_active_quantity: 0,
     extra_vehicle_cancel_at_period_end_quantity: 0,
   };
