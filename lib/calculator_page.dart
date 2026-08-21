@@ -40,8 +40,10 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
-import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
+import 'package:fluxidi_tracking/payment/booking_checkout_response.dart';
+import 'package:fluxidi_tracking/payment/booking_payment_method_tile.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
+import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
@@ -371,10 +373,11 @@ void _logCalculatorVisualThemeResolution({
   required bool useDriverVisualTheme,
 }) {
   if (!kDebugMode) return;
-  final visualSource = _calculatorUsesDriverVisualTheme(
-    entryContext: entryContext,
-    useDriverVisualTheme: useDriverVisualTheme,
-  )
+  final visualSource =
+      _calculatorUsesDriverVisualTheme(
+        entryContext: entryContext,
+        useDriverVisualTheme: useDriverVisualTheme,
+      )
       ? 'driver'
       : (entryContext == BookingEntryContext.companyAdmin
             ? 'business'
@@ -1812,8 +1815,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         final friendly = friendlyEntitlementUserMessage(
           rawError: txt,
           languageCode: lang,
-          isPublicCustomer:
-              widget.entryContext == BookingEntryContext.customer,
+          isPublicCustomer: widget.entryContext == BookingEntryContext.customer,
           httpStatus: res.statusCode,
         );
         throw Exception(friendly ?? 'Quote failed: ${res.statusCode}');
@@ -3899,43 +3901,12 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   List<String> get _enabledCompanyPaymentOptionIds =>
       _bookingPaymentCapability.enabledPaymentOptionIds;
 
-  String _normalizePaymentMarketCountry(String raw) {
-    final normalized = normalizeCountryCode(raw);
-    if (normalized.isNotEmpty &&
-        PaymentCountryCodes.supported.contains(normalized)) {
-      return normalized;
-    }
-    switch (raw.trim().toLowerCase()) {
-      case 'belgie':
-      case 'belgië':
-      case 'belgium':
-        return PaymentCountryCodes.belgium;
-      case 'nederland':
-      case 'netherlands':
-        return PaymentCountryCodes.netherlands;
-      case 'frankrijk':
-      case 'france':
-        return PaymentCountryCodes.france;
-      case 'spanje':
-      case 'spain':
-      case 'españa':
-      case 'espana':
-        return PaymentCountryCodes.spain;
-      default:
-        return '';
-    }
-  }
+  String _paymentMarketCountryCode() => paymentMarketCountryCode(
+    localBackendBusinessProfileNotifier.value?.country ?? '',
+  );
 
-  String _paymentMarketCountryCode() {
-    final profile = localBackendBusinessProfileNotifier.value;
-    final companyCountry = _normalizePaymentMarketCountry(
-      profile?.country ?? '',
-    );
-    if (companyCountry.isNotEmpty) return companyCountry;
-    return PaymentCountryCodes.belgium;
-  }
-
-  ResolvedPaymentMethods get _resolvedPaymentMethods => _paymentOptions.resolved;
+  ResolvedPaymentMethods get _resolvedPaymentMethods =>
+      _paymentOptions.resolved;
 
   List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
 
@@ -4016,161 +3987,36 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
-  String _paymentMethodUnavailableMessage() {
-    return _localizedText(
-      nl: 'Deze betaalmethode is niet beschikbaar voor dit bedrijf.',
-      en: 'This payment method is not available for this company.',
-      fr: 'Ce moyen de paiement n’est pas disponible pour cette entreprise.',
-      es: 'Este método de pago no está disponible para esta empresa.',
-    );
-  }
+  String _paymentMethodUnavailableMessage() =>
+      paymentMethodUnavailableMessage(_localizedText);
 
-  String _qrPaymentSetupRequiredMessage() {
-    return _localizedText(
-      nl: 'Vul eerst de bankgegevens in bij de bedrijfsinstellingen.',
-      en: 'Add bank details in business settings first.',
-      fr: 'Ajoutez d’abord les coordonnées bancaires dans les paramètres de l’entreprise.',
-      es: 'Añade primero los datos bancarios en la configuración de la empresa.',
-    );
-  }
+  String _qrPaymentSetupRequiredMessage() =>
+      qrPaymentSetupRequiredMessage(_localizedText);
 
-  String _payconiqWeroPendingMessage() {
-    return _localizedText(
-      nl: 'Payconiq / Wero wordt later als aparte betaaloptie gekoppeld.',
-      en: 'Payconiq / Wero will be connected later as a separate payment option.',
-      fr: 'Payconiq / Wero sera connecté plus tard comme option de paiement séparée.',
-      es: 'Payconiq / Wero se conectará más adelante como una opción de pago separada.',
-    );
-  }
+  String _payconiqWeroPendingMessage() =>
+      payconiqWeroPendingMessage(_localizedText);
 
   bool _isQrPaymentConfigured() => _paymentOptions.qrPaymentConfigured;
 
   bool _isQrPaymentMissingBankDetails() =>
       _paymentOptions.qrPaymentMissingBankDetails;
 
-  String _displayOnlyPaymentMessage(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    if (id == PaymentMethodIds.qrCode) {
-      return _qrPaymentSetupRequiredMessage();
-    }
-    if (id == PaymentMethodIds.payconiqWero) {
-      return _payconiqWeroPendingMessage();
-    }
-    if (id == PaymentMethodIds.googlePay) {
-      return PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+  String _displayOnlyPaymentMessage(String methodId) =>
+      displayOnlyPaymentMethodMessage(
+        methodId,
+        _localizedText,
         languageCode: widget.language.name,
       );
-    }
-    return _paymentMethodUnavailableMessage();
-  }
 
-  String _paymentMethodLabel(String methodId) {
-    switch (normalizePaymentMethodId(methodId)) {
-      case PaymentMethodIds.inVehicleCard:
-        return _localizedText(
-          nl: 'Betalen in de auto',
-          en: 'Pay in the car',
-          fr: 'Payer dans la voiture',
-          es: 'Pagar en el coche',
-        );
-      case PaymentMethodIds.bancontact:
-        return 'Bancontact';
-      case PaymentMethodIds.kbcCbc:
-        return 'KBC/CBC Payment Button';
-      case PaymentMethodIds.belfius:
-        return 'Belfius Pay Button';
-      case PaymentMethodIds.bancontactQr:
-        return 'Payconiq / Bancontact Pay QR';
-      case PaymentMethodIds.qrCode:
-        return _localizedText(
-          nl: 'QR-betaling',
-          en: 'QR payment',
-          fr: 'Paiement par QR',
-          es: 'Pago por QR',
-        );
-      case PaymentMethodIds.ideal:
-        return 'iDEAL';
-      case PaymentMethodIds.cardPayment:
-        return _localizedText(
-          nl: 'Kaartbetaling',
-          en: 'Card payment',
-          fr: 'Paiement par carte',
-          es: 'Pago con tarjeta',
-        );
-      case PaymentMethodIds.applePay:
-        return 'Apple Pay';
-      case PaymentMethodIds.googlePay:
-        return 'Google Pay';
-      case PaymentMethodIds.paypal:
-        return 'PayPal';
-      case PaymentMethodIds.bizum:
-        return 'Bizum';
-      case PaymentMethodIds.cartesBancaires:
-        return 'Carte Bancaire / CB';
-      case PaymentMethodIds.payconiqWero:
-        return 'Payconiq / Wero';
-      default:
-        return methodId;
-    }
-  }
+  String _paymentMethodLabel(String methodId) =>
+      paymentMethodDisplayLabel(methodId, _localizedText);
 
-  String _paymentMethodDescription(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    if (id == PaymentMethodIds.inVehicleCard || id == PaymentMethodIds.cash) {
-      return _localizedText(
-        nl: 'Boeking wordt meteen aangemaakt, betaling volgt tijdens de rit.',
-        en: 'Booking is created immediately, payment follows during the ride.',
-        fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
-        es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
+  String _paymentMethodDescription(String methodId) =>
+      paymentMethodShortDescription(
+        methodId,
+        _localizedText,
+        qrPaymentConfigured: _isQrPaymentConfigured(),
       );
-    }
-    if (id == PaymentMethodIds.qrCode) {
-      if (!_isQrPaymentConfigured()) {
-        return _localizedText(
-          nl: 'Bankgegevens ontbreken in de bedrijfsinstellingen.',
-          en: 'Bank details are missing in business settings.',
-          fr: 'Les coordonnées bancaires manquent dans les paramètres de l’entreprise.',
-          es: 'Faltan los datos bancarios en la configuración de la empresa.',
-        );
-      }
-      return _localizedText(
-        nl: 'Scan en betaal naar de rekening van het bedrijf.',
-        en: 'Scan and pay to the company bank account.',
-        fr: 'Scannez et payez sur le compte bancaire de l’entreprise.',
-        es: 'Escanea y paga a la cuenta bancaria de la empresa.',
-      );
-    }
-    if (id == PaymentMethodIds.payconiqWero) {
-      return _localizedText(
-        nl: 'Payconiq / Wero — binnenkort beschikbaar',
-        en: 'Payconiq / Wero — coming soon',
-        fr: 'Payconiq / Wero — bientôt disponible',
-        es: 'Payconiq / Wero — próximamente',
-      );
-    }
-    if (id == PaymentMethodIds.bancontactQr) {
-      return _localizedText(
-        nl: 'Scan met Bancontact Pay, Payconiq by Bancontact of je bank-app.',
-        en: 'Scan with Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app.',
-        fr: 'Scannez avec Bancontact Pay, Payconiq by Bancontact ou votre application bancaire belge.',
-        es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
-      );
-    }
-    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
-      return _localizedText(
-        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
-        en: 'Open the secure checkout page after confirming.',
-        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
-        es: 'Abre la página de pago segura tras confirmar.',
-      );
-    }
-    return _localizedText(
-      nl: 'Open de beveiligde betaalpagina na het bevestigen.',
-      en: 'Open the secure checkout page after confirming.',
-      fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
-      es: 'Abre la página de pago segura tras confirmar.',
-    );
-  }
 
   String? _qrSrcFromBookResponse(Map<String, dynamic> body) {
     Map<String, dynamic>? asMap(dynamic value) {
@@ -4240,88 +4086,34 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   }
 
   Widget _paymentMethodChoiceOption(String methodId) {
-    final selected = _selectedPaymentMethodId == methodId;
     final displayOnly = _isDisplayOnlyPaymentMethod(methodId);
-    final fallbackIconColor = displayOnly
-        ? _textMuted.withOpacity(0.72)
-        : selected
-        ? _gold
-        : _textPrimary.withOpacity(0.8);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: _submitting
+    return BookingPaymentMethodTile(
+      methodId: methodId,
+      label: _paymentMethodLabel(methodId),
+      description: _paymentMethodDescription(methodId),
+      selected: _selectedPaymentMethodId == methodId,
+      displayOnly: displayOnly,
+      style: BookingPaymentTileStyle(
+        animationDuration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        selectedBackground: _panelAlt,
+        unselectedBackground: _panel.withOpacity(_isDarkTheme ? 0.45 : 0.75),
+        selectedBorderColor: _gold,
+        unselectedBorderColor: _border.withOpacity(_isDarkTheme ? 0.45 : 1),
+        accentColor: _gold,
+        labelColor: _textPrimary,
+        mutedColor: _textMuted,
+        descriptionColor: _textMuted.withOpacity(0.92),
+        unselectedLogoColor: _textPrimary.withOpacity(0.8),
+      ),
+      onSelect: _submitting
           ? null
-          : displayOnly
-          ? () => _showThemedSnackBar(_displayOnlyPaymentMessage(methodId))
           : () => setState(() {
               _selectedPaymentMethodId = methodId;
             }),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected
-              ? _panelAlt
-              : _panel.withOpacity(_isDarkTheme ? 0.45 : 0.75),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected
-                ? _gold
-                : _border.withOpacity(_isDarkTheme ? 0.45 : 1),
-            width: selected ? 1.2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            buildPaymentMethodLogo(
-              methodId: methodId,
-              fallbackIconColor: fallbackIconColor,
-              plateWidth: 44,
-              plateHeight: 32,
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _paymentMethodLabel(methodId),
-                    style: TextStyle(
-                      color: displayOnly ? _textMuted : _textPrimary,
-                      fontSize: 12.8,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _paymentMethodDescription(methodId),
-                    style: TextStyle(
-                      color: _textMuted.withOpacity(0.92),
-                      fontSize: 11.2,
-                      height: 1.2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              displayOnly
-                  ? Icons.info_outline_rounded
-                  : selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_off,
-              color: displayOnly
-                  ? _textMuted.withOpacity(0.72)
-                  : selected
-                  ? _gold
-                  : _textMuted.withOpacity(0.8),
-              size: 18,
-            ),
-          ],
-        ),
-      ),
+      onDisplayOnlyTap: _submitting
+          ? null
+          : () => _showThemedSnackBar(_displayOnlyPaymentMessage(methodId)),
     );
   }
 
@@ -4338,8 +4130,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     final entitlementMsg = friendlyEntitlementUserMessage(
       rawError: raw,
       languageCode: lang == 'de' ? 'nl' : lang,
-      isPublicCustomer:
-          widget.entryContext == BookingEntryContext.customer,
+      isPublicCustomer: widget.entryContext == BookingEntryContext.customer,
     );
     if (entitlementMsg != null) return entitlementMsg;
     final s = raw.trim().toLowerCase();
@@ -4396,21 +4187,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     return raw;
   }
 
-  bool _isCustomerSafeCheckoutUrl(String value) {
-    final url = value.trim();
-    if (url.isEmpty) return false;
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme || !uri.hasAuthority) return false;
-    final scheme = uri.scheme.toLowerCase();
-    if (scheme != 'https') return false;
-    final host = uri.host.toLowerCase();
-    if (host.contains('workers.dev') ||
-        host.contains('localhost') ||
-        host.contains('127.0.0.1')) {
-      return false;
-    }
-    return true;
-  }
+  bool _isCustomerSafeCheckoutUrl(String value) =>
+      isCustomerSafeCheckoutUrl(value);
 
   Future<void> _copyPaymentLink(String paymentUrl, {String? message}) async {
     await Clipboard.setData(ClipboardData(text: paymentUrl));
@@ -4610,8 +4388,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Comprobando la reserva...';
       case AppLanguage.nl:
         return 'Boeking wordt gecontroleerd...';
-    case AppLanguage.de:
-      return 'Checking booking status...';
+      case AppLanguage.de:
+        return 'Checking booking status...';
     }
   }
 
@@ -4625,8 +4403,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Comprobando el pago...';
       case AppLanguage.nl:
         return 'Betaling controleren...';
-    case AppLanguage.de:
-      return 'Checking booking status...';
+      case AppLanguage.de:
+        return 'Checking booking status...';
     }
   }
 
@@ -4640,8 +4418,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'No pudimos confirmar la reserva. Revisa Mis reservas o actualiza.';
       case AppLanguage.nl:
         return 'We konden de bevestiging niet controleren. Kijk bij Mijn boekingen of vernieuw.';
-    case AppLanguage.de:
-      return 'Checking booking status...';
+      case AppLanguage.de:
+        return 'Checking booking status...';
     }
   }
 

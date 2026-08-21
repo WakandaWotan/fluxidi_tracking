@@ -46268,6 +46268,10 @@ export default {
           loadRecord: (id) => _loadLimousineQuoteRecord(env, id),
           persistExpired: (next) => _saveLimousineQuoteRecord(env, next),
           isCompanyAllowlisted: (companyId) => _limousineTestCompanyAllowlisted(env, companyId),
+          // Same sanitized projection the accept response returns, so a customer
+          // who restarts the app can re-read the partner's payment capability
+          // instead of being offered methods the partner cannot accept.
+          loadPaymentCapability: (rec) => _limousinePartnerPaymentCapability(env, rec),
         });
         return json(result.body, result.status);
       }

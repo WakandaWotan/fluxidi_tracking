@@ -8,6 +8,8 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_quote.dart';
 import 'package:fluxidi_tracking/limousine/limousine_dimensions.dart';
 import 'package:fluxidi_tracking/limousine/limousine_pricing_separation.dart';
+import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 
 const List<String> _kForbiddenLimousineWranglerKeys = <String>[
   'LIMOUSINE_QUOTE_ENABLED',
@@ -157,6 +159,9 @@ void main() {
       handoff: _handoff(),
       draft: _draft(),
       customer: _customer,
+      payment: BookingPaymentSelection.fromMethodId(
+        PaymentMethodIds.inVehicleCard,
+      ),
     );
     expect(payload.containsKey('total_incl_vat_cents'), isFalse);
     expect(payload.containsKey('total'), isFalse);

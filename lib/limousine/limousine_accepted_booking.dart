@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../payment/payment_booking_selection.dart';
-import '../payment/payment_method_catalog.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_quote_inbox.dart';
 
@@ -43,6 +42,22 @@ const Key kLimousineAcceptedBookingBackToQuoteKey = ValueKey<String>(
 const Key kLimousineAcceptedBookingBackToProfileKey = ValueKey<String>(
   'limousine_accepted_booking_back_profile',
 );
+const Key kLimousineAcceptedBookingPaymentSectionKey = ValueKey<String>(
+  'limousine_accepted_booking_payment',
+);
+const Key kLimousineAcceptedBookingPaymentLoadingKey = ValueKey<String>(
+  'limousine_accepted_booking_payment_loading',
+);
+const Key kLimousineAcceptedBookingPaymentRetryKey = ValueKey<String>(
+  'limousine_accepted_booking_payment_retry',
+);
+const Key kLimousineAcceptedBookingCheckoutUnavailableKey = ValueKey<String>(
+  'limousine_accepted_booking_checkout_unavailable',
+);
+
+/// Key of one payment option row, so a test can tap the method a customer sees.
+Key limousineAcceptedBookingPaymentMethodKey(String methodId) =>
+    ValueKey<String>('limousine_accepted_booking_payment_$methodId');
 
 const Set<String> kLimousineAcceptedBookAllowedKeys = <String>{
   'limousine_acceptance_reference',
@@ -82,6 +97,11 @@ const Set<String> kLimousineAcceptedBookAllowedKeys = <String>{
   'paymentProvider',
   'payment_method',
   'paymentMethod',
+  // Same additive checkout fields taxi and airport send for an online method.
+  'mollie_method',
+  'mollieMethod',
+  'qr_preferred',
+  'qrPreferred',
   'booking_source',
   'entry_channel',
   'created_by_role',
@@ -124,6 +144,16 @@ enum LimousineAcceptedBookingError {
   unknownResponse,
   ambiguousTimeout,
   network,
+
+  /// The partner's payment capability could not be read, so no method may be
+  /// offered. Retryable.
+  paymentCapabilityUnavailable,
+
+  /// No payment method has been chosen yet.
+  paymentMethodRequired,
+
+  /// The partner no longer accepts the chosen method — read again and re-pick.
+  paymentMethodUnavailable,
 }
 
 class LimousineAcceptedBookingCustomer {
@@ -288,14 +318,19 @@ LimousineAcceptedBookingError? limousineAcceptedBookPreflightError({
   return null;
 }
 
+/// Booking payload for an accepted quote.
+///
+/// [payment] is the method the customer actually picked. There is no default:
+/// a limousine customer chooses how to pay exactly like a taxi or airport
+/// customer, so a caller that has no choice yet has nothing to send.
 Map<String, dynamic> limousineAcceptedBookPayload({
   required LimousineAcceptedQuoteHandoff handoff,
   required LimousineQuoteCreateDraft draft,
   required LimousineAcceptedBookingCustomer customer,
+  required BookingPaymentSelection payment,
   LimousineQuoteRequest? request,
 }) {
   final partnerId = handoff.publicPartnerId.trim();
-  final payment = BookingPaymentSelection.fromMethodId(PaymentMethodIds.cash);
   final phone = customer.phone.trim();
   final email = customer.email.trim();
   final name = customer.name.trim();
@@ -441,6 +476,12 @@ LimousineAcceptedBookingError limousineAcceptedBookErrorFromCode(String code) {
     case 'limousine_book_disabled':
     case 'manual_quote_gate_off':
       return LimousineAcceptedBookingError.bookDisabled;
+    // The partner's payment configuration changed after the picker read it.
+    case 'payment_method_disabled_for_company':
+    case 'payment_method_not_supported_for_mollie_checkout':
+    case 'payment_checkout_unavailable':
+    case 'mollie_connect_not_configured':
+      return LimousineAcceptedBookingError.paymentMethodUnavailable;
     case 'ambiguous_timeout':
       return LimousineAcceptedBookingError.ambiguousTimeout;
     case 'unknown_response':

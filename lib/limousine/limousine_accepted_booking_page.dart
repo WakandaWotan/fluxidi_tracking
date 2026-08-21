@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import '../payment/booking_payment_method_tile.dart';
 import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_api.dart';
 import 'limousine_accepted_booking_labels.dart';
@@ -46,6 +49,31 @@ class _LimousineAcceptedBookingPageState
   void initState() {
     super.initState();
     widget.controller.addListener(_onChanged);
+    if (_entryEnabled && widget.controller.paymentCapability == null) {
+      unawaited(widget.controller.loadPaymentCapability());
+    }
+  }
+
+  /// Same four-language resolution the other booking surfaces use, so the
+  /// shared payment copy reads identically here.
+  String _payText({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.de:
+        return en;
+    }
   }
 
   void _onChanged() {
@@ -85,6 +113,7 @@ class _LimousineAcceptedBookingPageState
               _success(controller, palette)
             else ...[
               _review(controller.reviewFor(_lang), palette),
+              _paymentSection(controller, palette),
               if (controller.error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
@@ -115,11 +144,9 @@ class _LimousineAcceptedBookingPageState
                 ),
                 FilledButton(
                   key: kLimousineAcceptedBookingSubmitKey,
-                  onPressed:
-                      controller.submitting ||
-                          !controller.confirmationAcknowledged
-                      ? null
-                      : () => controller.confirmBooking(),
+                  onPressed: controller.canConfirmBooking
+                      ? () => controller.confirmBooking()
+                      : null,
                   child: Text(_t(kLimousineAcceptedBookingSubmit)),
                 ),
               ],
@@ -147,6 +174,137 @@ class _LimousineAcceptedBookingPageState
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The payment picker, driven entirely by the partner capability the server
+  /// published for this accepted quote.
+  Widget _paymentSection(
+    LimousineAcceptedBookingController controller,
+    CustomerThemePalette palette,
+  ) {
+    final options = controller.paymentOptionsFor(_lang.name);
+    final visible = controller.visiblePaymentMethodIds;
+    return Card(
+      key: kLimousineAcceptedBookingPaymentSectionKey,
+      color: palette.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(kLimousineAcceptedBookingPaymentTitle),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _t(kLimousineAcceptedBookingPaymentSubtitle),
+              style: TextStyle(color: palette.textMuted, fontSize: 12.4),
+            ),
+            const SizedBox(height: 10),
+            if (controller.loadingPaymentCapability)
+              Row(
+                key: kLimousineAcceptedBookingPaymentLoadingKey,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: palette.gold,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _t(kLimousineAcceptedBookingPaymentLoading),
+                      style: TextStyle(color: palette.textMuted),
+                    ),
+                  ),
+                ],
+              )
+            else if (options == null || visible.isEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: kLimousineAcceptedBookingPaymentRetryKey,
+                  onPressed: () => controller.loadPaymentCapability(),
+                  child: Text(_t(kLimousineAcceptedBookingPaymentRetry)),
+                ),
+              )
+            else ...[
+              if (options.onlinePaymentsBlockedMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    options.onlinePaymentsBlockedMessage!,
+                    style: TextStyle(color: palette.textMuted, fontSize: 12),
+                  ),
+                ),
+              for (final methodId in visible)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: BookingPaymentMethodTile(
+                    key: limousineAcceptedBookingPaymentMethodKey(methodId),
+                    methodId: methodId,
+                    label: paymentMethodDisplayLabel(methodId, _payText),
+                    description: paymentMethodShortDescription(
+                      methodId,
+                      _payText,
+                      qrPaymentConfigured: options.qrPaymentConfigured,
+                    ),
+                    selected: controller.selectedPaymentMethodId == methodId,
+                    displayOnly: options.isDisplayOnly(methodId),
+                    style: BookingPaymentTileStyle(
+                      animationDuration: const Duration(milliseconds: 160),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      selectedBackground: palette.surfaceAlt,
+                      unselectedBackground: palette.surface,
+                      selectedBorderColor: palette.gold,
+                      unselectedBorderColor: palette.border,
+                      accentColor: palette.gold,
+                      labelColor: palette.textPrimary,
+                      mutedColor: palette.textMuted,
+                      descriptionColor: palette.textMuted,
+                      unselectedLogoColor: palette.textMuted,
+                    ),
+                    onSelect: controller.submitting
+                        ? null
+                        : () => controller.selectPaymentMethod(methodId),
+                    onDisplayOnlyTap: controller.submitting
+                        ? null
+                        : () => _showPaymentNotice(
+                            displayOnlyPaymentMethodMessage(
+                              methodId,
+                              _payText,
+                              languageCode: _lang.name,
+                            ),
+                            palette,
+                          ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPaymentNotice(String message, CustomerThemePalette palette) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: palette.surfaceAlt,
+        content: Text(message, style: TextStyle(color: palette.textPrimary)),
       ),
     );
   }
@@ -257,6 +415,15 @@ class _LimousineAcceptedBookingPageState
             ),
             const SizedBox(height: 8),
             Text('${_t(kLimousineAcceptedBookingReference)}: $reference'),
+            if (controller.checkoutStartFailed)
+              Padding(
+                key: kLimousineAcceptedBookingCheckoutUnavailableKey,
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _t(kLimousineAcceptedBookingCheckoutUnavailable),
+                  style: TextStyle(color: palette.textMuted),
+                ),
+              ),
           ],
         ),
       ),
@@ -268,6 +435,7 @@ void openLimousineAcceptedBookingReview(
   BuildContext context, {
   required LimousineCustomerQuoteController quoteController,
   LimousineAcceptedBookingGateway? gateway,
+  LimousineAcceptedPaymentCapabilityLoader? paymentCapabilityLoader,
   bool? entryEnabled,
 }) {
   final handoff = quoteController.handoff;
@@ -283,6 +451,14 @@ void openLimousineAcceptedBookingReview(
     quoteController: quoteController,
     reviewSnapshot: quoteController.secureResumeReview,
     gateway: gateway ?? HttpLimousineAcceptedBookingGateway(),
+    initialPaymentCapability: quoteController.acceptedPaymentCapability,
+    // Always re-readable: the partner's capability comes from the accepted
+    // quote's own status read, never from the company profile on this device.
+    paymentCapabilityLoader:
+        paymentCapabilityLoader ??
+        () => readLimousinePartnerPaymentCapability(
+          statusRef: quoteController.statusRef ?? '',
+        ),
   );
   Navigator.of(context)
       .push(

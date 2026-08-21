@@ -17,8 +17,23 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_quote_api.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_status_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_deactivation.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox.dart';
+import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
+import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 
 const String _acceptRef = 'limacc1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
+
+/// A partner that collects payment in the car only.
+const BookingPaymentCapability _manualOnlyCapability = BookingPaymentCapability(
+  paymentOwnerMode: 'manual_only',
+  paymentDemoMode: false,
+  mollieConnected: false,
+  publicPaymentOptions: <String>[PaymentMethodIds.inVehicleCard],
+  countryCode: 'BE',
+);
+
+BookingPaymentSelection get _manualPayment =>
+    BookingPaymentSelection.fromMethodId(PaymentMethodIds.inVehicleCard);
 
 LimousineAcceptedQuoteHandoff _handoff({
   String reference = _acceptRef,
@@ -226,6 +241,7 @@ LimousineAcceptedBookingController _controller({
   LimousineCustomerQuoteController? quoteController,
   bool entryEnabled = true,
   LimousineAcceptedBookingCustomer? customer,
+  BookingPaymentCapability? capability = _manualOnlyCapability,
 }) {
   return LimousineAcceptedBookingController(
     handoff: handoff ?? _handoff(),
@@ -236,6 +252,8 @@ LimousineAcceptedBookingController _controller({
     entryEnabled: entryEnabled,
     quoteController: quoteController,
     gateway: gateway,
+    initialPaymentCapability: capability,
+    isApplePaymentPlatform: false,
     customerOverride: customer ?? _customer,
     customerLoader: () async => customer ?? _customer,
     persister:
@@ -307,11 +325,18 @@ void main() {
     expect(find.text('Coachline'), findsOneWidget);
     expect(find.text('Executive'), findsWidgets);
     expect(find.textContaining('EUR'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(kLimousineAcceptedBookingSubmitKey),
+      200,
+    );
     final submit = tester.widget<FilledButton>(
       find.byKey(kLimousineAcceptedBookingSubmitKey),
     );
     expect(submit.onPressed, isNull);
-    await tester.tap(find.byKey(kLimousineAcceptedBookingConfirmKey));
+    await tester.tap(
+      find.byKey(kLimousineAcceptedBookingConfirmKey),
+      warnIfMissed: false,
+    );
     await tester.pump();
     expect(controller.confirmationAcknowledged, isTrue);
     controller.dispose();
@@ -340,7 +365,11 @@ void main() {
       expect(gateway.lastPayload!['pickup_iso'], '2026-09-01T10:00:00Z');
       expect(gateway.lastPayload!.containsKey('total_incl_vat_cents'), isFalse);
       expect(gateway.lastPayload!.containsKey('vehicle_id'), isFalse);
-      expect(gateway.lastPayload!['payment_mode'], 'manual');
+      expect(
+        gateway.lastPayload!['payment_mode'],
+        'manual',
+        reason: 'this partner accepts payment in the car only',
+      );
       controller.dispose();
       quote.dispose();
     },
@@ -435,6 +464,7 @@ void main() {
       handoff: _handoff(),
       draft: _draft(),
       customer: _customer,
+      payment: _manualPayment,
       request: _request(),
     );
     expect(payload.containsKey('total_incl_vat_cents'), isFalse);
@@ -505,6 +535,7 @@ void main() {
           handoff: _handoff(),
           draft: _draft(),
           customer: _customer,
+          payment: _manualPayment,
         ),
       ),
       throwsA(
@@ -535,6 +566,8 @@ void main() {
       gateway: httpGateway,
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -606,25 +639,28 @@ void main() {
     }
   });
 
-  test('18) showroom stays off /book; quote API reuses existing /book only for booking requests', () {
-    final quoteApi = File(
-      'lib/limousine/limousine_customer_quote_api.dart',
-    ).readAsStringSync();
-    expect(quoteApi.contains('/limousine/quote-requests'), isTrue);
-    expect(quoteApi.contains("Uri.parse('\$_base/book')"), isTrue);
-    expect(
-      File(
-        'lib/limousine/limousine_public_showroom.dart',
-      ).readAsStringSync().contains('/book'),
-      isFalse,
-    );
-    expect(
-      File(
-        'lib/limousine/limousine_accepted_booking_api.dart',
-      ).readAsStringSync().contains('/book'),
-      isTrue,
-    );
-  });
+  test(
+    '18) showroom stays off /book; quote API reuses existing /book only for booking requests',
+    () {
+      final quoteApi = File(
+        'lib/limousine/limousine_customer_quote_api.dart',
+      ).readAsStringSync();
+      expect(quoteApi.contains('/limousine/quote-requests'), isTrue);
+      expect(quoteApi.contains("Uri.parse('\$_base/book')"), isTrue);
+      expect(
+        File(
+          'lib/limousine/limousine_public_showroom.dart',
+        ).readAsStringSync().contains('/book'),
+        isFalse,
+      );
+      expect(
+        File(
+          'lib/limousine/limousine_accepted_booking_api.dart',
+        ).readAsStringSync().contains('/book'),
+        isTrue,
+      );
+    },
+  );
 
   test('19) marketplace entry remains default OFF', () {
     expect(kLimousineMarketplaceCustomerEntryEnabled, isFalse);
@@ -650,6 +686,7 @@ void main() {
         handoff: _handoff(),
         draft: _draft(),
         customer: _customer,
+        payment: _manualPayment,
       ),
     );
     expect(client.posts, 1);

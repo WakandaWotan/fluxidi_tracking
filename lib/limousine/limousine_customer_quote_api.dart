@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_session_store.dart';
+import '../payment/booking_payment_options.dart';
 import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_resume.dart';
 import 'limousine_accepted_booking_vault.dart';
@@ -163,7 +164,9 @@ class HttpLimousineCustomerQuoteGateway
       code: error.isEmpty ? 'unavailable' : error,
       statusCode: status,
       stage: (map['stage'] ?? '').toString().trim(),
-      requestId: (map['request_id'] ?? map['requestId'] ?? '').toString().trim(),
+      requestId: (map['request_id'] ?? map['requestId'] ?? '')
+          .toString()
+          .trim(),
       stale: error == 'stale_revision' || status == 409,
       rateLimited: error == 'rate_limited' || status == 429,
       unavailable: status == 404 || error == 'invalid_status_ref',
@@ -442,10 +445,14 @@ class HttpLimousineCustomerQuoteGateway
       if (res.statusCode < 200 || res.statusCode >= 300) {
         _throwFailed(res.statusCode, map);
       }
+      final capability = map['payment_capability'];
       return LimousineQuoteAcceptResult(
         request: LimousineQuoteRequest.fromJson(map['quote_request']),
         acceptanceReference: (map['acceptance_reference'] ?? '').toString(),
         expiresAt: (map['expires_at'] ?? '').toString(),
+        paymentCapability: capability is Map
+            ? BookingPaymentCapability.fromPublicJson(capability)
+            : null,
       );
     } on LimousineCustomerQuoteException {
       rethrow;
@@ -514,6 +521,11 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   String lastDiscoveryService = '';
   String providerDisplayName = '';
 
+  /// Partner payment capability the server returned when the quote was
+  /// accepted. Kept so the booking page can offer the picker immediately, and
+  /// re-read from the status endpoint whenever it is missing.
+  BookingPaymentCapability? acceptedPaymentCapability;
+
   String? _statusRef;
   String? _acceptanceRef;
   int _createGeneration = 0;
@@ -525,6 +537,9 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool _pollingEnabled = false;
   final List<DateTime> _statusAttempts = <DateTime>[];
   final List<String> _logSink = <String>[];
+
+  /// Opaque reference for the authoritative status read of this quote.
+  String? get statusRef => _statusRef;
 
   String? get statusRefForTests => _statusRef;
   String? get acceptanceRefForTests => _acceptanceRef;
@@ -837,9 +852,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     final offer = selectedOffer;
     if (offer == null) return;
     offerScopeChanged = false;
-    draft = draft.copyWith(
-      journeyType: _resolveOfferJourneyType(offer, ''),
-    );
+    draft = draft.copyWith(journeyType: _resolveOfferJourneyType(offer, ''));
     notifyListeners();
   }
 
@@ -916,8 +929,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       request = result.request;
       quoteUpdated = false;
       termsAcknowledged = false;
-      providerDisplayName =
-          (selectedProvider?.provider.companyName ?? '').trim();
+      providerDisplayName = (selectedProvider?.provider.companyName ?? '')
+          .trim();
       if (looksLikeLimousineStatusRef(result.statusRef)) {
         _statusRef = result.statusRef;
         await _statusStore.retain(
@@ -1107,10 +1120,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         statusRef: ref!,
         state: live.state,
         companyName: providerDisplayName,
-        vehicleDisplayName: limousineQuoteVehicleDisplay(
-          live,
-          AppLanguage.nl,
-        ),
+        vehicleDisplayName: limousineQuoteVehicleDisplay(live, AppLanguage.nl),
         offerDisplayName: limousineQuoteOfferDisplay(live, AppLanguage.nl),
         from: live.fulfilment?.from ?? draft.from,
         to: live.fulfilment?.to ?? draft.to,
@@ -1142,6 +1152,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       );
       if (generation != _acceptGeneration) return false;
       request = result.request;
+      acceptedPaymentCapability = result.paymentCapability;
       if (looksLikeLimousineAcceptanceRef(result.acceptanceReference)) {
         _acceptanceRef = result.acceptanceReference;
         handoff = LimousineAcceptedQuoteHandoff(

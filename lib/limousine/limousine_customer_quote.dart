@@ -4,6 +4,7 @@
 
 import 'package:flutter/foundation.dart';
 
+import '../payment/booking_payment_options.dart';
 import 'limousine_journey_scope.dart';
 import 'limousine_offers.dart';
 import 'limousine_pricing_overlay.dart';
@@ -296,9 +297,8 @@ class LimousinePublishedOffer {
         map['service_class_id'] ?? map['serviceClassId'],
       ),
       journeyTypes: journeys,
-      sourceRevision: limousineCentsOf(
-            map['source_revision'] ?? map['sourceRevision'],
-          ) ??
+      sourceRevision:
+          limousineCentsOf(map['source_revision'] ?? map['sourceRevision']) ??
           0,
       pricePresentation: limousineOfferToken(
         map['price_presentation'] ?? map['pricePresentation'],
@@ -484,11 +484,18 @@ class LimousineQuoteAcceptResult {
     required this.request,
     this.acceptanceReference = '',
     this.expiresAt = '',
+    this.paymentCapability,
   });
 
   final LimousineQuoteRequest request;
   final String acceptanceReference;
   final String expiresAt;
+
+  /// Sanitized payment capability of the partner that will perform the ride.
+  ///
+  /// Null when the server published none, in which case the booking page reads
+  /// it again rather than assuming what the partner accepts.
+  final BookingPaymentCapability? paymentCapability;
 }
 
 /// Opaque handoff for a future /book UI. Never decode or persist limacc1.
@@ -753,12 +760,11 @@ Map<String, dynamic> limousineCustomerCreateBody(
   return body;
 }
 
-Map<String, dynamic> limousineCustomerBookBody(LimousineQuoteCreateDraft draft) {
+Map<String, dynamic> limousineCustomerBookBody(
+  LimousineQuoteCreateDraft draft,
+) {
   final quoteBody = limousineCustomerCreateBody(draft);
-  final body = <String, dynamic>{
-    'service_category': 'limousine',
-    ...quoteBody,
-  };
+  final body = <String, dynamic>{'service_category': 'limousine', ...quoteBody};
   if (draft.scheduledPickupIso.trim().isNotEmpty) {
     body['pickup_iso'] = draft.scheduledPickupIso.trim();
   }

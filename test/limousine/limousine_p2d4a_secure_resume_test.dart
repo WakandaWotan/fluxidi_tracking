@@ -15,8 +15,19 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_quote.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_quote_api.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_quote_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox.dart';
+import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
+import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 
 const String _acceptRef = 'limacc1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
+
+/// A partner that collects payment in the car only.
+const BookingPaymentCapability _manualOnlyCapability = BookingPaymentCapability(
+  paymentOwnerMode: 'manual_only',
+  paymentDemoMode: false,
+  mollieConnected: false,
+  publicPaymentOptions: <String>[PaymentMethodIds.inVehicleCard],
+  countryCode: 'BE',
+);
 
 DateTime _now = DateTime.utc(2026, 8, 17, 12);
 
@@ -412,6 +423,8 @@ void main() {
       gateway: _BookGateway(),
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -449,6 +462,8 @@ void main() {
         ..error = const LimousineAcceptedBookException(code: 'network'),
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -474,6 +489,8 @@ void main() {
         ),
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -587,6 +604,8 @@ void main() {
       gateway: gateway,
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -626,6 +645,8 @@ void main() {
         gateway: gateway,
         customerOverride: _customer,
         customerLoader: () async => _customer,
+        initialPaymentCapability: _manualOnlyCapability,
+        isApplePaymentPlatform: false,
         persister:
             ({
               required response,
@@ -690,6 +711,8 @@ void main() {
       gateway: gateway,
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,
@@ -728,6 +751,8 @@ void main() {
       gateway: _BookGateway(),
       customerOverride: _customer,
       customerLoader: () async => _customer,
+      initialPaymentCapability: _manualOnlyCapability,
+      isApplePaymentPlatform: false,
       persister:
           ({
             required response,

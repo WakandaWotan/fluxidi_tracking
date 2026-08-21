@@ -15,6 +15,44 @@ library;
 import 'payment_method_catalog.dart';
 import 'payment_method_resolver.dart';
 
+/// Market whose payment method ordering applies, from a free-form country.
+///
+/// Companies record their country as a code or as a name in their own
+/// language, so both have to resolve to the same market. Returns `''` when the
+/// value names no market this app has payment rules for.
+String normalizePaymentMarketCountry(String raw) {
+  final normalized = normalizeCountryCode(raw);
+  if (normalized.isNotEmpty &&
+      PaymentCountryCodes.supported.contains(normalized)) {
+    return normalized;
+  }
+  switch (raw.trim().toLowerCase()) {
+    case 'belgie':
+    case 'belgië':
+    case 'belgium':
+      return PaymentCountryCodes.belgium;
+    case 'nederland':
+    case 'netherlands':
+      return PaymentCountryCodes.netherlands;
+    case 'frankrijk':
+    case 'france':
+      return PaymentCountryCodes.france;
+    case 'spanje':
+    case 'spain':
+    case 'españa':
+    case 'espana':
+      return PaymentCountryCodes.spain;
+    default:
+      return '';
+  }
+}
+
+/// Market to hand the resolver, falling back to the home market.
+String paymentMarketCountryCode(String raw) {
+  final resolved = normalizePaymentMarketCountry(raw);
+  return resolved.isEmpty ? PaymentCountryCodes.belgium : resolved;
+}
+
 /// Payment capability of the company that will perform the ride.
 ///
 /// For taxi and airport this is the company operating the app. For a
@@ -29,6 +67,7 @@ class BookingPaymentCapability {
     this.mollieForcedTestMode,
     this.publicPaymentOptions = const <String>[],
     this.qrTransferAvailable = false,
+    this.countryCode = '',
   });
 
   /// No company capability is known yet.
@@ -42,7 +81,8 @@ class BookingPaymentCapability {
       livePaymentsEnabled = null,
       mollieForcedTestMode = null,
       publicPaymentOptions = const <String>[],
-      qrTransferAvailable = false;
+      qrTransferAvailable = false,
+      countryCode = '';
 
   /// A company whose capability could not be established.
   ///
@@ -55,7 +95,8 @@ class BookingPaymentCapability {
       livePaymentsEnabled = null,
       mollieForcedTestMode = null,
       publicPaymentOptions = const <String>[],
-      qrTransferAvailable = false;
+      qrTransferAvailable = false,
+      countryCode = '';
 
   /// Reads the capability a worker published for a partner the customer is
   /// booking with.
@@ -81,6 +122,7 @@ class BookingPaymentCapability {
           : const <String>[],
       qrTransferAvailable:
           optionalBool(source['qr_transfer_available']) ?? false,
+      countryCode: (source['country'] ?? '').toString(),
     );
   }
 
@@ -95,6 +137,13 @@ class BookingPaymentCapability {
 
   /// Whether the company has bank details behind the QR transfer option.
   final bool qrTransferAvailable;
+
+  /// Country the company operates in, as the company itself recorded it.
+  ///
+  /// Empty when a surface resolves the market itself instead of taking it from
+  /// the capability. Free-form on purpose: normalise it with
+  /// [paymentMarketCountryCode] before handing it to the resolver.
+  final String countryCode;
 
   PaymentOwnershipGate get ownershipGate => PaymentOwnershipGate(
     paymentOwnerMode: paymentOwnerMode,
@@ -128,11 +177,12 @@ class BookingPaymentOptions {
   /// Apple Pay may only be offered on Apple platforms.
   final bool isApplePlatform;
 
-  bool get mollieForcedTestMode => PaymentMethodResolver.inferMollieForcedTestMode(
-    gate: capability.ownershipGate,
-    livePaymentsEnabled: capability.livePaymentsEnabled,
-    mollieForcedTestMode: capability.mollieForcedTestMode,
-  );
+  bool get mollieForcedTestMode =>
+      PaymentMethodResolver.inferMollieForcedTestMode(
+        gate: capability.ownershipGate,
+        livePaymentsEnabled: capability.livePaymentsEnabled,
+        mollieForcedTestMode: capability.mollieForcedTestMode,
+      );
 
   PaymentMethodClientContext get clientContext =>
       PaymentMethodClientContext.forPlatform(
@@ -166,7 +216,8 @@ class BookingPaymentOptions {
 
   /// True when QR transfer is offered but the company never filled in an IBAN.
   bool get qrPaymentMissingBankDetails =>
-      visibleMethodIds.contains(PaymentMethodIds.qrCode) && !qrPaymentConfigured;
+      visibleMethodIds.contains(PaymentMethodIds.qrCode) &&
+      !qrPaymentConfigured;
 
   bool isGooglePaySubmitBlocked(String methodId) =>
       PaymentMethodResolver.isGooglePayMethodId(methodId) &&

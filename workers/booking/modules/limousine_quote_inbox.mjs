@@ -386,6 +386,7 @@ export async function executeLimousineStatusRead({
   loadRecord,
   persistExpired,
   isCompanyAllowlisted = null,
+  loadPaymentCapability = null,
 } = {}) {
   const pre = prevalidateLimousineStatusBody(body);
   if (!pre.ok) {
@@ -485,9 +486,28 @@ export async function executeLimousineStatusRead({
     wrote = true;
   }
   const view = publicLimousineQuoteView(viewRecord);
+  // An accepted quote is booked against this partner, so the customer's payment
+  // picker needs the partner's capability — including after a process death,
+  // when this poll is the only authoritative read the app still holds.
+  let capability = null;
+  if (
+    typeof loadPaymentCapability === "function" &&
+    viewRecord.state === LIMOUSINE_QUOTE_STATES.ACCEPTED
+  ) {
+    try {
+      const loaded = await loadPaymentCapability(viewRecord);
+      capability = loaded && typeof loaded === "object" ? loaded : null;
+    } catch (_) {
+      capability = null;
+    }
+  }
   return {
     status: 200,
-    body: { ok: true, quote_request: view },
+    body: {
+      ok: true,
+      quote_request: view,
+      ...(capability ? { payment_capability: capability } : {}),
+    },
     wrote,
     loaded_record: true,
     limiter_called: true,

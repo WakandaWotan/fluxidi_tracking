@@ -99,6 +99,52 @@ const LocalizedText kLimousineAcceptedBookingVehicle = LocalizedText(
   es: 'Vehículo seleccionado',
 );
 
+const LocalizedText kLimousineAcceptedBookingPaymentTitle = LocalizedText(
+  nl: 'Betaalmethode',
+  en: 'Payment method',
+  fr: 'Mode de paiement',
+  es: 'Método de pago',
+);
+
+const LocalizedText kLimousineAcceptedBookingPaymentSubtitle = LocalizedText(
+  nl: 'Kies hoe je deze rit wilt betalen.',
+  en: 'Choose how you want to pay for this ride.',
+  fr: 'Choisissez comment payer ce trajet.',
+  es: 'Elige cómo quieres pagar este viaje.',
+);
+
+const LocalizedText kLimousineAcceptedBookingPaymentLoading = LocalizedText(
+  nl: 'Betaalmogelijkheden van de aanbieder worden opgehaald…',
+  en: 'Loading the provider’s payment options…',
+  fr: 'Chargement des moyens de paiement du prestataire…',
+  es: 'Cargando los métodos de pago del proveedor…',
+);
+
+const LocalizedText kLimousineAcceptedBookingPaymentRetry = LocalizedText(
+  nl: 'Opnieuw proberen',
+  en: 'Try again',
+  fr: 'Réessayer',
+  es: 'Intentar de nuevo',
+);
+
+/// Shown when the server created the booking but the checkout page could not
+/// be opened. The ride exists; only the payment still has to be finished.
+const LocalizedText
+kLimousineAcceptedBookingCheckoutUnavailable = LocalizedText(
+  nl:
+      'De boeking staat vast, maar de betaalpagina kon niet worden geopend. '
+      'Rond de betaling af bij "Mijn boekingen".',
+  en:
+      'The booking is confirmed, but the payment page could not be opened. '
+      'Finish the payment from "My bookings".',
+  fr:
+      'La réservation est confirmée, mais la page de paiement n’a pas pu '
+      's’ouvrir. Finalisez le paiement dans « Mes réservations ».',
+  es:
+      'La reserva está confirmada, pero no se pudo abrir la página de pago. '
+      'Finaliza el pago en «Mis reservas».',
+);
+
 const Map<LimousineAcceptedBookingError, LocalizedText>
 kLimousineAcceptedBookingErrors =
     <LimousineAcceptedBookingError, LocalizedText>{
@@ -179,5 +225,33 @@ kLimousineAcceptedBookingErrors =
         en: 'The booking could not be sent. Try again.',
         fr: 'La réservation n’a pas pu être envoyée. Réessayez.',
         es: 'No se pudo enviar la reserva. Inténtelo de nuevo.',
+      ),
+      LimousineAcceptedBookingError.paymentCapabilityUnavailable: LocalizedText(
+        nl:
+            'De betaalmogelijkheden van deze aanbieder konden niet worden '
+            'opgehaald. Probeer opnieuw.',
+        en:
+            'The payment options of this provider could not be loaded. '
+            'Try again.',
+        fr:
+            'Les moyens de paiement de ce prestataire n’ont pas pu être '
+            'chargés. Réessayez.',
+        es:
+            'No se pudieron cargar los métodos de pago de este proveedor. '
+            'Inténtelo de nuevo.',
+      ),
+      LimousineAcceptedBookingError.paymentMethodRequired: LocalizedText(
+        nl: 'Kies eerst een betaalmethode.',
+        en: 'Choose a payment method first.',
+        fr: 'Choisissez d’abord un mode de paiement.',
+        es: 'Elija primero un método de pago.',
+      ),
+      LimousineAcceptedBookingError.paymentMethodUnavailable: LocalizedText(
+        nl:
+            'Deze betaalmethode wordt niet meer aangeboden. Kies een andere '
+            'methode.',
+        en: 'This payment method is no longer offered. Choose another method.',
+        fr: 'Ce mode de paiement n’est plus proposé. Choisissez-en un autre.',
+        es: 'Este método de pago ya no está disponible. Elija otro método.',
       ),
     };

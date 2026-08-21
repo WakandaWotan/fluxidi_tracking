@@ -15,6 +15,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/booking_payment_method_tile.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
@@ -68,10 +69,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   final TextEditingController _billingVatController = TextEditingController();
   final TextEditingController _billingRegistrationNumberController =
       TextEditingController();
-  final TextEditingController _billingStreetController = TextEditingController();
-  final TextEditingController _billingPostalController = TextEditingController();
+  final TextEditingController _billingStreetController =
+      TextEditingController();
+  final TextEditingController _billingPostalController =
+      TextEditingController();
   final TextEditingController _billingCityController = TextEditingController();
-  final TextEditingController _billingCountryController = TextEditingController();
+  final TextEditingController _billingCountryController =
+      TextEditingController();
   final TextEditingController _billingContactEmailController =
       TextEditingController();
   final TextEditingController _billingPeppolEndpointController =
@@ -212,39 +216,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   BookingPaymentSelection get _bookingPaymentSelection =>
       BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
-  String _normalizePaymentMarketCountry(String raw) {
-    final normalized = normalizeCountryCode(raw);
-    if (normalized.isNotEmpty &&
-        PaymentCountryCodes.supported.contains(normalized)) {
-      return normalized;
-    }
-    switch (raw.trim().toLowerCase()) {
-      case 'belgie':
-      case 'belgië':
-      case 'belgium':
-        return PaymentCountryCodes.belgium;
-      case 'nederland':
-      case 'netherlands':
-        return PaymentCountryCodes.netherlands;
-      case 'frankrijk':
-      case 'france':
-        return PaymentCountryCodes.france;
-      case 'spanje':
-      case 'spain':
-      case 'españa':
-      case 'espana':
-        return PaymentCountryCodes.spain;
-      default:
-        return '';
-    }
-  }
-
   String _firstPaymentMarketCountryFromPayload(
     Map<String, dynamic> base,
     List<String> keys,
   ) {
     for (final key in keys) {
-      final normalized = _normalizePaymentMarketCountry(
+      final normalized = normalizePaymentMarketCountry(
         base[key]?.toString() ?? '',
       );
       if (normalized.isNotEmpty) return normalized;
@@ -254,7 +231,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
 
   String _paymentCountryCodeForResolver() {
     final profile = localBackendBusinessProfileNotifier.value;
-    final companyCountry = _normalizePaymentMarketCountry(
+    final companyCountry = normalizePaymentMarketCountry(
       profile?.country ?? '',
     );
     if (companyCountry.isNotEmpty) return companyCountry;
@@ -337,7 +314,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   List<String> get _enabledCompanyPaymentOptionIds =>
       _bookingPaymentCapability.enabledPaymentOptionIds;
 
-  ResolvedPaymentMethods get _resolvedPaymentMethods => _paymentOptions.resolved;
+  ResolvedPaymentMethods get _resolvedPaymentMethods =>
+      _paymentOptions.resolved;
 
   List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
 
@@ -391,104 +369,30 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   String? get _onlinePaymentsBlockedMessage =>
       _resolvedPaymentMethods.onlinePaymentsBlockedMessage;
 
-  String _paymentMethodUnavailableMessage() {
-    return _t(
-      nl: 'Deze betaalmethode is niet beschikbaar voor dit bedrijf.',
-      en: 'This payment method is not available for this company.',
-      fr: 'Ce moyen de paiement n’est pas disponible pour cette entreprise.',
-      es: 'Este método de pago no está disponible para esta empresa.',
-    );
-  }
+  String _paymentMethodUnavailableMessage() =>
+      paymentMethodUnavailableMessage(_t);
 
-  String _qrPaymentSetupRequiredMessage() {
-    return _t(
-      nl: 'Vul eerst de bankgegevens in bij de bedrijfsinstellingen.',
-      en: 'Add bank details in business settings first.',
-      fr: 'Ajoutez d’abord les coordonnées bancaires dans les paramètres de l’entreprise.',
-      es: 'Añade primero los datos bancarios en la configuración de la empresa.',
-    );
-  }
+  String _qrPaymentSetupRequiredMessage() => qrPaymentSetupRequiredMessage(_t);
 
-  String _payconiqWeroPendingMessage() {
-    return _t(
-      nl: 'Payconiq / Wero wordt later als aparte betaaloptie gekoppeld.',
-      en: 'Payconiq / Wero will be connected later as a separate payment option.',
-      fr: 'Payconiq / Wero sera connecté plus tard comme option de paiement séparée.',
-      es: 'Payconiq / Wero se conectará más adelante como una opción de pago separada.',
-    );
-  }
+  String _payconiqWeroPendingMessage() => payconiqWeroPendingMessage(_t);
 
   bool _isQrPaymentConfigured() => _paymentOptions.qrPaymentConfigured;
 
   bool _isQrPaymentMissingBankDetails() =>
       _paymentOptions.qrPaymentMissingBankDetails;
 
-  String _displayOnlyPaymentMessage(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    if (id == PaymentMethodIds.qrCode) {
-      return _qrPaymentSetupRequiredMessage();
-    }
-    if (id == PaymentMethodIds.payconiqWero) {
-      return _payconiqWeroPendingMessage();
-    }
-    if (id == PaymentMethodIds.googlePay) {
-      return PaymentMethodResolver.googlePayTestModeUnavailableMessage(
+  String _displayOnlyPaymentMessage(String methodId) =>
+      displayOnlyPaymentMethodMessage(
+        methodId,
+        _t,
         languageCode: widget.languageCode,
       );
-    }
-    return _paymentMethodUnavailableMessage();
-  }
 
-  String _paymentMethodLabel(String methodId) {
-    switch (normalizePaymentMethodId(methodId)) {
-      case PaymentMethodIds.inVehicleCard:
-        return _t(
-          nl: 'Betalen in de auto',
-          en: 'Pay in the car',
-          fr: 'Payer dans la voiture',
-          es: 'Pagar en el coche',
-        );
-      case PaymentMethodIds.bancontact:
-        return 'Bancontact';
-      case PaymentMethodIds.kbcCbc:
-        return 'KBC/CBC Payment Button';
-      case PaymentMethodIds.belfius:
-        return 'Belfius Pay Button';
-      case PaymentMethodIds.bancontactQr:
-        return 'Payconiq / Bancontact Pay QR';
-      case PaymentMethodIds.qrCode:
-        return _t(
-          nl: 'QR-betaling',
-          en: 'QR payment',
-          fr: 'Paiement par QR',
-          es: 'Pago por QR',
-        );
-      case PaymentMethodIds.ideal:
-        return 'iDEAL';
-      case PaymentMethodIds.cardPayment:
-        return _t(
-          nl: 'Kaartbetaling',
-          en: 'Card payment',
-          fr: 'Paiement par carte',
-          es: 'Pago con tarjeta',
-        );
-      case PaymentMethodIds.applePay:
-        return 'Apple Pay';
-      case PaymentMethodIds.googlePay:
-        return 'Google Pay';
-      case PaymentMethodIds.paypal:
-        return 'PayPal';
-      case PaymentMethodIds.bizum:
-        return 'Bizum';
-      case PaymentMethodIds.cartesBancaires:
-        return 'Carte Bancaire / CB';
-      case PaymentMethodIds.payconiqWero:
-        return 'Payconiq / Wero';
-      default:
-        return methodId;
-    }
-  }
+  String _paymentMethodLabel(String methodId) =>
+      paymentMethodDisplayLabel(methodId, _t);
 
+  /// Airport words the manual and the redirect case differently from the other
+  /// surfaces, so those two stay here; everything else is the shared wording.
   String _paymentMethodDescription(String methodId) {
     final id = normalizePaymentMethodId(methodId);
     if (id == PaymentMethodIds.inVehicleCard || id == PaymentMethodIds.cash) {
@@ -499,51 +403,22 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         es: 'El trayecto se confirma y pagas después en el vehículo.',
       );
     }
-    if (id == PaymentMethodIds.qrCode) {
-      if (!_isQrPaymentConfigured()) {
-        return _t(
-          nl: 'Bankgegevens ontbreken in de bedrijfsinstellingen.',
-          en: 'Bank details are missing in business settings.',
-          fr: 'Les coordonnées bancaires manquent dans les paramètres de l’entreprise.',
-          es: 'Faltan los datos bancarios en la configuración de la empresa.',
-        );
-      }
+    if (id != PaymentMethodIds.qrCode &&
+        id != PaymentMethodIds.payconiqWero &&
+        id != PaymentMethodIds.bancontactQr &&
+        id != PaymentMethodIds.kbcCbc &&
+        id != PaymentMethodIds.belfius) {
       return _t(
-        nl: 'Scan en betaal naar de rekening van het bedrijf.',
-        en: 'Scan and pay to the company bank account.',
-        fr: 'Scannez et payez sur le compte bancaire de l’entreprise.',
-        es: 'Escanea y paga a la cuenta bancaria de la empresa.',
+        nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
+        en: 'You will be redirected to secure checkout immediately.',
+        fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
+        es: 'Se te redirigirá de inmediato al pago seguro.',
       );
     }
-    if (id == PaymentMethodIds.payconiqWero) {
-      return _t(
-        nl: 'Payconiq / Wero — binnenkort beschikbaar',
-        en: 'Payconiq / Wero — coming soon',
-        fr: 'Payconiq / Wero — bientôt disponible',
-        es: 'Payconiq / Wero — próximamente',
-      );
-    }
-    if (id == PaymentMethodIds.bancontactQr) {
-      return _t(
-        nl: 'Scan met Bancontact Pay, Payconiq by Bancontact of je bank-app.',
-        en: 'Scan with Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app.',
-        fr: 'Scannez avec Bancontact Pay, Payconiq by Bancontact ou votre application bancaire belge.',
-        es: 'Escanea con Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga.',
-      );
-    }
-    if (id == PaymentMethodIds.kbcCbc || id == PaymentMethodIds.belfius) {
-      return _t(
-        nl: 'Open de beveiligde betaalpagina na het bevestigen.',
-        en: 'Open the secure checkout page after confirming.',
-        fr: 'Ouvrez la page de paiement sécurisée après confirmation.',
-        es: 'Abre la página de pago segura tras confirmar.',
-      );
-    }
-    return _t(
-      nl: 'Je wordt direct doorgestuurd naar de veilige betaalpagina.',
-      en: 'You will be redirected to secure checkout immediately.',
-      fr: 'Vous serez redirigé immédiatement vers le paiement sécurisé.',
-      es: 'Se te redirigirá de inmediato al pago seguro.',
+    return paymentMethodShortDescription(
+      methodId,
+      _t,
+      qrPaymentConfigured: _isQrPaymentConfigured(),
     );
   }
 
@@ -1448,11 +1323,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       );
     }
 
-    final payload = _buildBookPayload(
-      name: name,
-      phone: phone,
-      email: email,
-    );
+    final payload = _buildBookPayload(name: name, phone: phone, email: email);
     _logAirportBookPayloadCoords(payload);
     setState(() {
       _isSubmitting = true;
@@ -1738,19 +1609,37 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
   }
 
   Widget _paymentMethodChoiceOptionTile(String methodId) {
-    final selected = _selectedPaymentMethodId == methodId;
-    final displayOnly = _isDisplayOnlyPaymentMethod(methodId);
-    final fallbackIconColor = displayOnly
-        ? _textMuted.withOpacity(0.72)
-        : selected
-        ? _gold
-        : _textMuted;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: _isSubmitting || _isSubmitted
+    final busy = _isSubmitting || _isSubmitted;
+    return BookingPaymentMethodTile(
+      methodId: methodId,
+      label: _paymentMethodLabel(methodId),
+      description: _paymentMethodDescription(methodId),
+      selected: _selectedPaymentMethodId == methodId,
+      displayOnly: _isDisplayOnlyPaymentMethod(methodId),
+      style: BookingPaymentTileStyle(
+        animationDuration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+        selectedBackground: _gold.withOpacity(_isDarkTheme ? 0.16 : 0.12),
+        unselectedBackground: _panel.withOpacity(_isDarkTheme ? 0.72 : 1),
+        selectedBorderColor: _gold,
+        unselectedBorderColor: _border.withOpacity(_isDarkTheme ? 0.8 : 0.95),
+        accentColor: _gold,
+        labelColor: _textPrimary,
+        mutedColor: _textMuted,
+        descriptionColor: _textMuted,
+        unselectedLogoColor: _textMuted,
+        descriptionFontSize: 11.1,
+      ),
+      onSelect: busy
           ? null
-          : displayOnly
-          ? () {
+          : () {
+              setState(() {
+                _selectedPaymentMethodId = methodId;
+              });
+            },
+      onDisplayOnlyTap: busy
+          ? null
+          : () {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   behavior: SnackBarBehavior.floating,
@@ -1761,78 +1650,7 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                   ),
                 ),
               );
-            }
-          : () {
-              setState(() {
-                _selectedPaymentMethodId = methodId;
-              });
             },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected
-              ? _gold.withOpacity(_isDarkTheme ? 0.16 : 0.12)
-              : _panel.withOpacity(_isDarkTheme ? 0.72 : 1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected
-                ? _gold
-                : _border.withOpacity(_isDarkTheme ? 0.8 : 0.95),
-            width: selected ? 1.2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            buildPaymentMethodLogo(
-              methodId: methodId,
-              fallbackIconColor: fallbackIconColor,
-              plateWidth: 44,
-              plateHeight: 32,
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _paymentMethodLabel(methodId),
-                    style: TextStyle(
-                      color: displayOnly ? _textMuted : _textPrimary,
-                      fontSize: 12.8,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _paymentMethodDescription(methodId),
-                    style: TextStyle(
-                      color: _textMuted,
-                      fontSize: 11.1,
-                      height: 1.2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              displayOnly
-                  ? Icons.info_outline_rounded
-                  : selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_off,
-              color: displayOnly
-                  ? _textMuted.withOpacity(0.72)
-                  : selected
-                  ? _gold
-                  : _textMuted.withOpacity(0.8),
-              size: 18,
-            ),
-          ],
-        ),
-      ),
     );
   }
 
