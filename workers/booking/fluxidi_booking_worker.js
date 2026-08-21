@@ -182,6 +182,11 @@ import {
   allocateLimousineOperationalLegs as _allocateLimousineOperationalLegs,
 } from "./modules/limousine_operational_legs.mjs";
 import {
+  requiredVehicleIdFromBookingRecord as _requiredVehicleIdFromBookingRecord,
+  requiredVehicleIdFromRequest as _requiredVehicleIdFromRequest,
+  vehicleMatchesRequiredVehicle as _vehicleMatchesRequiredVehicle,
+} from "./modules/required_vehicle_constraint.mjs";
+import {
   buildLimousineAcceptedSnapshot as _buildLimousineAcceptedSnapshot,
   buildLimousineQuoteResult as _buildLimousineQuoteResult,
   compareLimousineQuoteForBook as _compareLimousineQuoteForBook,
@@ -11936,6 +11941,13 @@ export class FleetAllocatorDO {
     }
 
     const tenantScope = normalizeFleetTenantScope(body);
+    // Server-authoritative exact-vehicle constraint, set only by a trusted
+    // internal dispatch caller. When present, the allocator may reserve this
+    // vehicle or nothing at all.
+    const requiredVehicleId = safeStr(
+      body?.required_vehicle_id ?? body?.requiredVehicleId,
+      128,
+    );
     const req = {
       pickupMs,
       serviceMin,
@@ -11945,6 +11957,7 @@ export class FleetAllocatorDO {
       pickup_address: pickupAddress,
       pickup_lat: Number.isFinite(pickupLat) ? pickupLat : null,
       pickup_lng: Number.isFinite(pickupLng) ? pickupLng : null,
+      ...(requiredVehicleId ? { required_vehicle_id: requiredVehicleId } : {}),
       tenantScope,
     };
     const reservations = await this._loadReservations();
@@ -11973,6 +11986,22 @@ export class FleetAllocatorDO {
         if (reservationsDirty) {
           await this._saveReservations(reservations);
           reservationsDirty = false;
+        }
+        const reservedVehicleId = safeStr(reservations[bookingId].vehicle_id, 128);
+        // Never report a pinned booking as allocated against a different car.
+        if (requiredVehicleId && reservedVehicleId !== requiredVehicleId) {
+          console.log(
+            `[FLEET_ALLOCATOR][REQUIRED_VEHICLE_MISMATCH] booking=${_bookingIntentMask(bookingId)} reserved=${_bookingIntentMask(reservedVehicleId)} required=${_bookingIntentMask(requiredVehicleId)}`,
+          );
+          return this._json({
+            ok: true,
+            allowed: false,
+            reason: "required_vehicle_unavailable",
+            reason_code: "required_vehicle_unavailable",
+            block_reason: "required_vehicle_unavailable",
+            suitable_vehicle_count: 0,
+            available_slots: 0,
+          });
         }
         return this._json({
           ok: true,
@@ -12043,13 +12072,18 @@ export class FleetAllocatorDO {
     }
     const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
     if (suitableVehicles.length === 0) {
+      const emptyPoolReason = requiredVehicleId
+        ? "required_vehicle_unavailable"
+        : "no_suitable_vehicle";
       console.log(
-        `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=no_suitable_vehicle vehicle_count=${vehicles.length} suitable_count=0 req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
+        `[FLEET_ALLOCATOR][NO_SUITABLE_VEHICLE] tenant=${_diagTenantMask} company=${_diagCompanyMask} reason=${emptyPoolReason} vehicle_count=${vehicles.length} suitable_count=0 req_pax=${_diagReqPax} req_bags=${_diagReqBags} req_tier=${_diagReqTier}`,
       );
       return this._json({
         ok: true,
         allowed: false,
-        reason: "no_suitable_vehicle",
+        reason: emptyPoolReason,
+        reason_code: emptyPoolReason,
+        block_reason: emptyPoolReason,
         suitable_vehicle_count: 0,
       });
     }
@@ -65998,6 +66032,23 @@ async function handleBooking(payload, env, request, options = {}) {
       ? _allocateLimousineOperationalLegs(_limousineAccepted.total)
       : null;
     const _limousineHasReturnLeg = _limousineLegAllocation?.has_return_leg === true;
+    // The customer accepted an offer for ONE specific car, so the canonical
+    // allocator must reserve that car or refuse the booking. The value comes
+    // from the sealed acceptance snapshot (server-side), never from the
+    // client payload, and is persisted with the booking so the post-payment
+    // auto-dispatch path can recover the same constraint.
+    const _limousineRequiredVehicleId = safeStr(
+      _limousineAccepted?.snapshot?.vehicle_id,
+      128,
+    );
+    // Stable server-side identifier of the accepted quote. Only the accepted
+    // manual-quote path has one; it is read from the authoritative record the
+    // pre-flight re-loaded, never from the request body.
+    const _limousineAcceptedQuoteRequestId = sanitizeTenantString(
+      _limousineManualQuoteRecord?.quote_request_id ??
+        _limousineAccepted?.snapshot?.manual_quote_request_id,
+      120,
+    );
 
     if (_limousineAccepted) {
       payload.service_type = _LIMOUSINE_SERVICE_TYPE;
@@ -66036,6 +66087,15 @@ async function handleBooking(payload, env, request, options = {}) {
                 "",
             ),
             safeStr(payload?.occasion, 80),
+            // Accepted-quote bookings are additionally keyed on the stable
+            // quote request id, so a regenerated acceptance token or a retried
+            // /book for the same accepted quote collapses onto the same
+            // canonical booking instead of creating a second one. Appended
+            // only when present, so direct limousine bookings keep their
+            // existing intent hash.
+            ...(_limousineAcceptedQuoteRequestId
+              ? [_limousineAcceptedQuoteRequestId]
+              : []),
           ]
         : [],
     });
@@ -66754,6 +66814,7 @@ async function handleBooking(payload, env, request, options = {}) {
               bookingDropoffLatForAllocator,
               bookingDropoffLngForAllocator,
               bookingServiceMin,
+              requiredVehicleId: _limousineRequiredVehicleId,
             });
             const failedLeg = (dispatchOutcome?.legResults || []).find(
               (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -66834,6 +66895,7 @@ async function handleBooking(payload, env, request, options = {}) {
               pickupLng: bookingPickupLngForAllocator,
               dropoffLat: bookingDropoffLatForAllocator,
               dropoffLng: bookingDropoffLngForAllocator,
+              requiredVehicleId: _limousineRequiredVehicleId,
             });
             if (!vehicleCapacity.ok) {
               console.log(
@@ -67660,6 +67722,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           bookingDropoffLatForAllocator,
           bookingDropoffLngForAllocator,
           bookingServiceMin,
+          requiredVehicleId: _limousineRequiredVehicleId,
         });
         const failedLeg = (dispatchOutcome?.legResults || []).find(
           (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -67740,6 +67803,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           pickupLng: bookingPickupLngForAllocator,
           dropoffLat: bookingDropoffLatForAllocator,
           dropoffLng: bookingDropoffLngForAllocator,
+          requiredVehicleId: _limousineRequiredVehicleId,
         });
         if (!vehicleCapacity.ok) {
           console.log(
@@ -81636,6 +81700,13 @@ async function _loadVehicleInventory(env, { scope = null } = {}) {
 
 function _vehicleSupportsRequest(vehicle, req) {
   if (!vehicle || !vehicle.is_active) return false;
+  // A trusted booking source may pin dispatch to one exact fleet vehicle
+  // (e.g. an accepted limousine quote for a specific car). When pinned, every
+  // other vehicle is unsuitable by definition, so the allocator can never
+  // substitute a different car. Unpinned requests are unaffected.
+  if (!_vehicleMatchesRequiredVehicle(vehicle, _requiredVehicleIdFromRequest(req))) {
+    return false;
+  }
   // Tier remains part of the data model (commercial label),
   // but operational suitability is driven by real capacity constraints.
   const reqPax = _toPositiveInt(req?.pax ?? 0, 0);
@@ -83014,15 +83085,21 @@ async function _vehicleCapacityGateForRequest(env, req) {
   const vehicles = await _loadVehicleInventory(env, { scope: fleetScope });
   const suitableVehicles = vehicles.filter((v) => _vehicleSupportsRequest(v, req));
   if (suitableVehicles.length === 0) {
+    // With an exact-vehicle constraint an empty pool always means that one
+    // pinned vehicle is missing, inactive or unsuitable — never that some
+    // other car could have served the ride.
+    const reason = _requiredVehicleIdFromRequest(req)
+      ? "required_vehicle_unavailable"
+      : "no_suitable_vehicle";
     return {
       ok: false,
-      reason: "no_suitable_vehicle",
+      reason,
       suitable_vehicle_count: 0,
       overlapping_demand_count: 0,
       available_slots: 0,
       needed_slots: 1,
-      reason_code: "no_suitable_vehicle",
-      block_reason: "no_suitable_vehicle",
+      reason_code: reason,
+      block_reason: reason,
     };
   }
 
@@ -104582,7 +104659,13 @@ async function _restampDocumentPaymentMethodTruthAfterCanonicalRefine(
   }
 }
 
-async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "fleet_dispatch") {
+async function _requestFleetLegAllocation(
+  env,
+  spec,
+  fleetScope,
+  sourceLabel = "fleet_dispatch",
+  requiredVehicleId = "",
+) {
   const allocatorBookingId = safeStr(spec?.allocatorBookingId, 200);
   const legKey = safeStr(spec?.legKey, 24).toLowerCase() || "leg";
   const maskedAllocatorId = _bookingIntentMask(allocatorBookingId);
@@ -104612,6 +104695,9 @@ async function _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel = "
     // its route check; these extras are harmless when ignored.
     dropoff_lat: spec.dropoffLat ?? null,
     dropoff_lng: spec.dropoffLng ?? null,
+    ...(safeStr(requiredVehicleId, 128)
+      ? { required_vehicle_id: safeStr(requiredVehicleId, 128) }
+      : {}),
     tenantScope: fleetScope,
   });
   const allowed = alloc?.allowed === true;
@@ -104697,13 +104783,22 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
   pickupLng = null,
   dropoffLat = null,
   dropoffLng = null,
+  requiredVehicleId = "",
 } = {}) {
   const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
   const bookingObj = bookingFields && typeof bookingFields === "object" ? bookingFields : {};
   const tier = normalizeTier(bookingObj.tier ?? "comfort");
   const pax = clampInt(bookingObj.pax, 1, 99);
   const bags = Math.max(0, clampInt(bookingObj.bags, 0, 99));
-  const common = { tier, pax, bags, tenantScope: fleetScope };
+  const pinnedVehicleId =
+    safeStr(requiredVehicleId, 128) || _requiredVehicleIdFromBookingRecord(rec);
+  const common = {
+    tier,
+    pax,
+    bags,
+    ...(pinnedVehicleId ? { required_vehicle_id: pinnedVehicleId } : {}),
+    tenantScope: fleetScope,
+  };
   if (mode !== "split_no_wait") {
     return _vehicleCapacityGateForRequest(env, {
       ...common,
@@ -104789,6 +104884,7 @@ async function _runBookingCreationFleetDispatch(env, {
   bookingDropoffLatForAllocator = null,
   bookingDropoffLngForAllocator = null,
   bookingServiceMin = 30,
+  requiredVehicleId = "",
 } = {}) {
   const bookingFields = {
     service,
@@ -104839,6 +104935,7 @@ async function _runBookingCreationFleetDispatch(env, {
     requireAllLegs: true,
     allowPartialLegAssignment: false,
     bookingFields,
+    requiredVehicleId,
   });
 }
 
@@ -104852,13 +104949,18 @@ async function _dispatchFleetAssignmentForBooking(
     requireAllLegs = false,
     allowPartialLegAssignment = true,
     bookingFields = null,
+    requiredVehicleId = "",
   } = {},
 ) {
   const safeParentId = safeStr(parentBookingId, 160);
   const maskedParentId = _bookingIntentMask(safeParentId);
   const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
+  // Booking creation passes the constraint explicitly; post-payment auto
+  // dispatch recovers it from the sealed snapshot on the persisted record.
+  const pinnedVehicleId =
+    safeStr(requiredVehicleId, 128) || _requiredVehicleIdFromBookingRecord(rec);
   console.log(
-    `[ROUNDTRIP_DISPATCH][MODE] mode=${mode} booking=${maskedParentId} source=${safeStr(sourceLabel, 64) || "fleet_dispatch"}`,
+    `[ROUNDTRIP_DISPATCH][MODE] mode=${mode} booking=${maskedParentId} source=${safeStr(sourceLabel, 64) || "fleet_dispatch"}${pinnedVehicleId ? ` required_vehicle=${_bookingIntentMask(pinnedVehicleId)}` : ""}`,
   );
 
   const bookingObj = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -105055,7 +105157,13 @@ async function _dispatchFleetAssignmentForBooking(
       }
       let result;
       try {
-        result = await _requestFleetLegAllocation(env, spec, fleetScope, sourceLabel);
+        result = await _requestFleetLegAllocation(
+          env,
+          spec,
+          fleetScope,
+          sourceLabel,
+          pinnedVehicleId,
+        );
       } catch (err) {
         result = {
           ok: false,
@@ -105139,6 +105247,7 @@ async function _dispatchFleetAssignmentForBooking(
     pickup_iso: outboundPickupIso,
     pickup_lat: outboundPickupLat,
     pickup_lng: outboundPickupLng,
+    ...(pinnedVehicleId ? { required_vehicle_id: pinnedVehicleId } : {}),
     tenantScope: fleetScope,
   };
   console.log(
