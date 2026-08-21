@@ -381,7 +381,42 @@ export function projectInvoiceRouteAddressesForExport(
 }
 
 /**
- * Billit / provider-neutral Taxirit line description with frozen route text.
+ * Service word that opens an invoice/credit-note line. Taxi and airport rides
+ * both use this, so leaving it at the default keeps their descriptions
+ * byte-for-byte unchanged.
+ */
+export const DEFAULT_INVOICE_SERVICE_LINE_LABEL = "Taxirit";
+
+/**
+ * Credit-note form of a service label: "Taxirit" -> "Creditnota taxirit".
+ */
+export function creditNoteServiceLineLabel(serviceLabel) {
+  const label = String(serviceLabel || "").trim();
+  if (!label) return "Creditnota";
+  return `Creditnota ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
+
+/** True when `description` already opens with `label` as its service word. */
+function descriptionOpensWithLabel(description, label) {
+  const desc = String(description || "").trim().toLowerCase();
+  const needle = String(label || "").trim().toLowerCase();
+  if (!needle || !desc.startsWith(needle)) return false;
+  const next = desc.charAt(needle.length);
+  return next === "" || next === ":" || next === " " || next === "-";
+}
+
+/** Rewrites an invoice line description into its credit-note counterpart. */
+export function creditNoteLineDescription(description, serviceLabel) {
+  const desc = String(description || "");
+  const label = String(serviceLabel || "").trim();
+  if (label && descriptionOpensWithLabel(desc, label)) {
+    return `${creditNoteServiceLineLabel(label)}${desc.slice(label.length)}`;
+  }
+  return desc;
+}
+
+/**
+ * Billit / provider-neutral service line description with frozen route text.
  * Never embeds raw coordinate pairs. Caps at 240 chars (Billit Description).
  */
 export function formatBillitTaxiritLineDescription({
@@ -390,15 +425,18 @@ export function formatBillitTaxiritLineDescription({
   dropoff = "",
   missingLabel = "Niet opgegeven",
   maxLen = 240,
+  serviceLabel = DEFAULT_INVOICE_SERVICE_LINE_LABEL,
 } = {}) {
+  const label =
+    String(serviceLabel || "").trim() || DEFAULT_INVOICE_SERVICE_LINE_LABEL;
   const base =
     legSuffix === "return"
-      ? "Taxirit - terugrit"
+      ? `${label} - terugrit`
       : legSuffix === "outbound" || legSuffix === "heenrit"
-        ? "Taxirit - heenrit"
+        ? `${label} - heenrit`
         : legSuffix
-          ? `Taxirit - ${String(legSuffix).slice(0, 40)}`
-          : "Taxirit";
+          ? `${label} - ${String(legSuffix).slice(0, 40)}`
+          : label;
   const from = pickCustomerVisibleAddress(pickup);
   const to = pickCustomerVisibleAddress(dropoff);
   if (!from && !to) return base.slice(0, maxLen);
@@ -418,32 +456,38 @@ export function enrichProviderNeutralLineItemsWithRoute(
   lineItems,
   issuedDocument = null,
   bookingRecord = null,
-  { legType = null } = {},
+  { legType = null, serviceLabel = DEFAULT_INVOICE_SERVICE_LINE_LABEL } = {},
 ) {
   const route = projectInvoiceRouteAddressesForExport(
     issuedDocument,
     bookingRecord,
   );
+  const label =
+    String(serviceLabel || "").trim() || DEFAULT_INVOICE_SERVICE_LINE_LABEL;
   const items = Array.isArray(lineItems) ? lineItems : [];
   const enriched = items.map((li) => {
     if (!li || typeof li !== "object" || Array.isArray(li)) return li;
     const desc = String(li.description || "").trim();
-    const isTaxirit =
+    // A line is ours to enrich when it is empty or already opens with this
+    // service word. The legacy Taxirit spellings stay recognized so stored
+    // rows written before a service label existed keep enriching.
+    const ownsDescription =
       !desc ||
+      descriptionOpensWithLabel(desc, label) ||
+      descriptionOpensWithLabel(desc, creditNoteServiceLineLabel(label)) ||
       /^Taxirit(\b|$)/i.test(desc) ||
       /^Creditnota taxirit(\b|$)/i.test(desc);
-    if (!isTaxirit) return { ...li };
+    if (!ownsDescription) return { ...li };
     const isCredit = /^Creditnota/i.test(desc);
     const baseDesc = formatBillitTaxiritLineDescription({
       legSuffix: legType,
       pickup: route.pickup,
       dropoff: route.dropoff,
+      serviceLabel: label,
     });
     return {
       ...li,
-      description: isCredit
-        ? baseDesc.replace(/^Taxirit/, "Creditnota taxirit")
-        : baseDesc,
+      description: isCredit ? creditNoteLineDescription(baseDesc, label) : baseDesc,
     };
   });
   return {

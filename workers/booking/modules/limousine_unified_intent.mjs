@@ -404,19 +404,20 @@ export function enrichLimousineAcceptedSnapshot(snapshot, {
   };
 }
 
-/// PDF/Command Center lines from an existing booking snapshot. Same document
-/// pipeline; no second PDF service.
+/// PDF lines from an existing booking snapshot. Same document pipeline; no
+/// second PDF service.
+///
+/// These lines reach the customer on an invoice, so they carry only readable
+/// commercial facts: the car by its published name and the hire duration.
+/// Internal offer/vehicle identifiers and pricing-mode enums stay out.
 export function limousineDocumentLinesFromSnapshot(snapshot) {
   const s = asObject(snapshot);
   if (s.service_type !== LIMOUSINE_SERVICE_TYPE && s.service_category !== LIMOUSINE_SERVICE_TYPE) {
     return [];
   }
   const lines = ["Limousine"];
-  if (s.offer_id) lines.push(`Aanbod ${s.offer_id}`);
-  if (s.vehicle_id) lines.push(`Voertuig ${s.vehicle_id}`);
-  if (s.published_pricing_mode || s.pricing_mode) {
-    lines.push(`Prijsmodus ${s.published_pricing_mode || s.pricing_mode}`);
-  }
+  const vehicleName = safeText(s.vehicle_public_name, 120);
+  if (vehicleName) lines.push(vehicleName);
   const pack = asObject(s.package_hire);
   if (pack.package_amount_cents != null) {
     lines.push(`Arrangement ${pack.included_duration_minutes || ""} min`);
@@ -425,7 +426,6 @@ export function limousineDocumentLinesFromSnapshot(snapshot) {
   if (hourly.billable_duration_minutes != null) {
     lines.push(`Duur ${hourly.billable_duration_minutes} min`);
   }
-  if (s.occasion) lines.push(`Gelegenheid ${s.occasion}`);
   if (s.currency && s.total_incl_vat_cents != null) {
     lines.push(`${s.currency} ${(Number(s.total_incl_vat_cents) / 100).toFixed(2)}`);
   }

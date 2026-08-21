@@ -802,6 +802,11 @@ export function buildLimousineAcceptedSnapshot({
     offer_id: total.offer_id,
     service_class_id: total.service_class_id,
     ...(total.vehicle_id ? { vehicle_id: total.vehicle_id } : {}),
+    // Published vehicle name, so customer-visible documents can name the car
+    // without ever printing a raw vehicle id.
+    ...(total.vehicle_public_name
+      ? { vehicle_public_name: total.vehicle_public_name }
+      : {}),
     company_id: companyId,
     ...(publicPartnerId ? { public_partner_id: publicPartnerId } : {}),
     pricing_mode: total.pricing_mode,

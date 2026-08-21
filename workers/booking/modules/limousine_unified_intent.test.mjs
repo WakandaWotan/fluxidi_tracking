@@ -347,6 +347,7 @@ test("14) PDF lines stay inside the existing document snapshot", () => {
     service_type: LIMOUSINE_SERVICE_TYPE,
     offer_id: "off_1",
     vehicle_id: "veh_1",
+    vehicle_public_name: "Hummer White",
     published_pricing_mode: M.PACKAGE,
     package_hire: { included_duration_minutes: 180, package_amount_cents: 45000 },
     total_incl_vat_cents: 45000,
@@ -354,8 +355,15 @@ test("14) PDF lines stay inside the existing document snapshot", () => {
     occasion: "gala",
   });
   assert.ok(lines.includes("Limousine"));
-  assert.ok(lines.some((line) => line.includes("off_1")));
-  assert.ok(lines.some((line) => line.includes("gala")));
+  assert.ok(lines.includes("Hummer White"));
+  assert.ok(lines.some((line) => line.includes("180 min")));
+  // These lines print on a customer invoice, so no internal identifier or
+  // pricing-mode enum may leak into them.
+  const joined = lines.join(" | ");
+  assert.ok(!joined.includes("off_1"));
+  assert.ok(!joined.includes("veh_1"));
+  assert.ok(!joined.includes(M.PACKAGE));
+  assert.ok(!joined.includes("gala"));
 });
 
 test("15) no second limousine booking/inbox/status platform was added", () => {

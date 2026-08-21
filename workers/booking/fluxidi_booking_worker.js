@@ -601,7 +601,12 @@ import {
   projectInvoiceRouteAddressesForExport,
   formatBillitTaxiritLineDescription,
   enrichProviderNeutralLineItemsWithRoute,
+  creditNoteLineDescription,
+  DEFAULT_INVOICE_SERVICE_LINE_LABEL,
 } from "./modules/invoice_route_address.js";
+import {
+  invoiceServiceLineLabel,
+} from "./modules/invoice_service_line.mjs";
 import {
   resolveInvoiceLogoSrc,
   buildFluxidiInvoiceLogoDataUri,
@@ -1197,6 +1202,13 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     journey_type: String(record.request?.journey_type || ""),
     service_class_id: binding.service_class_id,
     vehicle_id: binding.vehicle_id,
+    // Published vehicle name from the authoritative quote record, so invoices
+    // and credit notes can name the car the customer actually accepted
+    // instead of printing its internal id.
+    vehicle_public_name: sanitizeTenantString(
+      record?.request?.vehicle_snapshot?.public_name,
+      120,
+    ),
     pricing_mode: "manual_quote",
     pricing_modes: ["manual"],
     components: [
@@ -72731,18 +72743,27 @@ async function stampDocumentCoreRouteAddressSnapshot(
   if (!doc || typeof doc !== "object") {
     return { ok: false, skipped: true, reason: "document_not_found" };
   }
-  if (
+  const routeAlreadyFrozen = Boolean(
     doc.route_address_snapshot &&
-    typeof doc.route_address_snapshot === "object" &&
-    (doc.route_address_snapshot.from_address ||
-      doc.route_address_snapshot.to_address ||
-      doc.route_address_snapshot.invoice_from_address)
-  ) {
+      typeof doc.route_address_snapshot === "object" &&
+      (doc.route_address_snapshot.from_address ||
+        doc.route_address_snapshot.to_address ||
+        doc.route_address_snapshot.invoice_from_address),
+  );
+  // Freeze the service word alongside the route so the export preview can name
+  // the service without rereading the booking. Only a non-default label is
+  // written, which keeps taxi and airport documents byte-for-byte unchanged.
+  const serviceLineLabel = invoiceServiceLineLabel(bookingRecord);
+  const shouldFreezeServiceLineLabel =
+    serviceLineLabel !== DEFAULT_INVOICE_SERVICE_LINE_LABEL &&
+    !safeStr(doc.service_line_label);
+  if (routeAlreadyFrozen && !shouldFreezeServiceLineLabel) {
     return { ok: true, skipped: true, reason: "already_frozen", record: doc };
   }
-  const snap =
-    bookingRecord?.route_address_snapshot &&
-    typeof bookingRecord.route_address_snapshot === "object"
+  const snap = routeAlreadyFrozen
+    ? doc.route_address_snapshot
+    : bookingRecord?.route_address_snapshot &&
+        typeof bookingRecord.route_address_snapshot === "object"
       ? bookingRecord.route_address_snapshot
       : buildRouteAddressSnapshot({
           fromAddress: resolveHumanRouteAddress(bookingRecord, "from"),
@@ -72759,6 +72780,9 @@ async function stampDocumentCoreRouteAddressSnapshot(
   const updated = {
     ...doc,
     route_address_snapshot: snap,
+    ...(shouldFreezeServiceLineLabel
+      ? { service_line_label: serviceLineLabel }
+      : {}),
     updated_at: new Date().toISOString(),
   };
   try {
@@ -97121,6 +97145,7 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     cur,
     routePickup = "",
     routeDropoff = "",
+    serviceLabel = DEFAULT_INVOICE_SERVICE_LINE_LABEL,
   ) {
     if (!totalsArg) return [];
     const legSuffix =
@@ -97134,17 +97159,18 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     const totalIncl = _firstFiniteNumberOrNull(totalsArg.total_incl_vat);
     const vatRate = _normalizeVatRatePercentOrNull(totalsArg.vat_rate_percent);
     // Same frozen Document Core route_address_snapshot as Fluxidi PDF projection.
-    const taxiritDescription = formatBillitTaxiritLineDescription({
+    const serviceDescription = formatBillitTaxiritLineDescription({
       legSuffix,
       pickup: routePickup,
       dropoff: routeDropoff,
+      serviceLabel,
     });
 
     if (docTypeArg === "invoice") {
       if (subtotal === null && totalIncl === null) return [];
       return [
         {
-          description: taxiritDescription,
+          description: serviceDescription,
           quantity: 1,
           unit_price_ex_vat: subtotal,
           line_total_ex_vat: subtotal,
@@ -97166,9 +97192,9 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
       );
       const lineTotalIncl = creditedIncl !== null ? creditedIncl : totalIncl;
       if (lineTotalIncl === null && subtotal === null) return [];
-      const description = taxiritDescription.replace(
-        /^Taxirit/,
-        "Creditnota taxirit",
+      const description = creditNoteLineDescription(
+        serviceDescription,
+        serviceLabel,
       );
       return [
         {
@@ -97310,6 +97336,10 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
   // refund_proof / receipt / ritbon / unknown never get invoice line items.
   let lineItems = [];
   if (docType === "invoice" || docType === "credit_note") {
+    // Service word frozen onto the document at issuance; taxi and airport
+    // documents carry none and fall back to the historical default.
+    const serviceLineLabel =
+      safeStr(rec.service_line_label) || DEFAULT_INVOICE_SERVICE_LINE_LABEL;
     lineItems = _projectStoredLineItemsSafe(
       rec.line_items ??
         rec.lineItems ??
@@ -97325,13 +97355,14 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
         currency,
         exportRoute.pickup,
         exportRoute.dropoff,
+        serviceLineLabel,
       );
     } else {
       const enriched = enrichProviderNeutralLineItemsWithRoute(
         lineItems,
         rec,
         null,
-        { legType: sourceLegType },
+        { legType: sourceLegType, serviceLabel: serviceLineLabel },
       );
       lineItems = enriched.line_items;
       routeAddressesPreview = enriched.route_addresses;
@@ -102963,20 +102994,29 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     : `<strong>Passagiers / Koffers:</strong> ${escapeHtml(
         paxDisplay || missingLabel,
       )} / ${escapeHtml(bagsDisplay || missingLabel)}<br>`;
-  const limousineDocLines = _limousineDocumentLinesFromSnapshot(
+  const limousineSnapshot =
     d.limousineAcceptedPrice || d.limousine_accepted_price || {
       service_type: d.serviceType || d.service_type,
-    },
-  );
+    };
+  const limousineDocLines = _limousineDocumentLinesFromSnapshot(limousineSnapshot);
   const limousineLine = limousineDocLines.length
     ? `<strong>Limousine:</strong> ${escapeHtml(limousineDocLines.join(" · "))}<br>`
     : "";
   const logoHtml = LOGO_URL
     ? `<img alt="${escapeHtml(sellerBrand || "Fluxidi")}" src="${escapeHtml(LOGO_URL)}">`
     : "";
-  const taxidienstLabel = omitTier
-    ? `<strong>Taxidienst</strong>`
-    : `<strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier))})</span>`;
+  // Same service word the invoice/credit-note export line uses, so the PDF and
+  // the Billit/Peppol description never disagree. Taxi and airport keep the
+  // historical "Taxidienst" heading including its ride-tier suffix.
+  const serviceLineLabel = invoiceServiceLineLabel({
+    limousine_accepted_price: limousineSnapshot,
+  });
+  const taxidienstLabel =
+    serviceLineLabel === DEFAULT_INVOICE_SERVICE_LINE_LABEL
+      ? omitTier
+        ? `<strong>Taxidienst</strong>`
+        : `<strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier))})</span>`
+      : `<strong>${escapeHtml(serviceLineLabel)}</strong>`;
 
   const vatRatePct = (() => {
     const fromPercent = Number(d.vatRate);
