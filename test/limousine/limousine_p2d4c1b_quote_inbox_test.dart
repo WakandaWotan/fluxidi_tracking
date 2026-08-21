@@ -600,14 +600,14 @@ void main() {
     final quoted = _record(state: 'quoted', withQuote: true);
     expect(
       limousineQuoteInboxAuthoritativeAmount(quoted, AppLanguage.nl),
-      'EUR 185.00 aangeboden',
+      '€ 185,00 aangeboden',
     );
     expect(
       limousineQuoteInboxAuthoritativeAmount(
         _record(state: 'accepted', withQuote: true),
         AppLanguage.nl,
       ),
-      'EUR 185.00 geaccepteerd',
+      '€ 185,00 geaccepteerd',
     );
     expect(
       limousineQuoteInboxAuthoritativeAmount(_record(), AppLanguage.nl),
@@ -636,7 +636,7 @@ void main() {
     expect(
       File(
         'lib/limousine/limousine_quote_inbox_presentation.dart',
-      ).readAsStringSync().contains('formatLimousineMoney'),
+      ).readAsStringSync().contains('formatLimousineEuroAmount'),
       isTrue,
     );
   });

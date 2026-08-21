@@ -24,6 +24,7 @@ import 'limousine_transfer_endpoint.dart';
 import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
+import 'limousine_customer_request_history.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_customer_status_page.dart';
 import 'limousine_customer_wizard_chrome.dart';
@@ -47,6 +48,7 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.initialVehicle,
     this.initialCompanyName = '',
     this.resumeRepository,
+    this.historyRepository,
     this.placeLookup,
     this.hotelLookup,
     this.eventLookup,
@@ -56,6 +58,7 @@ class LimousineCustomerQuotePage extends StatefulWidget {
   final LimousineCustomerQuoteController? controller;
   final LimousineCustomerQuoteGateway? gateway;
   final LimousineAcceptedBookingResumeRepository? resumeRepository;
+  final LimousineCustomerRequestHistoryRepository? historyRepository;
   final LimousinePlaceLookup? placeLookup;
   final LimousineHotelLookup? hotelLookup;
   final LimousineEventLookup? eventLookup;
@@ -127,6 +130,11 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         LimousineCustomerQuoteController(
           gateway: widget.gateway ?? HttpLimousineCustomerQuoteGateway(),
           resumeRepository: widget.resumeRepository,
+          historyRepository:
+              widget.historyRepository ??
+              (widget.gateway == null
+                  ? LimousineCustomerRequestHistoryRepository()
+                  : null),
         );
     _controller.addListener(_onChanged);
     _ownsPlaceLookup = widget.placeLookup == null;

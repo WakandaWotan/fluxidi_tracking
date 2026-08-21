@@ -5,6 +5,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
+import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_customer_quote.dart';
@@ -918,6 +919,11 @@ String _formatMoney(LimousineDiscoveryPrice price) {
 }
 
 String limousineDiscoveryServiceClassLabel(String serviceClassId) {
+  final labeled = limousineServiceClassLabel(
+    serviceClassId,
+    appLanguageNotifier.value,
+  );
+  if (labeled.isNotEmpty) return labeled;
   final token = limousineOfferToken(serviceClassId);
   if (token.isEmpty) return '';
   return token.replaceAll('_', ' ');

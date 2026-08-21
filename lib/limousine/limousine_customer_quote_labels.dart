@@ -283,10 +283,80 @@ const LocalizedText kLimousineCustomerAcceptConfirm = LocalizedText(
 );
 
 const LocalizedText kLimousineCustomerAcceptAction = LocalizedText(
-  nl: 'Offerte aanvaarden',
+  nl: 'Offerte accepteren',
   en: 'Accept quote',
   fr: 'Accepter le devis',
   es: 'Aceptar presupuesto',
+);
+
+const LocalizedText kLimousineCustomerDeclineAction = LocalizedText(
+  nl: 'Offerte weigeren',
+  en: 'Decline quote',
+  fr: 'Refuser le devis',
+  es: 'Rechazar presupuesto',
+);
+
+const LocalizedText kLimousineCustomerViewedByNamed = LocalizedText(
+  nl: 'Bekeken door {company}',
+  en: 'Viewed by {company}',
+  fr: 'Vue par {company}',
+  es: 'Vista por {company}',
+);
+
+const LocalizedText kLimousineQuoteSubmittedReceived = LocalizedText(
+  nl: '{company} heeft uw aanvraag ontvangen.',
+  en: '{company} has received your request.',
+  fr: '{company} a reçu votre demande.',
+  es: '{company} ha recibido su solicitud.',
+);
+
+const LocalizedText kLimousineQuoteSubmittedReceivedFallback = LocalizedText(
+  nl: 'Het limousinebedrijf heeft uw aanvraag ontvangen.',
+  en: 'The limousine company has received your request.',
+  fr: 'L’entreprise de limousine a reçu votre demande.',
+  es: 'La empresa de limusinas ha recibido su solicitud.',
+);
+
+const LocalizedText kLimousineCustomerYourRequest = LocalizedText(
+  nl: 'Uw aanvraag',
+  en: 'Your request',
+  fr: 'Votre demande',
+  es: 'Su solicitud',
+);
+
+const LocalizedText kLimousineCustomerQuoteFromCompany = LocalizedText(
+  nl: 'Offerte van {company}',
+  en: 'Quote from {company}',
+  fr: 'Devis de {company}',
+  es: 'Presupuesto de {company}',
+);
+
+const LocalizedText kLimousineCustomerQuoteFromCompanyFallback = LocalizedText(
+  nl: 'Offerte van het limousinebedrijf',
+  en: 'Quote from the limousine company',
+  fr: 'Devis de l’entreprise de limousine',
+  es: 'Presupuesto de la empresa de limusinas',
+);
+
+const LocalizedText kLimousineCustomerRequestsTitle = LocalizedText(
+  nl: 'Limousineaanvragen',
+  en: 'Limousine requests',
+  fr: 'Demandes limousine',
+  es: 'Solicitudes de limusina',
+);
+
+const LocalizedText kLimousineCustomerRequestsEmpty = LocalizedText(
+  nl: 'Nog geen limousineaanvragen. Een offerteaanvraag is nog geen boeking.',
+  en: 'No limousine requests yet. A quote request is not a booking.',
+  fr: 'Aucune demande limousine pour le moment. Une demande de devis n’est pas une réservation.',
+  es: 'Aún no hay solicitudes de limusina. Una solicitud de presupuesto no es una reserva.',
+);
+
+const LocalizedText kLimousineCustomerRequestsHint = LocalizedText(
+  nl: 'Dit zijn offerteaanvragen, geen gewone boekingen.',
+  en: 'These are quote requests, not regular bookings.',
+  fr: 'Ce sont des demandes de devis, pas des réservations.',
+  es: 'Estas son solicitudes de presupuesto, no reservas.',
 );
 
 const LocalizedText kLimousineCustomerAccepted = LocalizedText(
@@ -411,7 +481,7 @@ const Map<String, LocalizedText> kLimousineCustomerStateLabels =
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
         nl: 'Bekeken door het bedrijf',
-        en: 'Viewed by company',
+        en: 'Viewed by the company',
         fr: 'Vue par l’entreprise',
         es: 'Vista por la empresa',
       ),
@@ -474,8 +544,32 @@ const Map<String, LocalizedText> kLimousineCustomerStateLabels =
 String limousineCustomerLabel(LocalizedText text, AppLanguage language) =>
     text.of(language);
 
-String limousineCustomerStateLabel(String state, AppLanguage language) {
+String limousineCustomerViewedByCompanyLabel(
+  AppLanguage language, {
+  String companyName = '',
+}) {
+  final name = companyName.trim();
+  if (name.isEmpty) {
+    return kLimousineCustomerStateLabels[LimousineQuoteStateId.viewedByCompany]!
+        .of(language);
+  }
+  return kLimousineCustomerViewedByNamed
+      .of(language)
+      .replaceAll('{company}', name);
+}
+
+String limousineCustomerStateLabel(
+  String state,
+  AppLanguage language, {
+  String companyName = '',
+}) {
   final token = LimousineQuoteStateId.normalize(state);
+  if (token == LimousineQuoteStateId.viewedByCompany) {
+    return limousineCustomerViewedByCompanyLabel(
+      language,
+      companyName: companyName,
+    );
+  }
   final label = kLimousineCustomerStateLabels[token];
   if (label == null) return kLimousineQuoteUnknownState.of(language);
   return label.of(language);

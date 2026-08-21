@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../app_config.dart';
 import '../app_strings.dart';
 import '../business_theme/brand_signature_palette.dart';
 import '../business_theme_palette.dart';
@@ -782,16 +783,16 @@ String _offerSummary(
   AppLanguage language,
   LimousineQuoteCreateDraft draft,
 ) {
-  if (offer == null) return draft.offerId.trim();
+  if (offer == null) return '';
   final title = localizedLimousineText(
     offer.title,
     languageCode: language.name,
   ).trim();
-  final classId = offer.serviceClassId.trim();
-  if (title.isNotEmpty && classId.isNotEmpty) return '$title · $classId';
+  final classLabel = limousineServiceClassLabel(offer.serviceClassId, language);
+  if (title.isNotEmpty && classLabel.isNotEmpty) return '$title · $classLabel';
   if (title.isNotEmpty) return title;
-  if (classId.isNotEmpty) return classId;
-  return offer.offerId;
+  if (classLabel.isNotEmpty) return classLabel;
+  return '';
 }
 
 String limousineCustomerReviewScheduleLabel(String iso, AppLanguage language) {

@@ -387,7 +387,7 @@ void main() {
       expect(gateway.respondCalls.single['action'], 'viewed');
     });
 
-    test('12) quote form validates all required terms', () {
+    test('12) quote form validates commercial required fields only', () {
       final empty = validateLimousineCompanyQuoteDraft(
         const LimousineCompanyQuoteDraft(),
       );
@@ -396,9 +396,9 @@ void main() {
       expect(empty.missing, contains('currency'));
       expect(empty.missing, contains('vat_treatment'));
       expect(empty.missing, contains('expires_at'));
-      expect(empty.missing, contains('terms_revision'));
+      expect(empty.missing, isNot(contains('terms_revision')));
       for (final key in kLimousineRequiredTermsKeys) {
-        expect(empty.missing, contains(key));
+        expect(empty.missing, isNot(contains(key)));
       }
       final ok = validateLimousineCompanyQuoteDraft(
         const LimousineCompanyQuoteDraft(
@@ -406,13 +406,6 @@ void main() {
           currency: 'EUR',
           vatTreatment: 'incl',
           expiresAt: '2026-08-19T10:00:00Z',
-          termsRevision: 1,
-          cancellationDeadlineHours: 24,
-          cancellationPenaltyPercent: 50,
-          waitingTimeIncludedMinutes: 15,
-          waitingTimeOverageCentsPerMinute: 80,
-          noShowPenaltyPercent: 100,
-          overtimeCentsPerHour: 9000,
         ),
       );
       expect(ok.ok, isTrue);

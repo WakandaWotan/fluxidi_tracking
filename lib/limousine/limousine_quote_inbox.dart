@@ -50,6 +50,18 @@ const Key kLimousineQuoteReadOnlyBannerKey = ValueKey<String>(
 const Key kLimousineQuoteEditorPageKey = ValueKey<String>(
   'limousine_quote_editor_page',
 );
+const Key kLimousineQuoteTotalFieldKey = ValueKey<String>(
+  'limousine_quote_total_field',
+);
+const Key kLimousineQuoteExpiresFieldKey = ValueKey<String>(
+  'limousine_quote_expires_field',
+);
+const Key kLimousineQuoteVatFieldKey = ValueKey<String>(
+  'limousine_quote_vat_field',
+);
+const Key kLimousineQuoteCurrencyValueKey = ValueKey<String>(
+  'limousine_quote_currency_value',
+);
 const Key kLimousineQuoteDeclineDialogKey = ValueKey<String>(
   'limousine_quote_decline_dialog',
 );
@@ -1031,9 +1043,13 @@ class LimousineQuoteDraftValidation {
   final List<String> unknownCritical;
 }
 
+/// Commercial completeness only. Optional booking terms and the internal
+/// terms revision are filled by [completeLimousineCompanyQuoteDraft] before
+/// the Worker payload is built — they must not block a simple quote.
 LimousineQuoteDraftValidation validateLimousineCompanyQuoteDraft(
-  LimousineCompanyQuoteDraft draft,
-) {
+  LimousineCompanyQuoteDraft draft, {
+  bool requireInternalTerms = false,
+}) {
   final missing = <String>[];
   if (draft.totalInclVatCents == null || draft.totalInclVatCents! <= 0) {
     missing.add('total_incl_vat_cents');
@@ -1048,25 +1064,30 @@ LimousineQuoteDraftValidation validateLimousineCompanyQuoteDraft(
       DateTime.tryParse(draft.expiresAt.trim()) == null) {
     missing.add('expires_at');
   }
-  if (draft.termsRevision == null || draft.termsRevision! <= 0) {
-    missing.add('terms_revision');
-  }
-  void requireTerm(String key, int? value) {
-    if (value == null || value < 0) missing.add(key);
-  }
+  if (requireInternalTerms) {
+    if (draft.termsRevision == null || draft.termsRevision! <= 0) {
+      missing.add('terms_revision');
+    }
+    void requireTerm(String key, int? value) {
+      if (value == null || value < 0) missing.add(key);
+    }
 
-  requireTerm('cancellation_deadline_hours', draft.cancellationDeadlineHours);
-  requireTerm('cancellation_penalty_percent', draft.cancellationPenaltyPercent);
-  requireTerm(
-    'waiting_time_included_minutes',
-    draft.waitingTimeIncludedMinutes,
-  );
-  requireTerm(
-    'waiting_time_overage_cents_per_minute',
-    draft.waitingTimeOverageCentsPerMinute,
-  );
-  requireTerm('no_show_penalty_percent', draft.noShowPenaltyPercent);
-  requireTerm('overtime_cents_per_hour', draft.overtimeCentsPerHour);
+    requireTerm('cancellation_deadline_hours', draft.cancellationDeadlineHours);
+    requireTerm(
+      'cancellation_penalty_percent',
+      draft.cancellationPenaltyPercent,
+    );
+    requireTerm(
+      'waiting_time_included_minutes',
+      draft.waitingTimeIncludedMinutes,
+    );
+    requireTerm(
+      'waiting_time_overage_cents_per_minute',
+      draft.waitingTimeOverageCentsPerMinute,
+    );
+    requireTerm('no_show_penalty_percent', draft.noShowPenaltyPercent);
+    requireTerm('overtime_cents_per_hour', draft.overtimeCentsPerHour);
+  }
   final unknown = List<String>.from(draft.unknownCriticalKeys);
   return LimousineQuoteDraftValidation(
     ok: missing.isEmpty && unknown.isEmpty,

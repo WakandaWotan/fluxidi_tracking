@@ -8,16 +8,19 @@ import '../business_theme_store.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 
 class LimousineQuoteEditorPage extends StatefulWidget {
-  const LimousineQuoteEditorPage({
+  LimousineQuoteEditorPage({
     super.key,
     required this.record,
     this.onSubmit,
-  });
+    DateTime Function()? clock,
+  }) : clock = clock ?? DateTime.now;
 
   final LimousineQuoteRequest record;
   final Future<void> Function(LimousineCompanyQuoteDraft draft)? onSubmit;
+  final DateTime Function() clock;
 
   @override
   State<LimousineQuoteEditorPage> createState() =>
@@ -26,21 +29,18 @@ class LimousineQuoteEditorPage extends StatefulWidget {
 
 class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
   final _total = TextEditingController();
-  final _currency = TextEditingController(text: 'EUR');
-  final _expires = TextEditingController();
-  final _termsRevision = TextEditingController();
   final _cancelHours = TextEditingController();
   final _cancelPenalty = TextEditingController();
   final _waitingIncluded = TextEditingController();
   final _waitingOverage = TextEditingController();
   final _noShow = TextEditingController();
   final _overtime = TextEditingController();
-  final _publicNl = TextEditingController();
   final _included = TextEditingController();
   final _mobilisation = TextEditingController();
   final _obligations = TextEditingController();
   final _important = TextEditingController();
   String _vatTreatment = '';
+  late DateTime _expiresDate;
   bool _submitting = false;
   LimousineQuoteDraftValidation? _validation;
 
@@ -49,18 +49,23 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
   String _t(LocalizedText text) => text.of(_lang);
 
   @override
+  void initState() {
+    super.initState();
+    final existing = limousineDateFromQuoteExpiresAt(
+      widget.record.quote?.expiresAt ?? '',
+    );
+    _expiresDate = existing ?? limousineDefaultQuoteValidUntilDate(widget.clock());
+  }
+
+  @override
   void dispose() {
     _total.dispose();
-    _currency.dispose();
-    _expires.dispose();
-    _termsRevision.dispose();
     _cancelHours.dispose();
     _cancelPenalty.dispose();
     _waitingIncluded.dispose();
     _waitingOverage.dispose();
     _noShow.dispose();
     _overtime.dispose();
-    _publicNl.dispose();
     _included.dispose();
     _mobilisation.dispose();
     _obligations.dispose();
@@ -68,8 +73,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     super.dispose();
   }
 
-  LimousineCompanyQuoteDraft _draft() {
-    final extras = <Map<String, dynamic>>[];
+  LimousineCompanyQuoteDraft _rawDraft() {
     final services = <Map<String, dynamic>>[];
     final included = _included.text.trim();
     if (included.isNotEmpty) {
@@ -80,23 +84,18 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     }
     return LimousineCompanyQuoteDraft(
       totalInclVatCents: limousineMajorUnitsToCents(_total.text),
-      currency: _currency.text,
+      currency: kLimousineDefaultQuoteCurrency,
       vatTreatment: _vatTreatment,
-      expiresAt: _expires.text.trim(),
-      termsRevision: int.tryParse(_termsRevision.text.trim()),
+      expiresAt: limousineQuoteExpiresAtIsoFromDate(_expiresDate),
       cancellationDeadlineHours: int.tryParse(_cancelHours.text.trim()),
       cancellationPenaltyPercent: int.tryParse(_cancelPenalty.text.trim()),
       waitingTimeIncludedMinutes: int.tryParse(_waitingIncluded.text.trim()),
-      waitingTimeOverageCentsPerMinute: int.tryParse(
-        _waitingOverage.text.trim(),
+      waitingTimeOverageCentsPerMinute: limousineMajorUnitsToCents(
+        _waitingOverage.text,
       ),
       noShowPenaltyPercent: int.tryParse(_noShow.text.trim()),
-      overtimeCentsPerHour: int.tryParse(_overtime.text.trim()),
-      publicText: _publicNl.text.trim().isEmpty
-          ? const <String, String>{}
-          : <String, String>{'nl': _publicNl.text.trim()},
+      overtimeCentsPerHour: limousineMajorUnitsToCents(_overtime.text),
       includedServices: services,
-      paidExtras: extras,
       mobilisationDisclosure: _mobilisation.text.trim().isEmpty
           ? const <String, String>{}
           : <String, String>{'nl': _mobilisation.text.trim()},
@@ -109,9 +108,38 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     );
   }
 
+  LimousineCompanyQuoteDraft _completedDraft() {
+    return completeLimousineCompanyQuoteDraft(
+      _rawDraft(),
+      existingTermsRevision: widget.record.quote?.termsRevision ?? 0,
+      now: widget.clock(),
+    );
+  }
+
+  LimousineQuoteDraftValidation _currentValidation() {
+    return validateLimousineCompanyQuoteDraft(_completedDraft());
+  }
+
+  String? _errorFor(String key) {
+    final missing = _validation?.missing ?? _currentValidation().missing;
+    if (!missing.contains(key)) return null;
+    return limousineQuoteFieldErrorLabel(key, _lang);
+  }
+
+  Future<void> _pickExpires() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _expiresDate,
+      firstDate: widget.clock(),
+      lastDate: widget.clock().add(const Duration(days: 365 * 2)),
+    );
+    if (picked == null) return;
+    setState(() => _expiresDate = picked);
+  }
+
   Future<void> _submit() async {
     if (_submitting) return;
-    final draft = _draft();
+    final draft = _completedDraft();
     final validation = validateLimousineCompanyQuoteDraft(draft);
     setState(() => _validation = validation);
     if (!validation.ok) return;
@@ -134,7 +162,8 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
       valueListenable: businessThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForBusinessTheme(variant);
-        final missing = _validation?.missing ?? const <String>[];
+        final missing = _validation?.missing ?? _currentValidation().missing;
+        final canSubmit = !_submitting && missing.isEmpty;
         return Scaffold(
           key: kLimousineQuoteEditorPageKey,
           backgroundColor: palette.background,
@@ -143,9 +172,11 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
             foregroundColor: palette.textPrimary,
             title: Text(_t(kLimousineQuoteEditorTitle)),
           ),
-          body: ListView(
+          body: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
               if (missing.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -154,15 +185,26 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                     style: TextStyle(color: palette.danger, height: 1.35),
                   ),
                 ),
-              _moneyField(palette, _t(kLimousineQuoteTotal), _total),
-              _field(palette, _t(kLimousineQuoteCurrency), _currency, max: 3),
-              _vatPicker(palette),
-              _field(palette, _t(kLimousineQuoteExpires), _expires),
-              _intField(
+              _moneyField(
                 palette,
-                _t(kLimousineQuoteTermsRevision),
-                _termsRevision,
+                _t(kLimousineQuoteTotal),
+                _total,
+                key: kLimousineQuoteTotalFieldKey,
+                error: _errorFor('total_incl_vat_cents'),
               ),
+              _currencyRow(palette),
+              _vatPicker(palette),
+              _expiresField(palette),
+              const SizedBox(height: 8),
+              Text(
+                _t(kLimousineQuoteOptionalSection),
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 10),
               _intField(
                 palette,
                 _t(kLimousineQuoteCancelDeadline),
@@ -178,13 +220,13 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                 _t(kLimousineQuoteWaitingIncluded),
                 _waitingIncluded,
               ),
-              _intField(
+              _moneyField(
                 palette,
                 _t(kLimousineQuoteWaitingOverage),
                 _waitingOverage,
               ),
               _intField(palette, _t(kLimousineQuoteNoShow), _noShow),
-              _intField(palette, _t(kLimousineQuoteOvertime), _overtime),
+              _moneyField(palette, _t(kLimousineQuoteOvertime), _overtime),
               _field(
                 palette,
                 _t(kLimousineQuoteIncludedServices),
@@ -214,11 +256,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                 height: 48,
                 child: FilledButton(
                   key: kLimousineQuoteSubmitKey,
-                  onPressed:
-                      _submitting ||
-                          !validateLimousineCompanyQuoteDraft(_draft()).ok
-                      ? null
-                      : _submit,
+                  onPressed: canSubmit ? _submit : null,
                   child: Text(
                     _submitting
                         ? _t(kLimousineQuoteSubmitting)
@@ -227,9 +265,30 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                 ),
               ),
             ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _currencyRow(BusinessThemePalette palette) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: _t(kLimousineQuoteCurrency),
+          labelStyle: TextStyle(color: palette.textMuted),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: palette.border),
+          ),
+        ),
+        child: Text(
+          kLimousineDefaultQuoteCurrency,
+          key: kLimousineQuoteCurrencyValueKey,
+          style: TextStyle(color: palette.textPrimary),
+        ),
+      ),
     );
   }
 
@@ -240,20 +299,59 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
         decoration: InputDecoration(
           labelText: _t(kLimousineQuoteVatTreatment),
           labelStyle: TextStyle(color: palette.textMuted),
+          errorText: _errorFor('vat_treatment'),
           enabledBorder: OutlineInputBorder(
             borderSide: BorderSide(color: palette.border),
           ),
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<String>(
+            key: kLimousineQuoteVatFieldKey,
             value: _vatTreatment.isEmpty ? null : _vatTreatment,
             hint: Text(_t(kLimousineQuoteVatTreatment)),
             dropdownColor: palette.surface,
-            items: const [
-              DropdownMenuItem(value: 'incl', child: Text('incl')),
-              DropdownMenuItem(value: 'excl', child: Text('excl')),
+            items: [
+              DropdownMenuItem(
+                value: kLimousineQuoteVatIncl,
+                child: Text(_t(kLimousineQuoteVatInclLabel)),
+              ),
+              DropdownMenuItem(
+                value: kLimousineQuoteVatExcl,
+                child: Text(_t(kLimousineQuoteVatExclLabel)),
+              ),
+              DropdownMenuItem(
+                value: kLimousineQuoteVatNone,
+                child: Text(_t(kLimousineQuoteVatNoneLabel)),
+              ),
             ],
             onChanged: (value) => setState(() => _vatTreatment = value ?? ''),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _expiresField(BusinessThemePalette palette) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        key: kLimousineQuoteExpiresFieldKey,
+        onTap: _pickExpires,
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: _t(kLimousineQuoteExpires),
+            labelStyle: TextStyle(color: palette.textMuted),
+            errorText: _errorFor('expires_at'),
+            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: palette.border),
+            ),
+          ),
+          child: Text(
+            formatLimousineUserDate(
+              limousineQuoteExpiresAtIsoFromDate(_expiresDate),
+              _lang,
+            ),
+            style: TextStyle(color: palette.textPrimary),
           ),
         ),
       ),
@@ -263,12 +361,16 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
   Widget _moneyField(
     BusinessThemePalette palette,
     String label,
-    TextEditingController controller,
-  ) {
+    TextEditingController controller, {
+    Key? key,
+    String? error,
+  }) {
     return _field(
       palette,
       label,
       controller,
+      key: key,
+      error: error,
       keyboard: const TextInputType.numberWithOptions(decimal: true),
     );
   }
@@ -291,6 +393,8 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     BusinessThemePalette palette,
     String label,
     TextEditingController controller, {
+    Key? key,
+    String? error,
     int maxLines = 1,
     int? max,
     TextInputType? keyboard,
@@ -299,6 +403,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
+        key: key,
         controller: controller,
         maxLines: maxLines,
         maxLength: max,
@@ -309,6 +414,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(color: palette.textMuted),
+          errorText: error,
           counterText: '',
           enabledBorder: OutlineInputBorder(
             borderSide: BorderSide(color: palette.border),

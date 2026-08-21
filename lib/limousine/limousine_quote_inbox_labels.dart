@@ -385,10 +385,73 @@ const LocalizedText kLimousineQuoteEditorTitle = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteValidationMissing = LocalizedText(
-  nl: 'Vul alle verplichte voorwaarden in voordat u verstuurt.',
-  en: 'Complete every required term before sending.',
-  fr: 'Complétez toutes les conditions obligatoires avant l’envoi.',
-  es: 'Complete todos los términos obligatorios antes de enviar.',
+  nl: 'Controleer de gemarkeerde velden voordat u verstuurt.',
+  en: 'Check the highlighted fields before sending.',
+  fr: 'Vérifiez les champs indiqués avant l’envoi.',
+  es: 'Revise los campos marcados antes de enviar.',
+);
+
+const LocalizedText kLimousineQuoteTotalRequired = LocalizedText(
+  nl: 'Vul een geldig offertebedrag in.',
+  en: 'Enter a valid quote amount.',
+  fr: 'Saisissez un montant de devis valide.',
+  es: 'Introduzca un importe de presupuesto válido.',
+);
+
+const LocalizedText kLimousineQuoteVatRequired = LocalizedText(
+  nl: 'Kies de btw-behandeling.',
+  en: 'Choose the VAT treatment.',
+  fr: 'Choisissez le traitement TVA.',
+  es: 'Elija el tratamiento del IVA.',
+);
+
+const LocalizedText kLimousineQuoteExpiresRequired = LocalizedText(
+  nl: 'Kies tot wanneer de offerte geldig is.',
+  en: 'Choose until when the quote is valid.',
+  fr: 'Choisissez jusqu’à quand le devis est valable.',
+  es: 'Elija hasta cuándo es válido el presupuesto.',
+);
+
+const LocalizedText kLimousineQuoteCurrencyRequired = LocalizedText(
+  nl: 'Kies een valuta.',
+  en: 'Choose a currency.',
+  fr: 'Choisissez une devise.',
+  es: 'Elija una moneda.',
+);
+
+const LocalizedText kLimousineQuoteVatInclLabel = LocalizedText(
+  nl: 'BTW inbegrepen',
+  en: 'VAT included',
+  fr: 'TVA incluse',
+  es: 'IVA incluido',
+);
+
+const LocalizedText kLimousineQuoteVatExclLabel = LocalizedText(
+  nl: 'BTW exclusief',
+  en: 'VAT excluded',
+  fr: 'TVA exclue',
+  es: 'IVA excluido',
+);
+
+const LocalizedText kLimousineQuoteVatNoneLabel = LocalizedText(
+  nl: 'Vrijgesteld / geen BTW',
+  en: 'Exempt / no VAT',
+  fr: 'Exonéré / pas de TVA',
+  es: 'Exento / sin IVA',
+);
+
+const LocalizedText kLimousineQuoteOptionalSection = LocalizedText(
+  nl: 'Optionele voorwaarden',
+  en: 'Optional terms',
+  fr: 'Conditions facultatives',
+  es: 'Condiciones opcionales',
+);
+
+const LocalizedText kLimousineQuoteCurrencyValue = LocalizedText(
+  nl: 'Valuta',
+  en: 'Currency',
+  fr: 'Devise',
+  es: 'Moneda',
 );
 
 const LocalizedText kLimousineQuoteJourneyCard = LocalizedText(
@@ -410,6 +473,13 @@ const LocalizedText kLimousineQuotePickup = LocalizedText(
   en: 'Pickup',
   fr: 'Prise en charge',
   es: 'Recogida',
+);
+
+const LocalizedText kLimousineQuoteWhen = LocalizedText(
+  nl: 'Datum',
+  en: 'Date',
+  fr: 'Date',
+  es: 'Fecha',
 );
 
 const LocalizedText kLimousineQuoteDestination = LocalizedText(
@@ -448,17 +518,17 @@ const LocalizedText kLimousineQuoteCustomerNote = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteTotal = LocalizedText(
-  nl: 'Totaal incl. btw',
-  en: 'Total incl. VAT',
-  fr: 'Total TTC',
-  es: 'Total con IVA',
+  nl: 'Totaalbedrag',
+  en: 'Total amount',
+  fr: 'Montant total',
+  es: 'Importe total',
 );
 
 const LocalizedText kLimousineQuoteCurrency = LocalizedText(
-  nl: 'Valuta (ISO)',
-  en: 'Currency (ISO)',
-  fr: 'Devise (ISO)',
-  es: 'Moneda (ISO)',
+  nl: 'Valuta',
+  en: 'Currency',
+  fr: 'Devise',
+  es: 'Moneda',
 );
 
 const LocalizedText kLimousineQuoteVatTreatment = LocalizedText(
@@ -469,10 +539,10 @@ const LocalizedText kLimousineQuoteVatTreatment = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteExpires = LocalizedText(
-  nl: 'Geldig tot (ISO)',
-  en: 'Valid until (ISO)',
-  fr: 'Valable jusqu’au (ISO)',
-  es: 'Válido hasta (ISO)',
+  nl: 'Offerte geldig tot',
+  en: 'Quote valid until',
+  fr: 'Devis valable jusqu’au',
+  es: 'Presupuesto válido hasta',
 );
 
 const LocalizedText kLimousineQuoteTermsRevision = LocalizedText(
@@ -504,10 +574,10 @@ const LocalizedText kLimousineQuoteWaitingIncluded = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteWaitingOverage = LocalizedText(
-  nl: 'Wachttijd extra (centen/minuut)',
-  en: 'Waiting overage (cents/minute)',
-  fr: 'Attente supplémentaire (centimes/minute)',
-  es: 'Espera extra (céntimos/minuto)',
+  nl: 'Extra wachttijd (€ / minuut)',
+  en: 'Extra waiting (€ / minute)',
+  fr: 'Attente extra (€ / minute)',
+  es: 'Espera extra (€ / minuto)',
 );
 
 const LocalizedText kLimousineQuoteNoShow = LocalizedText(
@@ -518,10 +588,10 @@ const LocalizedText kLimousineQuoteNoShow = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteOvertime = LocalizedText(
-  nl: 'Overuren (centen/uur)',
-  en: 'Overtime (cents/hour)',
-  fr: 'Heures supplémentaires (centimes/heure)',
-  es: 'Horas extra (céntimos/hora)',
+  nl: 'Overuren (€ / uur)',
+  en: 'Overtime (€ / hour)',
+  fr: 'Heures supplémentaires (€ / heure)',
+  es: 'Horas extra (€ / hora)',
 );
 
 const LocalizedText kLimousineQuoteIncludedServices = LocalizedText(
@@ -663,10 +733,10 @@ const Map<String, LocalizedText> kLimousineQuoteInboxStatusLabels =
         es: 'Nuevo',
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
-        nl: 'Wacht op mij',
-        en: 'Waiting for company',
-        fr: 'En attente de l’entreprise',
-        es: 'Esperando a la empresa',
+        nl: 'Bekeken',
+        en: 'Viewed',
+        fr: 'Vu',
+        es: 'Visto',
       ),
       LimousineQuoteStateId.quoted: LocalizedText(
         nl: 'Wacht op klant',
@@ -703,10 +773,10 @@ const Map<String, LocalizedText> kLimousineQuoteStateLabels =
         es: 'Solicitado',
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
-        nl: 'Bekeken door bedrijf',
-        en: 'Viewed by company',
-        fr: 'Vu par l’entreprise',
-        es: 'Visto por la empresa',
+        nl: 'Bekeken',
+        en: 'Viewed',
+        fr: 'Vu',
+        es: 'Visto',
       ),
       LimousineQuoteStateId.quoted: LocalizedText(
         nl: 'Offerte verstuurd',

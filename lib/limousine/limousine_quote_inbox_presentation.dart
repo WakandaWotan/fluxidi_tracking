@@ -6,6 +6,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 
 enum LimousineQuoteInboxKpiCode { neu, toAnswer, waitingCustomer, accepted }
 
@@ -215,7 +216,7 @@ String? limousineQuoteInboxAuthoritativeAmount(
 ) {
   final quote = record.quote;
   if (quote == null) return null;
-  final money = formatLimousineMoney(quote.totalInclVatCents, quote.currency);
+  final money = formatLimousineEuroAmount(quote.totalInclVatCents);
   final state = LimousineQuoteStateId.normalize(record.state);
   final suffix =
       state == LimousineQuoteStateId.accepted ||

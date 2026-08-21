@@ -7,6 +7,7 @@ import '../business_theme_store.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 import 'limousine_quote_respond_form.dart';
 
 class LimousineQuoteDetailPage extends StatefulWidget {
@@ -270,21 +271,28 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
       add(kLimousineQuoteStops, fulfilment.stops.join(' · '));
     }
     if (record.scheduledPickupIso.isNotEmpty) {
-      add(kLimousineQuoteUpdated, record.scheduledPickupIso);
+      add(
+        kLimousineQuoteWhen,
+        limousineQuoteDisplayOrEmpty(record.scheduledPickupIso, _lang),
+      );
     }
     if (record.pax != null) add(kLimousineQuotePassengers, '${record.pax}');
     if (record.bags != null) add(kLimousineQuoteLuggage, '${record.bags}');
     add(kLimousineQuoteCustomerNote, fulfilment?.customerNote);
-    if (record.serviceClassId.isNotEmpty) {
-      rows.add(
-        _kv(palette, _t(kLimousineQuoteServiceClass), record.serviceClassId),
-      );
+    final classLabel = limousineQuoteServiceClassDisplay(
+      record.serviceClassId,
+      _lang,
+    );
+    if (classLabel.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteServiceClass), classLabel));
     }
-    if (record.vehicleId.isNotEmpty) {
-      rows.add(_kv(palette, _t(kLimousineQuoteVehicle), record.vehicleId));
+    final vehicleLabel = limousineQuoteVehicleDisplay(record, _lang);
+    if (vehicleLabel.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteVehicle), vehicleLabel));
     }
-    if (record.offerId.isNotEmpty) {
-      rows.add(_kv(palette, _t(kLimousineQuoteOffer), record.offerId));
+    final offerLabel = limousineQuoteOfferDisplay(record, _lang);
+    if (offerLabel.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteOffer), offerLabel));
     }
     if (rows.isEmpty) return const SizedBox.shrink();
     return _card(
@@ -305,23 +313,19 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
         _kv(
           palette,
           _t(kLimousineQuoteTotal),
-          formatLimousineMoney(quote.totalInclVatCents, quote.currency),
+          formatLimousineEuroAmount(quote.totalInclVatCents),
         ),
       );
-      if (quote.vatTreatment.isNotEmpty) {
-        rows.add(
-          _kv(palette, _t(kLimousineQuoteVatTreatment), quote.vatTreatment),
-        );
+      final vatLabel = limousineVatTreatmentLabel(quote.vatTreatment, _lang);
+      if (vatLabel.isNotEmpty) {
+        rows.add(_kv(palette, _t(kLimousineQuoteVatTreatment), vatLabel));
       }
       if (quote.expiresAt.isNotEmpty) {
-        rows.add(_kv(palette, _t(kLimousineQuoteExpires), quote.expiresAt));
-      }
-      if (quote.termsRevision != null) {
         rows.add(
           _kv(
             palette,
-            _t(kLimousineQuoteTermsRevision),
-            '${quote.termsRevision}',
+            _t(kLimousineQuoteExpires),
+            formatLimousineUserDate(quote.expiresAt, _lang),
           ),
         );
       }
@@ -359,11 +363,41 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
       }
       final terms = quote.terms;
       if (terms != null) {
-        for (final key in kLimousineRequiredTermsKeys) {
-          final value = terms[key];
-          if (value == null) continue;
+        void addTerm(String key, String display) {
+          if (display.trim().isEmpty) return;
           final label = kLimousineQuoteFieldLabels[key]?.of(_lang) ?? key;
-          rows.add(_kv(palette, label, '$value'));
+          rows.add(_kv(palette, label, display));
+        }
+
+        final hours = terms['cancellation_deadline_hours'];
+        if (hours is num && hours > 0) {
+          addTerm('cancellation_deadline_hours', '$hours');
+        }
+        final cancelPct = terms['cancellation_penalty_percent'];
+        if (cancelPct is num && cancelPct > 0) {
+          addTerm('cancellation_penalty_percent', '$cancelPct');
+        }
+        final waitMin = terms['waiting_time_included_minutes'];
+        if (waitMin is num && waitMin > 0) {
+          addTerm('waiting_time_included_minutes', '$waitMin');
+        }
+        final waitOver = terms['waiting_time_overage_cents_per_minute'];
+        if (waitOver is num && waitOver > 0) {
+          addTerm(
+            'waiting_time_overage_cents_per_minute',
+            formatLimousineEuroAmount(waitOver.toInt()),
+          );
+        }
+        final noShow = terms['no_show_penalty_percent'];
+        if (noShow is num && noShow > 0) {
+          addTerm('no_show_penalty_percent', '$noShow');
+        }
+        final overtime = terms['overtime_cents_per_hour'];
+        if (overtime is num && overtime > 0) {
+          addTerm(
+            'overtime_cents_per_hour',
+            formatLimousineEuroAmount(overtime.toInt()),
+          );
         }
       }
     }
@@ -382,7 +416,13 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
       );
     }
     if (record.updatedAt.isNotEmpty) {
-      rows.add(_kv(palette, _t(kLimousineQuoteUpdated), record.updatedAt));
+      rows.add(
+        _kv(
+          palette,
+          _t(kLimousineQuoteUpdated),
+          limousineQuoteDisplayOrEmpty(record.updatedAt, _lang),
+        ),
+      );
     }
     if (rows.isEmpty) return const SizedBox.shrink();
     return _card(palette, title: _t(kLimousineQuoteTermsCard), children: rows);

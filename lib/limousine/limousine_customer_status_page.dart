@@ -12,6 +12,7 @@ import 'limousine_customer_quote_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 import 'limousine_wizard_vehicle.dart';
 
 class LimousineCustomerUnavailableBanner extends StatelessWidget {
@@ -56,11 +57,28 @@ class LimousineCustomerStatusView extends StatelessWidget {
       return LimousineCustomerUnavailableBanner(language: language);
     }
     final quote = request.quote;
+    final companyName =
+        (controller.providerDisplayName.isNotEmpty
+                ? controller.providerDisplayName
+                : controller.selectedProvider?.provider.companyName ?? '')
+            .trim();
+    final vehicleName =
+        (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
+        ? controller.lockedVehicle!.name.trim()
+        : limousineQuoteVehicleDisplay(request, language);
     return Column(
       key: kLimousineCustomerStatusPageKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Chip(label: Text(limousineCustomerStateLabel(request.state, language))),
+        Chip(
+          label: Text(
+            limousineCustomerStateLabel(
+              request.state,
+              language,
+              companyName: companyName,
+            ),
+          ),
+        ),
         const SizedBox(height: 8),
         if (LimousineQuoteStateId.normalize(request.state) ==
                 LimousineQuoteStateId.requested ||
@@ -80,7 +98,12 @@ class LimousineCustomerStatusView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(_t(kLimousineQuoteSubmittedBody)),
+                Text(
+                  limousineCustomerRequestReceivedLabel(
+                    language,
+                    companyName: companyName,
+                  ),
+                ),
                 if (request.quoteRequestId.trim().isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -89,24 +112,11 @@ class LimousineCustomerStatusView extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ],
-                if ((controller.selectedProvider?.provider.companyName ?? '')
-                    .trim()
-                    .isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      controller.selectedProvider!.provider.companyName,
-                    ),
-                  ),
-                if ((controller.lockedVehicle?.name ?? request.vehicleId)
-                    .trim()
-                    .isNotEmpty)
+                if (vehicleName.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
-                          ? controller.lockedVehicle!.name
-                          : request.vehicleId,
+                      vehicleName,
                       key: kLimousineReviewLockedVehicleKey,
                     ),
                   ),
@@ -137,19 +147,50 @@ class LimousineCustomerStatusView extends StatelessWidget {
               ),
             ),
           ),
-        if (quote != null) ...[
-          const SizedBox(height: 12),
+        const SizedBox(height: 8),
+        Text(
+          _t(kLimousineCustomerYourRequest),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        if ((request.fulfilment?.from ?? '').isNotEmpty ||
+            (request.fulfilment?.to ?? '').isNotEmpty)
           Text(
-            formatLimousineMoney(quote.totalInclVatCents, quote.currency),
+            [
+              request.fulfilment?.from ?? '',
+              request.fulfilment?.to ?? '',
+            ].where((part) => part.trim().isNotEmpty).join(' → '),
+          ),
+        if (request.scheduledPickupIso.isNotEmpty)
+          Text(
+            limousineQuoteDisplayOrEmpty(request.scheduledPickupIso, language),
+          ),
+        if (request.pax != null)
+          Text('${_t(kLimousineCustomerPax)}: ${request.pax}'),
+        if (vehicleName.isNotEmpty) Text(vehicleName),
+        if (quote != null) ...[
+          const SizedBox(height: 16),
+          Text(
+            limousineCustomerQuoteFromCompanyLabel(
+              language,
+              companyName: companyName,
+            ),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            formatLimousineEuroAmount(quote.totalInclVatCents),
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w800,
             ),
           ),
-          Text('${_t(kLimousineCustomerVat)}: ${quote.vatTreatment}'),
+          if (limousineVatTreatmentLabel(quote.vatTreatment, language).isNotEmpty)
+            Text(limousineVatTreatmentLabel(quote.vatTreatment, language)),
           if (quote.expiresAt.isNotEmpty)
-            Text('${kLimousineQuoteExpires.of(language)}: ${quote.expiresAt}'),
+            Text(
+              '${kLimousineQuoteExpires.of(language)}: ${formatLimousineUserDate(quote.expiresAt, language)}',
+            ),
           if (quote.publicText.isNotEmpty)
             Text(
               localizedLimousineText(
@@ -271,6 +312,75 @@ class LimousineCustomerTermsCard extends StatelessWidget {
       return '';
     }
 
+    String includedLabels(Object? raw) {
+      if (raw is! List) return '';
+      final labels = <String>[];
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final label = item['label'] ?? item['name'];
+        final text = label is Map
+            ? localized(label)
+            : (label ?? '').toString().trim();
+        if (text.isNotEmpty) labels.add(text);
+      }
+      return labels.join(', ');
+    }
+
+    final cancelHours = terms['cancellation_deadline_hours'];
+    final cancelPct = terms['cancellation_penalty_percent'];
+    final waitMin = terms['waiting_time_included_minutes'];
+    final waitOver = terms['waiting_time_overage_cents_per_minute'];
+    final noShow = terms['no_show_penalty_percent'];
+    final overtime = terms['overtime_cents_per_hour'];
+    final included = includedLabels(
+      quote?.includedServices.isNotEmpty == true
+          ? quote!.includedServices
+          : terms['included_services'],
+    );
+    final extras = includedLabels(
+      quote?.separatelyPricedExtras.isNotEmpty == true
+          ? quote!.separatelyPricedExtras
+          : terms['paid_extras'],
+    );
+    final mobilisation = localized(
+      quote?.mobilisationDisclosure.isNotEmpty == true
+          ? quote!.mobilisationDisclosure
+          : terms['mobilisation_disclosure'],
+    );
+    final obligations = localized(terms['customer_obligations']);
+    final important = localized(terms['important_information']);
+    final rows = <Widget>[
+      if (cancelHours is num && cancelHours > 0)
+        row(kLimousineQuoteCancelDeadline.of(language), cancelHours),
+      if (cancelPct is num && cancelPct > 0)
+        row(kLimousineQuoteCancelPenalty.of(language), cancelPct),
+      if (waitMin is num && waitMin > 0)
+        row(kLimousineQuoteWaitingIncluded.of(language), waitMin),
+      if (waitOver is num && waitOver > 0)
+        row(
+          kLimousineQuoteWaitingOverage.of(language),
+          formatLimousineEuroAmount(waitOver.toInt()),
+        ),
+      if (noShow is num && noShow > 0)
+        row(kLimousineQuoteNoShow.of(language), noShow),
+      if (overtime is num && overtime > 0)
+        row(
+          kLimousineQuoteOvertime.of(language),
+          formatLimousineEuroAmount(overtime.toInt()),
+        ),
+      if (included.isNotEmpty)
+        row(kLimousineCustomerIncludedServices.of(language), included),
+      if (extras.isNotEmpty)
+        row(kLimousineCustomerPaidExtras.of(language), extras),
+      if (mobilisation.isNotEmpty)
+        row(kLimousineCustomerMobilisation.of(language), mobilisation),
+      if (obligations.isNotEmpty)
+        row(kLimousineCustomerObligations.of(language), obligations),
+      if (important.isNotEmpty)
+        row(kLimousineCustomerImportant.of(language), important),
+    ];
+    if (rows.isEmpty) return const SizedBox.shrink();
+
     return Card(
       key: kLimousineCustomerTermsCardKey,
       child: Padding(
@@ -283,64 +393,7 @@ class LimousineCustomerTermsCard extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            row(
-              kLimousineQuoteTermsRevision.of(language),
-              quote?.termsRevision ?? terms['terms_revision'],
-            ),
-            row(
-              kLimousineQuoteCancelDeadline.of(language),
-              terms['cancellation_deadline_hours'],
-            ),
-            row(
-              kLimousineQuoteCancelPenalty.of(language),
-              terms['cancellation_penalty_percent'],
-            ),
-            row(
-              kLimousineQuoteWaitingIncluded.of(language),
-              terms['waiting_time_included_minutes'],
-            ),
-            row(
-              kLimousineQuoteWaitingOverage.of(language),
-              terms['waiting_time_overage_cents_per_minute'] == null
-                  ? null
-                  : formatLimousineMoney(
-                      (terms['waiting_time_overage_cents_per_minute'] as num)
-                          .toInt(),
-                      quote?.currency ?? '',
-                    ),
-            ),
-            row(
-              kLimousineQuoteNoShow.of(language),
-              terms['no_show_penalty_percent'],
-            ),
-            row(
-              kLimousineQuoteOvertime.of(language),
-              terms['overtime_cents_per_hour'] == null
-                  ? null
-                  : formatLimousineMoney(
-                      (terms['overtime_cents_per_hour'] as num).toInt(),
-                      quote?.currency ?? '',
-                    ),
-            ),
-            if ((terms['included_services'] as List?)?.isNotEmpty == true)
-              Text(kLimousineCustomerIncludedServices.of(language)),
-            if ((terms['paid_extras'] as List?)?.isNotEmpty == true)
-              Text(kLimousineCustomerPaidExtras.of(language)),
-            if (localized(terms['mobilisation_disclosure']).isNotEmpty)
-              row(
-                kLimousineCustomerMobilisation.of(language),
-                localized(terms['mobilisation_disclosure']),
-              ),
-            if (localized(terms['customer_obligations']).isNotEmpty)
-              row(
-                kLimousineCustomerObligations.of(language),
-                localized(terms['customer_obligations']),
-              ),
-            if (localized(terms['important_information']).isNotEmpty)
-              row(
-                kLimousineCustomerImportant.of(language),
-                localized(terms['important_information']),
-              ),
+            ...rows,
           ],
         ),
       ),

@@ -1512,6 +1512,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
+                    const LimousineCustomerRequestsSection(),
                     if (_error != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),

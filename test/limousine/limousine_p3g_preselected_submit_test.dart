@@ -293,7 +293,7 @@ void main() {
     expect(find.byKey(kLimousineQuoteSubmitConfirmationKey), findsOneWidget);
     expect(find.textContaining('limq_p3g_1'), findsOneWidget);
     expect(
-      find.text('Uw offerteaanvraag is goed verstuurd.'),
+      find.text('Aanvraag verzonden'),
       findsOneWidget,
     );
     controller.dispose();

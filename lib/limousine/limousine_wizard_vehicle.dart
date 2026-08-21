@@ -92,17 +92,17 @@ const LocalizedText kLimousineReviewLockedVehicle = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteSubmittedTitle = LocalizedText(
-  nl: 'Uw offerteaanvraag is goed verstuurd.',
-  en: 'Your quote request was sent successfully.',
-  fr: 'Votre demande de devis a bien été envoyée.',
-  es: 'Su solicitud de presupuesto se envió correctamente.',
+  nl: 'Aanvraag verzonden',
+  en: 'Request sent',
+  fr: 'Demande envoyée',
+  es: 'Solicitud enviada',
 );
 
 const LocalizedText kLimousineQuoteSubmittedBody = LocalizedText(
-  nl: 'Het limousinebedrijf neemt zo spoedig mogelijk contact met u op.',
-  en: 'The limousine company will contact you as soon as possible.',
-  fr: 'L’entreprise de limousine vous contactera dès que possible.',
-  es: 'La empresa de limusinas se pondrá en contacto con usted lo antes posible.',
+  nl: 'Het limousinebedrijf heeft uw aanvraag ontvangen.',
+  en: 'The limousine company has received your request.',
+  fr: 'L’entreprise de limousine a reçu votre demande.',
+  es: 'La empresa de limusinas ha recibido su solicitud.',
 );
 
 const LocalizedText kLimousineQuoteSubmittedHome = LocalizedText(

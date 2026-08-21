@@ -294,12 +294,12 @@ void main() {
     expect(find.byKey(kLimousineQuoteSubmitReferenceKey), findsOneWidget);
     expect(find.textContaining('limq_p3f_1'), findsOneWidget);
     expect(
-      find.textContaining('Uw offerteaanvraag is goed verstuurd.'),
+      find.textContaining('Aanvraag verzonden'),
       findsOneWidget,
     );
     expect(
       find.textContaining(
-        'Het limousinebedrijf neemt zo spoedig mogelijk contact met u op.',
+        'Coachline heeft uw aanvraag ontvangen.',
       ),
       findsOneWidget,
     );

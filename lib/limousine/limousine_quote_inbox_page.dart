@@ -7,6 +7,7 @@ import '../business_theme_store.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_detail_page.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_quote_presentation.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_operational_handoff.dart';
@@ -788,7 +789,7 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      '${_t(kLimousineQuoteInboxValidUntil)} ${item.quote!.expiresAt}',
+                      '${_t(kLimousineQuoteInboxValidUntil)} ${formatLimousineUserDate(item.quote!.expiresAt, _lang)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -836,7 +837,10 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                 if (item.scheduledPickupIso.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text(
-                    item.scheduledPickupIso,
+                    limousineQuoteDisplayOrEmpty(
+                      item.scheduledPickupIso,
+                      _lang,
+                    ),
                     style: TextStyle(color: palette.textSecondary),
                   ),
                 ],

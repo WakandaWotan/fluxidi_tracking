@@ -8,11 +8,14 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
+import '../app_strings.dart';
 import '../customer_session_store.dart';
 import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_resume.dart';
 import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
+import 'limousine_customer_request_history.dart';
+import 'limousine_quote_presentation.dart';
 import 'limousine_journey_scope.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_quote_inbox.dart';
@@ -459,12 +462,14 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     required LimousineCustomerQuoteGateway gateway,
     LimousineStatusReferenceStore? statusStore,
     LimousineAcceptedBookingResumeRepository? resumeRepository,
+    LimousineCustomerRequestHistoryRepository? historyRepository,
     LimousineAcceptedResumeCustomerIdLoader? customerIdLoader,
     String accountScope = 'customer',
     DateTime Function()? clock,
   }) : _gateway = gateway,
        _statusStore = statusStore ?? LimousineInMemoryStatusReferenceStore(),
        _resumeRepository = resumeRepository,
+       _historyRepository = historyRepository,
        _customerIdLoader =
            customerIdLoader ?? _defaultLimousineResumeCustomerId,
        _accountScope = accountScope,
@@ -475,6 +480,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   final LimousineCustomerQuoteGateway _gateway;
   final LimousineStatusReferenceStore _statusStore;
   final LimousineAcceptedBookingResumeRepository? _resumeRepository;
+  final LimousineCustomerRequestHistoryRepository? _historyRepository;
   final LimousineAcceptedResumeCustomerIdLoader _customerIdLoader;
   final String _accountScope;
   final DateTime Function() _clock;
@@ -506,6 +512,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool offerScopeChanged = false;
   int lastDiscoveryCount = 0;
   String lastDiscoveryService = '';
+  String providerDisplayName = '';
 
   String? _statusRef;
   String? _acceptanceRef;
@@ -537,6 +544,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
 
   void _onSessionCleared() {
     unawaited(_statusStore.clearAll());
+    unawaited(_historyRepository?.clearAll());
     _forgetAcceptedHandoff();
     notifyListeners();
   }
@@ -908,6 +916,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       request = result.request;
       quoteUpdated = false;
       termsAcknowledged = false;
+      providerDisplayName =
+          (selectedProvider?.provider.companyName ?? '').trim();
       if (looksLikeLimousineStatusRef(result.statusRef)) {
         _statusRef = result.statusRef;
         await _statusStore.retain(
@@ -923,6 +933,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (limousineCustomerShouldPoll(request!.state)) {
         startPolling();
       }
+      await _persistHistory();
       _safeLog(
         'quote_submit ok offer_id=${draft.offerId} vehicle_id=${draft.vehicleId} journey_type=${draft.journeyType}',
       );
@@ -1006,6 +1017,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (LimousineQuoteStateId.waitingForCustomer.contains(request!.state)) {
         step = LimousineCustomerQuoteStep.reviewQuote;
       }
+      await _persistHistory();
       notifyListeners();
     } on LimousineCustomerQuoteException catch (error) {
       if (generation != _statusGeneration) return;
@@ -1062,6 +1074,51 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     _pollingEnabled = false;
     _pollTimer?.cancel();
     _pollTimer = null;
+  }
+
+  void restorePersistedRequest(LimousineCustomerRequestRecord record) {
+    request = record.request;
+    _statusRef = looksLikeLimousineStatusRef(record.statusRef)
+        ? record.statusRef
+        : null;
+    providerDisplayName = record.companyName;
+    quoteUpdated = false;
+    termsAcknowledged = false;
+    phase = LimousineCustomerQuotePhase.live;
+    step = LimousineQuoteStateId.waitingForCustomer.contains(record.state)
+        ? LimousineCustomerQuoteStep.reviewQuote
+        : LimousineCustomerQuoteStep.waitingCompany;
+    if (request != null && limousineCustomerShouldPoll(request!.state)) {
+      startPolling();
+    }
+    notifyListeners();
+  }
+
+  Future<void> _persistHistory() async {
+    final repo = _historyRepository;
+    final live = request;
+    final ref = _statusRef;
+    if (repo == null || live == null || !looksLikeLimousineStatusRef(ref)) {
+      return;
+    }
+    await repo.upsert(
+      LimousineCustomerRequestRecord(
+        quoteRequestId: live.quoteRequestId,
+        statusRef: ref!,
+        state: live.state,
+        companyName: providerDisplayName,
+        vehicleDisplayName: limousineQuoteVehicleDisplay(
+          live,
+          AppLanguage.nl,
+        ),
+        offerDisplayName: limousineQuoteOfferDisplay(live, AppLanguage.nl),
+        from: live.fulfilment?.from ?? draft.from,
+        to: live.fulfilment?.to ?? draft.to,
+        scheduledPickupIso: live.scheduledPickupIso,
+        request: live,
+        updatedAt: live.updatedAt,
+      ),
+    );
   }
 
   void setTermsAcknowledged(bool value) {
