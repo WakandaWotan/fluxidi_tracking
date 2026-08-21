@@ -229,6 +229,9 @@ import {
   limousineNearbyAllowsUnscopedListing as _limousineNearbyAllowsUnscopedListing,
 } from "./modules/limousine_discovery_preview.mjs";
 import {
+  resolveLimousineTransactionGate as _resolveLimousineTransactionGateRaw,
+} from "./modules/limousine_transaction_gate.mjs";
+import {
   normalizePublicVehicleGallery as _normalizePublicVehicleGallery,
   attachPublicVehicleMediaFields as _attachPublicVehicleMediaFields,
   newVehicleGalleryMediaId as _newVehicleGalleryMediaId,
@@ -825,6 +828,24 @@ function _limousineBookGateEnabled(env) {
 /// Default OFF; gate-off performs zero manual-quote reads or writes.
 function _limousineManualQuoteGateEnabled(env) {
   return _limousineManualQuoteGateEnabledRaw(env?.LIMOUSINE_MANUAL_QUOTE_ENABLED ?? "0");
+}
+
+function _resolveLimousineTransactionGate(env, { kind, companyId, publishedLimousine } = {}) {
+  const globalGateEnabled =
+    kind === "quote"
+      ? _limousineQuoteGateEnabled(env)
+      : kind === "book"
+        ? _limousineBookGateEnabled(env)
+        : _limousineManualQuoteGateEnabled(env);
+  return _resolveLimousineTransactionGateRaw({
+    kind,
+    globalGateEnabled,
+    companyId,
+    allowlisted: _limousineTestCompanyAllowlisted(env, companyId),
+    allowlistConfigured: _limousineAllowlistConfigured(env),
+    listingMode: _LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW,
+    publishedLimousine,
+  });
 }
 
 function _limousineTestCompanyAllowlisted(env, companyId) {
@@ -27709,7 +27730,10 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         _limousineTrustedQuoteCompany = "";
       }
     }
-    if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedQuoteCompany)) {
+    if (!_resolveLimousineTransactionGate(env, {
+      kind: "quote",
+      companyId: _limousineTrustedQuoteCompany,
+    }).ok) {
       return _limousineAllowlistUnavailableQuote();
     }
   }
@@ -45583,7 +45607,10 @@ export default {
             return _limousineAllowlistDenied();
           }
         }
-        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+        if (!_resolveLimousineTransactionGate(env, {
+          kind: "manual_quote",
+          companyId: scope.company_id,
+        }).ok) {
           return _limousineAllowlistDenied();
         }
         // New requests are blocked for suspended companies, exactly like /book.
@@ -65721,7 +65748,10 @@ async function handleBooking(payload, env, request, options = {}) {
           _limousineTrustedBookCompany = "";
         }
       }
-      if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedBookCompany)) {
+      if (!_resolveLimousineTransactionGate(env, {
+        kind: "book",
+        companyId: _limousineTrustedBookCompany,
+      }).ok) {
         return { ok: false, error: "limousine_unavailable" };
       }
       if (_limousineAcceptanceReference) {
