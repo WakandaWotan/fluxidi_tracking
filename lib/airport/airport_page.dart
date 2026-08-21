@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
-import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
+import 'package:fluxidi_tracking/airport/airport_selector.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
 import 'package:fluxidi_tracking/nearby/public_partner_identity.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
@@ -22,29 +23,7 @@ enum _TransferMode { toAirport, fromAirport }
 typedef AirportPartnerSelectionCallback =
     Future<Map<String, String>?> Function(BuildContext context);
 
-class _AirportOption {
-  const _AirportOption({
-    required this.id,
-    required this.countryCode,
-    required this.countryName,
-    required this.city,
-    required this.name,
-    required this.iata,
-    this.latitude,
-    this.longitude,
-    this.preciseAddress,
-  });
-
-  final String id;
-  final String countryCode;
-  final String countryName;
-  final String city;
-  final String name;
-  final String iata;
-  final double? latitude;
-  final double? longitude;
-  final String? preciseAddress;
-}
+typedef _AirportOption = AirportCatalogAirport;
 
 class _AirportAddressSuggestion {
   const _AirportAddressSuggestion({
@@ -115,399 +94,11 @@ class _AirportPageState extends State<AirportPage> {
   Color get _border => _themePalette.border;
   Color get _shadow => _themePalette.shadow;
   static const String _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
-  static const Set<String> _supportedCountryCodes = <String>{
-    'BE',
-    'NL',
-    'FR',
-    'DE',
-    'LU',
-    'ES',
-    'GB',
-  };
-  static const Set<String> _requiredAirportIata = <String>{
-    'AMS',
-    'DUS',
-    'BER',
-    'MAD',
-    'IBZ',
-    'LYS',
-  };
+  static const Set<String> _supportedCountryCodes = kSupportedAirportCountryCodes;
+  static const Set<String> _requiredAirportIata = kRequiredAirportIata;
 
-  static const List<_AirportOption> _airports = <_AirportOption>[
-    _AirportOption(
-      id: 'bru',
-      countryCode: 'BE',
-      countryName: 'België',
-      city: 'Brussel',
-      name: 'Brussels Airport',
-      iata: 'BRU',
-    ),
-    _AirportOption(
-      id: 'crl',
-      countryCode: 'BE',
-      countryName: 'België',
-      city: 'Charleroi',
-      name: 'Brussels South Charleroi Airport',
-      iata: 'CRL',
-    ),
-    _AirportOption(
-      id: 'anr',
-      countryCode: 'BE',
-      countryName: 'België',
-      city: 'Antwerpen',
-      name: 'Antwerp Airport',
-      iata: 'ANR',
-    ),
-    _AirportOption(
-      id: 'ost',
-      countryCode: 'BE',
-      countryName: 'België',
-      city: 'Oostende/Brugge',
-      name: 'Ostend-Bruges Airport',
-      iata: 'OST',
-    ),
-    _AirportOption(
-      id: 'lgg',
-      countryCode: 'BE',
-      countryName: 'België',
-      city: 'Luik',
-      name: 'Liège Airport',
-      iata: 'LGG',
-    ),
-    _AirportOption(
-      id: 'ams',
-      countryCode: 'NL',
-      countryName: 'Nederland',
-      city: 'Amsterdam',
-      name: 'Amsterdam Schiphol',
-      iata: 'AMS',
-      latitude: 52.308601,
-      longitude: 4.763890,
-      preciseAddress:
-          'Evert van de Beekstraat 202, 1118 CP Schiphol, Nederland',
-    ),
-    _AirportOption(
-      id: 'ein',
-      countryCode: 'NL',
-      countryName: 'Nederland',
-      city: 'Eindhoven',
-      name: 'Eindhoven Airport',
-      iata: 'EIN',
-    ),
-    _AirportOption(
-      id: 'rtm',
-      countryCode: 'NL',
-      countryName: 'Nederland',
-      city: 'Rotterdam/Den Haag',
-      name: 'Rotterdam The Hague Airport',
-      iata: 'RTM',
-    ),
-    _AirportOption(
-      id: 'mst',
-      countryCode: 'NL',
-      countryName: 'Nederland',
-      city: 'Maastricht',
-      name: 'Maastricht Aachen Airport',
-      iata: 'MST',
-    ),
-    _AirportOption(
-      id: 'grq',
-      countryCode: 'NL',
-      countryName: 'Nederland',
-      city: 'Groningen',
-      name: 'Groningen Airport Eelde',
-      iata: 'GRQ',
-    ),
-    _AirportOption(
-      id: 'cdg',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Parijs',
-      name: 'Paris Charles de Gaulle',
-      iata: 'CDG',
-    ),
-    _AirportOption(
-      id: 'ory',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Parijs',
-      name: 'Paris Orly',
-      iata: 'ORY',
-    ),
-    _AirportOption(
-      id: 'bva',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Beauvais',
-      name: 'Paris Beauvais',
-      iata: 'BVA',
-    ),
-    _AirportOption(
-      id: 'lys',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Lyon',
-      name: 'Lyon-Saint Exupéry Airport',
-      iata: 'LYS',
-      latitude: 45.725996,
-      longitude: 5.090139,
-      preciseAddress: '69125 Colombier-Saugnieu, Frankrijk',
-    ),
-    _AirportOption(
-      id: 'mrs',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Marseille',
-      name: 'Marseille Provence Airport',
-      iata: 'MRS',
-    ),
-    _AirportOption(
-      id: 'nce',
-      countryCode: 'FR',
-      countryName: 'Frankrijk',
-      city: 'Nice',
-      name: 'Nice Côte d’Azur Airport',
-      iata: 'NCE',
-    ),
-    _AirportOption(
-      id: 'fra',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'Frankfurt',
-      name: 'Frankfurt Airport',
-      iata: 'FRA',
-    ),
-    _AirportOption(
-      id: 'muc',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'München',
-      name: 'Munich Airport',
-      iata: 'MUC',
-    ),
-    _AirportOption(
-      id: 'dus',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'Düsseldorf',
-      name: 'Düsseldorf Airport',
-      iata: 'DUS',
-      latitude: 51.289501,
-      longitude: 6.766780,
-      preciseAddress: 'Flughafenstraße 105, 40474 Düsseldorf, Duitsland',
-    ),
-    _AirportOption(
-      id: 'cgn',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'Keulen/Bonn',
-      name: 'Cologne Bonn Airport',
-      iata: 'CGN',
-    ),
-    _AirportOption(
-      id: 'ber',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'Berlijn',
-      name: 'Berlin Brandenburg Airport',
-      iata: 'BER',
-      latitude: 52.361738,
-      longitude: 13.502341,
-      preciseAddress: 'Willy-Brandt-Platz, 12529 Schönefeld, Duitsland',
-    ),
-    _AirportOption(
-      id: 'ham',
-      countryCode: 'DE',
-      countryName: 'Duitsland',
-      city: 'Hamburg',
-      name: 'Hamburg Airport',
-      iata: 'HAM',
-    ),
-    _AirportOption(
-      id: 'lux',
-      countryCode: 'LU',
-      countryName: 'Luxemburg',
-      city: 'Luxemburg',
-      name: 'Luxembourg Airport',
-      iata: 'LUX',
-    ),
-    _AirportOption(
-      id: 'mad',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Madrid',
-      name: 'Madrid Barajas Airport',
-      iata: 'MAD',
-      latitude: 40.493407,
-      longitude: -3.572249,
-      preciseAddress: 'Av de la Hispanidad, s/n, 28042 Madrid, Spanje',
-    ),
-    _AirportOption(
-      id: 'bcn',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Barcelona',
-      name: 'Barcelona El Prat Airport',
-      iata: 'BCN',
-    ),
-    _AirportOption(
-      id: 'agp',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Málaga',
-      name: 'Málaga-Costa del Sol Airport',
-      iata: 'AGP',
-    ),
-    _AirportOption(
-      id: 'alc',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Alicante',
-      name: 'Alicante-Elche Miguel Hernández Airport',
-      iata: 'ALC',
-    ),
-    _AirportOption(
-      id: 'vlc',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Valencia',
-      name: 'Valencia Airport',
-      iata: 'VLC',
-    ),
-    _AirportOption(
-      id: 'svq',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Sevilla',
-      name: 'Seville Airport',
-      iata: 'SVQ',
-    ),
-    _AirportOption(
-      id: 'pmi',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Palma de Mallorca',
-      name: 'Palma de Mallorca Airport',
-      iata: 'PMI',
-    ),
-    _AirportOption(
-      id: 'ibz',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Ibiza',
-      name: 'Ibiza Airport',
-      iata: 'IBZ',
-      latitude: 38.872898,
-      longitude: 1.373120,
-      preciseAddress: '07820 Sant Jordi de ses Salines, Ibiza, Spanje',
-    ),
-    _AirportOption(
-      id: 'tfs',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Tenerife',
-      name: 'Tenerife South Airport',
-      iata: 'TFS',
-    ),
-    _AirportOption(
-      id: 'lpa',
-      countryCode: 'ES',
-      countryName: 'Spanje',
-      city: 'Gran Canaria',
-      name: 'Gran Canaria Airport',
-      iata: 'LPA',
-    ),
-    _AirportOption(
-      id: 'lhr',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Londen',
-      name: 'London Heathrow',
-      iata: 'LHR',
-    ),
-    _AirportOption(
-      id: 'lgw',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Londen',
-      name: 'London Gatwick',
-      iata: 'LGW',
-    ),
-    _AirportOption(
-      id: 'stn',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Londen',
-      name: 'London Stansted',
-      iata: 'STN',
-    ),
-    _AirportOption(
-      id: 'ltn',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Londen',
-      name: 'London Luton',
-      iata: 'LTN',
-    ),
-    _AirportOption(
-      id: 'man',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Manchester',
-      name: 'Manchester Airport',
-      iata: 'MAN',
-    ),
-    _AirportOption(
-      id: 'bhx',
-      countryCode: 'GB',
-      countryName: 'Verenigd Koninkrijk',
-      city: 'Birmingham',
-      name: 'Birmingham Airport',
-      iata: 'BHX',
-    ),
-  ];
-  static final List<_AirportOption> _catalogAirports = _buildCatalogAirports();
+  static final List<_AirportOption> _catalogAirports = publishedAirportCatalog();
 
-  static List<_AirportOption> _buildCatalogAirports() {
-    final generated = kAirportCatalog
-        .where(
-          (entry) =>
-              _supportedCountryCodes.contains(entry.countryCode) &&
-              entry.iata.trim().length == 3,
-        )
-        .map(
-          (entry) => _AirportOption(
-            id: entry.iata.toLowerCase(),
-            countryCode: entry.countryCode,
-            countryName: entry.countryName,
-            city: entry.municipality,
-            name: entry.name,
-            iata: entry.iata,
-            latitude: entry.latitude,
-            longitude: entry.longitude,
-            preciseAddress: entry.preciseAddress,
-          ),
-        )
-        .toList(growable: false);
-
-    if (generated.isEmpty) {
-      debugPrint(
-        '[AIRPORT_CATALOG] generated catalog empty in supported scope; using fallback list.',
-      );
-      return _airports;
-    }
-    final iataSet = generated.map((airport) => airport.iata).toSet();
-    final missingRequired = _requiredAirportIata
-        .where((iata) => !iataSet.contains(iata))
-        .toList(growable: false);
-    if (missingRequired.isNotEmpty) {
-      debugPrint(
-        '[AIRPORT_CATALOG] missing required generated airports ${missingRequired.join(", ")}; using fallback list.',
-      );
-      return _airports;
-    }
-    return generated;
-  }
 
   _TransferMode _selectedMode = _TransferMode.toAirport;
   String _selectedCountryCode = _catalogAirports.first.countryCode;
@@ -2050,13 +1641,17 @@ class _AirportPageState extends State<AirportPage> {
   }
 
   Widget _buildAirportDropdown() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildCountryDropdown(),
-        const SizedBox(height: 10),
-        _buildAirportOnlyDropdown(),
-      ],
+    return AirportCountryAirportSelector(
+      language: appConfig.currentLanguage,
+      countryCode: _selectedCountryCode,
+      airportIata: _selectedAirport.iata,
+      airports: _catalogAirports,
+      onCountryChanged: _setCountry,
+      onAirportChanged: (airport) => _setAirport(airport.id),
+      fillColor: _panel,
+      dropdownColor: _panelAlt,
+      iconColor: _gold,
+      textColor: _textPrimary,
     );
   }
 

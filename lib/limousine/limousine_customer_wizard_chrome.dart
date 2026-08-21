@@ -339,6 +339,7 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
                       : tokens.surfaceAlt,
                   borderRadius: BorderRadius.circular(14),
                   child: InkWell(
+                    key: ValueKey<String>('limousine_journey_type_$type'),
                     borderRadius: BorderRadius.circular(14),
                     onTap: () => onSelected(type),
                     child: Container(

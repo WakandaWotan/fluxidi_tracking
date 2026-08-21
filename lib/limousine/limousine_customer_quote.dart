@@ -8,6 +8,7 @@ import 'limousine_offers.dart';
 import 'limousine_pricing_overlay.dart';
 import 'limousine_profile_identity.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_transfer_endpoint.dart';
 
 const Key kLimousineCustomerQuotePageKey = ValueKey<String>(
   'limousine_customer_quote_page',
@@ -68,6 +69,13 @@ const Set<String> kLimousineCustomerCreateAllowedKeys = <String>{
   'customer_note',
   'occasion',
   'locale',
+  'from_endpoint',
+  'to_endpoint',
+  'return_pickup_endpoint',
+  'return_destination_endpoint',
+  'stop_endpoints',
+  'airport_direction',
+  'hotel_direction',
 };
 
 const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
@@ -89,6 +97,13 @@ const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
   'customer_note',
   'occasion',
   'locale',
+  'from_endpoint',
+  'to_endpoint',
+  'return_pickup_endpoint',
+  'return_destination_endpoint',
+  'stop_endpoints',
+  'airport_direction',
+  'hotel_direction',
 };
 
 const Set<String> kLimousineCustomerForbiddenSubmitKeys = <String>{
@@ -329,6 +344,13 @@ class LimousineQuoteCreateDraft {
     this.customerNote = '',
     this.occasion = '',
     this.locale = '',
+    this.fromEndpoint,
+    this.toEndpoint,
+    this.returnPickupEndpoint,
+    this.returnDestinationEndpoint,
+    this.stopEndpoints = const <LimousineTransferEndpoint>[],
+    this.airportDirection = '',
+    this.hotelDirection = '',
   });
 
   final String publicPartnerId;
@@ -347,6 +369,23 @@ class LimousineQuoteCreateDraft {
   final String customerNote;
   final String occasion;
   final String locale;
+  final LimousineTransferEndpoint? fromEndpoint;
+  final LimousineTransferEndpoint? toEndpoint;
+  final LimousineTransferEndpoint? returnPickupEndpoint;
+  final LimousineTransferEndpoint? returnDestinationEndpoint;
+  final List<LimousineTransferEndpoint> stopEndpoints;
+  final String airportDirection;
+  final String hotelDirection;
+
+  LimousineItineraryEndpoints get itinerary => LimousineItineraryEndpoints(
+    from: fromEndpoint,
+    to: toEndpoint,
+    returnPickup: returnPickupEndpoint,
+    returnDestination: returnDestinationEndpoint,
+    stops: stopEndpoints,
+    airportDirection: airportDirection,
+    hotelDirection: hotelDirection,
+  );
 
   LimousineQuoteCreateDraft copyWith({
     String? publicPartnerId,
@@ -365,6 +404,13 @@ class LimousineQuoteCreateDraft {
     String? customerNote,
     String? occasion,
     String? locale,
+    LimousineTransferEndpoint? fromEndpoint,
+    LimousineTransferEndpoint? toEndpoint,
+    LimousineTransferEndpoint? returnPickupEndpoint,
+    LimousineTransferEndpoint? returnDestinationEndpoint,
+    List<LimousineTransferEndpoint>? stopEndpoints,
+    String? airportDirection,
+    String? hotelDirection,
   }) {
     return LimousineQuoteCreateDraft(
       publicPartnerId: publicPartnerId ?? this.publicPartnerId,
@@ -384,6 +430,14 @@ class LimousineQuoteCreateDraft {
       customerNote: customerNote ?? this.customerNote,
       occasion: occasion ?? this.occasion,
       locale: locale ?? this.locale,
+      fromEndpoint: fromEndpoint ?? this.fromEndpoint,
+      toEndpoint: toEndpoint ?? this.toEndpoint,
+      returnPickupEndpoint: returnPickupEndpoint ?? this.returnPickupEndpoint,
+      returnDestinationEndpoint:
+          returnDestinationEndpoint ?? this.returnDestinationEndpoint,
+      stopEndpoints: stopEndpoints ?? this.stopEndpoints,
+      airportDirection: airportDirection ?? this.airportDirection,
+      hotelDirection: hotelDirection ?? this.hotelDirection,
     );
   }
 }
@@ -676,6 +730,7 @@ Map<String, dynamic> limousineCustomerCreateBody(
   if (draft.occasion.trim().isNotEmpty) {
     body['occasion'] = draft.occasion.trim();
   }
+  body.addAll(draft.itinerary.toJson());
   body.removeWhere(
     (key, value) => value == null || (value is String && value.isEmpty),
   );

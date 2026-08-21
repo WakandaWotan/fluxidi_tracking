@@ -11,6 +11,7 @@
 // and a customer-supplied total is never trusted.
 
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
+import { attachLimousineItineraryEndpoints } from "./limousine_transfer_endpoint.mjs";
 import {
   LIMOUSINE_INTENT_KIND,
   LIMOUSINE_SERVICE_TYPE,
@@ -557,6 +558,7 @@ export function itineraryFingerprint(request) {
     toInt(r.pax) ?? "",
     toInt(r.bags) ?? "",
     safeText(r.occasion, 80).toLowerCase(),
+    safeText(r.itinerary_endpoint_fingerprint, 160),
     (Array.isArray(r.selected_extra_ids) ? [...r.selected_extra_ids] : [])
       .map((e) => normalizeLimousineToken(e))
       .sort()
@@ -658,6 +660,7 @@ export function validateLimousineQuoteRequest(input, {
     pricing_mode: classified.pricing_mode,
     intent_kind: classified.intent_kind,
   };
+  Object.assign(request, attachLimousineItineraryEndpoints(request, src));
   request.itinerary_fingerprint = itineraryFingerprint(request);
   const snapshot = buildLimousineQuoteIntentSnapshot({
     offer: authoritativeOffer,

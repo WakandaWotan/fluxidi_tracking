@@ -335,6 +335,17 @@ export function buildLimousineQuoteIntentSnapshot({
     selected_extra_ids: Array.isArray(request.selected_extra_ids)
       ? request.selected_extra_ids
       : [],
+    ...(request.from_endpoint ? { from_endpoint: request.from_endpoint } : {}),
+    ...(request.to_endpoint ? { to_endpoint: request.to_endpoint } : {}),
+    ...(request.return_pickup_endpoint
+      ? { return_pickup_endpoint: request.return_pickup_endpoint }
+      : {}),
+    ...(request.return_destination_endpoint
+      ? { return_destination_endpoint: request.return_destination_endpoint }
+      : {}),
+    ...(request.itinerary_endpoint_fingerprint
+      ? { itinerary_endpoint_fingerprint: request.itinerary_endpoint_fingerprint }
+      : {}),
   };
 }
 

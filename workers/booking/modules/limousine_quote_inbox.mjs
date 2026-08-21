@@ -334,6 +334,8 @@ export function buildLimousineCompanyInboxView(record, {
     fulfilment: {
       from: safeText(req.from, 240),
       to: safeText(req.to, 240),
+      ...(req.from_endpoint ? { from_endpoint: req.from_endpoint } : {}),
+      ...(req.to_endpoint ? { to_endpoint: req.to_endpoint } : {}),
       stops: Array.isArray(req.stops) ? req.stops.slice(0, 8).map((s) => safeText(s, 240)) : [],
       ...(req.return_pickup_iso ? { return_pickup_iso: safeText(req.return_pickup_iso, 40) } : {}),
       ...(toInt(req.requested_duration_minutes) != null

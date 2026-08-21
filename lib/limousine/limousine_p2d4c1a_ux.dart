@@ -12,6 +12,7 @@ import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
+import 'limousine_transfer_endpoint.dart';
 import 'limousine_unified_intent.dart';
 
 const Size kLimousineSmX400Portrait = Size(1320, 2112);
@@ -359,19 +360,27 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
   final gaps = <LimousineRequestStepGap>[];
   switch (step) {
     case LimousineRequestWizardStep.journey:
-      if (pickupAddress != null) {
-        if (!pickupAddress.isRouteReady) {
+      final typedPickupReady =
+          draft.fromEndpoint != null && draft.fromEndpoint!.routeText.isNotEmpty;
+      final typedDestinationReady =
+          draft.toEndpoint != null && draft.toEndpoint!.routeText.isNotEmpty;
+      if (!typedPickupReady) {
+        if (pickupAddress != null) {
+          if (!pickupAddress.isRouteReady) {
+            gaps.add(const LimousineRequestStepGap('pickup_required'));
+          }
+        } else if (draft.from.trim().isEmpty) {
           gaps.add(const LimousineRequestStepGap('pickup_required'));
         }
-      } else if (draft.from.trim().isEmpty) {
-        gaps.add(const LimousineRequestStepGap('pickup_required'));
       }
-      if (destinationAddress != null) {
-        if (!destinationAddress.isRouteReady) {
+      if (!typedDestinationReady) {
+        if (destinationAddress != null) {
+          if (!destinationAddress.isRouteReady) {
+            gaps.add(const LimousineRequestStepGap('destination_required'));
+          }
+        } else if (draft.to.trim().isEmpty) {
           gaps.add(const LimousineRequestStepGap('destination_required'));
         }
-      } else if (draft.to.trim().isEmpty) {
-        gaps.add(const LimousineRequestStepGap('destination_required'));
       }
       if (stopAddresses.any((stop) => !stop.isRouteReady)) {
         gaps.add(const LimousineRequestStepGap('stop_address_required'));
@@ -525,6 +534,31 @@ class LimousineRequestReviewRow {
   final String value;
 }
 
+String limousineReviewEndpointLabel(LimousineTransferEndpoint? endpoint, String fallback) {
+  if (endpoint == null || endpoint.isEmpty) return fallback.trim();
+  if (endpoint.kind == LimousineTransferEndpointKind.airport) {
+    final iata = (endpoint.iataCode ?? '').trim();
+    final name = (endpoint.airportName ?? endpoint.displayName).trim();
+    if (iata.isNotEmpty && name.isNotEmpty) return '$name ($iata)';
+    return endpoint.displayName.trim().isEmpty ? fallback : endpoint.displayName.trim();
+  }
+  if (endpoint.kind == LimousineTransferEndpointKind.hotel) {
+    final name = (endpoint.hotelName ?? endpoint.displayName).trim();
+    final address = endpoint.formattedAddress.trim();
+    if (name.isNotEmpty && address.isNotEmpty && name != address) {
+      return '$name — $address';
+    }
+    return name.isEmpty ? address : name;
+  }
+  return endpoint.routeText.isEmpty ? fallback.trim() : endpoint.routeText;
+}
+
+String limousineReviewRouteLabel(LimousineQuoteCreateDraft draft) {
+  final from = limousineReviewEndpointLabel(draft.fromEndpoint, draft.from);
+  final to = limousineReviewEndpointLabel(draft.toEndpoint, draft.to);
+  return '$from  $to'.trim();
+}
+
 List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
   required LimousineQuoteCreateDraft draft,
   required AppLanguage language,
@@ -548,7 +582,7 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
     LimousineRequestReviewRow(
       id: 'route',
       label: kLimousineReviewRoute.of(language),
-      value: '${draft.from.trim()}  ${draft.to.trim()}'.trim(),
+      value: limousineReviewRouteLabel(draft),
     ),
   ];
   if (draft.stops.isNotEmpty) {
@@ -583,21 +617,29 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
             : '—',
       ),
     );
-    if (returnPickupAddress.trim().isNotEmpty) {
+    final returnPickupLabel = limousineReviewEndpointLabel(
+      draft.returnPickupEndpoint,
+      returnPickupAddress,
+    );
+    final returnDestinationLabel = limousineReviewEndpointLabel(
+      draft.returnDestinationEndpoint,
+      returnDestinationAddress,
+    );
+    if (returnPickupLabel.isNotEmpty) {
       rows.add(
         LimousineRequestReviewRow(
           id: 'return_pickup_address',
           label: kLimousineReviewReturnPickup.of(language),
-          value: returnPickupAddress.trim(),
+          value: returnPickupLabel,
         ),
       );
     }
-    if (returnDestinationAddress.trim().isNotEmpty) {
+    if (returnDestinationLabel.isNotEmpty) {
       rows.add(
         LimousineRequestReviewRow(
           id: 'return_destination_address',
           label: kLimousineReviewReturnDestination.of(language),
-          value: returnDestinationAddress.trim(),
+          value: returnDestinationLabel,
         ),
       );
     }
