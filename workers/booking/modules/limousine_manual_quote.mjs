@@ -19,7 +19,9 @@ import {
 import {
   LIMOUSINE_INTENT_KIND,
   LIMOUSINE_SERVICE_TYPE,
+  LIMOUSINE_UNIFIED_REASONS,
   assertLimousineOfferStillPublished,
+  assertLimousineOfferVehicleScope,
   buildLimousineQuoteIntentSnapshot,
   classifyLimousinePublishedPricingMode,
 } from "./limousine_unified_intent.mjs";
@@ -94,6 +96,8 @@ export const LIMOUSINE_QUOTE_REASONS = Object.freeze({
   STALE_TERMS_REVISION: "stale_terms_revision",
   UNKNOWN_CRITICAL_FIELD: "unknown_critical_field",
   JOURNEY_TYPE_NOT_ALLOWED: "journey_type_not_allowed",
+  VEHICLE_SCOPE_MISMATCH: LIMOUSINE_UNIFIED_REASONS.VEHICLE_SCOPE_MISMATCH,
+  VEHICLE_NOT_PUBLISHED: LIMOUSINE_UNIFIED_REASONS.VEHICLE_NOT_PUBLISHED,
 });
 
 const ISO_CURRENCY = /^[A-Z]{3}$/;
@@ -551,6 +555,9 @@ export const LIMOUSINE_FORBIDDEN_REQUEST_FIELDS = Object.freeze([
 export function itineraryFingerprint(request) {
   const r = asObject(request);
   const parts = [
+    safeText(r.public_partner_id ?? r.publicPartnerId, 120),
+    safeText(r.offer_id ?? r.offerId, 64),
+    safeText(r.vehicle_id ?? r.vehicleId, 96),
     normalizeLimousineToken(r.journey_type),
     normalizeLimousineToken(r.direction),
     safeText(r.from, 240).toLowerCase(),
@@ -608,6 +615,14 @@ export function validateLimousineQuoteRequest(input, {
   if (!offerAllowsPublishedJourneyType(authoritativeOffer, requestedJourney)) {
     return { ok: false, reason: R.JOURNEY_TYPE_NOT_ALLOWED, field: "journey_type" };
   }
+  const clientVehicle = safeText(src.vehicle_id ?? src.vehicleId, 96);
+  const vehicleScope = assertLimousineOfferVehicleScope(
+    authoritativeOffer,
+    clientVehicle || safeText(authoritativeOffer.vehicle_id, 96),
+  );
+  if (!vehicleScope.ok) {
+    return { ok: false, reason: vehicleScope.reason, field: "vehicle_id" };
+  }
 
   const from = safeText(src.from, 240);
   const to = safeText(src.to, 240);
@@ -643,7 +658,7 @@ export function validateLimousineQuoteRequest(input, {
     service_class_id: normalizeLimousineToken(
       authoritativeOffer.service_class_id ?? src.service_class_id,
     ),
-    vehicle_id: safeText(authoritativeOffer.vehicle_id ?? src.vehicle_id, 96),
+    vehicle_id: safeText(vehicleScope.vehicle_id || authoritativeOffer.vehicle_id || src.vehicle_id, 96),
     journey_type: normalizeLimousineToken(src.journey_type ?? src.journeyType),
     direction: normalizeLimousineToken(src.direction ?? src.airport_direction),
     from,

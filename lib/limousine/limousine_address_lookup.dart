@@ -161,6 +161,15 @@ bool limousineCoordinatesAreValid(double lat, double lon) {
       lon <= 180;
 }
 
+String limousineMapboxProximitySuffix({
+  double? latitude,
+  double? longitude,
+}) {
+  if (latitude == null || longitude == null) return '';
+  if (!limousineCoordinatesAreValid(latitude, longitude)) return '';
+  return '&proximity=${longitude.toStringAsFixed(6)},${latitude.toStringAsFixed(6)}';
+}
+
 List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
   Object? rawFeatures,
 ) {

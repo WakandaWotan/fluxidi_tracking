@@ -10,7 +10,8 @@ import '../app_config.dart';
 import 'limousine_address_lookup.dart';
 import 'limousine_transfer_endpoint.dart';
 
-const int kLimousineEventMinQueryLength = 3;
+const int kLimousineEventMinQueryLength = 2;
+const String kLimousineEventNearbyQuery = 'venue';
 const Duration kLimousineEventDebounce = Duration(milliseconds: 220);
 const int kLimousineEventMaxSuggestions = 6;
 
@@ -110,15 +111,21 @@ Uri limousineMapboxEventPlacesUri({
   required String query,
   required String token,
   String language = 'nl',
+  double? proximityLat,
+  double? proximityLng,
 }) {
   final encoded = Uri.encodeComponent(query);
+  final proximity = limousineMapboxProximitySuffix(
+    latitude: proximityLat,
+    longitude: proximityLng,
+  );
   return Uri.parse(
     'https://$kLimousineMapboxGeocodingV5Host$kLimousineMapboxGeocodingV5PathPrefix$encoded.json'
     '?access_token=${Uri.encodeComponent(token)}'
     '&autocomplete=true'
     '&types=poi'
     '&language=${Uri.encodeComponent(language)}'
-    '&limit=$kLimousineEventMaxSuggestions',
+    '&limit=$kLimousineEventMaxSuggestions$proximity',
   );
 }
 
@@ -254,6 +261,8 @@ class LimousineEventLookup {
   Future<LimousineEventLookupResult> search(
     String rawQuery, {
     String language = 'nl',
+    double? proximityLat,
+    double? proximityLng,
   }) async {
     final query = rawQuery.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (query.length < kLimousineEventMinQueryLength) {
@@ -262,18 +271,27 @@ class LimousineEventLookup {
     searchesStarted += 1;
     final override = _searchOverride;
     if (override != null) return override(query, language);
-    return _searchMapbox(query, language);
+    return _searchMapbox(
+      query,
+      language,
+      proximityLat: proximityLat,
+      proximityLng: proximityLng,
+    );
   }
 
   Future<LimousineEventLookupResult> _searchMapbox(
     String query,
-    String language,
-  ) async {
+    String language, {
+    double? proximityLat,
+    double? proximityLng,
+  }) async {
     if (token.isEmpty) return const LimousineEventLookupResult();
     final uri = limousineMapboxEventPlacesUri(
       query: query,
       token: token,
       language: language,
+      proximityLat: proximityLat,
+      proximityLng: proximityLng,
     );
     final client = _client ?? http.Client();
     try {
