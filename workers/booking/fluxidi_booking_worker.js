@@ -608,6 +608,9 @@ import {
   invoiceServiceLineLabel,
 } from "./modules/invoice_service_line.mjs";
 import {
+  projectPublicPaymentCapability,
+} from "./modules/public_payment_capability.mjs";
+import {
   resolveInvoiceLogoSrc,
   buildFluxidiInvoiceLogoDataUri,
 } from "./modules/invoice_logo_embedded.js";
@@ -46136,6 +46139,10 @@ export default {
           {
             ok: true,
             quote_request: _publicLimousineQuoteView(next),
+            // The customer books against this partner, not against the company
+            // on their device, so the picker needs the partner's capability to
+            // avoid offering a method the partner cannot accept.
+            payment_capability: await _limousinePartnerPaymentCapability(env, next),
             acceptance_reference: sealed.reference,
             expires_at: sealed.expires_at,
           },
@@ -57177,6 +57184,28 @@ function _safeMollieOwnershipMetadata(source = {}) {
       ? modeRaw
       : null;
   return { organizationId, profileId, mode };
+}
+
+/// Payment capability of the limousine partner a customer accepted a quote
+/// from, projected for that customer's picker. Fails soft: an unreadable
+/// profile yields a capability with no online methods rather than an error,
+/// which keeps the manual path available.
+async function _limousinePartnerPaymentCapability(env, quoteRecord) {
+  const rec = quoteRecord && typeof quoteRecord === "object" ? quoteRecord : {};
+  const scope = {
+    tenant_id: safeStr(rec.tenant_id ?? rec.company_id, 80),
+    company_id: safeStr(rec.company_id, 80),
+  };
+  let businessProfile = null;
+  try {
+    businessProfile = await loadBusinessProfile(env, scope);
+  } catch (_) {
+    businessProfile = null;
+  }
+  return projectPublicPaymentCapability({
+    businessProfile,
+    livePaymentsEnabled: mollieCompanyLivePaymentsEnabled(env),
+  });
 }
 
 function mollieCompanyLivePaymentsEnabled(env) {

@@ -41,6 +41,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
+import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
@@ -3849,39 +3850,37 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   BookingPaymentSelection get _bookingPaymentSelection =>
       BookingPaymentSelection.fromMethodId(_selectedPaymentMethodId);
 
-  PaymentOwnershipGate get _paymentOwnershipGate {
+  BookingPaymentCapability get _bookingPaymentCapability {
     final profile = localBackendBusinessProfileNotifier.value;
-    if (profile == null) return const PaymentOwnershipGate();
-    return PaymentOwnershipGate(
+    if (profile == null) return const BookingPaymentCapability.unknown();
+    return BookingPaymentCapability(
       paymentOwnerMode: profile.paymentOwnerMode,
       paymentDemoMode: profile.paymentDemoMode,
       mollieConnected: profile.mollieConnected,
+      livePaymentsEnabled: profile.livePaymentsEnabled,
+      mollieForcedTestMode: profile.mollieForcedTestMode,
+      publicPaymentOptions: profile.publicPaymentOptions,
+      qrTransferAvailable: profile.iban.trim().isNotEmpty,
     );
   }
+
+  BookingPaymentOptions get _paymentOptions => BookingPaymentOptions(
+    capability: _bookingPaymentCapability,
+    countryCode: _paymentMarketCountryCode(),
+    languageCode: widget.language.name,
+    isApplePlatform: _isApplePaymentPlatform,
+  );
+
+  PaymentOwnershipGate get _paymentOwnershipGate =>
+      _bookingPaymentCapability.ownershipGate;
 
   bool get _isApplePaymentPlatform => !kIsWeb && Platform.isIOS;
 
-  PaymentMethodClientContext get _paymentClientContext {
-    final profile = localBackendBusinessProfileNotifier.value;
-    final forcedTestMode = PaymentMethodResolver.inferMollieForcedTestMode(
-      gate: _paymentOwnershipGate,
-      livePaymentsEnabled: profile?.livePaymentsEnabled,
-      mollieForcedTestMode: profile?.mollieForcedTestMode,
-    );
-    return PaymentMethodClientContext.forPlatform(
-      isApplePlatform: _isApplePaymentPlatform,
-      supportsGooglePayCheckout: !forcedTestMode,
-    );
-  }
+  PaymentMethodClientContext get _paymentClientContext =>
+      _paymentOptions.clientContext;
 
-  bool get _blocksGooglePayBookSubmit {
-    final profile = localBackendBusinessProfileNotifier.value;
-    return PaymentMethodResolver.blocksGooglePayBookSubmit(
-      gate: _paymentOwnershipGate,
-      livePaymentsEnabled: profile?.livePaymentsEnabled,
-      mollieForcedTestMode: profile?.mollieForcedTestMode,
-    );
-  }
+  bool get _blocksGooglePayBookSubmit =>
+      _paymentOptions.blocksGooglePayBookSubmit;
 
   bool _isGooglePaySubmitBlocked(String methodId) =>
       PaymentMethodResolver.isGooglePayMethodId(methodId) &&
@@ -3897,12 +3896,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     return true;
   }
 
-  List<String> get _enabledCompanyPaymentOptionIds {
-    final profile = localBackendBusinessProfileNotifier.value;
-    return profile == null
-        ? const <String>[]
-        : filterPublicPartnerPaymentOptionIds(profile.publicPaymentOptions);
-  }
+  List<String> get _enabledCompanyPaymentOptionIds =>
+      _bookingPaymentCapability.enabledPaymentOptionIds;
 
   String _normalizePaymentMarketCountry(String raw) {
     final normalized = normalizeCountryCode(raw);
@@ -3940,47 +3935,18 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     return PaymentCountryCodes.belgium;
   }
 
-  ResolvedPaymentMethods get _resolvedPaymentMethods =>
-      PaymentMethodResolver.resolve(
-        countryCode: _paymentMarketCountryCode(),
-        enabledPublicPaymentOptionIds: _enabledCompanyPaymentOptionIds,
-        ownershipGate: _paymentOwnershipGate,
-        clientContext: _paymentClientContext,
-        languageCode: widget.language.name,
-      );
+  ResolvedPaymentMethods get _resolvedPaymentMethods => _paymentOptions.resolved;
 
   List<String> get _visiblePaymentMethodIds => _resolvedPaymentMethods.ids;
 
-  bool _isDisplayOnlyPaymentMethod(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    final def = PaymentMethodCatalog.definitionFor(id);
-    if (def == null) return true;
-    if (id == PaymentMethodIds.inVehicleCard) return false;
-    if (id == PaymentMethodIds.qrCode) return !_isQrPaymentConfigured();
-    if (PaymentMethodResolver.isGooglePayMethodId(id) &&
-        _blocksGooglePayBookSubmit) {
-      return true;
-    }
-    return !def.isSupportedMollieCheckout;
-  }
+  bool _isDisplayOnlyPaymentMethod(String methodId) =>
+      _paymentOptions.isDisplayOnly(methodId);
 
-  bool _isDirectCheckoutPaymentMethod(String methodId) {
-    if (_isDisplayOnlyPaymentMethod(methodId)) return false;
-    return PaymentMethodCatalog.definitionFor(
-          methodId,
-        )?.isSupportedMollieCheckout ??
-        false;
-  }
+  bool _isDirectCheckoutPaymentMethod(String methodId) =>
+      _paymentOptions.isDirectCheckout(methodId);
 
-  bool _isSelectableExternalPaymentMethod(String methodId) {
-    final id = normalizePaymentMethodId(methodId);
-    final def = PaymentMethodCatalog.definitionFor(id);
-    if (def == null) return false;
-    if (def.isSupportedMollieCheckout) return false;
-    if (id == PaymentMethodIds.inVehicleCard) return true;
-    if (id == PaymentMethodIds.qrCode) return _isQrPaymentConfigured();
-    return false;
-  }
+  bool _isSelectableExternalPaymentMethod(String methodId) =>
+      _paymentOptions.isSelectableExternal(methodId);
 
   void _logPaymentPickerResolution() {
     final profile = localBackendBusinessProfileNotifier.value;
@@ -4077,15 +4043,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
   }
 
-  bool _isQrPaymentConfigured() {
-    final profile = localBackendBusinessProfileNotifier.value;
-    return (profile?.iban.trim().isNotEmpty ?? false);
-  }
+  bool _isQrPaymentConfigured() => _paymentOptions.qrPaymentConfigured;
 
-  bool _isQrPaymentMissingBankDetails() {
-    return _visiblePaymentMethodIds.contains(PaymentMethodIds.qrCode) &&
-        !_isQrPaymentConfigured();
-  }
+  bool _isQrPaymentMissingBankDetails() =>
+      _paymentOptions.qrPaymentMissingBankDetails;
 
   String _displayOnlyPaymentMessage(String methodId) {
     final id = normalizePaymentMethodId(methodId);
