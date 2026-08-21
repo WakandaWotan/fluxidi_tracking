@@ -210,6 +210,7 @@ class LimousineWizardFooter extends StatelessWidget {
     required this.onNext,
     required this.maxWidth,
     this.primaryAction,
+    this.allowSubmitWhenInvalid = false,
   });
 
   final LimousineUxTokens tokens;
@@ -222,6 +223,7 @@ class LimousineWizardFooter extends StatelessWidget {
   final VoidCallback? onNext;
   final double maxWidth;
   final LocalizedText? primaryAction;
+  final bool allowSubmitWhenInvalid;
 
   @override
   Widget build(BuildContext context) {
@@ -270,7 +272,11 @@ class LimousineWizardFooter extends StatelessWidget {
                           key: isReview
                               ? kLimousineCustomerSubmitKey
                               : kLimousineRequestWizardNextKey,
-                          onPressed: canAdvance && !submitting ? onNext : null,
+                          onPressed: submitting
+                              ? null
+                              : (canAdvance || allowSubmitWhenInvalid)
+                              ? onNext
+                              : null,
                           style: FilledButton.styleFrom(
                             backgroundColor: tokens.gold,
                             foregroundColor: tokens.onPrimarySafe,
@@ -859,14 +865,14 @@ class LimousineReviewSection extends StatelessWidget {
     required this.title,
     required this.child,
     required this.editLabel,
-    required this.onEdit,
+    this.onEdit,
   });
 
   final LimousineUxTokens tokens;
   final String title;
   final Widget child;
   final String editLabel;
-  final VoidCallback onEdit;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -892,11 +898,12 @@ class LimousineReviewSection extends StatelessWidget {
                   ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: onEdit,
-                icon: Icon(Icons.edit_outlined, size: 16, color: tokens.gold),
-                label: Text(editLabel),
-              ),
+              if (onEdit != null)
+                TextButton.icon(
+                  onPressed: onEdit,
+                  icon: Icon(Icons.edit_outlined, size: 16, color: tokens.gold),
+                  label: Text(editLabel),
+                ),
             ],
           ),
           child,

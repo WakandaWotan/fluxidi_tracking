@@ -107,6 +107,7 @@ bool limousineQuoteInboxMatchesQuery(
     record.offerId,
     record.serviceClassId,
     record.vehicleId,
+    record.publicVehicleName,
     record.bookingReference,
     record.journeyType,
     kLimousineJourneyTypeLabels[record.journeyType]?.of(language) ?? '',

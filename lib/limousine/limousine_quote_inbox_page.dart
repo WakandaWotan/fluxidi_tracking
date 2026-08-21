@@ -798,13 +798,36 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                     ),
                   ),
                 const SizedBox(height: 8),
-                Text(
-                  limousineQuoteInboxCardTitle(item, _lang),
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 17,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (item.publicVehiclePhotoUrl.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            item.publicVehiclePhotoUrl,
+                            width: 72,
+                            height: 52,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                          ),
+                        ),
+                      ),
+                    Expanded(
+                      child: Text(
+                        item.publicVehicleName.isNotEmpty
+                            ? item.publicVehicleName
+                            : limousineQuoteInboxCardTitle(item, _lang),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 Text(
                   limousineQuoteInboxPublicReference(item),
@@ -847,9 +870,9 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                           fontSize: 12,
                         ),
                       ),
-                    if (item.vehicleId.isNotEmpty)
+                    if (item.publicVehicleName.isNotEmpty)
                       Text(
-                        item.vehicleId,
+                        item.publicVehicleName,
                         style: TextStyle(
                           color: palette.textMuted,
                           fontSize: 12,

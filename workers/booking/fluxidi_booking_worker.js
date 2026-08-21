@@ -45644,10 +45644,23 @@ export default {
           scope,
           body?.offer_id ?? body?.offerId,
         );
+        let publishedVehicles = [];
+        try {
+          const partnerKeys = buildScopedPartnerKeys(scope);
+          const profileRecord = partnerKeys
+            ? await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" })
+            : null;
+          publishedVehicles = Array.isArray(profileRecord?.partner_profile?.vehicles)
+            ? profileRecord.partner_profile.vehicles
+            : [];
+        } catch (_) {
+          publishedVehicles = [];
+        }
         const validated = _validateLimousineQuoteRequest(body, {
           eligible,
           offer,
           gateEnabled: true,
+          publishedVehicles,
         });
         if (!validated.ok) {
           return json({ ok: false, error: validated.reason, field: validated.field }, 400);

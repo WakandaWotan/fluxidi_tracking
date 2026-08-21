@@ -19,6 +19,7 @@ import 'limousine_public_copy.dart';
 import 'limousine_public_offer_card.dart';
 import 'limousine_public_showroom_labels.dart';
 import 'limousine_vehicle_public_copy.dart';
+import 'limousine_wizard_vehicle.dart';
 
 class LimousineVehicleDetailPage extends StatefulWidget {
   const LimousineVehicleDetailPage({
@@ -606,6 +607,11 @@ class _LimousineVehicleDetailPageState
         publicPartnerId: widget.partnerId,
         offer: offer,
         companyName: widget.companyName,
+        vehicleId: widget.vehicle.vehicleId,
+        vehicle: LimousineWizardVehicleOption.fromShowroomVehicle(
+          widget.vehicle,
+          pricePresentation: offer.pricePresentation,
+        ),
         entryEnabled: true,
         quoteEnabled: widget.quoteEnabled,
         manualQuoteEnabled: widget.manualQuoteEnabled,
@@ -627,6 +633,11 @@ class _LimousineVehicleDetailPageState
       publicPartnerId: widget.partnerId,
       offer: offer,
       companyName: widget.companyName,
+      vehicleId: widget.vehicle.vehicleId,
+      vehicle: LimousineWizardVehicleOption.fromShowroomVehicle(
+        widget.vehicle,
+        pricePresentation: offer.pricePresentation,
+      ),
       entryEnabled: true,
       quoteEnabled: widget.quoteEnabled,
       manualQuoteEnabled: widget.manualQuoteEnabled,

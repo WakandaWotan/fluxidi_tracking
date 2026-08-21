@@ -43,6 +43,8 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.entryEnabled,
     this.initialPublicPartnerId,
     this.initialOffer,
+    this.initialVehicleId = '',
+    this.initialVehicle,
     this.initialCompanyName = '',
     this.resumeRepository,
     this.placeLookup,
@@ -61,6 +63,8 @@ class LimousineCustomerQuotePage extends StatefulWidget {
   final bool? entryEnabled;
   final String? initialPublicPartnerId;
   final LimousinePublishedOffer? initialOffer;
+  final String initialVehicleId;
+  final LimousineWizardVehicleOption? initialVehicle;
   final String initialCompanyName;
 
   @override
@@ -148,6 +152,8 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         publicPartnerId: initialPartner,
         offer: initialOffer,
         companyName: widget.initialCompanyName,
+        vehicleId: widget.initialVehicleId,
+        vehicle: widget.initialVehicle,
       );
     }
     _pickup.seedText(_controller.draft.from);
@@ -285,6 +291,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   LimousineWizardVehicleMode get _vehicleMode => limousineWizardVehicleMode(
     providerOfferLocked: _controller.providerOfferLocked,
     offer: _controller.selectedOffer,
+    lockedVehicleId: _controller.vehicleLocked
+        ? _controller.draft.vehicleId
+        : '',
   );
 
   List<LimousineRequestWizardStep> get _visibleSteps =>
@@ -803,10 +812,12 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                 : _goBack,
             onNext: () => unawaited(_goNext()),
             maxWidth: columnWidth,
+            allowSubmitWhenInvalid:
+                _wizardStep == LimousineRequestWizardStep.review,
             primaryAction: _wizardStep == LimousineRequestWizardStep.review &&
                     _intentKind == LimousineCustomerIntentKind.bookingRequest
                 ? kLimousineReviewSubmitBooking
-                : null,
+                : limousineWizardPrimaryAction(_wizardStep, _vehicleMode),
           ),
       ],
     );
@@ -1253,7 +1264,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
               _t(kLimousineReviewProvider),
           editLabel: _t(kLimousineExtrasChangeSelection),
           onEdit: () => _controller.goTo(
-            _vehicleMode == LimousineWizardVehicleMode.skip
+            limousineWizardSkipsVehicleStep(_vehicleMode)
                 ? LimousineCustomerQuoteStep.journey
                 : LimousineCustomerQuoteStep.providerOffer,
           ),
@@ -1375,9 +1386,32 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             tokens: _tokens,
             title: _t(kLimousineReviewProvider),
             editLabel: _t(kLimousineReviewEdit),
-            onEdit: () =>
-                _controller.goTo(LimousineCustomerQuoteStep.providerOffer),
-            child: _reviewLines(rows, const ['provider', 'offer']),
+            onEdit: limousineWizardSkipsVehicleStep(_vehicleMode)
+                ? null
+                : () => _controller.goTo(
+                    LimousineCustomerQuoteStep.providerOffer,
+                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _reviewLines(rows, const ['provider', 'offer']),
+                if (_controller.lockedVehicle != null ||
+                    _controller.draft.vehicleId.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      _controller.lockedVehicle?.name.isNotEmpty == true
+                          ? _controller.lockedVehicle!.name
+                          : _controller.draft.vehicleId,
+                      key: kLimousineReviewLockedVehicleKey,
+                      style: TextStyle(
+                        color: _tokens.onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           LimousineReviewSection(
             tokens: _tokens,
@@ -1482,7 +1516,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         break;
       case LimousineRequestWizardStep.details:
         _controller.goTo(
-          _vehicleMode == LimousineWizardVehicleMode.skip
+          limousineWizardSkipsVehicleStep(_vehicleMode)
               ? LimousineCustomerQuoteStep.journey
               : LimousineCustomerQuoteStep.providerOffer,
         );
@@ -1504,11 +1538,16 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
 
   Future<void> _goNext() async {
     _syncDraft();
-    if (!_canAdvance) return;
+    if (!_canAdvance) {
+      _controller.markSubmitBlocked(
+        _gaps.isEmpty ? 'invalid_request' : _gaps.first.code,
+      );
+      return;
+    }
     switch (_wizardStep) {
       case LimousineRequestWizardStep.journey:
         _controller.goTo(
-          _vehicleMode == LimousineWizardVehicleMode.skip
+          limousineWizardSkipsVehicleStep(_vehicleMode)
               ? LimousineCustomerQuoteStep.detailsExtras
               : LimousineCustomerQuoteStep.providerOffer,
         );
@@ -1886,6 +1925,8 @@ void openLimousineCustomerQuoteFlow(
   String? publicPartnerId,
   LimousinePublishedOffer? offer,
   String companyName = '',
+  String vehicleId = '',
+  LimousineWizardVehicleOption? vehicle,
   bool? entryEnabled,
   bool? quoteEnabled,
   bool? manualQuoteEnabled,
@@ -1908,6 +1949,8 @@ void openLimousineCustomerQuoteFlow(
         entryEnabled: entryEnabled ?? true,
         initialPublicPartnerId: publicPartnerId,
         initialOffer: offer,
+        initialVehicleId: vehicleId,
+        initialVehicle: vehicle,
         initialCompanyName: companyName,
         resumeRepository: LimousineAcceptedBookingResumeRepository(),
       ),
