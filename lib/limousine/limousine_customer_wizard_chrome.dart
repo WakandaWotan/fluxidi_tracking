@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote.dart';
@@ -10,6 +11,7 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_p2d4c1c_journey.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_wizard_vehicle.dart';
 
 class LimousineWizardHero extends StatelessWidget {
   const LimousineWizardHero({
@@ -102,22 +104,27 @@ class LimousineWizardStepper extends StatelessWidget {
     required this.language,
     required this.current,
     required this.onOpenPast,
+    this.steps = kLimousineRequestWizardSteps,
+    this.stepLabel,
   });
 
   final LimousineUxTokens tokens;
   final AppLanguage language;
   final LimousineRequestWizardStep current;
   final ValueChanged<LimousineRequestWizardStep> onOpenPast;
+  final List<LimousineRequestWizardStep> steps;
+  final LocalizedText Function(LimousineRequestWizardStep step)? stepLabel;
 
   @override
   Widget build(BuildContext context) {
-    final currentIndex = kLimousineRequestWizardSteps.indexOf(current);
+    final visible = steps.isEmpty ? kLimousineRequestWizardSteps : steps;
+    final currentIndex = visible.indexOf(current);
     return SingleChildScrollView(
       key: kLimousineRequestWizardStepperKey,
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          for (var i = 0; i < kLimousineRequestWizardSteps.length; i++) ...[
+          for (var i = 0; i < visible.length; i++) ...[
             if (i > 0)
               Container(
                 width: 22,
@@ -125,7 +132,7 @@ class LimousineWizardStepper extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 16, left: 4, right: 4),
                 color: i <= currentIndex ? tokens.gold : tokens.border,
               ),
-            _step(kLimousineRequestWizardSteps[i], i, currentIndex),
+            _step(visible[i], i, currentIndex),
           ],
         ],
       ),
@@ -170,7 +177,7 @@ class LimousineWizardStepper extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                limousineRequestWizardStepLabel(step).of(language),
+                (stepLabel ?? limousineRequestWizardStepLabel)(step).of(language),
                 style: TextStyle(
                   color: selected ? tokens.onSurface : tokens.muted,
                   fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
@@ -269,11 +276,29 @@ class LimousineWizardFooter extends StatelessWidget {
                             foregroundColor: tokens.onPrimarySafe,
                             minimumSize: const Size(48, 48),
                           ),
-                          child: Text(
-                            (primaryAction ??
-                                    limousineRequestWizardPrimaryAction(step))
-                                .of(language),
-                          ),
+                          child: submitting
+                              ? Row(
+                                  key: kLimousineQuoteSubmitLoadingKey,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(kLimousineReviewSubmitting.of(language)),
+                                  ],
+                                )
+                              : Text(
+                                  (primaryAction ??
+                                          limousineRequestWizardPrimaryAction(
+                                            step,
+                                          ))
+                                      .of(language),
+                                ),
                         ),
                       ),
                     ],
@@ -562,9 +587,9 @@ class LimousineProviderOfferCard extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          offer.isVehicleTargeted
-              ? kLimousineProviderExactVehicle.of(language)
-              : kLimousineProviderServiceClass.of(language),
+          limousineServiceClassLabel(offer.serviceClassId, language).isNotEmpty
+              ? limousineServiceClassLabel(offer.serviceClassId, language)
+              : kLimousineProviderHeroTitle.of(language),
           style: TextStyle(
             color: tokens.gold,
             fontWeight: FontWeight.w700,

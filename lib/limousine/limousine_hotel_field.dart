@@ -36,10 +36,10 @@ const LocalizedText kLimousineHotelError = LocalizedText(
 );
 
 const LocalizedText kLimousineHotelManual = LocalizedText(
-  nl: 'Gebruik dit hoteladres',
-  en: 'Use this hotel address',
-  fr: 'Utiliser cette adresse d’hôtel',
-  es: 'Usar esta dirección de hotel',
+  nl: 'Adres handmatig invoeren',
+  en: 'Enter the address manually',
+  fr: 'Saisir l’adresse manuellement',
+  es: 'Introducir la dirección manualmente',
 );
 
 const LocalizedText kLimousineHotelRetry = LocalizedText(
@@ -72,6 +72,8 @@ class LimousineHotelFieldController extends ChangeNotifier {
   final LimousineHotelLookup lookup;
   String language;
   final Duration debounce;
+  double? proximityLat;
+  double? proximityLng;
   final TextEditingController textController = TextEditingController();
 
   Timer? _debounce;
@@ -106,10 +108,27 @@ class LimousineHotelFieldController extends ChangeNotifier {
 
   Future<void> retry() => _search(textController.text.trim(), ++_requestId);
 
+  void onFocus() {
+    if (hasSelection) return;
+    if (textController.text.trim().isNotEmpty) return;
+    _debounce?.cancel();
+    loading = true;
+    notifyListeners();
+    final id = ++_requestId;
+    _debounce = Timer(debounce, () {
+      unawaited(_search(kLimousineHotelNearbyQuery, id));
+    });
+  }
+
   Future<void> _search(String query, int id) async {
     loading = true;
     notifyListeners();
-    final result = await lookup.search(query, language: language);
+    final result = await lookup.search(
+      query,
+      language: language,
+      proximityLat: proximityLat,
+      proximityLng: proximityLng,
+    );
     if (id != _requestId) return;
     loading = false;
     searched = true;
@@ -199,6 +218,7 @@ class LimousineHotelField extends StatelessWidget {
                 keyboardType: TextInputType.text,
                 textInputAction: TextInputAction.search,
                 onChanged: controller.onTextChanged,
+                onTap: controller.onFocus,
                 decoration: InputDecoration(
                   labelText: label,
                   hintText: kLimousineHotelHint.of(language),
@@ -275,13 +295,35 @@ class LimousineHotelField extends StatelessWidget {
                     style: TextStyle(color: tokens.muted),
                   ),
                 ),
-              for (var i = 0; i < controller.suggestions.length; i++)
-                ListTile(
-                  key: limousineHotelSuggestionKey(i),
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(controller.suggestions[i].name),
-                  subtitle: Text(controller.suggestions[i].formattedAddress),
-                  onTap: () => controller.accept(controller.suggestions[i]),
+              if (controller.suggestions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  decoration: BoxDecoration(
+                    color: tokens.surfaceAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: tokens.gold.withOpacity(0.35)),
+                  ),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < controller.suggestions.length; i++)
+                        ListTile(
+                          key: limousineHotelSuggestionKey(i),
+                          leading: Icon(
+                            Icons.hotel_outlined,
+                            color: tokens.gold,
+                          ),
+                          title: Text(
+                            controller.suggestions[i].name,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                            controller.suggestions[i].formattedAddress,
+                          ),
+                          onTap: () =>
+                              controller.accept(controller.suggestions[i]),
+                        ),
+                    ],
+                  ),
                 ),
               if (canManual && !controller.hasSelection)
                 Align(

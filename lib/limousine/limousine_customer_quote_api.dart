@@ -17,6 +17,7 @@ import 'limousine_journey_scope.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_unified_intent.dart';
+import 'limousine_wizard_vehicle.dart';
 
 typedef LimousineCustomerAuthHeaders = Future<Map<String, String>> Function();
 
@@ -434,6 +435,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool restoredFromSecureResume = false;
   List<LimousineCustomerDraftError> draftErrors = const [];
   String safeError = '';
+  String lastSubmitErrorCode = '';
+  int lastHttpStatus = 0;
   bool quoteUpdated = false;
   bool termsAcknowledged = false;
   bool discovering = false;
@@ -557,7 +560,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       providers = const [];
       lastDiscoveryCount = 0;
       lastDiscoveryService = '';
-      draft = draft.copyWith(publicPartnerId: '', offerId: '');
+      draft = draft.copyWith(publicPartnerId: '', offerId: '', vehicleId: '');
     }
     draftErrors = const [];
     notifyListeners();
@@ -618,6 +621,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     draft = draft.copyWith(
       publicPartnerId: partnerId,
       offerId: offer.offerId,
+      vehicleId: limousineAutoSelectVehicleId(offer),
       journeyType: _resolveOfferJourneyType(offer, draft.journeyType),
     );
     notifyListeners();
@@ -654,8 +658,21 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     offerScopeChanged = false;
     draft = draft.copyWith(
       offerId: offer.offerId,
+      vehicleId: limousineAutoSelectVehicleId(offer),
       journeyType: _resolveOfferJourneyType(offer, draft.journeyType),
     );
+    notifyListeners();
+  }
+
+  void selectVehicle(String vehicleId) {
+    draft = draft.copyWith(vehicleId: vehicleId.trim());
+    notifyListeners();
+  }
+
+  void markSubmitBlocked(String code) {
+    lastSubmitErrorCode = code;
+    lastHttpStatus = 0;
+    safeError = code;
     notifyListeners();
   }
 
@@ -709,16 +726,36 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
 
   Future<bool> submitRequest() async {
     if (submitting) return false;
-    if (!validateCurrentDraft()) return false;
+    lastSubmitErrorCode = '';
+    lastHttpStatus = 0;
+    safeError = '';
+    if (!validateCurrentDraft()) {
+      lastSubmitErrorCode = draftErrors.isEmpty
+          ? 'invalid_request'
+          : draftErrors.first.name;
+      safeError = lastSubmitErrorCode;
+      notifyListeners();
+      return false;
+    }
     final bookIntent =
         limousineCustomerIntentKindOf(selectedOffer) ==
         LimousineCustomerIntentKind.bookingRequest;
     if (bookIntent) {
       final body = limousineCustomerBookBody(draft);
-      if (!limousineCustomerBookBodyIsBounded(body)) return false;
+      if (!limousineCustomerBookBodyIsBounded(body)) {
+        lastSubmitErrorCode = 'invalid_request';
+        safeError = 'invalid_request';
+        notifyListeners();
+        return false;
+      }
     } else {
       final body = limousineCustomerCreateBody(draft);
-      if (!limousineCustomerCreateBodyIsBounded(body)) return false;
+      if (!limousineCustomerCreateBodyIsBounded(body)) {
+        lastSubmitErrorCode = 'invalid_request';
+        safeError = 'invalid_request';
+        notifyListeners();
+        return false;
+      }
     }
     phase = LimousineCustomerQuotePhase.submitting;
     notifyListeners();
@@ -760,11 +797,15 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     } on LimousineCustomerQuoteException catch (error) {
       if (generation != _createGeneration) return false;
       phase = LimousineCustomerQuotePhase.draft;
+      lastHttpStatus = error.statusCode;
+      lastSubmitErrorCode = error.code.isEmpty ? 'network' : error.code;
       if (error.code == 'journey_type_not_allowed') {
         offerScopeChanged = true;
         safeError = 'offer_scope_changed';
+      } else if (error.unavailable) {
+        safeError = 'unavailable';
       } else {
-        safeError = error.unavailable ? 'unavailable' : 'network';
+        safeError = lastSubmitErrorCode;
       }
       notifyListeners();
       return false;

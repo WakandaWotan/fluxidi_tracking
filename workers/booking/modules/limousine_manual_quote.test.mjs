@@ -193,6 +193,72 @@ test("4) request identity is stable so a retry is idempotent", () => {
   assert.notEqual(a.request.itinerary_fingerprint, other.request.itinerary_fingerprint);
 });
 
+test("p3f) fingerprint includes partner, offer, vehicle and journey", () => {
+  const a = validateLimousineQuoteRequest(
+    customerRequest({ public_partner_id: "p1", vehicle_id: "veh_1" }),
+    {
+      eligible: true,
+      offer: authoritativeOffer({
+        target_type: "vehicle",
+        vehicle_id: "veh_1",
+        vehicle_ids: ["veh_1"],
+      }),
+      gateEnabled: true,
+    },
+  );
+  const otherVehicle = validateLimousineQuoteRequest(
+    customerRequest({ public_partner_id: "p1", vehicle_id: "veh_2" }),
+    {
+      eligible: true,
+      offer: authoritativeOffer({
+        target_type: "vehicle",
+        vehicle_id: "veh_2",
+        vehicle_ids: ["veh_2"],
+      }),
+      gateEnabled: true,
+    },
+  );
+  assert.equal(a.ok, true);
+  assert.notEqual(a.request.itinerary_fingerprint, otherVehicle.request.itinerary_fingerprint);
+});
+
+test("p3f) wrong vehicle or journey is rejected", () => {
+  const wrongVehicle = validateLimousineQuoteRequest(
+    customerRequest({ vehicle_id: "veh_other" }),
+    {
+      eligible: true,
+      offer: authoritativeOffer({
+        target_type: "vehicle",
+        vehicle_id: "veh_1",
+        vehicle_ids: ["veh_1"],
+      }),
+      gateEnabled: true,
+    },
+  );
+  assert.equal(wrongVehicle.ok, false);
+  assert.equal(wrongVehicle.reason, R.VEHICLE_SCOPE_MISMATCH);
+  const wrongJourney = validateLimousineQuoteRequest(
+    customerRequest({ journey_type: "airport_transfer" }),
+    {
+      eligible: true,
+      offer: authoritativeOffer({ journey_types: ["event_transfer"] }),
+      gateEnabled: true,
+    },
+  );
+  assert.equal(wrongJourney.ok, false);
+  assert.equal(wrongJourney.reason, R.JOURNEY_TYPE_NOT_ALLOWED);
+});
+
+test("p3f) working drafts stay unpublished", () => {
+  const draft = validateLimousineQuoteRequest(customerRequest(), {
+    eligible: true,
+    offer: authoritativeOffer({ published: false, enabled: true }),
+    gateEnabled: true,
+  });
+  assert.equal(draft.ok, false);
+  assert.equal(draft.reason, R.OFFER_UNPUBLISHED);
+});
+
 test("8/12) quote-required extra is carried; customer pricing is rejected", () => {
   const withQuoteExtra = validateLimousineQuoteRequest(
     customerRequest({ selected_extra_ids: ["deco"] }),

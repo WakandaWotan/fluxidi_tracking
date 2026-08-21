@@ -388,7 +388,7 @@ void main() {
     expect(find.textContaining('limousine_entitled'), findsNothing);
   });
 
-  test('11) CTA preselects only partner + offer and does not submit', () {
+  test('11) CTA preselects partner, offer and published vehicle and does not submit', () {
     final offer = LimousinePublishedOffer.fromJson(_vehicleOffer());
     final gateway = _NoopGateway();
     final controller = LimousineCustomerQuoteController(gateway: gateway);
@@ -399,6 +399,7 @@ void main() {
     );
     expect(controller.draft.publicPartnerId, 'p1');
     expect(controller.draft.offerId, 'off_veh');
+    expect(controller.draft.vehicleId, 'veh_1');
     expect(controller.providerOfferLocked, isTrue);
     expect(controller.phase, LimousineCustomerQuotePhase.draft);
     expect(gateway.createCalls, 0);
@@ -407,7 +408,7 @@ void main() {
     final body = limousineCustomerCreateBody(controller.draft);
     expect(body.containsKey('total_incl_vat_cents'), isFalse);
     expect(body.containsKey('tenant_id'), isFalse);
-    expect(body.containsKey('vehicle_id'), isFalse);
+    expect(body['vehicle_id'], 'veh_1');
     controller.selectOffer(LimousinePublishedOffer.fromJson(_classOffer()));
     expect(controller.draft.offerId, 'off_veh');
     controller.dispose();

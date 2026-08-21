@@ -12,6 +12,7 @@ import 'limousine_customer_quote_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_wizard_vehicle.dart';
 
 class LimousineCustomerUnavailableBanner extends StatelessWidget {
   const LimousineCustomerUnavailableBanner({super.key, required this.language});
@@ -59,21 +60,39 @@ class LimousineCustomerStatusView extends StatelessWidget {
       children: [
         Chip(label: Text(limousineCustomerStateLabel(request.state, language))),
         const SizedBox(height: 8),
-        Text(
-          '${request.offerId} · ${request.serviceClassId}',
-          style: TextStyle(color: palette.textMuted),
-        ),
-        if (request.scheduledPickupIso.isNotEmpty)
-          Text(request.scheduledPickupIso),
-        if (request.bookingReference.isNotEmpty) Text(request.bookingReference),
         if (LimousineQuoteStateId.normalize(request.state) ==
                 LimousineQuoteStateId.requested ||
             LimousineQuoteStateId.normalize(request.state) ==
                 LimousineQuoteStateId.viewedByCompany)
           Padding(
+            key: kLimousineQuoteSubmitConfirmationKey,
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(_t(kLimousineCustomerWaitingCopy)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(kLimousineQuoteSubmittedTitle),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(_t(kLimousineQuoteSubmittedBody)),
+                if (request.quoteRequestId.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    '${_t(kLimousineQuoteSubmittedReference)}: ${request.quoteRequestId}',
+                    key: kLimousineQuoteSubmitReferenceKey,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Text(_t(kLimousineCustomerWaitingCopy)),
+              ],
+            ),
           ),
+        if (request.bookingReference.isNotEmpty) Text(request.bookingReference),
         if (controller.quoteUpdated)
           Padding(
             key: kLimousineCustomerQuoteUpdatedKey,

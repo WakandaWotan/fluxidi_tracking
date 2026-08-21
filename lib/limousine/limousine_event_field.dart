@@ -51,10 +51,10 @@ const LocalizedText kLimousineEventError = LocalizedText(
 );
 
 const LocalizedText kLimousineEventManual = LocalizedText(
-  nl: 'Locatie niet gevonden? Adres handmatig invoeren',
-  en: 'Venue not found? Enter the address manually',
-  fr: 'Lieu introuvable ? Saisir l’adresse manuellement',
-  es: '¿No encuentra el lugar? Introducir la dirección manualmente',
+  nl: 'Adres handmatig invoeren',
+  en: 'Enter the address manually',
+  fr: 'Saisir l’adresse manuellement',
+  es: 'Introducir la dirección manualmente',
 );
 
 const LocalizedText kLimousineEventRetry = LocalizedText(
@@ -97,6 +97,8 @@ class LimousineEventFieldController extends ChangeNotifier {
   final LimousineEventLookup lookup;
   String language;
   final Duration debounce;
+  double? proximityLat;
+  double? proximityLng;
   final TextEditingController textController = TextEditingController();
   final TextEditingController eventNameController = TextEditingController();
 
@@ -142,10 +144,27 @@ class LimousineEventFieldController extends ChangeNotifier {
 
   Future<void> retry() => _search(textController.text.trim(), ++_requestId);
 
+  void onFocus() {
+    if (hasSelection) return;
+    if (textController.text.trim().isNotEmpty) return;
+    _debounce?.cancel();
+    loading = true;
+    notifyListeners();
+    final id = ++_requestId;
+    _debounce = Timer(debounce, () {
+      unawaited(_search(kLimousineEventNearbyQuery, id));
+    });
+  }
+
   Future<void> _search(String query, int id) async {
     loading = true;
     notifyListeners();
-    final result = await lookup.search(query, language: language);
+    final result = await lookup.search(
+      query,
+      language: language,
+      proximityLat: proximityLat,
+      proximityLng: proximityLng,
+    );
     if (id != _requestId) return;
     loading = false;
     searched = true;
@@ -251,6 +270,7 @@ class LimousineEventField extends StatelessWidget {
                 keyboardType: TextInputType.text,
                 textInputAction: TextInputAction.search,
                 onChanged: controller.onTextChanged,
+                onTap: controller.onFocus,
                 decoration: InputDecoration(
                   labelText: kLimousineEventSearchLabel.of(language),
                   hintText: kLimousineEventHint.of(language),
@@ -348,13 +368,35 @@ class LimousineEventField extends StatelessWidget {
                     style: TextStyle(color: tokens.muted),
                   ),
                 ),
-              for (var i = 0; i < controller.suggestions.length; i++)
-                ListTile(
-                  key: limousineEventSuggestionKey(i),
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(controller.suggestions[i].name),
-                  subtitle: Text(controller.suggestions[i].formattedAddress),
-                  onTap: () => controller.accept(controller.suggestions[i]),
+              if (controller.suggestions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  decoration: BoxDecoration(
+                    color: tokens.surfaceAlt,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: tokens.gold.withOpacity(0.35)),
+                  ),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < controller.suggestions.length; i++)
+                        ListTile(
+                          key: limousineEventSuggestionKey(i),
+                          leading: Icon(
+                            Icons.celebration_outlined,
+                            color: tokens.gold,
+                          ),
+                          title: Text(
+                            controller.suggestions[i].name,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                            controller.suggestions[i].formattedAddress,
+                          ),
+                          onTap: () =>
+                              controller.accept(controller.suggestions[i]),
+                        ),
+                    ],
+                  ),
                 ),
               if (canManual && !controller.hasSelection)
                 Align(

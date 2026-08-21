@@ -549,6 +549,8 @@ LocalizedText limousineRequestGapLabel(String code) {
       return kLimousineOfferScopeChanged;
     case 'capacity_exceeded':
       return kLimousineGapCapacity;
+    case 'vehicle_required':
+      return kLimousineProviderHeroTitle;
     default:
       return kLimousineGapPickupTime;
   }

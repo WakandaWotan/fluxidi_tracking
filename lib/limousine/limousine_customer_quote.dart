@@ -77,6 +77,7 @@ const Set<String> kLimousineCustomerCreateAllowedKeys = <String>{
   'stop_endpoints',
   'airport_direction',
   'hotel_direction',
+  'vehicle_id',
 };
 
 const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
@@ -105,6 +106,7 @@ const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
   'stop_endpoints',
   'airport_direction',
   'hotel_direction',
+  'vehicle_id',
 };
 
 const Set<String> kLimousineCustomerForbiddenSubmitKeys = <String>{
@@ -125,7 +127,6 @@ const Set<String> kLimousineCustomerForbiddenSubmitKeys = <String>{
   'company_readiness',
   'tenant_id',
   'company_id',
-  'vehicle_id',
   'service_class_id',
   'itinerary_fingerprint',
   'status_ref',
@@ -359,6 +360,7 @@ class LimousineQuoteCreateDraft {
     this.stopEndpoints = const <LimousineTransferEndpoint>[],
     this.airportDirection = '',
     this.hotelDirection = '',
+    this.vehicleId = '',
   });
 
   final String publicPartnerId;
@@ -384,6 +386,7 @@ class LimousineQuoteCreateDraft {
   final List<LimousineTransferEndpoint> stopEndpoints;
   final String airportDirection;
   final String hotelDirection;
+  final String vehicleId;
 
   LimousineItineraryEndpoints get itinerary => LimousineItineraryEndpoints(
     from: fromEndpoint,
@@ -419,6 +422,7 @@ class LimousineQuoteCreateDraft {
     List<LimousineTransferEndpoint>? stopEndpoints,
     String? airportDirection,
     String? hotelDirection,
+    String? vehicleId,
   }) {
     return LimousineQuoteCreateDraft(
       publicPartnerId: publicPartnerId ?? this.publicPartnerId,
@@ -446,6 +450,7 @@ class LimousineQuoteCreateDraft {
       stopEndpoints: stopEndpoints ?? this.stopEndpoints,
       airportDirection: airportDirection ?? this.airportDirection,
       hotelDirection: hotelDirection ?? this.hotelDirection,
+      vehicleId: vehicleId ?? this.vehicleId,
     );
   }
 }
@@ -737,6 +742,9 @@ Map<String, dynamic> limousineCustomerCreateBody(
   }
   if (draft.occasion.trim().isNotEmpty) {
     body['occasion'] = draft.occasion.trim();
+  }
+  if (draft.vehicleId.trim().isNotEmpty) {
+    body['vehicle_id'] = draft.vehicleId.trim();
   }
   body.addAll(draft.itinerary.toJson());
   body.removeWhere(
