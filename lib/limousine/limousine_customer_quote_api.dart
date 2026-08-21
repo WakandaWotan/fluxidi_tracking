@@ -277,10 +277,24 @@ class HttpLimousineCustomerQuoteGateway
       final headers = await _authHeaders();
       final res = await _post(uri, headers, jsonEncode(body));
       final map = _decode(res);
+      debugPrint(
+        '[LIMOUSINE_QUOTE_SUBMIT] POST /limousine/quote-requests '
+        'status=${res.statusCode} error=${map['error'] ?? ''} '
+        'offer_id=${body['offer_id']} vehicle_id=${body['vehicle_id'] ?? ''} '
+        'journey_type=${body['journey_type']} '
+        'trace=${map['request_id'] ?? map['trace_id'] ?? ''}',
+      );
       if (res.statusCode < 200 || res.statusCode >= 300) {
         _throwFailed(res.statusCode, map);
       }
-      final request = LimousineQuoteRequest.fromJson(map['quote_request']);
+      final rawRequest = map['quote_request'] ?? map['quoteRequest'] ?? map;
+      final request = LimousineQuoteRequest.fromJson(rawRequest);
+      if (request.quoteRequestId.trim().isEmpty) {
+        throw LimousineCustomerQuoteException(
+          code: 'invalid_request',
+          statusCode: res.statusCode,
+        );
+      }
       return LimousineQuoteCreateResult(
         request: request,
         statusRef: (map['status_ref'] ?? map['statusRef'] ?? '').toString(),
@@ -442,6 +456,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool discovering = false;
   bool loadingProvider = false;
   bool providerOfferLocked = false;
+  bool vehicleLocked = false;
+  LimousineWizardVehicleOption? lockedVehicle;
   bool offerScopeChanged = false;
   int lastDiscoveryCount = 0;
   String lastDiscoveryService = '';
@@ -567,6 +583,9 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   }
 
   void goTo(LimousineCustomerQuoteStep next) {
+    if (vehicleLocked && next == LimousineCustomerQuoteStep.providerOffer) {
+      return;
+    }
     step = next;
     notifyListeners();
   }
@@ -604,9 +623,12 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     required String publicPartnerId,
     required LimousinePublishedOffer offer,
     String companyName = '',
+    String vehicleId = '',
+    LimousineWizardVehicleOption? vehicle,
   }) {
     final partnerId = publicPartnerId.trim();
     if (partnerId.isEmpty || offer.offerId.trim().isEmpty) return;
+    final incomingVehicle = (vehicle?.vehicleId ?? vehicleId).trim();
     selectedProvider = LimousineProviderDetail(
       provider: LimousineDiscoveredProvider(
         partnerId: partnerId,
@@ -617,11 +639,27 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     );
     selectedOffer = offer;
     providerOfferLocked = true;
+    vehicleLocked = incomingVehicle.isNotEmpty;
+    lockedVehicle = incomingVehicle.isEmpty
+        ? null
+        : (vehicle ??
+              LimousineWizardVehicleOption(
+                vehicleId: incomingVehicle,
+                name: localizedLimousineText(offer.title, languageCode: 'nl'),
+                serviceClassId: offer.serviceClassId,
+                photoUrl: offer.photoUrl,
+                passengerCapacity: offer.passengerCapacity,
+                luggageCapacity: offer.luggageCapacity,
+                publicDescription: offer.description,
+                pricePresentation: offer.pricePresentation,
+              ));
     offerScopeChanged = false;
     draft = draft.copyWith(
       publicPartnerId: partnerId,
       offerId: offer.offerId,
-      vehicleId: limousineAutoSelectVehicleId(offer),
+      vehicleId: incomingVehicle.isNotEmpty
+          ? incomingVehicle
+          : limousineAutoSelectVehicleId(offer),
       journeyType: _resolveOfferJourneyType(offer, draft.journeyType),
     );
     notifyListeners();
@@ -665,6 +703,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   }
 
   void selectVehicle(String vehicleId) {
+    if (vehicleLocked) return;
     draft = draft.copyWith(vehicleId: vehicleId.trim());
     notifyListeners();
   }
@@ -729,11 +768,14 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     lastSubmitErrorCode = '';
     lastHttpStatus = 0;
     safeError = '';
+    phase = LimousineCustomerQuotePhase.submitting;
+    notifyListeners();
     if (!validateCurrentDraft()) {
       lastSubmitErrorCode = draftErrors.isEmpty
           ? 'invalid_request'
           : draftErrors.first.name;
       safeError = lastSubmitErrorCode;
+      phase = LimousineCustomerQuotePhase.draft;
       notifyListeners();
       return false;
     }
@@ -745,6 +787,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (!limousineCustomerBookBodyIsBounded(body)) {
         lastSubmitErrorCode = 'invalid_request';
         safeError = 'invalid_request';
+        phase = LimousineCustomerQuotePhase.draft;
         notifyListeners();
         return false;
       }
@@ -753,17 +796,23 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (!limousineCustomerCreateBodyIsBounded(body)) {
         lastSubmitErrorCode = 'invalid_request';
         safeError = 'invalid_request';
+        phase = LimousineCustomerQuotePhase.draft;
         notifyListeners();
         return false;
       }
     }
-    phase = LimousineCustomerQuotePhase.submitting;
-    notifyListeners();
     final generation = ++_createGeneration;
     try {
       if (bookIntent) {
         final booked = await _gateway.createBookingRequest(draft);
         if (generation != _createGeneration) return false;
+        if (booked.bookingId.trim().isEmpty) {
+          lastSubmitErrorCode = 'unavailable';
+          safeError = 'unavailable';
+          phase = LimousineCustomerQuotePhase.draft;
+          notifyListeners();
+          return false;
+        }
         bookingRequestId = booked.bookingId;
         phase = LimousineCustomerQuotePhase.live;
         step = LimousineCustomerQuoteStep.waitingCompany;
@@ -773,6 +822,15 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       }
       final result = await _gateway.createRequest(draft);
       if (generation != _createGeneration) return false;
+      final quoteId = result.request.quoteRequestId.trim();
+      if (quoteId.isEmpty) {
+        lastSubmitErrorCode = 'invalid_request';
+        safeError = 'invalid_request';
+        lastHttpStatus = 200;
+        phase = LimousineCustomerQuotePhase.draft;
+        notifyListeners();
+        return false;
+      }
       request = result.request;
       quoteUpdated = false;
       termsAcknowledged = false;
@@ -780,7 +838,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         _statusRef = result.statusRef;
         await _statusStore.retain(
           accountScope: _accountScope,
-          requestKey: result.request.quoteRequestId,
+          requestKey: quoteId,
           statusRef: result.statusRef,
         );
       }
@@ -791,7 +849,9 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (limousineCustomerShouldPoll(request!.state)) {
         startPolling();
       }
-      _safeLog('quote_request_created');
+      _safeLog(
+        'quote_submit ok offer_id=${draft.offerId} vehicle_id=${draft.vehicleId} journey_type=${draft.journeyType}',
+      );
       notifyListeners();
       return true;
     } on LimousineCustomerQuoteException catch (error) {
@@ -807,6 +867,19 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       } else {
         safeError = lastSubmitErrorCode;
       }
+      _safeLog(
+        'quote_submit fail status=${error.statusCode} error=$lastSubmitErrorCode offer_id=${draft.offerId} vehicle_id=${draft.vehicleId} journey_type=${draft.journeyType}',
+      );
+      notifyListeners();
+      return false;
+    } catch (_) {
+      if (generation != _createGeneration) return false;
+      phase = LimousineCustomerQuotePhase.draft;
+      lastSubmitErrorCode = 'network';
+      safeError = 'network';
+      _safeLog(
+        'quote_submit fail status=0 error=network offer_id=${draft.offerId} vehicle_id=${draft.vehicleId}',
+      );
       notifyListeners();
       return false;
     }

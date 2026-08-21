@@ -87,6 +87,27 @@ class LimousineCustomerStatusView extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ],
+                if ((controller.selectedProvider?.provider.companyName ?? '')
+                    .trim()
+                    .isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      controller.selectedProvider!.provider.companyName,
+                    ),
+                  ),
+                if ((controller.lockedVehicle?.name ?? request.vehicleId)
+                    .trim()
+                    .isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
+                          ? controller.lockedVehicle!.name
+                          : request.vehicleId,
+                      key: kLimousineReviewLockedVehicleKey,
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Text(_t(kLimousineCustomerWaitingCopy)),
               ],

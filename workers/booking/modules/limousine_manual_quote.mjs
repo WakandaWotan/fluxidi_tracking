@@ -587,10 +587,75 @@ export function itineraryFingerprint(request) {
 
 /// Validates a customer manual-quote request. Only booking intent is accepted;
 /// any pricing/readiness assertion is rejected.
+function httpsOnly(raw) {
+  const text = safeText(raw, 400);
+  return text.startsWith("https://") ? text : "";
+}
+
+export function buildLimousinePublicVehicleSnapshot({
+  offer = null,
+  vehicleId = "",
+  publishedVehicles = [],
+} = {}) {
+  const id = safeText(vehicleId, 96);
+  if (!id) return null;
+  const catalog = Array.isArray(publishedVehicles) ? publishedVehicles : [];
+  const offerObj = asObject(offer);
+  const offerVehicles = Array.isArray(offerObj.vehicles) ? offerObj.vehicles : [];
+  const match = [...catalog, ...offerVehicles].find((item) => {
+    const src = asObject(item);
+    return normalizeLimousineToken(src.vehicle_id || src.vehicleId || src.id) ===
+      normalizeLimousineToken(id);
+  });
+  const src = asObject(match) || asObject(offerObj.vehicle);
+  const photo = httpsOnly(
+    src.photo_url || src.photoUrl || src.primary_photo_url || offerObj.photo_url,
+  );
+  const name = safeText(
+    src.name || src.display_name || src.displayName || src.brand_model,
+    120,
+  );
+  return {
+    vehicle_id: id,
+    ...(name ? { public_name: name } : {}),
+    ...(normalizeLimousineToken(src.service_class_id || src.serviceClassId || src.service_class || offerObj.service_class_id)
+      ? {
+          service_class_id: normalizeLimousineToken(
+            src.service_class_id || src.serviceClassId || src.service_class || offerObj.service_class_id,
+          ),
+        }
+      : {}),
+    ...(photo ? { photo_url: photo } : {}),
+    ...(toInt(src.passenger_capacity ?? src.pax ?? offerObj.passenger_capacity) != null
+      ? { passenger_capacity: toInt(src.passenger_capacity ?? src.pax ?? offerObj.passenger_capacity) }
+      : {}),
+    ...(toInt(src.luggage_capacity ?? src.bags ?? offerObj.luggage_capacity) != null
+      ? { luggage_capacity: toInt(src.luggage_capacity ?? src.bags ?? offerObj.luggage_capacity) }
+      : {}),
+  };
+}
+
+export function assertLimousinePublishedVehicle(vehicleId, publishedVehicles) {
+  const catalog = Array.isArray(publishedVehicles) ? publishedVehicles : [];
+  if (!catalog.length) return { ok: true };
+  const id = normalizeLimousineToken(vehicleId);
+  const found = catalog.find((item) => {
+    const src = asObject(item);
+    return normalizeLimousineToken(src.vehicle_id || src.vehicleId || src.id) === id;
+  });
+  if (!found) return { ok: false, reason: LIMOUSINE_QUOTE_REASONS.VEHICLE_NOT_PUBLISHED };
+  const src = asObject(found);
+  if (src.is_active === false || src.active === false || src.published === false || src.public === false) {
+    return { ok: false, reason: LIMOUSINE_QUOTE_REASONS.VEHICLE_NOT_PUBLISHED };
+  }
+  return { ok: true, vehicle: src };
+}
+
 export function validateLimousineQuoteRequest(input, {
   eligible = false,
   offer = null,
   gateEnabled = false,
+  publishedVehicles = [],
 } = {}) {
   const R = LIMOUSINE_QUOTE_REASONS;
   const src = asObject(input);
@@ -622,6 +687,13 @@ export function validateLimousineQuoteRequest(input, {
   );
   if (!vehicleScope.ok) {
     return { ok: false, reason: vehicleScope.reason, field: "vehicle_id" };
+  }
+  const publishedVehicle = assertLimousinePublishedVehicle(
+    vehicleScope.vehicle_id,
+    publishedVehicles,
+  );
+  if (!publishedVehicle.ok) {
+    return { ok: false, reason: publishedVehicle.reason, field: "vehicle_id" };
   }
 
   const from = safeText(src.from, 240);
@@ -659,6 +731,11 @@ export function validateLimousineQuoteRequest(input, {
       authoritativeOffer.service_class_id ?? src.service_class_id,
     ),
     vehicle_id: safeText(vehicleScope.vehicle_id || authoritativeOffer.vehicle_id || src.vehicle_id, 96),
+    vehicle_snapshot: buildLimousinePublicVehicleSnapshot({
+      offer: authoritativeOffer,
+      vehicleId: safeText(vehicleScope.vehicle_id || authoritativeOffer.vehicle_id || src.vehicle_id, 96),
+      publishedVehicles,
+    }),
     journey_type: normalizeLimousineToken(src.journey_type ?? src.journeyType),
     direction: normalizeLimousineToken(src.direction ?? src.airport_direction),
     from,
@@ -986,6 +1063,7 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     offer_id: safeText(req.offer_id, 64),
     service_class_id: safeText(req.service_class_id, 64),
     ...(req.vehicle_id ? { vehicle_id: safeText(req.vehicle_id, 96) } : {}),
+    ...(req.vehicle_snapshot ? { vehicle_snapshot: asObject(req.vehicle_snapshot) } : {}),
     journey_type: safeText(req.journey_type, 32),
     service_type: LIMOUSINE_SERVICE_TYPE,
     ...(req.pricing_mode ? { pricing_mode: safeText(req.pricing_mode, 32) } : {}),

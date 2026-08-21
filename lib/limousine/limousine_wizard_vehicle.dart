@@ -8,10 +8,11 @@ import '../app_strings.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_p2d4c1c_journey.dart';
+import 'limousine_provider_showroom.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_vehicle_public_copy.dart';
 
-enum LimousineWizardVehicleMode { discover, skip, choose }
+enum LimousineWizardVehicleMode { discover, skip, choose, locked }
 
 const Key kLimousineWizardVehicleListKey = ValueKey<String>(
   'limousine_wizard_vehicle_list',
@@ -27,6 +28,9 @@ const Key kLimousineQuoteSubmitReferenceKey = ValueKey<String>(
 );
 const Key kLimousineQuoteSubmitLoadingKey = ValueKey<String>(
   'limousine_quote_submit_loading',
+);
+const Key kLimousineReviewLockedVehicleKey = ValueKey<String>(
+  'limousine_review_locked_vehicle',
 );
 
 Key limousineWizardVehicleCardKey(String vehicleId) =>
@@ -54,10 +58,31 @@ const LocalizedText kLimousineWizardLuggage = LocalizedText(
 );
 
 const LocalizedText kLimousineReviewSubmitting = LocalizedText(
-  nl: 'Bezig met verzenden…',
-  en: 'Sending…',
-  fr: 'Envoi en cours…',
-  es: 'Enviando…',
+  nl: 'Offerte wordt verzonden…',
+  en: 'Sending quote request…',
+  fr: 'Envoi de la demande…',
+  es: 'Enviando la solicitud…',
+);
+
+const LocalizedText kLimousineJourneyContinueExtras = LocalizedText(
+  nl: 'Verder naar extra’s',
+  en: 'Continue to extras',
+  fr: 'Continuer vers les extras',
+  es: 'Continuar a extras',
+);
+
+const LocalizedText kLimousineJourneyContinueLimousine = LocalizedText(
+  nl: 'Verder',
+  en: 'Continue',
+  fr: 'Continuer',
+  es: 'Continuar',
+);
+
+const LocalizedText kLimousineReviewLockedVehicle = LocalizedText(
+  nl: 'Gekozen limousine',
+  en: 'Chosen limousine',
+  fr: 'Limousine choisie',
+  es: 'Limusina elegida',
 );
 
 const LocalizedText kLimousineQuoteSubmittedTitle = LocalizedText(
@@ -154,18 +179,90 @@ class LimousineWizardVehicleOption {
   String classLabel(AppLanguage language) {
     return limousineServiceClassLabel(serviceClassId, language);
   }
+
+  factory LimousineWizardVehicleOption.fromShowroomVehicle(
+    LimousineShowroomVehicle vehicle, {
+    String pricePresentation = '',
+  }) {
+    return LimousineWizardVehicleOption(
+      vehicleId: vehicle.vehicleId.trim(),
+      name: vehicle.displayName,
+      serviceClassId: vehicle.serviceClassId,
+      photoUrl: vehicle.primaryPhotoUrl,
+      passengerCapacity: vehicle.passengerCapacity,
+      luggageCapacity: vehicle.luggageCapacity,
+      publicDescription: vehicle.publicDescription,
+      pricePresentation: pricePresentation,
+    );
+  }
+
+  Map<String, dynamic> toPublicSnapshot() {
+    return <String, dynamic>{
+      'vehicle_id': vehicleId,
+      if (name.trim().isNotEmpty) 'public_name': name.trim(),
+      if (serviceClassId.trim().isNotEmpty)
+        'service_class_id': serviceClassId.trim(),
+      if (photoUrl.startsWith('https://')) 'photo_url': photoUrl,
+      if (passengerCapacity != null) 'passenger_capacity': passengerCapacity,
+      if (luggageCapacity != null) 'luggage_capacity': luggageCapacity,
+    };
+  }
+
+  static LimousineWizardVehicleOption? fromPublicSnapshot(Object? raw) {
+    if (raw is! Map) return null;
+    final map = raw.map((key, value) => MapEntry(key.toString(), value));
+    final id = limousineCanonicalVehicleId(
+      map['vehicle_id'] ?? map['vehicleId'],
+    );
+    if (id.isEmpty) return null;
+    return LimousineWizardVehicleOption(
+      vehicleId: id,
+      name: (map['public_name'] ?? map['name'] ?? map['display_name'] ?? '')
+          .toString()
+          .trim(),
+      serviceClassId: (map['service_class_id'] ?? map['serviceClassId'] ?? '')
+          .toString()
+          .trim(),
+      photoUrl: (map['photo_url'] ?? map['photoUrl'] ?? '').toString().trim(),
+      passengerCapacity: int.tryParse(
+        '${map['passenger_capacity'] ?? map['pax'] ?? ''}',
+      ),
+      luggageCapacity: int.tryParse(
+        '${map['luggage_capacity'] ?? map['bags'] ?? ''}',
+      ),
+    );
+  }
 }
 
 List<LimousineWizardVehicleOption> limousineWizardVehicleOptions(
-  LimousinePublishedOffer offer,
-) {
+  LimousinePublishedOffer offer, {
+  List<LimousineShowroomVehicle> catalog = const <LimousineShowroomVehicle>[],
+}) {
   final seen = <String>{};
   final out = <LimousineWizardVehicleOption>[];
+  final byId = <String, LimousineShowroomVehicle>{
+    for (final vehicle in catalog)
+      if (vehicle.vehicleId.trim().isNotEmpty)
+        limousineCanonicalVehicleId(vehicle.vehicleId): vehicle,
+  };
 
   void add(LimousineWizardVehicleOption option) {
     final id = option.vehicleId.trim();
     if (id.isEmpty || seen.contains(id)) return;
     seen.add(id);
+    final catalogHit = byId[limousineCanonicalVehicleId(id)];
+    if (catalogHit != null &&
+        (option.name.trim().isEmpty ||
+            option.name == _offerDisplayName(offer) ||
+            option.photoUrl.isEmpty)) {
+      out.add(
+        LimousineWizardVehicleOption.fromShowroomVehicle(
+          catalogHit,
+          pricePresentation: offer.pricePresentation,
+        ),
+      );
+      return;
+    }
     out.add(option);
   }
 
@@ -186,19 +283,25 @@ List<LimousineWizardVehicleOption> limousineWizardVehicleOptions(
   final ids = offer.raw['vehicle_ids'] ?? offer.raw['vehicleIds'];
   if (ids is List) {
     for (final rawId in ids) {
-      final id = rawId.toString().trim();
+      final id = limousineCanonicalVehicleId(rawId);
       if (id.isEmpty) continue;
+      final catalogHit = byId[id];
       add(
-        LimousineWizardVehicleOption(
-          vehicleId: id,
-          name: _offerDisplayName(offer),
-          serviceClassId: offer.serviceClassId,
-          photoUrl: offer.photoUrl,
-          passengerCapacity: offer.passengerCapacity,
-          luggageCapacity: offer.luggageCapacity,
-          publicDescription: offer.description,
-          pricePresentation: offer.pricePresentation,
-        ),
+        catalogHit == null
+            ? LimousineWizardVehicleOption(
+                vehicleId: id,
+                name: _offerDisplayName(offer),
+                serviceClassId: offer.serviceClassId,
+                photoUrl: offer.photoUrl,
+                passengerCapacity: offer.passengerCapacity,
+                luggageCapacity: offer.luggageCapacity,
+                publicDescription: offer.description,
+                pricePresentation: offer.pricePresentation,
+              )
+            : LimousineWizardVehicleOption.fromShowroomVehicle(
+                catalogHit,
+                pricePresentation: offer.pricePresentation,
+              ),
       );
     }
   }
@@ -230,19 +333,28 @@ List<LimousineWizardVehicleOption> limousineWizardVehicleOptions(
 LimousineWizardVehicleMode limousineWizardVehicleMode({
   required bool providerOfferLocked,
   LimousinePublishedOffer? offer,
+  String lockedVehicleId = '',
 }) {
   if (!providerOfferLocked || offer == null) {
     return LimousineWizardVehicleMode.discover;
+  }
+  if (lockedVehicleId.trim().isNotEmpty) {
+    return LimousineWizardVehicleMode.locked;
   }
   return limousineWizardVehicleOptions(offer).length > 1
       ? LimousineWizardVehicleMode.choose
       : LimousineWizardVehicleMode.skip;
 }
 
+bool limousineWizardSkipsVehicleStep(LimousineWizardVehicleMode mode) {
+  return mode == LimousineWizardVehicleMode.skip ||
+      mode == LimousineWizardVehicleMode.locked;
+}
+
 List<LimousineRequestWizardStep> limousineVisibleWizardSteps(
   LimousineWizardVehicleMode mode,
 ) {
-  if (mode == LimousineWizardVehicleMode.skip) {
+  if (limousineWizardSkipsVehicleStep(mode)) {
     return const <LimousineRequestWizardStep>[
       LimousineRequestWizardStep.journey,
       LimousineRequestWizardStep.details,
@@ -250,6 +362,21 @@ List<LimousineRequestWizardStep> limousineVisibleWizardSteps(
     ];
   }
   return kLimousineRequestWizardSteps;
+}
+
+LocalizedText limousineWizardPrimaryAction(
+  LimousineRequestWizardStep step,
+  LimousineWizardVehicleMode mode,
+) {
+  if (step == LimousineRequestWizardStep.journey) {
+    if (limousineWizardSkipsVehicleStep(mode)) {
+      return kLimousineJourneyContinueExtras;
+    }
+    if (mode == LimousineWizardVehicleMode.choose) {
+      return kLimousineJourneyContinueLimousine;
+    }
+  }
+  return limousineRequestWizardPrimaryAction(step);
 }
 
 LocalizedText limousineVisibleWizardStepLabel(

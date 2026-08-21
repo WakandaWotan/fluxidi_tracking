@@ -622,6 +622,7 @@ class LimousineQuoteRequest {
     this.pricingMode = '',
     this.occasion = '',
     this.pricingSnapshot = const <String, dynamic>{},
+    this.vehicleSnapshot = const <String, dynamic>{},
   });
 
   final String quoteRequestId;
@@ -650,6 +651,24 @@ class LimousineQuoteRequest {
   final String pricingMode;
   final String occasion;
   final Map<String, dynamic> pricingSnapshot;
+  final Map<String, dynamic> vehicleSnapshot;
+
+  String get publicVehicleName {
+    final name = (vehicleSnapshot['public_name'] ??
+            vehicleSnapshot['name'] ??
+            vehicleSnapshot['display_name'] ??
+            '')
+        .toString()
+        .trim();
+    return name;
+  }
+
+  String get publicVehiclePhotoUrl {
+    final url = (vehicleSnapshot['photo_url'] ?? vehicleSnapshot['photoUrl'] ?? '')
+        .toString()
+        .trim();
+    return url.startsWith('https://') ? url : '';
+  }
 
   bool get isUnread =>
       LimousineQuoteStateId.normalize(state) == LimousineQuoteStateId.requested;
@@ -743,6 +762,11 @@ class LimousineQuoteRequest {
           : (map['pricingSnapshot'] is Map
                 ? Map<String, dynamic>.from(map['pricingSnapshot'] as Map)
                 : const <String, dynamic>{}),
+      vehicleSnapshot: map['vehicle_snapshot'] is Map
+          ? Map<String, dynamic>.from(map['vehicle_snapshot'] as Map)
+          : (map['vehicleSnapshot'] is Map
+                ? Map<String, dynamic>.from(map['vehicleSnapshot'] as Map)
+                : const <String, dynamic>{}),
     );
   }
 
@@ -790,6 +814,9 @@ class LimousineQuoteRequest {
       pricingSnapshot: incoming.pricingSnapshot.isNotEmpty
           ? incoming.pricingSnapshot
           : pricingSnapshot,
+      vehicleSnapshot: incoming.vehicleSnapshot.isNotEmpty
+          ? incoming.vehicleSnapshot
+          : vehicleSnapshot,
     );
   }
 }
