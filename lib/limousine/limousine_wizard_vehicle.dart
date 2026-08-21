@@ -17,6 +17,9 @@ enum LimousineWizardVehicleMode { discover, skip, choose, locked }
 const Key kLimousineWizardVehicleListKey = ValueKey<String>(
   'limousine_wizard_vehicle_list',
 );
+const Key kLimousineQuoteSubmitTraceKey = ValueKey<String>(
+  'limousine_quote_submit_trace',
+);
 const Key kLimousineQuoteSubmitErrorKey = ValueKey<String>(
   'limousine_quote_submit_error',
 );
@@ -25,6 +28,9 @@ const Key kLimousineQuoteSubmitConfirmationKey = ValueKey<String>(
 );
 const Key kLimousineQuoteSubmitReferenceKey = ValueKey<String>(
   'limousine_quote_submit_reference',
+);
+const Key kLimousineQuoteSubmittedHomeKey = ValueKey<String>(
+  'limousine_quote_submitted_home',
 );
 const Key kLimousineQuoteSubmitLoadingKey = ValueKey<String>(
   'limousine_quote_submit_loading',
@@ -86,17 +92,38 @@ const LocalizedText kLimousineReviewLockedVehicle = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteSubmittedTitle = LocalizedText(
-  nl: 'Offerteaanvraag verzonden',
-  en: 'Quote request sent',
-  fr: 'Demande de devis envoyée',
-  es: 'Solicitud de presupuesto enviada',
+  nl: 'Uw offerteaanvraag is goed verstuurd.',
+  en: 'Your quote request was sent successfully.',
+  fr: 'Votre demande de devis a bien été envoyée.',
+  es: 'Su solicitud de presupuesto se envió correctamente.',
 );
 
 const LocalizedText kLimousineQuoteSubmittedBody = LocalizedText(
-  nl: 'Het bedrijf heeft uw aanvraag ontvangen. U kunt deze referentie later terugvinden.',
-  en: 'The company received your request. You can find this reference later.',
-  fr: 'L’entreprise a reçu votre demande. Vous pourrez retrouver cette référence plus tard.',
-  es: 'La empresa recibió su solicitud. Puede consultar esta referencia más adelante.',
+  nl: 'Het limousinebedrijf neemt zo spoedig mogelijk contact met u op.',
+  en: 'The limousine company will contact you as soon as possible.',
+  fr: 'L’entreprise de limousine vous contactera dès que possible.',
+  es: 'La empresa de limusinas se pondrá en contacto con usted lo antes posible.',
+);
+
+const LocalizedText kLimousineQuoteSubmittedHome = LocalizedText(
+  nl: 'Terug naar start',
+  en: 'Back to start',
+  fr: 'Retour à l’accueil',
+  es: 'Volver al inicio',
+);
+
+const LocalizedText kLimousineBookingSubmittedTitle = LocalizedText(
+  nl: 'Uw boekingsaanvraag is goed verzonden.',
+  en: 'Your booking request was sent successfully.',
+  fr: 'Votre demande de réservation a bien été envoyée.',
+  es: 'Su solicitud de reserva se envió correctamente.',
+);
+
+const LocalizedText kLimousineBookingSubmittedBody = LocalizedText(
+  nl: 'De aanbieder bevestigt eerst de beschikbaarheid. Dit is nog geen bevestigde rit.',
+  en: 'The provider first confirms availability. This is not a confirmed trip yet.',
+  fr: 'Le prestataire confirme d’abord la disponibilité. Ce n’est pas encore un trajet confirmé.',
+  es: 'El proveedor confirma primero la disponibilidad. Aún no es un viaje confirmado.',
 );
 
 const LocalizedText kLimousineQuoteSubmittedReference = LocalizedText(
@@ -153,6 +180,27 @@ const LocalizedText kLimousineSubmitGenericError = LocalizedText(
   en: 'The request was not sent. Try again. Your details are kept.',
   fr: 'La demande n’a pas été envoyée. Réessayez. Vos données sont conservées.',
   es: 'La solicitud no se envió. Inténtelo de nuevo. Sus datos se conservan.',
+);
+
+const LocalizedText kLimousineSubmitServerError = LocalizedText(
+  nl: 'De server kon de aanvraag niet verwerken. Probeer opnieuw. Uw gegevens blijven bewaard.',
+  en: 'The server could not process the request. Try again. Your details are kept.',
+  fr: 'Le serveur n’a pas pu traiter la demande. Réessayez. Vos données sont conservées.',
+  es: 'El servidor no pudo procesar la solicitud. Inténtelo de nuevo. Sus datos se conservan.',
+);
+
+const LocalizedText kLimousineSubmitConflictError = LocalizedText(
+  nl: 'Deze aanvraag is gewijzigd of is niet meer geldig. Controleer de gegevens en probeer opnieuw.',
+  en: 'This request changed or is no longer valid. Check the details and try again.',
+  fr: 'Cette demande a changé ou n’est plus valable. Vérifiez les données et réessayez.',
+  es: 'Esta solicitud cambió o ya no es válida. Revise los datos e inténtelo de nuevo.',
+);
+
+const LocalizedText kLimousineSubmitTechnicalRef = LocalizedText(
+  nl: 'Technische referentie',
+  en: 'Technical reference',
+  fr: 'Référence technique',
+  es: 'Referencia técnica',
 );
 
 class LimousineWizardVehicleOption {
@@ -428,6 +476,13 @@ LocalizedText limousineSubmitErrorLabel(String code) {
     case 'journey_type_not_allowed':
     case 'offer_scope_changed':
       return kLimousineOfferScopeChanged;
+    case 'conflict':
+    case 'stale_revision':
+      return kLimousineSubmitConflictError;
+    case 'invalid_response':
+    case 'internal_error':
+    case 'BOOKING_KV binding is missing':
+      return kLimousineSubmitServerError;
     default:
       return kLimousineSubmitGenericError;
   }

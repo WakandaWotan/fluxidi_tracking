@@ -533,7 +533,9 @@ void main() {
     ).readAsStringSync();
     expect(hotelLookup.contains('RATEHAWK'), isFalse);
     expect(hotelLookup.contains('ratehawk_'), isFalse);
-    expect(hotelLookup.contains('kLimousineMapboxGeocodingV5Host'), isTrue);
+    expect(hotelLookup.contains('kLimousineMapboxSearchHost'), isTrue);
+    expect(hotelLookup.contains('searchbox'), isTrue);
+    expect(hotelLookup.contains('types=poi'), isFalse);
     expect(endpoint.contains('ratehawk_hotel_id'), isTrue);
     expect(worker.contains('BOOKING_KV'), isFalse);
     expect(worker.contains('CREATE TABLE'), isFalse);

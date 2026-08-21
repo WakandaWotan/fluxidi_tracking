@@ -292,7 +292,10 @@ void main() {
     expect(controller.request?.quoteRequestId, 'limq_p3g_1');
     expect(find.byKey(kLimousineQuoteSubmitConfirmationKey), findsOneWidget);
     expect(find.textContaining('limq_p3g_1'), findsOneWidget);
-    expect(find.text('Offerteaanvraag verzonden'), findsOneWidget);
+    expect(
+      find.text('Uw offerteaanvraag is goed verstuurd.'),
+      findsOneWidget,
+    );
     controller.dispose();
   });
 

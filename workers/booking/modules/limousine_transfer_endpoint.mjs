@@ -132,6 +132,30 @@ export function sanitizeLimousineItineraryEndpoints(input) {
   };
 }
 
+export function deriveLimousineAirportPricingFacts(input) {
+  const src = asObject(input);
+  const itinerary = sanitizeLimousineItineraryEndpoints(src);
+  const from = itinerary.from_endpoint;
+  const to = itinerary.to_endpoint;
+  let airportIata = safeText(src.airport_iata ?? src.airportIata, 8).toUpperCase();
+  let direction = safeText(
+    src.airport_direction ?? src.direction ?? itinerary.airport_direction,
+    24,
+  );
+  if (to?.kind === "airport" && to.iata_code) {
+    if (!airportIata) airportIata = String(to.iata_code).toUpperCase();
+    if (!direction) direction = "to_airport";
+  } else if (from?.kind === "airport" && from.iata_code) {
+    if (!airportIata) airportIata = String(from.iata_code).toUpperCase();
+    if (!direction) direction = "from_airport";
+  }
+  return {
+    airport_iata: airportIata,
+    direction,
+    itinerary,
+  };
+}
+
 export function attachLimousineItineraryEndpoints(target, input) {
   const next = { ...asObject(target) };
   const itinerary = sanitizeLimousineItineraryEndpoints(input);

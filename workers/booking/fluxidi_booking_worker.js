@@ -149,6 +149,14 @@ import {
   validateLimousineQuoteRequest as _validateLimousineQuoteRequest,
 } from "./modules/limousine_manual_quote.mjs";
 import {
+  attachLimousineBookObservability as _attachLimousineBookObservability,
+  createLimousineSubmitRequestId as _createLimousineSubmitRequestId,
+  LIMOUSINE_SUBMIT_STAGES as _LIMOUSINE_SUBMIT_STAGES,
+  limousineQuoteSuccessBody as _limousineQuoteSuccessBody,
+  limousineSubmitErrorBody as _limousineSubmitErrorBody,
+  logLimousineSubmit as _logLimousineSubmit,
+} from "./modules/limousine_submit_observability.mjs";
+import {
   limousineAcceptanceBindingMatches as _limousineAcceptanceBindingMatches,
   sealLimousineAcceptance as _sealLimousineAcceptance,
   unsealLimousineAcceptance as _unsealLimousineAcceptance,
@@ -1252,20 +1260,31 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
 /// re-loads the authoritative offer, recalculates routes, recomputes the
 /// complete price and compares it with the quote the client is booking against.
 /// Client totals are ignored entirely.
-async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }) {
+async function _prepareLimousineBooking(env, scope, payload, { from, to, stops, requestId } = {}) {
   const unavailable = (error, extra = {}) => ({
     ok: false,
-    response: { ok: false, error, service_category: "limousine", service_type: "limousine", ...extra },
+    response: {
+      ok: false,
+      error,
+      stage: extra.stage || extra.reason || _LIMOUSINE_SUBMIT_STAGES.PUBLISHED_OFFER,
+      request_id: requestId || extra.request_id || "",
+      service_category: "limousine",
+      service_type: "limousine",
+      ...extra,
+    },
   });
   if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
-    return unavailable("limousine_unavailable");
+    return unavailable("limousine_unavailable", { stage: _LIMOUSINE_SUBMIT_STAGES.ALLOWLIST });
   }
 
   const offerId = String(payload?.offer_id ?? payload?.offerId ?? "").trim();
   const { offer } = await _loadAuthoritativeLimousineOffer(env, scope, offerId);
   const published = _assertLimousineOfferStillPublished(offer);
   if (!published.ok) {
-    return unavailable("limousine_unavailable", { reason: published.reason || "offer_unpublished" });
+    return unavailable("limousine_unavailable", {
+      reason: published.reason || "offer_unpublished",
+      stage: _LIMOUSINE_SUBMIT_STAGES.PUBLISHED_OFFER,
+    });
   }
   const classified = _classifyLimousinePublishedPricingMode(offer);
   if (!classified.ok || classified.intent_kind !== _LIMOUSINE_INTENT_KIND.BOOKING_REQUEST) {
@@ -1278,7 +1297,10 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
   ).trim();
   const vehicleScope = _assertLimousineOfferVehicleScope(offer, selectedVehicleId);
   if (!vehicleScope.ok) {
-    return unavailable("limousine_unavailable", { reason: vehicleScope.reason });
+    return unavailable("limousine_unavailable", {
+      reason: vehicleScope.reason,
+      stage: _LIMOUSINE_SUBMIT_STAGES.VEHICLE_SCOPE,
+    });
   }
 
   if (classified.pricing_mode === "hourly" || classified.pricing_mode === "package") {
@@ -1292,6 +1314,7 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
     return unavailable("journey_type_not_allowed", {
       reason: "journey_type_not_allowed",
       field: "journey_type",
+      stage: _LIMOUSINE_SUBMIT_STAGES.JOURNEY_SCOPE,
     });
   }
   const itinerary = _attachLimousineItineraryEndpoints({}, payload);
@@ -1299,6 +1322,7 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
     return unavailable("invalid_request", {
       reason: "invalid_endpoint",
       field: "to_endpoint",
+      stage: _LIMOUSINE_SUBMIT_STAGES.ENDPOINT,
     });
   }
   Object.assign(payload, itinerary);
@@ -1387,9 +1411,17 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
   if (!total || total.ok !== true) {
     const reason = total?.reason || "unavailable";
     if (total?.manual_quote_required === true) {
-      return unavailable("limousine_manual_quote_required", { reason });
+      return unavailable("limousine_manual_quote_required", {
+        reason,
+        stage: "authoritative_total",
+        substage: reason,
+      });
     }
-    return unavailable("limousine_unavailable", { reason });
+    return unavailable("limousine_unavailable", {
+      reason,
+      stage: "authoritative_total",
+      substage: reason,
+    });
   }
 
   // 4) Compare with the quote the client is booking against. A stale or changed
@@ -1496,6 +1528,9 @@ async function _resolveAuthoritativeLimousineTotal(env, scope, body, { mainRoute
       direction: body.airport_direction ?? body.direction,
       return_direction: body.return_direction ?? body.returnDirection,
       airport_iata: body.airport_iata ?? body.airportIata,
+      airport_direction: body.airport_direction ?? body.airportDirection,
+      from_endpoint: body.from_endpoint ?? body.fromEndpoint,
+      to_endpoint: body.to_endpoint ?? body.toEndpoint,
       currency: body.currency,
       requested_duration_minutes:
         body.requested_duration_minutes ?? body.requestedDurationMinutes,
@@ -44243,13 +44278,39 @@ export default {
             });
           }
         }
+        const limousineBookRequestId = _isLimousineServiceRequest(normalizedBody)
+          ? _createLimousineSubmitRequestId()
+          : "";
         const out = await handleBooking(normalizedBody, env, request, {
           trustedPublicPartnerScope: isDriverAppBooking ? null : routedPublicPartner,
           explicitAssignmentTrusted: explicitAssignmentTrust.trusted === true,
           explicitAssignmentTrustSource: explicitAssignmentTrust.source || "",
+          limousineRequestId: limousineBookRequestId,
         });
         // Build tag helps verify correct deployment
         if (out && typeof out === "object") out.build = "v15-2026-01-20-gcal-hardfix";
+        if (limousineBookRequestId) {
+          _attachLimousineBookObservability(out, {
+            requestId: limousineBookRequestId,
+            isLimousine: true,
+          });
+          _logLimousineSubmit({
+            request_id: limousineBookRequestId,
+            route: "/book",
+            service_type: "limousine",
+            intent_kind: "booking_request",
+            public_partner_id: requestedPublicPartnerId || "",
+            offer_id: normalizedBody?.offer_id || normalizedBody?.offerId || "",
+            vehicle_id: normalizedBody?.vehicle_id || normalizedBody?.vehicleId || "",
+            journey_type: normalizedBody?.journey_type || normalizedBody?.journeyType || "",
+            tenant: requestScope.tenant_id,
+            company: requestScope.company_id,
+            stage: out?.stage || (out?.ok === true ? _LIMOUSINE_SUBMIT_STAGES.RESPONSE : _LIMOUSINE_SUBMIT_STAGES.VALIDATION),
+            http_status: out?.ok === true ? 200 : (out?.error === "payment_checkout_unavailable" ? 502 : 400),
+            error: out?.error || "",
+            booking_id: out?.booking_id || out?.bookingId || "",
+          });
+        }
         const statusCode = out?.ok === true
           ? 200
           : (out?.error === "payment_checkout_unavailable" ? 502 : 400);
@@ -45599,23 +45660,63 @@ export default {
       // performs zero reads/writes while the gate is off.
       // =====================================================================
       if (url.pathname === "/limousine/quote-requests" && request.method === "POST") {
+        const requestId = _createLimousineSubmitRequestId();
+        const quoteTrace = {
+          request_id: requestId,
+          route: "/limousine/quote-requests",
+          service_type: "limousine",
+          intent_kind: "quote_request",
+        };
+        const failQuote = (status, error, stage, extra = {}) => {
+          _logLimousineSubmit({
+            ...quoteTrace,
+            ...extra,
+            public_partner_id: extra.public_partner_id || "",
+            offer_id: extra.offer_id || "",
+            vehicle_id: extra.vehicle_id || "",
+            journey_type: extra.journey_type || "",
+            tenant: extra.tenant || "",
+            company: extra.company || "",
+            error,
+            stage,
+            http_status: status,
+          });
+          return json(_limousineSubmitErrorBody({ error, stage, requestId, extra }), status);
+        };
         if (!_limousineManualQuoteGateEnabled(env)) {
-          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+          return failQuote(404, "manual_quote_gate_off", _LIMOUSINE_SUBMIT_STAGES.GATE, {
+            gate_ok: false,
+          });
         }
-        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        if (!env.BOOKING_KV) {
+          return failQuote(500, "BOOKING_KV binding is missing", _LIMOUSINE_SUBMIT_STAGES.PERSIST_PRIMARY);
+        }
         const body = await safeJson(request);
+        quoteTrace.offer_id = String(body?.offer_id ?? body?.offerId ?? "").trim();
+        quoteTrace.vehicle_id = String(body?.vehicle_id ?? body?.vehicleId ?? "").trim();
+        quoteTrace.journey_type = String(body?.journey_type ?? body?.journeyType ?? "").trim();
         const requestedPartnerId = _extractRequestedPublicPartnerId({ url, body });
+        quoteTrace.public_partner_id = String(requestedPartnerId || "").trim();
         let scope = null;
         if (requestedPartnerId) {
           const routed = await resolvePublicPartnerBookingScope(env, requestedPartnerId);
           if (!routed?.ok) {
-            return json({ ok: false, error: routed?.error || "invalid public partner" }, routed?.status || 400);
+            return failQuote(
+              routed?.status || 400,
+              routed?.error || "invalid public partner",
+              _LIMOUSINE_SUBMIT_STAGES.PUBLISHED_PARTNER,
+              { published_partner_ok: false, public_partner_id: requestedPartnerId },
+            );
           }
           scope = { tenant_id: routed.tenant_id, company_id: routed.company_id, hasScope: true };
         } else {
           scope = resolveExplicitBookingRequestScope({ request, url, body, allowLegacyFallback: false });
         }
-        if (!scope?.hasScope) return json(missingTenantScopeError(), 400);
+        if (!scope?.hasScope) {
+          return failQuote(400, missingTenantScopeError()?.error || "missing_tenant_scope", _LIMOUSINE_SUBMIT_STAGES.SCOPE);
+        }
+        quoteTrace.tenant = scope.tenant_id;
+        quoteTrace.company = scope.company_id;
         if (!requestedPartnerId) {
           const companySession = await _loadCompanySessionFromRequest(request, env);
           const sessionCompany = sanitizeTenantString(companySession?.company_id, 80);
@@ -45625,14 +45726,20 @@ export default {
             sessionCompany !== sanitizeTenantString(scope.company_id, 80) ||
             sessionTenant !== sanitizeTenantString(scope.tenant_id, 80)
           ) {
-            return _limousineAllowlistDenied();
+            return failQuote(404, "not_found", _LIMOUSINE_SUBMIT_STAGES.ALLOWLIST, {
+              allowlist_ok: false,
+            });
           }
         }
-        if (!_resolveLimousineTransactionGate(env, {
+        const gate = _resolveLimousineTransactionGate(env, {
           kind: "manual_quote",
           companyId: scope.company_id,
-        }).ok) {
-          return _limousineAllowlistDenied();
+        });
+        if (!gate.ok) {
+          return failQuote(404, "not_found", _LIMOUSINE_SUBMIT_STAGES.ALLOWLIST, {
+            gate_ok: false,
+            allowlist_ok: false,
+          });
         }
         // New requests are blocked for suspended companies, exactly like /book.
         const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
@@ -45663,7 +45770,26 @@ export default {
           publishedVehicles,
         });
         if (!validated.ok) {
-          return json({ ok: false, error: validated.reason, field: validated.field }, 400);
+          const reason = String(validated.reason || "invalid_request");
+          const stage =
+            reason === "vehicle_scope_mismatch" || reason === "vehicle_not_published"
+              ? _LIMOUSINE_SUBMIT_STAGES.VEHICLE_SCOPE
+              : reason === "journey_type_not_allowed"
+                ? _LIMOUSINE_SUBMIT_STAGES.JOURNEY_SCOPE
+                : reason === "unknown_offer" || reason === "offer_unpublished" || reason === "offer_not_manual_quotable"
+                  ? _LIMOUSINE_SUBMIT_STAGES.PUBLISHED_OFFER
+                  : reason === "not_eligible"
+                    ? _LIMOUSINE_SUBMIT_STAGES.ALLOWLIST
+                    : reason === "invalid_endpoint"
+                      ? _LIMOUSINE_SUBMIT_STAGES.ENDPOINT
+                      : _LIMOUSINE_SUBMIT_STAGES.VALIDATION;
+          return failQuote(400, reason, stage, {
+            field: validated.field,
+            published_offer_ok: stage !== _LIMOUSINE_SUBMIT_STAGES.PUBLISHED_OFFER,
+            vehicle_scope_ok: stage !== _LIMOUSINE_SUBMIT_STAGES.VEHICLE_SCOPE,
+            journey_scope_ok: stage !== _LIMOUSINE_SUBMIT_STAGES.JOURNEY_SCOPE,
+            validation_ok: false,
+          });
         }
         const nowIso = new Date().toISOString();
         const customerSession = await _loadCustomerSessionFromRequest(request, env);
@@ -45686,15 +45812,31 @@ export default {
           if (existing && _limousineQuoteScopeMatches(existing, scope)) {
             await _upsertLimousineInboxIndex(env, existing);
             const replayed = await _resealLimousineStatusRef(env, existing);
+            const quoteRequestId = existing.quote_request_id;
+            _logLimousineSubmit({
+              ...quoteTrace,
+              gate_ok: true,
+              allowlist_ok: true,
+              published_partner_ok: true,
+              published_offer_ok: true,
+              vehicle_scope_ok: true,
+              journey_scope_ok: true,
+              validation_ok: true,
+              persist_primary_ok: true,
+              persist_inbox_ok: true,
+              stage: _LIMOUSINE_SUBMIT_STAGES.RESPONSE,
+              http_status: 200,
+              quote_request_id: quoteRequestId,
+            });
             return json(
-              {
-                ok: true,
+              _limousineQuoteSuccessBody({
+                quoteRequestId,
+                requestId,
+                quoteRequest: _publicLimousineQuoteView(existing),
+                statusRef: replayed?.reference,
+                statusExpiresAt: replayed?.expires_at,
                 idempotent: true,
-                quote_request: _publicLimousineQuoteView(existing),
-                ...(replayed
-                  ? { status_ref: replayed.reference, status_expires_at: replayed.expires_at }
-                  : {}),
-              },
+              }),
               200,
             );
           }
@@ -45719,7 +45861,16 @@ export default {
           },
           issuedAtIso: nowIso,
         });
-        if (!sealedStatus.ok) return json({ ok: false, error: sealedStatus.error }, 500);
+        if (!sealedStatus.ok) {
+          return failQuote(
+            500,
+            sealedStatus.error || "internal_error",
+            sealedStatus.error === "status_secret_missing"
+              ? "status_sign"
+              : _LIMOUSINE_SUBMIT_STAGES.PERSIST_PRIMARY,
+            { persist_primary_ok: false, persist_inbox_ok: false },
+          );
+        }
         let record = {
           quote_request_id: quoteRequestId,
           tenant_id: scope.tenant_id,
@@ -45752,15 +45903,38 @@ export default {
             nowIso,
           }),
         );
-        await _saveLimousineQuoteRecord(env, record);
-        await env.BOOKING_KV.put(requestKey, quoteRequestId, { expirationTtl: 60 * 60 * 24 * 30 });
+        try {
+          await _saveLimousineQuoteRecord(env, record);
+          await env.BOOKING_KV.put(requestKey, quoteRequestId, { expirationTtl: 60 * 60 * 24 * 30 });
+        } catch (_) {
+          return failQuote(500, "internal_error", _LIMOUSINE_SUBMIT_STAGES.PERSIST_PRIMARY, {
+            persist_primary_ok: false,
+            persist_inbox_ok: false,
+          });
+        }
+        _logLimousineSubmit({
+          ...quoteTrace,
+          gate_ok: true,
+          allowlist_ok: true,
+          published_partner_ok: true,
+          published_offer_ok: true,
+          vehicle_scope_ok: true,
+          journey_scope_ok: true,
+          validation_ok: true,
+          persist_primary_ok: true,
+          persist_inbox_ok: true,
+          stage: _LIMOUSINE_SUBMIT_STAGES.RESPONSE,
+          http_status: 200,
+          quote_request_id: quoteRequestId,
+        });
         return json(
-          {
-            ok: true,
-            quote_request: _publicLimousineQuoteView(record),
-            status_ref: sealedStatus.reference,
-            status_expires_at: sealedStatus.expires_at,
-          },
+          _limousineQuoteSuccessBody({
+            quoteRequestId,
+            requestId,
+            quoteRequest: _publicLimousineQuoteView(record),
+            statusRef: sealedStatus.reference,
+            statusExpiresAt: sealedStatus.expires_at,
+          }),
           200,
         );
       }
@@ -65786,7 +65960,12 @@ async function handleBooking(payload, env, request, options = {}) {
         kind: "book",
         companyId: _limousineTrustedBookCompany,
       }).ok) {
-        return { ok: false, error: "limousine_unavailable" };
+        return {
+          ok: false,
+          error: "limousine_unavailable",
+          stage: _LIMOUSINE_SUBMIT_STAGES.GATE,
+          request_id: options?.limousineRequestId || "",
+        };
       }
       if (_limousineAcceptanceReference) {
         // LIMOUSINE-MARKETPLACE-P2C2: accepted MANUAL quote. The human-approved
@@ -65805,6 +65984,7 @@ async function handleBooking(payload, env, request, options = {}) {
           from,
           to,
           stops,
+          requestId: options?.limousineRequestId || "",
         });
         if (!limousinePreflight.ok) return limousinePreflight.response;
         _limousineAccepted = limousinePreflight.accepted;

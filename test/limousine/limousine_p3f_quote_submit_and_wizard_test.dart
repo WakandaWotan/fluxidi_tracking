@@ -132,6 +132,8 @@ class _Gateway with LimousineCustomerQuoteGateway {
       throw const LimousineCustomerQuoteException(
         code: 'invalid_request',
         statusCode: 400,
+        stage: 'validation',
+        requestId: 'lsub_p3f_err',
       );
     }
     return LimousineQuoteCreateResult(
@@ -291,6 +293,17 @@ void main() {
     expect(find.byKey(kLimousineQuoteSubmitConfirmationKey), findsOneWidget);
     expect(find.byKey(kLimousineQuoteSubmitReferenceKey), findsOneWidget);
     expect(find.textContaining('limq_p3f_1'), findsOneWidget);
+    expect(
+      find.textContaining('Uw offerteaanvraag is goed verstuurd.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Het limousinebedrijf neemt zo spoedig mogelijk contact met u op.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(kLimousineQuoteSubmittedHomeKey), findsOneWidget);
     controller.dispose();
   });
 
@@ -341,6 +354,33 @@ void main() {
     expect(find.byKey(kLimousineQuoteSubmitErrorKey), findsOneWidget);
     expect(find.byKey(kLimousineCustomerSubmitKey), findsOneWidget);
     expect(find.byKey(kLimousineQuoteSubmitConfirmationKey), findsNothing);
+    expect(controller.lastRequestId, 'lsub_p3f_err');
+    expect(find.textContaining('lsub_p3f_err'), findsOneWidget);
+    controller.dispose();
+  });
+
+  testWidgets('confirmed success resets only the limousine wizard', (
+    tester,
+  ) async {
+    final gateway = _Gateway();
+    final controller = LimousineCustomerQuoteController(gateway: gateway)
+      ..applyShowroomSelection(
+        publicPartnerId: 'p1',
+        offer: _offer(),
+        companyName: 'Coachline',
+      )
+      ..updateDraft(_validDraft())
+      ..goTo(LimousineCustomerQuoteStep.reviewRequest);
+    await _pumpReview(tester, controller: controller, gateway: gateway);
+    await tester.tap(find.byKey(kLimousineCustomerSubmitKey));
+    await tester.pumpAndSettle();
+    expect(controller.request?.quoteRequestId, 'limq_p3f_1');
+    await tester.tap(find.byKey(kLimousineQuoteSubmittedHomeKey));
+    await tester.pumpAndSettle();
+    expect(controller.request, isNull);
+    expect(controller.draft.offerId, isEmpty);
+    expect(controller.step, LimousineCustomerQuoteStep.journey);
+    expect(controller.phase, LimousineCustomerQuotePhase.draft);
     controller.dispose();
   });
 
@@ -576,13 +616,13 @@ void main() {
     expect(kLimousineHotelMinQueryLength, 2);
     expect(kLimousineEventMinQueryLength, 2);
     expect(
-      limousineMapboxHotelPlacesUri(
-        query: 'ho',
+      limousineMapboxSearchCategoryUri(
+        category: 'hotel',
         token: 'tok',
-        proximityLat: 51.05,
-        proximityLng: 3.72,
-      ).toString(),
-      contains('proximity=3.720000,51.050000'),
+        latitude: 51.05,
+        longitude: 3.72,
+      ).queryParameters['proximity'],
+      '3.72,51.05',
     );
   });
 }

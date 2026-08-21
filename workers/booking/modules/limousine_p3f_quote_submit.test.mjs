@@ -224,6 +224,8 @@ test("p3f persist + inbox: one request is tenant/company scoped and listed", asy
   assert.equal(created.status, 200, JSON.stringify(createdJson));
   assert.equal(createdJson.ok, true);
   assert.ok(createdJson.quote_request?.quote_request_id);
+  assert.equal(createdJson.quote_request_id, createdJson.quote_request.quote_request_id);
+  assert.match(String(createdJson.request_id || ""), /^lsub_/);
   assert.equal(createdJson.quote_request.service_type, "limousine");
   const quoteId = createdJson.quote_request.quote_request_id;
   assert.match(quoteId, /^limq_/);
@@ -287,6 +289,9 @@ test("p3f rejects wrong vehicle/journey and unpublished drafts", async () => {
   const wrongVehicleJson = await wrongVehicle.json();
   assert.equal(wrongVehicle.status, 400, JSON.stringify(wrongVehicleJson));
   assert.equal(wrongVehicleJson.error, "vehicle_scope_mismatch");
+  assert.equal(wrongVehicleJson.ok, false);
+  assert.equal(wrongVehicleJson.stage, "vehicle_scope");
+  assert.match(String(wrongVehicleJson.request_id || ""), /^lsub_/);
 
   const wrongJourney = await worker.fetch(
     jsonReq("/limousine/quote-requests", {

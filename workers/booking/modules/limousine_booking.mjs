@@ -9,6 +9,7 @@
 // exactly once with the shared Fluxidi €0.10 leg finalizer.
 
 import { finalizeLegPricingInclVat } from "./leg_pricing_finalize.mjs";
+import { deriveLimousineAirportPricingFacts } from "./limousine_transfer_endpoint.mjs";
 import {
   LIMOUSINE_MOBILISATION_METHODS,
   LIMOUSINE_PRICE_PRESENTATIONS,
@@ -56,6 +57,7 @@ export const LIMOUSINE_BOOK_REASONS = Object.freeze({
   QUOTE_MISMATCH: "quote_refresh_required",
   MISSING_QUOTE_REFERENCE: "missing_quote_reference",
   JOURNEY_TYPE_NOT_ALLOWED: "journey_type_not_allowed",
+  FIXED_FARE_UNMATCHED: "fixed_fare_unmatched",
 });
 
 function asObject(raw) {
@@ -128,7 +130,24 @@ function matchFixedRule(offer, { journeyType, direction, airportIata, nowMs }) {
     if (!ruleActive(rule, nowMs)) return false;
     return true;
   });
-  if (candidates.length === 0) return { rule: null, ambiguous: false };
+  if (candidates.length === 0) {
+    const specificExists = offer.fixed_rules.some((rule) => {
+      if (!rule.enabled || rule.amount_cents == null || rule.amount_cents <= 0) return false;
+      return rule.journey_type === journeyType && ruleActive(rule, nowMs);
+    });
+    if (specificExists) return { rule: null, ambiguous: false };
+    const generic = offer.fixed_rules.filter((rule) => {
+      if (!rule.enabled) return false;
+      if (rule.amount_cents == null || rule.amount_cents <= 0) return false;
+      if (!ruleActive(rule, nowMs)) return false;
+      const ruleJourney = normalizeLimousineToken(rule.journey_type);
+      if (ruleJourney && ruleJourney !== "point_to_point") return false;
+      return offerAllowsPublishedJourneyType(offer, journeyType);
+    });
+    if (generic.length === 1) return { rule: generic[0], ambiguous: false };
+    if (generic.length > 1) return { rule: null, ambiguous: true };
+    return { rule: null, ambiguous: false };
+  }
   if (candidates.length > 1) {
     const distinct = new Set(candidates.map((r) => r.rule_id));
     if (distinct.size !== candidates.length) return { rule: null, ambiguous: true };
@@ -463,7 +482,7 @@ function priceJourneyLeg(offer, { journeyType, direction, airportIata, route, re
     };
   }
 
-  return { ok: false, reason: LIMOUSINE_BOOK_REASONS.UNAVAILABLE };
+  return { ok: false, reason: LIMOUSINE_BOOK_REASONS.FIXED_FARE_UNMATCHED };
 }
 
 // ---------------------------------------------------------------------------
@@ -524,14 +543,17 @@ export function composeLimousineTotal({
   if (offer.currency && offer.currency !== currency) return failed(R.CURRENCY_MISMATCH);
 
   const journeyType = normalizeLimousineToken(request.journey_type);
+  const airportFacts = deriveLimousineAirportPricingFacts(request);
+  const direction = airportFacts.direction || request.direction;
+  const airportIata = airportFacts.airport_iata || request.airport_iata;
   const components = [];
   const legs = [];
 
   // Outbound leg.
   const main = priceJourneyLeg(offer, {
     journeyType,
-    direction: request.direction,
-    airportIata: request.airport_iata,
+    direction,
+    airportIata,
     route: routes.main,
     requestedDurationMinutes: request.requested_duration_minutes,
     currency,
@@ -558,12 +580,12 @@ export function composeLimousineTotal({
       journeyType,
       // Direction-specific fixed rule for the return leg.
       direction: normalizeLimousineToken(request.return_direction) ||
-        (normalizeLimousineToken(request.direction) === "to_airport"
+        (normalizeLimousineToken(direction) === "to_airport"
           ? "from_airport"
-          : normalizeLimousineToken(request.direction) === "from_airport"
+          : normalizeLimousineToken(direction) === "from_airport"
             ? "to_airport"
             : ""),
-      airportIata: request.airport_iata,
+      airportIata,
       route: routes.return,
       requestedDurationMinutes: request.return_requested_duration_minutes,
       currency,

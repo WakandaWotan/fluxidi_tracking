@@ -22,10 +22,10 @@ const LocalizedText kLimousineHotelLoading = LocalizedText(
 );
 
 const LocalizedText kLimousineHotelEmpty = LocalizedText(
-  nl: 'Geen hotel gevonden. Probeer een andere naam of gebruik een handmatig adres.',
-  en: 'No hotel found. Try another name or enter a manual address.',
-  fr: 'Aucun hôtel trouvé. Essayez un autre nom ou saisissez une adresse manuelle.',
-  es: 'No se encontró ningún hotel. Pruebe otro nombre o use una dirección manual.',
+  nl: 'Geen hotels gevonden. Probeer een andere naam of plaats, of voer het adres handmatig in.',
+  en: 'No hotels found. Try another name or place, or enter the address manually.',
+  fr: 'Aucun hôtel trouvé. Essayez un autre nom ou lieu, ou saisissez l’adresse manuellement.',
+  es: 'No se encontraron hoteles. Pruebe otro nombre o lugar, o introduzca la dirección manualmente.',
 );
 
 const LocalizedText kLimousineHotelError = LocalizedText(
@@ -35,11 +35,18 @@ const LocalizedText kLimousineHotelError = LocalizedText(
   es: 'La búsqueda de hoteles no está disponible temporalmente. Comprueba tu conexión o introduce una dirección manual.',
 );
 
+const LocalizedText kLimousineHotelAuthError = LocalizedText(
+  nl: 'Hotelzoeken is niet geautoriseerd. Vul het adres handmatig in of probeer later opnieuw.',
+  en: 'Hotel search is not authorized. Enter the address manually or try again later.',
+  fr: 'La recherche d’hôtel n’est pas autorisée. Saisissez l’adresse manuellement ou réessayez plus tard.',
+  es: 'La búsqueda de hoteles no está autorizada. Introduzca la dirección manualmente o inténtelo más tarde.',
+);
+
 const LocalizedText kLimousineHotelManual = LocalizedText(
-  nl: 'Adres handmatig invoeren',
-  en: 'Enter the address manually',
-  fr: 'Saisir l’adresse manuellement',
-  es: 'Introducir la dirección manualmente',
+  nl: 'Hotel niet gevonden? Adres handmatig invoeren',
+  en: 'Hotel not found? Enter the address manually',
+  fr: 'Hôtel introuvable ? Saisir l’adresse manuellement',
+  es: '¿Hotel no encontrado? Introducir la dirección manualmente',
 );
 
 const LocalizedText kLimousineHotelRetry = LocalizedText(
@@ -62,6 +69,27 @@ const Key kLimousineHotelSelectedCardKey = ValueKey<String>(
 Key limousineHotelSuggestionKey(int index) =>
     ValueKey<String>('limousine_hotel_suggestion_$index');
 
+String _hotelSuggestionSubtitle(LimousineHotelSuggestion suggestion) {
+  final parts = <String>[suggestion.formattedAddress];
+  final place = [
+    suggestion.city,
+    suggestion.postcode,
+    suggestion.countryCode,
+  ].where((part) => (part ?? '').trim().isNotEmpty).join(' ');
+  if (place.isNotEmpty && !suggestion.formattedAddress.contains(place)) {
+    parts.add(place);
+  }
+  final distance = suggestion.distanceMeters;
+  if (distance != null && distance.isFinite && distance >= 0) {
+    parts.add(
+      distance >= 1000
+          ? '${(distance / 1000).toStringAsFixed(1)} km'
+          : '${distance.round()} m',
+    );
+  }
+  return parts.where((part) => part.trim().isNotEmpty).join(' · ');
+}
+
 class LimousineHotelFieldController extends ChangeNotifier {
   LimousineHotelFieldController({
     required this.lookup,
@@ -81,6 +109,7 @@ class LimousineHotelFieldController extends ChangeNotifier {
   bool loading = false;
   bool searched = false;
   bool hadError = false;
+  String lastErrorCode = '';
   List<LimousineHotelSuggestion> suggestions = const [];
   LimousineTransferEndpoint? selected;
 
@@ -94,6 +123,7 @@ class LimousineHotelFieldController extends ChangeNotifier {
       loading = false;
       searched = false;
       hadError = false;
+      lastErrorCode = '';
       suggestions = const [];
       notifyListeners();
       return;
@@ -133,17 +163,29 @@ class LimousineHotelFieldController extends ChangeNotifier {
     loading = false;
     searched = true;
     hadError = result.hadError;
+    lastErrorCode = result.errorCode;
     suggestions = result.suggestions;
     notifyListeners();
   }
 
-  void accept(LimousineHotelSuggestion suggestion) {
-    selected = suggestion.toEndpoint();
+  Future<void> accept(LimousineHotelSuggestion suggestion) async {
+    final id = ++_requestId;
+    loading = true;
+    hadError = false;
+    notifyListeners();
+    final resolved = await lookup.resolveSuggestion(suggestion);
+    if (id != _requestId) return;
+    if (resolved == null || !resolved.isUsable) {
+      loading = false;
+      hadError = true;
+      notifyListeners();
+      return;
+    }
+    selected = resolved.toEndpoint();
+    final label = '${resolved.name} — ${resolved.formattedAddress}';
     textController.value = TextEditingValue(
-      text: '${suggestion.name} — ${suggestion.formattedAddress}',
-      selection: TextSelection.collapsed(
-        offset: '${suggestion.name} — ${suggestion.formattedAddress}'.length,
-      ),
+      text: label,
+      selection: TextSelection.collapsed(offset: label.length),
     );
     suggestions = const [];
     searched = false;
@@ -273,7 +315,10 @@ class LimousineHotelField extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        kLimousineHotelError.of(language),
+                        (controller.lastErrorCode == 'authorization'
+                                ? kLimousineHotelAuthError
+                                : kLimousineHotelError)
+                            .of(language),
                         style: TextStyle(color: tokens.danger),
                       ),
                       TextButton(
@@ -317,7 +362,7 @@ class LimousineHotelField extends StatelessWidget {
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           subtitle: Text(
-                            controller.suggestions[i].formattedAddress,
+                            _hotelSuggestionSubtitle(controller.suggestions[i]),
                           ),
                           onTap: () =>
                               controller.accept(controller.suggestions[i]),

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 
 import {
   attachLimousineItineraryEndpoints,
+  deriveLimousineAirportPricingFacts,
   sanitizeLimousineTransferEndpoint,
 } from "./limousine_transfer_endpoint.mjs";
 import {
@@ -103,6 +104,30 @@ test("typed airport and hotel endpoints sanitize without RateHawk", function () 
     }),
     null,
   );
+});
+
+test("airport pricing facts come from typed endpoints when top-level IATA is absent", () => {
+  const facts = deriveLimousineAirportPricingFacts({
+    from_endpoint: {
+      kind: "address",
+      display_name: "Korenmarkt 1, Gent",
+      formatted_address: "Korenmarkt 1, Gent",
+      latitude: 51.05,
+      longitude: 3.72,
+    },
+    to_endpoint: {
+      kind: "airport",
+      display_name: "Brussels Airport (BRU)",
+      formatted_address: "Brussels Airport",
+      airport_name: "Brussels Airport",
+      iata_code: "bru",
+      country_code: "be",
+      latitude: 50.901,
+      longitude: 4.484,
+    },
+  });
+  assert.equal(facts.airport_iata, "BRU");
+  assert.equal(facts.direction, "to_airport");
 });
 
 test("quote and book snapshots keep immutable typed itinerary", function () {

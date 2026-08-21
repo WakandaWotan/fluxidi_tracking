@@ -38,12 +38,14 @@ class LimousineCustomerStatusView extends StatelessWidget {
     required this.language,
     required this.palette,
     this.onOpenBookingReview,
+    this.onReturnToCustomerStart,
   });
 
   final LimousineCustomerQuoteController controller;
   final AppLanguage language;
   final CustomerThemePalette palette;
   final VoidCallback? onOpenBookingReview;
+  final VoidCallback? onReturnToCustomerStart;
 
   String _t(LocalizedText text) => text.of(language);
 
@@ -110,6 +112,15 @@ class LimousineCustomerStatusView extends StatelessWidget {
                   ),
                 const SizedBox(height: 8),
                 Text(_t(kLimousineCustomerWaitingCopy)),
+                const SizedBox(height: 12),
+                FilledButton(
+                  key: kLimousineQuoteSubmittedHomeKey,
+                  onPressed: () {
+                    controller.resetAfterConfirmedSubmit();
+                    onReturnToCustomerStart?.call();
+                  },
+                  child: Text(_t(kLimousineQuoteSubmittedHome)),
+                ),
               ],
             ),
           ),

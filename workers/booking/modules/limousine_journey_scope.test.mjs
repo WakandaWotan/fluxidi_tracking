@@ -289,7 +289,8 @@ test("quote success still creates no booking side effects in the validator", () 
 
 test("worker fail-closes forged types on quote-requests and /book before writes", () => {
   const worker = readFileSync(join(__dirname, "../fluxidi_booking_worker.js"), "utf8");
-  assert.match(worker, /error: validated\.reason, field: validated\.field \}, 400\)/);
+  assert.match(worker, /failQuote\(400, reason/);
+  assert.match(worker, /field: validated\.field/);
   assert.match(worker, /unavailable\("journey_type_not_allowed"/);
   assert.match(worker, /_offerAllowsPublishedJourneyType\(offer, journeyType\)/);
   assert.match(worker, /async function _loadAuthoritativeLimousineOffer\(env, scope, offerId\)/);

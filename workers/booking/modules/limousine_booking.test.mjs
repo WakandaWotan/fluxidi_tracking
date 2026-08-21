@@ -427,6 +427,112 @@ test("17) roundtrip prices both legs without duplicating mobilisation", () => {
   assert.equal(total.total_incl_vat_cents, 18000 + 17000 + 4000 + 4000);
 });
 
+test("airport fixed fare uses endpoint IATA when top-level airport_iata is absent", () => {
+  const total = composeLimousineTotal({
+    section: section({
+      journey_types: ["airport_transfer"],
+      fixed_rules: [
+        {
+          ...FIXED_RULE,
+          rule_id: "r_bru",
+          journey_type: "airport_transfer",
+          airport_iata: "BRU",
+          direction: "to_airport",
+          amount_cents: 22500,
+        },
+      ],
+    }),
+    offerId: "off_1",
+    request: {
+      service_class_id: "executive_sedan",
+      journey_type: "airport_transfer",
+      currency: "EUR",
+      to_endpoint: {
+        kind: "airport",
+        display_name: "Brussels Airport (BRU)",
+        formatted_address: "Brussels Airport",
+        airport_name: "Brussels Airport",
+        iata_code: "BRU",
+        country_code: "BE",
+        latitude: 50.901,
+        longitude: 4.484,
+      },
+      from_endpoint: {
+        kind: "address",
+        display_name: "Korenmarkt 1, Gent",
+        formatted_address: "Korenmarkt 1, Gent",
+        latitude: 51.05,
+        longitude: 3.72,
+      },
+    },
+    routes: { main: ROUTE },
+  });
+  assert.equal(total.ok, true, JSON.stringify(total));
+  assert.equal(total.total_incl_vat_cents, 22500);
+  const missing = composeLimousineTotal({
+    section: section({
+      journey_types: ["airport_transfer"],
+      fixed_rules: [
+        {
+          ...FIXED_RULE,
+          journey_type: "airport_transfer",
+          airport_iata: "BRU",
+          direction: "to_airport",
+        },
+      ],
+    }),
+    offerId: "off_1",
+    request: {
+      service_class_id: "executive_sedan",
+      journey_type: "airport_transfer",
+      currency: "EUR",
+    },
+    routes: { main: ROUTE },
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, R.FIXED_FARE_UNMATCHED);
+});
+
+test("published airport journey uses the single exact-fixed generic fare", () => {
+  const total = composeLimousineTotal({
+    section: section({
+      journey_types: ["airport_transfer", "hotel_transfer"],
+      vehicle_id: "vh_1787076028764",
+      vehicle_ids: ["vh_1787076028764"],
+      price_presentation: "exact_fixed",
+      fixed_rules: [
+        {
+          ...FIXED_RULE,
+          rule_id: "rule_offer_1787077871217",
+          journey_type: "point_to_point",
+          airport_iata: "",
+          direction: "",
+          amount_cents: 18900,
+        },
+      ],
+    }),
+    offerId: "off_1",
+    request: {
+      vehicle_id: "vh_1787076028764",
+      journey_type: "airport_transfer",
+      currency: "EUR",
+      to_endpoint: {
+        kind: "airport",
+        display_name: "Brussels Airport (BRU)",
+        formatted_address: "Brussels Airport",
+        airport_name: "Brussels Airport",
+        iata_code: "BRU",
+        country_code: "BE",
+        latitude: 50.901,
+        longitude: 4.484,
+      },
+    },
+    routes: { main: ROUTE },
+  });
+  assert.equal(total.ok, true, JSON.stringify(total));
+  assert.equal(total.total_incl_vat_cents, 18900);
+});
+
 test("roundtrip fails closed when one leg cannot be priced", () => {
   const total = composeLimousineTotal({
     section: section({

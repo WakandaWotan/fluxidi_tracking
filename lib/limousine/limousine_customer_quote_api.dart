@@ -65,6 +65,8 @@ class LimousineCustomerQuoteException implements Exception {
   const LimousineCustomerQuoteException({
     required this.code,
     this.statusCode = 0,
+    this.stage = '',
+    this.requestId = '',
     this.stale = false,
     this.rateLimited = false,
     this.unavailable = false,
@@ -73,6 +75,8 @@ class LimousineCustomerQuoteException implements Exception {
 
   final String code;
   final int statusCode;
+  final String stage;
+  final String requestId;
   final bool stale;
   final bool rateLimited;
   final bool unavailable;
@@ -155,6 +159,8 @@ class HttpLimousineCustomerQuoteGateway
     throw LimousineCustomerQuoteException(
       code: error.isEmpty ? 'unavailable' : error,
       statusCode: status,
+      stage: (map['stage'] ?? '').toString().trim(),
+      requestId: (map['request_id'] ?? map['requestId'] ?? '').toString().trim(),
       stale: error == 'stale_revision' || status == 409,
       rateLimited: error == 'rate_limited' || status == 429,
       unavailable: status == 404 || error == 'invalid_status_ref',
@@ -280,6 +286,7 @@ class HttpLimousineCustomerQuoteGateway
       debugPrint(
         '[LIMOUSINE_QUOTE_SUBMIT] POST /limousine/quote-requests '
         'status=${res.statusCode} error=${map['error'] ?? ''} '
+        'stage=${map['stage'] ?? ''} '
         'offer_id=${body['offer_id']} vehicle_id=${body['vehicle_id'] ?? ''} '
         'journey_type=${body['journey_type']} '
         'trace=${map['request_id'] ?? map['trace_id'] ?? ''}',
@@ -287,22 +294,45 @@ class HttpLimousineCustomerQuoteGateway
       if (res.statusCode < 200 || res.statusCode >= 300) {
         _throwFailed(res.statusCode, map);
       }
-      final rawRequest = map['quote_request'] ?? map['quoteRequest'] ?? map;
-      final request = LimousineQuoteRequest.fromJson(rawRequest);
-      if (request.quoteRequestId.trim().isEmpty) {
+      final topId = (map['quote_request_id'] ?? map['quoteRequestId'] ?? '')
+          .toString()
+          .trim();
+      final nested = map['quote_request'] ?? map['quoteRequest'];
+      final rawRequest = <String, dynamic>{
+        if (nested is Map)
+          ...nested.map((key, value) => MapEntry(key.toString(), value))
+        else
+          ...map,
+        if (topId.isNotEmpty) 'quote_request_id': topId,
+      };
+      try {
+        final request = LimousineQuoteRequest.fromJson(rawRequest);
+        if (request.quoteRequestId.trim().isEmpty) {
+          throw LimousineCustomerQuoteException(
+            code: 'invalid_response',
+            statusCode: res.statusCode,
+            stage: 'parse_response',
+            requestId: (map['request_id'] ?? '').toString(),
+          );
+        }
+        return LimousineQuoteCreateResult(
+          request: request,
+          statusRef: (map['status_ref'] ?? map['statusRef'] ?? '').toString(),
+          statusExpiresAt:
+              (map['status_expires_at'] ?? map['statusExpiresAt'] ?? '')
+                  .toString(),
+          idempotent: map['idempotent'] == true,
+        );
+      } on LimousineCustomerQuoteException {
+        rethrow;
+      } on FormatException {
         throw LimousineCustomerQuoteException(
-          code: 'invalid_request',
+          code: 'invalid_response',
           statusCode: res.statusCode,
+          stage: 'parse_response',
+          requestId: (map['request_id'] ?? '').toString(),
         );
       }
-      return LimousineQuoteCreateResult(
-        request: request,
-        statusRef: (map['status_ref'] ?? map['statusRef'] ?? '').toString(),
-        statusExpiresAt:
-            (map['status_expires_at'] ?? map['statusExpiresAt'] ?? '')
-                .toString(),
-        idempotent: map['idempotent'] == true,
-      );
     } on LimousineCustomerQuoteException {
       rethrow;
     } catch (_) {
@@ -323,6 +353,14 @@ class HttpLimousineCustomerQuoteGateway
       final headers = await _authHeaders();
       final res = await _post(uri, headers, jsonEncode(body));
       final map = _decode(res);
+      debugPrint(
+        '[LIMOUSINE_BOOK_SUBMIT] POST /book '
+        'status=${res.statusCode} error=${map['error'] ?? ''} '
+        'stage=${map['stage'] ?? ''} '
+        'offer_id=${body['offer_id']} vehicle_id=${body['vehicle_id'] ?? ''} '
+        'journey_type=${body['journey_type']} '
+        'trace=${map['request_id'] ?? map['trace_id'] ?? ''}',
+      );
       if (res.statusCode < 200 || res.statusCode >= 300) {
         _throwFailed(res.statusCode, map);
       }
@@ -330,7 +368,12 @@ class HttpLimousineCustomerQuoteGateway
           .toString()
           .trim();
       if (bookingId.isEmpty) {
-        throw const LimousineCustomerQuoteException(code: 'unavailable');
+        throw LimousineCustomerQuoteException(
+          code: 'invalid_response',
+          statusCode: res.statusCode,
+          stage: 'parse_response',
+          requestId: (map['request_id'] ?? '').toString(),
+        );
       }
       return LimousineBookingRequestResult(
         bookingId: bookingId,
@@ -451,6 +494,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   String safeError = '';
   String lastSubmitErrorCode = '';
   int lastHttpStatus = 0;
+  String lastErrorStage = '';
+  String lastRequestId = '';
   bool quoteUpdated = false;
   bool termsAcknowledged = false;
   bool discovering = false;
@@ -579,6 +624,31 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       draft = draft.copyWith(publicPartnerId: '', offerId: '', vehicleId: '');
     }
     draftErrors = const [];
+    notifyListeners();
+  }
+
+  void resetAfterConfirmedSubmit() {
+    stopPolling();
+    _createGeneration += 1;
+    request = null;
+    bookingRequestId = '';
+    lastSubmitErrorCode = '';
+    lastHttpStatus = 0;
+    lastErrorStage = '';
+    lastRequestId = '';
+    safeError = '';
+    quoteUpdated = false;
+    termsAcknowledged = false;
+    draft = const LimousineQuoteCreateDraft();
+    selectedProvider = null;
+    selectedOffer = null;
+    providers = const [];
+    providerOfferLocked = false;
+    vehicleLocked = false;
+    lockedVehicle = null;
+    offerScopeChanged = false;
+    phase = LimousineCustomerQuotePhase.draft;
+    step = LimousineCustomerQuoteStep.journey;
     notifyListeners();
   }
 
@@ -711,6 +781,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   void markSubmitBlocked(String code) {
     lastSubmitErrorCode = code;
     lastHttpStatus = 0;
+    lastErrorStage = 'client_validation';
+    lastRequestId = '';
     safeError = code;
     notifyListeners();
   }
@@ -767,6 +839,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     if (submitting) return false;
     lastSubmitErrorCode = '';
     lastHttpStatus = 0;
+    lastErrorStage = '';
+    lastRequestId = '';
     safeError = '';
     phase = LimousineCustomerQuotePhase.submitting;
     notifyListeners();
@@ -858,17 +932,21 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       if (generation != _createGeneration) return false;
       phase = LimousineCustomerQuotePhase.draft;
       lastHttpStatus = error.statusCode;
+      lastErrorStage = error.stage;
+      lastRequestId = error.requestId;
       lastSubmitErrorCode = error.code.isEmpty ? 'network' : error.code;
       if (error.code == 'journey_type_not_allowed') {
         offerScopeChanged = true;
         safeError = 'offer_scope_changed';
-      } else if (error.unavailable) {
+      } else if (error.code == 'network' && error.statusCode == 0) {
+        safeError = 'network';
+      } else if (error.unavailable && error.statusCode == 0) {
         safeError = 'unavailable';
       } else {
         safeError = lastSubmitErrorCode;
       }
       _safeLog(
-        'quote_submit fail status=${error.statusCode} error=$lastSubmitErrorCode offer_id=${draft.offerId} vehicle_id=${draft.vehicleId} journey_type=${draft.journeyType}',
+        'quote_submit fail status=${error.statusCode} error=$lastSubmitErrorCode stage=${error.stage} request_id=${error.requestId} offer_id=${draft.offerId} vehicle_id=${draft.vehicleId} journey_type=${draft.journeyType}',
       );
       notifyListeners();
       return false;

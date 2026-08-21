@@ -107,6 +107,15 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
 
   String _t(LocalizedText text) => text.of(_lang);
 
+  void _returnToCustomerStart() {
+    _controller.resetAfterConfirmedSubmit();
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -762,9 +771,40 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                     Padding(
                       key: kLimousineQuoteSubmitErrorKey,
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        _t(limousineSubmitErrorLabel(_controller.safeError)),
-                        style: TextStyle(color: tokens.danger, height: 1.35),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(limousineSubmitErrorLabel(_controller.safeError)),
+                            style: TextStyle(
+                              color: tokens.danger,
+                              height: 1.35,
+                            ),
+                          ),
+                          if (_controller.lastRequestId.isNotEmpty ||
+                              _controller.lastHttpStatus > 0)
+                            Padding(
+                              key: kLimousineQuoteSubmitTraceKey,
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                [
+                                  if (_controller.lastHttpStatus > 0)
+                                    'HTTP ${_controller.lastHttpStatus}',
+                                  if (_controller.lastSubmitErrorCode.isNotEmpty)
+                                    _controller.lastSubmitErrorCode,
+                                  if (_controller.lastErrorStage.isNotEmpty)
+                                    _controller.lastErrorStage,
+                                  if (_controller.lastRequestId.isNotEmpty)
+                                    '${_t(kLimousineSubmitTechnicalRef)}: ${_controller.lastRequestId}',
+                                ].join(' · '),
+                                style: TextStyle(
+                                  color: tokens.muted,
+                                  fontSize: 12,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   if (_controller.phase ==
@@ -773,14 +813,33 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                     LimousineCustomerUnavailableBanner(language: _lang)
                   else if (_controller.bookingRequestId.isNotEmpty)
                     Padding(
+                      key: kLimousineQuoteSubmitConfirmationKey,
                       padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        _t(kLimousineBookingRequestReceived),
-                        style: TextStyle(
-                          color: tokens.onSurface,
-                          height: 1.4,
-                          fontSize: 15,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(kLimousineBookingSubmittedTitle),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(_t(kLimousineBookingSubmittedBody)),
+                          const SizedBox(height: 10),
+                          Text(
+                            '${_t(kLimousineQuoteSubmittedReference)}: ${_controller.bookingRequestId}',
+                            key: kLimousineQuoteSubmitReferenceKey,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton(
+                            key: kLimousineQuoteSubmittedHomeKey,
+                            onPressed: _returnToCustomerStart,
+                            child: Text(_t(kLimousineQuoteSubmittedHome)),
+                          ),
+                        ],
                       ),
                     )
                   else if (_controller.request != null)
@@ -788,6 +847,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                       controller: _controller,
                       language: _lang,
                       palette: _palette,
+                      onReturnToCustomerStart: _returnToCustomerStart,
                     )
                   else if (!(_controller.restoredFromSecureResume &&
                       _controller.handoff != null))

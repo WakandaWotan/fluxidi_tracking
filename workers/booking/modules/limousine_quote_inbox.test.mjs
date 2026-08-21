@@ -510,7 +510,9 @@ test("20) existing request/respond/accept/book lifecycle wiring is intact", () =
   }
   assert.ok(worker.includes("_prepareLimousineManualBooking"));
   assert.ok(worker.includes("_sealLimousineStatusRef"));
-  assert.ok(worker.includes("status_ref: sealedStatus.reference"));
+  assert.ok(worker.includes("limousineQuoteSuccessBody"));
+  assert.ok(worker.includes("sealedStatus.reference"));
+  assert.ok(worker.includes("status_ref"));
   assert.ok(worker.includes("_upsertLimousineInboxIndex"));
   assert.ok(!worker.includes("BOOKING_KV.list({ prefix: \"limousine_quote"));
 });
