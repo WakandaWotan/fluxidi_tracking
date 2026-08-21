@@ -296,6 +296,7 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.wide,
+    this.allowedTypes = const <String>[],
   });
 
   final LimousineUxTokens tokens;
@@ -303,6 +304,7 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
   final String selected;
   final ValueChanged<String> onSelected;
   final bool wide;
+  final List<String> allowedTypes;
 
   static const _types = <String>[
     'point_to_point',
@@ -311,6 +313,11 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
     'event_transfer',
     'hourly_package',
   ];
+
+  List<String> get _visible {
+    if (allowedTypes.isEmpty) return _types;
+    return _types.where(allowedTypes.contains).toList(growable: false);
+  }
 
   static const _icons = <String, IconData>{
     'point_to_point': Icons.route_outlined,
@@ -330,7 +337,7 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final type in _types)
+            for (final type in _visible)
               SizedBox(
                 width: width,
                 child: Material(
@@ -375,6 +382,117 @@ class LimousineJourneyTypeGrid extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class LimousinePublishedJourneyTypeScope extends StatelessWidget {
+  const LimousinePublishedJourneyTypeScope({
+    super.key,
+    required this.tokens,
+    required this.language,
+    required this.selected,
+    required this.onSelected,
+    required this.wide,
+    required this.allowedTypes,
+  });
+
+  final LimousineUxTokens tokens;
+  final AppLanguage language;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  final bool wide;
+  final List<String> allowedTypes;
+
+  @override
+  Widget build(BuildContext context) {
+    if (allowedTypes.length == 1) {
+      final type = allowedTypes.first;
+      final label =
+          (kLimousineJourneyTypeLabels[type] ?? kLimousineCustomerStepJourney)
+              .of(language);
+      return Material(
+        key: kLimousineJourneyTypeScopeSingleKey,
+        color: tokens.gold.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          key: ValueKey<String>('limousine_journey_type_$type'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => onSelected(type),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 56),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: tokens.gold),
+            ),
+            child: Text(
+              '${kLimousineOfferAppliesToPrefix.of(language)} $label',
+              style: TextStyle(
+                color: tokens.onSurface,
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return LimousineJourneyTypeGrid(
+      tokens: tokens,
+      language: language,
+      selected: selected,
+      onSelected: onSelected,
+      wide: wide,
+      allowedTypes: allowedTypes,
+    );
+  }
+}
+
+class LimousineOfferScopeChangedBanner extends StatelessWidget {
+  const LimousineOfferScopeChangedBanner({
+    super.key,
+    required this.tokens,
+    required this.language,
+    required this.onRefresh,
+  });
+
+  final LimousineUxTokens tokens;
+  final AppLanguage language;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: kLimousineOfferScopeChangedBannerKey,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: tokens.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tokens.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            kLimousineOfferScopeChanged.of(language),
+            style: TextStyle(
+              color: tokens.onSurface,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: onRefresh,
+              child: Text(kLimousineOfferScopeRefresh.of(language)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

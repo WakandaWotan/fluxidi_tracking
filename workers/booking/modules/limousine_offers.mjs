@@ -62,7 +62,16 @@ export const LIMOUSINE_OFFER_ERRORS = Object.freeze({
   MOBILISATION_CONTRADICTORY: "mobilisation_contradictory",
   PUBLISHED_WITHOUT_READINESS: "published_without_readiness",
   DISTANCE_TIME_INCOMPLETE: "distance_time_incomplete",
+  MISSING_JOURNEY_TYPES: "missing_journey_types",
 });
+
+export const LIMOUSINE_JOURNEY_TYPE_CATALOG = Object.freeze([
+  "point_to_point",
+  "airport_transfer",
+  "hotel_transfer",
+  "event_transfer",
+  "hourly_package",
+]);
 
 const ISO_CURRENCY = /^[A-Z]{3}$/;
 const LANGS = ["nl", "en", "fr", "es"];
@@ -148,6 +157,42 @@ export function normalizeLocalizedText(raw, { max = 400 } = {}) {
 
 function localizedIsEmpty(text) {
   return LANGS.every((l) => !String(text?.[l] ?? "").trim());
+}
+
+export function limousineLegacyUnscopedJourneyTypes() {
+  return LIMOUSINE_JOURNEY_TYPE_CATALOG.slice();
+}
+
+export function publishedLimousineJourneyScope(offer) {
+  const src = asObject(offer);
+  const raw = Array.isArray(src.journey_types ?? src.journeyTypes)
+    ? (src.journey_types ?? src.journeyTypes)
+    : [];
+  const scoped = Array.from(
+    new Set(
+      raw
+        .map(normalizeJourneyType)
+        .filter((type) => LIMOUSINE_JOURNEY_TYPE_CATALOG.includes(type)),
+    ),
+  );
+  if (scoped.length > 0) return scoped;
+  return limousineLegacyUnscopedJourneyTypes();
+}
+
+export function offerHasExplicitPublishedJourneyScope(offer) {
+  const src = asObject(offer);
+  const raw = Array.isArray(src.journey_types ?? src.journeyTypes)
+    ? (src.journey_types ?? src.journeyTypes)
+    : [];
+  return raw
+    .map(normalizeJourneyType)
+    .some((type) => LIMOUSINE_JOURNEY_TYPE_CATALOG.includes(type));
+}
+
+export function offerAllowsPublishedJourneyType(offer, journeyType) {
+  const wanted = normalizeJourneyType(journeyType);
+  if (!wanted) return false;
+  return publishedLimousineJourneyScope(offer).includes(wanted);
 }
 
 function normalizeJourneyType(value) {
@@ -583,6 +628,7 @@ function limousineOfferMayPublishForDisplay(offer, ctx) {
     LIMOUSINE_OFFER_ERRORS.HOURLY_INCOMPLETE,
     LIMOUSINE_OFFER_ERRORS.HOURLY_MISSING_MINIMUM_DURATION,
     LIMOUSINE_OFFER_ERRORS.PACKAGE_INCOMPLETE,
+    LIMOUSINE_OFFER_ERRORS.MISSING_JOURNEY_TYPES,
   ]);
   if (!errors.every((code) => displayOnly.has(code))) return false;
   const hasDisplay = o.display_amount_cents != null && o.display_amount_cents > 0;
@@ -590,7 +636,9 @@ function limousineOfferMayPublishForDisplay(offer, ctx) {
     return false;
   }
   const hourlyErrors = errors.filter(
-    (code) => code !== LIMOUSINE_OFFER_ERRORS.INCOMPLETE_FIXED_RULE,
+    (code) =>
+      code !== LIMOUSINE_OFFER_ERRORS.INCOMPLETE_FIXED_RULE &&
+      code !== LIMOUSINE_OFFER_ERRORS.MISSING_JOURNEY_TYPES,
   );
   if (hourlyErrors.length) {
     const packageOk =
@@ -619,9 +667,7 @@ export function selectLimousineOfferForRequest(
   const wantedJourney = normalizeJourneyType(journeyType);
 
   const journeyOk = (offer) =>
-    !wantedJourney ||
-    offer.journey_types.length === 0 ||
-    offer.journey_types.includes(wantedJourney);
+    !wantedJourney || offerAllowsPublishedJourneyType(offer, wantedJourney);
 
   if (wantedVehicle) {
     const vehicleOffer = list.find(

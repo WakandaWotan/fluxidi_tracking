@@ -214,7 +214,7 @@ void main() {
     final page = File(
       'lib/limousine/limousine_customer_quote_page.dart',
     ).readAsStringSync();
-    expect('showCurrentLocation: true'.allMatches(page).length, 3);
+    expect('showCurrentLocation: true'.allMatches(page).length, 4);
     expect(page.contains('controller: _destination'), isTrue);
     expect(RegExp(r'controller: _destination,[\s\S]{0,180}showCurrentLocation: true').hasMatch(page), isFalse);
   });

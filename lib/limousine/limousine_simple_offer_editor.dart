@@ -8,6 +8,7 @@ import '../app_strings.dart';
 import 'limousine_business_setup.dart';
 import 'limousine_business_setup_labels.dart';
 import 'limousine_customer_discovery_labels.dart';
+import 'limousine_journey_scope.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -113,11 +114,12 @@ class _LimousineSimpleOfferEditorState
     if (_serviceClassId.isEmpty && widget.knownClassIds.isNotEmpty) {
       _serviceClassId = widget.knownClassIds.first;
     }
-    _journeyTypes = <String>{
-      ...((offer['journey_types'] as List?) ?? const <dynamic>[])
-          .map(limousineOfferToken)
-          .where((item) => item.isNotEmpty),
-    };
+    _journeyTypes = limousineSeedEditorJourneyTypes(
+      current: offer['journey_types'] ?? offer['journeyTypes'],
+      hourlyOrPackage:
+          widget.mode == LimousineSimpleOfferMode.hourly ||
+          widget.mode == LimousineSimpleOfferMode.package,
+    );
     _amount = TextEditingController(
       text: _textFromCents(limousineCentsOf(offer['display_amount_cents'])),
     );

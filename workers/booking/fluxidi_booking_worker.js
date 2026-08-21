@@ -128,6 +128,7 @@ import {
 import {
   buildSafePublicLimousineOffers as _buildSafePublicLimousineOffers,
   normalizeLimousineOffers as _normalizeLimousineOffers,
+  offerAllowsPublishedJourneyType as _offerAllowsPublishedJourneyType,
 } from "./modules/limousine_offers.mjs";
 import {
   LIMOUSINE_QUOTE_STATES as _LIMOUSINE_QUOTE_STATES,
@@ -180,6 +181,10 @@ import {
   limousineBookGateEnabled as _limousineBookGateEnabledRaw,
   limousineQuoteFingerprint as _limousineQuoteFingerprint,
 } from "./modules/limousine_booking.mjs";
+import {
+  attachLimousineItineraryEndpoints as _attachLimousineItineraryEndpoints,
+  limousineItineraryConflictsWithJourney as _limousineItineraryConflictsWithJourney,
+} from "./modules/limousine_transfer_endpoint.mjs";
 import {
   LIMOUSINE_INTENT_KIND as _LIMOUSINE_INTENT_KIND,
   LIMOUSINE_SERVICE_TYPE as _LIMOUSINE_SERVICE_TYPE,
@@ -1277,10 +1282,26 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
   }
 
   if (classified.pricing_mode === "hourly" || classified.pricing_mode === "package") {
-    payload.journey_type = "hourly_package";
-    payload.journeyType = "hourly_package";
+    if (_offerAllowsPublishedJourneyType(offer, "hourly_package")) {
+      payload.journey_type = "hourly_package";
+      payload.journeyType = "hourly_package";
+    }
   }
   const journeyType = String(payload?.journey_type ?? payload?.journeyType ?? "").trim();
+  if (!_offerAllowsPublishedJourneyType(offer, journeyType)) {
+    return unavailable("journey_type_not_allowed", {
+      reason: "journey_type_not_allowed",
+      field: "journey_type",
+    });
+  }
+  const itinerary = _attachLimousineItineraryEndpoints({}, payload);
+  if (_limousineItineraryConflictsWithJourney(journeyType, itinerary)) {
+    return unavailable("invalid_request", {
+      reason: "invalid_endpoint",
+      field: "to_endpoint",
+    });
+  }
+  Object.assign(payload, itinerary);
   const requestedDuration = payload?.requested_duration_minutes ?? payload?.requestedDurationMinutes;
   let hourlyHire = null;
   let packageHire = null;

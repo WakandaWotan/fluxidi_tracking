@@ -10,6 +10,7 @@ import '../customer_theme_palette.dart';
 import 'limousine_address_lookup.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
+import 'limousine_journey_scope.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_transfer_endpoint.dart';
@@ -132,6 +133,20 @@ const LocalizedText kLimousineReviewRoute = LocalizedText(
   en: 'Route',
   fr: 'Itinéraire',
   es: 'Ruta',
+);
+
+const LocalizedText kLimousineReviewEventName = LocalizedText(
+  nl: 'Evenement',
+  en: 'Event',
+  fr: 'Événement',
+  es: 'Evento',
+);
+
+const LocalizedText kLimousineReviewJourneyType = LocalizedText(
+  nl: 'Trajecttype',
+  en: 'Journey type',
+  fr: 'Type de trajet',
+  es: 'Tipo de trayecto',
 );
 
 const LocalizedText kLimousineReviewStops = LocalizedText(
@@ -388,6 +403,13 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
       if (DateTime.tryParse(draft.scheduledPickupIso) == null) {
         gaps.add(const LimousineRequestStepGap('pickup_time_required'));
       }
+      if (offer != null &&
+          !limousineJourneyTypeAllowedByPublishedScope(
+            journeyTypes: offer.journeyTypes,
+            journeyType: draft.journeyType,
+          )) {
+        gaps.add(const LimousineRequestStepGap('journey_type_out_of_scope'));
+      }
       gaps.addAll(
         limousineReturnTripGaps(
           draft: draft,
@@ -550,6 +572,16 @@ String limousineReviewEndpointLabel(LimousineTransferEndpoint? endpoint, String 
     }
     return name.isEmpty ? address : name;
   }
+  if (LimousineTransferEndpointKind.isEvent(endpoint.kind)) {
+    final name = (endpoint.venueName ?? endpoint.displayName).trim();
+    final address = endpoint.formattedAddress.trim();
+    final event = (endpoint.eventName ?? '').trim();
+    final venue = name.isNotEmpty && address.isNotEmpty && name != address
+        ? '$name — $address'
+        : (name.isEmpty ? address : name);
+    if (event.isNotEmpty && venue.isNotEmpty) return '$event · $venue';
+    return event.isNotEmpty ? event : venue;
+  }
   return endpoint.routeText.isEmpty ? fallback.trim() : endpoint.routeText;
 }
 
@@ -584,7 +616,24 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
       label: kLimousineReviewRoute.of(language),
       value: limousineReviewRouteLabel(draft),
     ),
+    LimousineRequestReviewRow(
+      id: 'journey_type',
+      label: kLimousineReviewJourneyType.of(language),
+      value: (kLimousineJourneyTypeLabels[limousineOfferToken(draft.journeyType)] ??
+              kLimousineReviewJourneyType)
+          .of(language),
+    ),
   ];
+  final eventName = (draft.toEndpoint?.eventName ?? '').trim();
+  if (eventName.isNotEmpty) {
+    rows.add(
+      LimousineRequestReviewRow(
+        id: 'event_name',
+        label: kLimousineReviewEventName.of(language),
+        value: eventName,
+      ),
+    );
+  }
   if (draft.stops.isNotEmpty) {
     rows.add(
       LimousineRequestReviewRow(

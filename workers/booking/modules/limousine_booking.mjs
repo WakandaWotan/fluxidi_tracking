@@ -13,6 +13,7 @@ import {
   LIMOUSINE_MOBILISATION_METHODS,
   LIMOUSINE_PRICE_PRESENTATIONS,
   normalizeLimousineOffer,
+  offerAllowsPublishedJourneyType,
   offerCanProduceResolvedPrice,
   offerSupportedPricingModes,
   selectLimousineOfferForRequest,
@@ -54,6 +55,7 @@ export const LIMOUSINE_BOOK_REASONS = Object.freeze({
   STALE_REVISION: "stale_revision",
   QUOTE_MISMATCH: "quote_refresh_required",
   MISSING_QUOTE_REFERENCE: "missing_quote_reference",
+  JOURNEY_TYPE_NOT_ALLOWED: "journey_type_not_allowed",
 });
 
 function asObject(raw) {
@@ -498,6 +500,9 @@ export function composeLimousineTotal({
   if (!offer) return failed(R.UNKNOWN_OFFER);
   offer = normalizeLimousineOffer(offer);
   if (!offer.enabled) return failed(R.OFFER_DISABLED);
+  if (!offerAllowsPublishedJourneyType(offer, request.journey_type)) {
+    return failed(R.JOURNEY_TYPE_NOT_ALLOWED);
+  }
 
   // Only directly calculable presentations may produce a total. Hourly and
   // package hires are bookable even when the marketing presentation is not

@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import 'limousine_journey_scope.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
@@ -175,11 +176,14 @@ class _LimousineOfferEditorDialogState
     _presentation = limousineOfferToken(_base['price_presentation']).isEmpty
         ? LimousinePricePresentation.quoteRequired
         : limousineOfferToken(_base['price_presentation']);
-    _journeyTypes = <String>{
-      ...((_base['journey_types'] as List?) ?? const [])
-          .map(limousineOfferToken)
-          .where((t) => t.isNotEmpty),
-    };
+    final hourlyRaw = _base['hourly'];
+    _journeyTypes = limousineSeedEditorJourneyTypes(
+      current: _base['journey_types'] ?? _base['journeyTypes'],
+      hourlyOrPackage:
+          hourlyRaw is Map &&
+          (hourlyRaw['first_hour_cents'] != null ||
+              hourlyRaw['package_amount_cents'] != null),
+    );
 
     _title = LimousineLocalizedField(_base['title']);
     _description = LimousineLocalizedField(_base['description']);

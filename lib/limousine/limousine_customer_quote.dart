@@ -4,6 +4,7 @@
 
 import 'package:flutter/foundation.dart';
 
+import 'limousine_journey_scope.dart';
 import 'limousine_offers.dart';
 import 'limousine_pricing_overlay.dart';
 import 'limousine_profile_identity.dart';
@@ -223,6 +224,7 @@ class LimousinePublishedOffer {
     this.vehicleId = '',
     this.serviceClassId = '',
     this.journeyTypes = const <String>[],
+    this.sourceRevision = 0,
     this.pricePresentation = '',
     this.displayAmountCents,
     this.currency = '',
@@ -243,6 +245,7 @@ class LimousinePublishedOffer {
   final String vehicleId;
   final String serviceClassId;
   final List<String> journeyTypes;
+  final int sourceRevision;
   final String pricePresentation;
   final int? displayAmountCents;
   final String currency;
@@ -258,9 +261,10 @@ class LimousinePublishedOffer {
       limousineOfferToken(targetType) == LimousineOfferTarget.vehicle;
 
   bool supportsJourney(String journeyType) {
-    final wanted = limousineOfferToken(journeyType);
-    if (wanted.isEmpty || journeyTypes.isEmpty) return true;
-    return journeyTypes.contains(wanted);
+    return limousineJourneyTypeAllowedByPublishedScope(
+      journeyTypes: journeyTypes,
+      journeyType: journeyType,
+    );
   }
 
   factory LimousinePublishedOffer.fromJson(Object? raw) {
@@ -291,6 +295,10 @@ class LimousinePublishedOffer {
         map['service_class_id'] ?? map['serviceClassId'],
       ),
       journeyTypes: journeys,
+      sourceRevision: limousineCentsOf(
+            map['source_revision'] ?? map['sourceRevision'],
+          ) ??
+          0,
       pricePresentation: limousineOfferToken(
         map['price_presentation'] ?? map['pricePresentation'],
       ),

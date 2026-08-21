@@ -155,6 +155,116 @@ test("quote and book snapshots keep immutable typed itinerary", function () {
   );
 });
 
+test("event and venue endpoints sanitize and reject incomplete live venues", function () {
+  const live = sanitizeLimousineTransferEndpoint({
+    kind: "event",
+    display_name: "Flanders Expo",
+    formatted_address: "Maaltekouter 1, 9051 Gent",
+    venue_name: "Flanders Expo",
+    event_name: "Wedding Expo",
+    latitude: 51.026,
+    longitude: 3.69,
+    provider_place_id: "poi.venue.1",
+    city: "Gent",
+    postcode: "9051",
+    country_code: "be",
+  });
+  assert.equal(live.kind, "event");
+  assert.equal(live.venue_name, "Flanders Expo");
+  assert.equal(live.event_name, "Wedding Expo");
+  assert.equal(live.country_code, "BE");
+  assert.equal(live.manual, false);
+
+  const venueAlias = sanitizeLimousineTransferEndpoint({
+    kind: "venue",
+    display_name: "Lotto Arena",
+    formatted_address: "Schijnpoortweg 119, Antwerpen",
+    venue_name: "Lotto Arena",
+    latitude: 51.23,
+    longitude: 4.44,
+  });
+  assert.equal(venueAlias.kind, "venue");
+
+  const manual = sanitizeLimousineTransferEndpoint({
+    kind: "event",
+    display_name: "Tijdelijke festivalweide, Oostende",
+    formatted_address: "Tijdelijke festivalweide, Oostende",
+    venue_name: "Tijdelijke festivalweide, Oostende",
+    manual: true,
+  });
+  assert.equal(manual.manual, true);
+
+  assert.equal(
+    sanitizeLimousineTransferEndpoint({
+      kind: "event",
+      display_name: "Incomplete",
+      formatted_address: "Incomplete",
+    }),
+    null,
+  );
+});
+
+test("event quote snapshots keep venue data and reject a mismatched destination", function () {
+  const eventOffer = {
+    ...quoteOffer(),
+    journey_types: ["event_transfer"],
+  };
+  const accepted = validateLimousineQuoteRequest(
+    customerRequest({
+      journey_type: "event_transfer",
+      to: "Flanders Expo, Gent",
+      from_endpoint: customerRequest().from_endpoint,
+      to_endpoint: {
+        kind: "event",
+        display_name: "Flanders Expo",
+        formatted_address: "Maaltekouter 1, 9051 Gent",
+        venue_name: "Flanders Expo",
+        event_name: "Wedding Expo",
+        latitude: 51.026,
+        longitude: 3.69,
+        provider_place_id: "poi.venue.1",
+        city: "Gent",
+        postcode: "9051",
+        country_code: "BE",
+      },
+      return_pickup_endpoint: {
+        kind: "event",
+        display_name: "Flanders Expo",
+        formatted_address: "Maaltekouter 1, 9051 Gent",
+        venue_name: "Flanders Expo",
+        latitude: 51.026,
+        longitude: 3.69,
+      },
+      return_destination_endpoint: customerRequest().from_endpoint,
+    }),
+    { eligible: true, offer: eventOffer, gateEnabled: true },
+  );
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.request.to_endpoint.kind, "event");
+  assert.equal(accepted.request.to_endpoint.venue_name, "Flanders Expo");
+  assert.equal(accepted.request.to_endpoint.event_name, "Wedding Expo");
+  assert.equal(accepted.snapshot.to_endpoint.kind, "event");
+  assert.equal(accepted.request.return_pickup_endpoint.kind, "event");
+  assert.equal(accepted.request.return_destination_endpoint.kind, "address");
+
+  const mismatched = validateLimousineQuoteRequest(
+    customerRequest({
+      journey_type: "event_transfer",
+      to: "Brussels Airport",
+    }),
+    { eligible: true, offer: eventOffer, gateEnabled: true },
+  );
+  assert.equal(mismatched.ok, false);
+  assert.equal(mismatched.field, "to_endpoint");
+
+  const forbiddenType = validateLimousineQuoteRequest(
+    customerRequest({ journey_type: "airport_transfer" }),
+    { eligible: true, offer: eventOffer, gateEnabled: true },
+  );
+  assert.equal(forbiddenType.ok, false);
+  assert.equal(forbiddenType.reason, "journey_type_not_allowed");
+});
+
 test("client claims stay rejected and no RateHawk datastore is added", function () {
   const rejected = validateLimousineQuoteRequest(
     customerRequest({ total_incl_vat_cents: 99000, company_id: "evil" }),

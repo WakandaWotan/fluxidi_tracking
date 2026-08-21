@@ -79,6 +79,7 @@ abstract final class LimousineOfferError {
   static const String mobilisationContradictory = 'mobilisation_contradictory';
   static const String publishedWithoutReadiness = 'published_without_readiness';
   static const String distanceTimeIncomplete = 'distance_time_incomplete';
+  static const String missingJourneyTypes = 'missing_journey_types';
 }
 
 String limousineOfferToken(Object? raw) => (raw ?? '')
@@ -766,12 +767,14 @@ Map<String, dynamic>? selectLimousineOfferForRequest(
     final types =
         (offer['journey_types'] as List?)
             ?.map(limousineOfferToken)
-            .where((t) => t.isNotEmpty)
+            .where(LimousineJourneyTypeId.all.contains)
             .toList(growable: false) ??
         const <String>[];
-    return wantedJourney.isEmpty ||
-        types.isEmpty ||
-        types.contains(wantedJourney);
+    if (wantedJourney.isEmpty) return true;
+    if (!LimousineJourneyTypeId.all.contains(wantedJourney)) return false;
+    // Explicit legacy rule: missing published scope uses the full catalog.
+    if (types.isEmpty) return true;
+    return types.contains(wantedJourney);
   }
 
   final wantedVehicle = vehicleId.trim();
@@ -908,6 +911,7 @@ bool _limousineOfferMayPublishForDisplay(
     LimousineOfferError.hourlyIncomplete,
     LimousineOfferError.hourlyMissingMinimumDuration,
     LimousineOfferError.packageIncomplete,
+    LimousineOfferError.missingJourneyTypes,
   };
   if (validation.errors.any((code) => !displayOnly.contains(code))) {
     return false;
@@ -918,7 +922,11 @@ bool _limousineOfferMayPublishForDisplay(
     return false;
   }
   final hourlyErrors = validation.errors
-      .where((code) => code != LimousineOfferError.incompleteFixedRule)
+      .where(
+        (code) =>
+            code != LimousineOfferError.incompleteFixedRule &&
+            code != LimousineOfferError.missingJourneyTypes,
+      )
       .toList(growable: false);
   if (hourlyErrors.isEmpty) return true;
   final hourly = _mapOf(offer['hourly']);
@@ -1333,6 +1341,12 @@ kLimousineOfferErrorLabels = <String, LocalizedText>{
     en: 'Distance/time pricing is incomplete.',
     fr: 'La tarification distance/temps est incomplète.',
     es: 'La tarificación distancia/tiempo está incompleta.',
+  ),
+  LimousineOfferError.missingJourneyTypes: LocalizedText(
+    nl: 'Kies minstens één toepasselijk trajecttype.',
+    en: 'Choose at least one applicable journey type.',
+    fr: 'Choisissez au moins un type de trajet applicable.',
+    es: 'Elija al menos un tipo de trayecto aplicable.',
   ),
 };
 

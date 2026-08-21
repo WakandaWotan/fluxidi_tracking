@@ -10,8 +10,12 @@
 // booking engine. A human-approved total is never recomputed with taxi pricing,
 // and a customer-supplied total is never trusted.
 
+import { offerAllowsPublishedJourneyType } from "./limousine_offers.mjs";
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
-import { attachLimousineItineraryEndpoints } from "./limousine_transfer_endpoint.mjs";
+import {
+  attachLimousineItineraryEndpoints,
+  limousineItineraryConflictsWithJourney,
+} from "./limousine_transfer_endpoint.mjs";
 import {
   LIMOUSINE_INTENT_KIND,
   LIMOUSINE_SERVICE_TYPE,
@@ -89,6 +93,7 @@ export const LIMOUSINE_QUOTE_REASONS = Object.freeze({
   QUOTE_TERMS_INCOMPLETE: "quote_terms_incomplete",
   STALE_TERMS_REVISION: "stale_terms_revision",
   UNKNOWN_CRITICAL_FIELD: "unknown_critical_field",
+  JOURNEY_TYPE_NOT_ALLOWED: "journey_type_not_allowed",
 });
 
 const ISO_CURRENCY = /^[A-Z]{3}$/;
@@ -599,6 +604,10 @@ export function validateLimousineQuoteRequest(input, {
   if (!classified.ok || classified.intent_kind !== LIMOUSINE_INTENT_KIND.QUOTE_REQUEST) {
     return { ok: false, reason: R.OFFER_NOT_BOOKABLE_MANUALLY };
   }
+  const requestedJourney = normalizeLimousineToken(src.journey_type ?? src.journeyType);
+  if (!offerAllowsPublishedJourneyType(authoritativeOffer, requestedJourney)) {
+    return { ok: false, reason: R.JOURNEY_TYPE_NOT_ALLOWED, field: "journey_type" };
+  }
 
   const from = safeText(src.from, 240);
   const to = safeText(src.to, 240);
@@ -661,6 +670,9 @@ export function validateLimousineQuoteRequest(input, {
     intent_kind: classified.intent_kind,
   };
   Object.assign(request, attachLimousineItineraryEndpoints(request, src));
+  if (limousineItineraryConflictsWithJourney(request.journey_type, request)) {
+    return { ok: false, reason: R.INVALID_REQUEST, field: "to_endpoint" };
+  }
   request.itinerary_fingerprint = itineraryFingerprint(request);
   const snapshot = buildLimousineQuoteIntentSnapshot({
     offer: authoritativeOffer,

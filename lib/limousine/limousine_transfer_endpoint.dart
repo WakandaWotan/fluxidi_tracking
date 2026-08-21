@@ -9,8 +9,18 @@ abstract final class LimousineTransferEndpointKind {
   static const String address = 'address';
   static const String airport = 'airport';
   static const String hotel = 'hotel';
+  static const String event = 'event';
+  static const String venue = 'venue';
 
-  static const List<String> all = <String>[address, airport, hotel];
+  static const List<String> all = <String>[
+    address,
+    airport,
+    hotel,
+    event,
+    venue,
+  ];
+
+  static bool isEvent(String kind) => kind == event || kind == venue;
 }
 
 class LimousineTransferEndpoint {
@@ -25,6 +35,8 @@ class LimousineTransferEndpoint {
     this.iataCode,
     this.countryCode,
     this.hotelName,
+    this.venueName,
+    this.eventName,
     this.city,
     this.postcode,
     this.ratehawkHotelId,
@@ -41,6 +53,8 @@ class LimousineTransferEndpoint {
   final String? iataCode;
   final String? countryCode;
   final String? hotelName;
+  final String? venueName;
+  final String? eventName;
   final String? city;
   final String? postcode;
   final String? ratehawkHotelId;
@@ -70,12 +84,16 @@ class LimousineTransferEndpoint {
     String? iataCode,
     String? countryCode,
     String? hotelName,
+    String? venueName,
+    String? eventName,
     String? city,
     String? postcode,
     String? ratehawkHotelId,
     bool? manual,
     bool clearAirport = false,
     bool clearHotel = false,
+    bool clearEvent = false,
+    bool clearEventName = false,
     bool clearPlaceId = false,
   }) {
     return LimousineTransferEndpoint(
@@ -89,6 +107,8 @@ class LimousineTransferEndpoint {
       iataCode: clearAirport ? null : (iataCode ?? this.iataCode),
       countryCode: countryCode ?? (clearAirport ? this.countryCode : this.countryCode),
       hotelName: clearHotel ? null : (hotelName ?? this.hotelName),
+      venueName: clearEvent ? null : (venueName ?? this.venueName),
+      eventName: clearEvent || clearEventName ? null : (eventName ?? this.eventName),
       city: city ?? this.city,
       postcode: postcode ?? this.postcode,
       ratehawkHotelId: clearHotel ? null : (ratehawkHotelId ?? this.ratehawkHotelId),
@@ -110,6 +130,8 @@ class LimousineTransferEndpoint {
       if ((countryCode ?? '').trim().isNotEmpty)
         'country_code': countryCode!.trim().toUpperCase(),
       if ((hotelName ?? '').trim().isNotEmpty) 'hotel_name': hotelName!.trim(),
+      if ((venueName ?? '').trim().isNotEmpty) 'venue_name': venueName!.trim(),
+      if ((eventName ?? '').trim().isNotEmpty) 'event_name': eventName!.trim(),
       if ((city ?? '').trim().isNotEmpty) 'city': city!.trim(),
       if ((postcode ?? '').trim().isNotEmpty) 'postcode': postcode!.trim(),
       'ratehawk_hotel_id': ratehawkHotelId,
@@ -145,6 +167,8 @@ class LimousineTransferEndpoint {
       iataCode: text(map['iata_code'] ?? map['iataCode'])?.toUpperCase(),
       countryCode: text(map['country_code'] ?? map['countryCode'])?.toUpperCase(),
       hotelName: text(map['hotel_name'] ?? map['hotelName']),
+      venueName: text(map['venue_name'] ?? map['venueName']),
+      eventName: text(map['event_name'] ?? map['eventName']),
       city: text(map['city']),
       postcode: text(map['postcode'] ?? map['postal_code']),
       ratehawkHotelId: text(map['ratehawk_hotel_id'] ?? map['ratehawkHotelId']),
@@ -162,6 +186,19 @@ LimousineTransferEndpoint limousineEndpointFromAddress(LimousineAddressValue val
     longitude: value.lon,
     providerPlaceId: value.placeId,
     manual: value.acceptance == LimousineAddressAcceptance.manualFallback,
+  );
+}
+
+LimousineAddressValue limousineAddressValueFromEndpoint(
+  LimousineTransferEndpoint endpoint,
+) {
+  return LimousineAddressValue(
+    displayText: endpoint.routeText,
+    canonicalLabel: endpoint.routeText,
+    lat: endpoint.latitude,
+    lon: endpoint.longitude,
+    placeId: endpoint.providerPlaceId,
+    acceptance: LimousineAddressAcceptance.selected,
   );
 }
 
@@ -226,6 +263,15 @@ bool limousineAirportEndpointIsCanonical(
 bool limousineHotelEndpointIsUsable(LimousineTransferEndpoint endpoint) {
   if (endpoint.kind != LimousineTransferEndpointKind.hotel) return false;
   final name = (endpoint.hotelName ?? endpoint.displayName).trim();
+  final address = endpoint.formattedAddress.trim();
+  if (name.isEmpty || address.isEmpty) return false;
+  if (endpoint.manual) return true;
+  return endpoint.hasCoordinates;
+}
+
+bool limousineEventEndpointIsUsable(LimousineTransferEndpoint endpoint) {
+  if (!LimousineTransferEndpointKind.isEvent(endpoint.kind)) return false;
+  final name = (endpoint.venueName ?? endpoint.displayName).trim();
   final address = endpoint.formattedAddress.trim();
   if (name.isEmpty || address.isEmpty) return false;
   if (endpoint.manual) return true;

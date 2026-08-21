@@ -10,6 +10,7 @@
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
 import { computeOfferHourlyCents } from "./limousine_pricing_resolver.mjs";
 import { LIMOUSINE_PRICE_PRESENTATIONS } from "./limousine_offers.mjs";
+import { attachLimousineItineraryEndpoints } from "./limousine_transfer_endpoint.mjs";
 
 export const LIMOUSINE_SERVICE_TYPE = "limousine";
 
@@ -359,8 +360,10 @@ export function enrichLimousineAcceptedSnapshot(snapshot, {
   const base = asObject(snapshot);
   if (!base.offer_id && !base.total_incl_vat_cents) return base;
   const classified = classifyLimousinePublishedPricingMode(offer);
+  const itinerary = attachLimousineItineraryEndpoints(base, request);
   return {
     ...base,
+    ...itinerary,
     service_type: LIMOUSINE_SERVICE_TYPE,
     service_category: LIMOUSINE_SERVICE_TYPE,
     published_pricing_mode: classified.ok ? classified.pricing_mode : base.pricing_mode,

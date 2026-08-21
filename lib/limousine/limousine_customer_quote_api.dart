@@ -13,6 +13,7 @@ import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_resume.dart';
 import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
+import 'limousine_journey_scope.dart';
 import 'limousine_offer_binding.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_unified_intent.dart';
@@ -438,6 +439,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool discovering = false;
   bool loadingProvider = false;
   bool providerOfferLocked = false;
+  bool offerScopeChanged = false;
   int lastDiscoveryCount = 0;
   String lastDiscoveryService = '';
 
@@ -612,18 +614,11 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     );
     selectedOffer = offer;
     providerOfferLocked = true;
+    offerScopeChanged = false;
     draft = draft.copyWith(
       publicPartnerId: partnerId,
       offerId: offer.offerId,
-      journeyType:
-          limousineCustomerIntentKindOf(offer) ==
-              LimousineCustomerIntentKind.bookingRequest &&
-          (limousinePublishedPricingModeOf(offer) ==
-                  LimousinePublishedPricingMode.hourly ||
-              limousinePublishedPricingModeOf(offer) ==
-                  LimousinePublishedPricingMode.package)
-          ? 'hourly_package'
-          : draft.journeyType,
+      journeyType: _resolveOfferJourneyType(offer, draft.journeyType),
     );
     notifyListeners();
   }
@@ -637,6 +632,10 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       selectedProvider = detail;
       final ranked = limousineRankPublicOffers(detail.offers);
       selectedOffer = ranked.isEmpty ? null : ranked.first;
+      if (selectedOffer != null &&
+          !selectedOffer!.supportsJourney(draft.journeyType)) {
+        offerScopeChanged = true;
+      }
       draft = draft.copyWith(
         publicPartnerId: detail.provider.partnerId,
         offerId: selectedOffer?.offerId ?? '',
@@ -652,15 +651,58 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   void selectOffer(LimousinePublishedOffer offer) {
     if (providerOfferLocked) return;
     selectedOffer = offer;
+    offerScopeChanged = false;
     draft = draft.copyWith(
       offerId: offer.offerId,
-      journeyType:
-          limousinePublishedPricingModeOf(offer) ==
-                  LimousinePublishedPricingMode.hourly ||
-              limousinePublishedPricingModeOf(offer) ==
-                  LimousinePublishedPricingMode.package
-          ? 'hourly_package'
-          : draft.journeyType,
+      journeyType: _resolveOfferJourneyType(offer, draft.journeyType),
+    );
+    notifyListeners();
+  }
+
+  String _resolveOfferJourneyType(
+    LimousinePublishedOffer offer,
+    String current,
+  ) {
+    final mode = limousinePublishedPricingModeOf(offer);
+    return limousineResolveJourneyTypeInPublishedScope(
+      journeyTypes: offer.journeyTypes,
+      current: current,
+      preferHourlyPackage:
+          mode == LimousinePublishedPricingMode.hourly ||
+          mode == LimousinePublishedPricingMode.package,
+    );
+  }
+
+  List<String> publishedJourneyScopeForSelectedOffer() {
+    return limousinePublishedJourneyScopeOf(selectedOffer?.journeyTypes);
+  }
+
+  void applyLivePublishedOffer(LimousinePublishedOffer live) {
+    final current = selectedOffer;
+    if (current == null || current.offerId != live.offerId) return;
+    if (limousinePublishedJourneyScopeChanged(
+      previousJourneyTypes: current.journeyTypes,
+      nextJourneyTypes: live.journeyTypes,
+      previousOfferId: current.offerId,
+      nextOfferId: live.offerId,
+      previousSourceRevision: current.sourceRevision,
+      nextSourceRevision: live.sourceRevision,
+    )) {
+      selectedOffer = live;
+      offerScopeChanged = true;
+      notifyListeners();
+      return;
+    }
+    selectedOffer = live;
+    notifyListeners();
+  }
+
+  void refreshOfferScopeAfterUserAck() {
+    final offer = selectedOffer;
+    if (offer == null) return;
+    offerScopeChanged = false;
+    draft = draft.copyWith(
+      journeyType: _resolveOfferJourneyType(offer, ''),
     );
     notifyListeners();
   }
@@ -718,7 +760,12 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     } on LimousineCustomerQuoteException catch (error) {
       if (generation != _createGeneration) return false;
       phase = LimousineCustomerQuotePhase.draft;
-      safeError = error.unavailable ? 'unavailable' : 'network';
+      if (error.code == 'journey_type_not_allowed') {
+        offerScopeChanged = true;
+        safeError = 'offer_scope_changed';
+      } else {
+        safeError = error.unavailable ? 'unavailable' : 'network';
+      }
       notifyListeners();
       return false;
     }

@@ -5,11 +5,36 @@
 import 'package:flutter/foundation.dart';
 
 import '../app_strings.dart';
+import 'limousine_customer_quote.dart';
+import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
 /// Limousine quote-create has `roundtrip` + `return_pickup_iso` only.
 /// Taxi/booking `wait_minutes` is a different engine and must not be reused.
 const bool kLimousineReturnWaitDurationSupported = false;
+
+/// Fail-closed unless the published offer explicitly includes wait terms.
+bool limousinePublishedOfferSupportsReturnWait(LimousinePublishedOffer? offer) {
+  if (offer == null) return false;
+  final raw = offer.raw;
+  if (raw['return_wait_supported'] == true || raw['wait_supported'] == true) {
+    return true;
+  }
+  final included = limousineMinutesOf(
+    raw['waiting_time_included_minutes'] ?? raw['waitingTimeIncludedMinutes'],
+  );
+  return included != null && included > 0;
+}
+
+int? limousinePublishedOfferWaitMinutes(LimousinePublishedOffer? offer) {
+  if (!limousinePublishedOfferSupportsReturnWait(offer)) return null;
+  final raw = offer!.raw;
+  final included = limousineMinutesOf(
+    raw['waiting_time_included_minutes'] ?? raw['waitingTimeIncludedMinutes'],
+  );
+  if (included != null && included >= 15 && included <= 240) return included;
+  return 30;
+}
 
 const List<int> kLimousineReturnWaitPresetMinutes = <int>[15, 30, 45, 60, 90];
 
@@ -41,6 +66,34 @@ const LocalizedText kLimousineJourneyTypeCardTitle = LocalizedText(
   en: 'Journey type',
   fr: 'Type de trajet',
   es: 'Tipo de trayecto',
+);
+
+const LocalizedText kLimousineOfferAppliesToPrefix = LocalizedText(
+  nl: 'Dit aanbod geldt voor',
+  en: 'This offer applies to',
+  fr: 'Cette offre s’applique à',
+  es: 'Esta oferta aplica a',
+);
+
+const LocalizedText kLimousineOfferScopeChanged = LocalizedText(
+  nl: 'Dit aanbod is gewijzigd. Begin opnieuw of vernieuw.',
+  en: 'This offer has changed. Start again or refresh.',
+  fr: 'Cette offre a changé. Recommencez ou actualisez.',
+  es: 'Esta oferta ha cambiado. Empiece de nuevo o actualice.',
+);
+
+const LocalizedText kLimousineOfferScopeRefresh = LocalizedText(
+  nl: 'Vernieuwen',
+  en: 'Refresh',
+  fr: 'Actualiser',
+  es: 'Actualizar',
+);
+
+const Key kLimousineJourneyTypeScopeSingleKey = ValueKey<String>(
+  'limousine_journey_type_scope_single',
+);
+const Key kLimousineOfferScopeChangedBannerKey = ValueKey<String>(
+  'limousine_offer_scope_changed_banner',
 );
 
 const LocalizedText kLimousineJourneySecureNote = LocalizedText(
@@ -492,6 +545,8 @@ LocalizedText limousineRequestGapLabel(String code) {
       return kLimousineGapStop;
     case 'provider_required':
       return kLimousineGapProvider;
+    case 'journey_type_out_of_scope':
+      return kLimousineOfferScopeChanged;
     case 'capacity_exceeded':
       return kLimousineGapCapacity;
     default:

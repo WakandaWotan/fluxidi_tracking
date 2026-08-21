@@ -1,7 +1,11 @@
 // Additive typed itinerary endpoints for limousine quote/book.
 // Does not introduce a second catalog, RateHawk client, or booking aggregate.
 
-const KINDS = Object.freeze(["address", "airport", "hotel"]);
+const KINDS = Object.freeze(["address", "airport", "hotel", "event", "venue"]);
+
+export function limousineEndpointIsEventKind(kind) {
+  return kind === "event" || kind === "venue";
+}
 
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -25,6 +29,8 @@ function endpointFingerprint(endpoint) {
     safeText(e.iata_code, 8).toUpperCase(),
     safeText(e.country_code, 8).toUpperCase(),
     safeText(e.hotel_name, 120).toLowerCase(),
+    safeText(e.venue_name, 160).toLowerCase(),
+    safeText(e.event_name, 160).toLowerCase(),
     safeText(e.provider_place_id, 80),
     e.manual === true ? "manual" : "live",
     e.latitude ?? "",
@@ -76,6 +82,17 @@ export function sanitizeLimousineTransferEndpoint(raw) {
     endpoint.hotel_name = hotelName;
     endpoint.ratehawk_hotel_id =
       safeText(src.ratehawk_hotel_id ?? src.ratehawkHotelId, 64) || null;
+    return endpoint;
+  }
+
+  if (limousineEndpointIsEventKind(kind)) {
+    const venueName =
+      safeText(src.venue_name ?? src.venueName, 160) || displayName;
+    const address = formattedAddress || displayName;
+    if (!venueName || !address) return null;
+    if (src.manual !== true && (latitude == null || longitude == null)) return null;
+    endpoint.venue_name = venueName;
+    endpoint.event_name = safeText(src.event_name ?? src.eventName, 160) || null;
     return endpoint;
   }
 
@@ -131,4 +148,13 @@ export function attachLimousineItineraryEndpoints(target, input) {
   if (itinerary.hotel_direction) next.hotel_direction = itinerary.hotel_direction;
   next.itinerary_endpoint_fingerprint = itinerary.itinerary_endpoint_fingerprint;
   return next;
+}
+
+export function limousineItineraryConflictsWithJourney(journeyType, itinerary) {
+  const journey = String(journeyType ?? "").trim();
+  const src = asObject(itinerary);
+  if (journey === "event_transfer" && src.to_endpoint) {
+    return !limousineEndpointIsEventKind(src.to_endpoint.kind);
+  }
+  return false;
 }
