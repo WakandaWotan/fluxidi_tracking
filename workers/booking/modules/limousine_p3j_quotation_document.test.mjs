@@ -475,7 +475,7 @@ test("1-18, 35-37) partner/customer PDF auth, R2, headers, and immutability", as
     const key = r2.writes[0];
     assert.ok(key.startsWith("private-artifacts/"));
     assert.ok(key.includes(`/limousine-quotes/`));
-    assert.ok(key.includes(`quotation-v1-${hash}.pdf`));
+    assert.ok(key.includes(`quotation-v2-${hash}.pdf`));
     assert.ok(!key.includes("limqs1"));
     assert.ok(!key.includes("status_ref"));
     assert.ok(!key.includes("Ada"));
@@ -489,6 +489,7 @@ test("1-18, 35-37) partner/customer PDF auth, R2, headers, and immutability", as
         quoteRequestId: "limq_p3j_pdf",
         revision,
         contentHash: hash,
+        rendererVersion: stored.quotation_snapshots[String(revision)].renderer_version,
       }),
     );
 

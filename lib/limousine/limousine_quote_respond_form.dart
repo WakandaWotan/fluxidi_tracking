@@ -54,7 +54,8 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     final existing = limousineDateFromQuoteExpiresAt(
       widget.record.quote?.expiresAt ?? '',
     );
-    _expiresDate = existing ?? limousineDefaultQuoteValidUntilDate(widget.clock());
+    _expiresDate =
+        existing ?? limousineDefaultQuoteValidUntilDate(widget.clock());
   }
 
   @override
@@ -177,94 +178,108 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              if (missing.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Text(
-                    _t(kLimousineQuoteValidationMissing),
-                    style: TextStyle(color: palette.danger, height: 1.35),
+                    limousineQuoteDocumentLanguageLabel(
+                      widget.record.locale,
+                      _lang,
+                    ),
+                    key: kLimousineQuoteLanguageKey,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              _moneyField(
-                palette,
-                _t(kLimousineQuoteTotal),
-                _total,
-                key: kLimousineQuoteTotalFieldKey,
-                error: _errorFor('total_incl_vat_cents'),
-              ),
-              _currencyRow(palette),
-              _vatPicker(palette),
-              _expiresField(palette),
-              const SizedBox(height: 8),
-              Text(
-                _t(kLimousineQuoteOptionalSection),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 15,
+                if (missing.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _t(kLimousineQuoteValidationMissing),
+                      style: TextStyle(color: palette.danger, height: 1.35),
+                    ),
+                  ),
+                _moneyField(
+                  palette,
+                  _t(kLimousineQuoteTotal),
+                  _total,
+                  key: kLimousineQuoteTotalFieldKey,
+                  error: _errorFor('total_incl_vat_cents'),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _intField(
-                palette,
-                _t(kLimousineQuoteCancelDeadline),
-                _cancelHours,
-              ),
-              _intField(
-                palette,
-                _t(kLimousineQuoteCancelPenalty),
-                _cancelPenalty,
-              ),
-              _intField(
-                palette,
-                _t(kLimousineQuoteWaitingIncluded),
-                _waitingIncluded,
-              ),
-              _moneyField(
-                palette,
-                _t(kLimousineQuoteWaitingOverage),
-                _waitingOverage,
-              ),
-              _intField(palette, _t(kLimousineQuoteNoShow), _noShow),
-              _moneyField(palette, _t(kLimousineQuoteOvertime), _overtime),
-              _field(
-                palette,
-                _t(kLimousineQuoteIncludedServices),
-                _included,
-                maxLines: 2,
-              ),
-              _field(
-                palette,
-                _t(kLimousineQuoteMobilisation),
-                _mobilisation,
-                maxLines: 2,
-              ),
-              _field(
-                palette,
-                _t(kLimousineQuoteCustomerObligations),
-                _obligations,
-                maxLines: 2,
-              ),
-              _field(
-                palette,
-                _t(kLimousineQuoteImportantInfo),
-                _important,
-                maxLines: 2,
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 48,
-                child: FilledButton(
-                  key: kLimousineQuoteSubmitKey,
-                  onPressed: canSubmit ? _submit : null,
-                  child: Text(
-                    _submitting
-                        ? _t(kLimousineQuoteSubmitting)
-                        : _t(kLimousineQuoteSendQuote),
+                _currencyRow(palette),
+                _vatPicker(palette),
+                _expiresField(palette),
+                const SizedBox(height: 8),
+                Text(
+                  _t(kLimousineQuoteOptionalSection),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 10),
+                _intField(
+                  palette,
+                  _t(kLimousineQuoteCancelDeadline),
+                  _cancelHours,
+                ),
+                _intField(
+                  palette,
+                  _t(kLimousineQuoteCancelPenalty),
+                  _cancelPenalty,
+                ),
+                _intField(
+                  palette,
+                  _t(kLimousineQuoteWaitingIncluded),
+                  _waitingIncluded,
+                ),
+                _moneyField(
+                  palette,
+                  _t(kLimousineQuoteWaitingOverage),
+                  _waitingOverage,
+                ),
+                _intField(palette, _t(kLimousineQuoteNoShow), _noShow),
+                _moneyField(palette, _t(kLimousineQuoteOvertime), _overtime),
+                _field(
+                  palette,
+                  _t(kLimousineQuoteIncludedServices),
+                  _included,
+                  maxLines: 2,
+                ),
+                _field(
+                  palette,
+                  _t(kLimousineQuoteMobilisation),
+                  _mobilisation,
+                  maxLines: 2,
+                ),
+                _field(
+                  palette,
+                  _t(kLimousineQuoteCustomerObligations),
+                  _obligations,
+                  maxLines: 2,
+                ),
+                _field(
+                  palette,
+                  _t(kLimousineQuoteImportantInfo),
+                  _important,
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 48,
+                  child: FilledButton(
+                    key: kLimousineQuoteSubmitKey,
+                    onPressed: canSubmit ? _submit : null,
+                    child: Text(
+                      _submitting
+                          ? _t(kLimousineQuoteSubmitting)
+                          : _t(kLimousineQuoteSendQuote),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         );

@@ -76,28 +76,21 @@ class LimousineCustomerStatusView extends StatelessWidget {
               request.state,
               language,
               companyName: companyName,
+              request: request,
             ),
           ),
         ),
         const SizedBox(height: 8),
-        if (LimousineQuoteStateId.normalize(request.state) ==
-                LimousineQuoteStateId.requested ||
-            LimousineQuoteStateId.normalize(request.state) ==
-                LimousineQuoteStateId.viewedByCompany)
+        if (LimousineQuoteStateId.normalize(
+              limousineCustomerLifecycleState(request.state, request: request),
+            ) ==
+            LimousineQuoteStateId.requested)
           Padding(
             key: kLimousineQuoteSubmitConfirmationKey,
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _t(kLimousineQuoteSubmittedTitle),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                  ),
-                ),
-                const SizedBox(height: 6),
                 Text(
                   limousineCustomerRequestReceivedLabel(
                     language,
@@ -131,6 +124,28 @@ class LimousineCustomerStatusView extends StatelessWidget {
                   },
                   child: Text(_t(kLimousineQuoteSubmittedHome)),
                 ),
+              ],
+            ),
+          ),
+        if (limousineCustomerLifecycleState(request.state, request: request) ==
+            LimousineQuoteStateId.viewedByCompany)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_t(kLimousineCustomerCompanyViewedCopy)),
+                if (request.companyViewedAt.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      formatLimousineUserDate(
+                        request.companyViewedAt,
+                        language,
+                      ),
+                      key: kLimousineCustomerViewedAtKey,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -178,21 +193,45 @@ class LimousineCustomerStatusView extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            formatLimousineEuroAmount(quote.totalInclVatCents),
+            formatLimousineEuroAmount(
+              request.quotationTotalInclVatCents ?? quote.totalInclVatCents,
+            ),
+            key: kLimousineCustomerQuoteTotalKey,
             style: TextStyle(
               color: palette.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w800,
             ),
           ),
+          if ((request.quotationCurrency.isNotEmpty
+                  ? request.quotationCurrency
+                  : quote.currency)
+              .isNotEmpty)
+            Text(
+              request.quotationCurrency.isNotEmpty
+                  ? request.quotationCurrency
+                  : quote.currency,
+            ),
           if (limousineVatTreatmentLabel(
             quote.vatTreatment,
             language,
           ).isNotEmpty)
             Text(limousineVatTreatmentLabel(quote.vatTreatment, language)),
-          if (quote.expiresAt.isNotEmpty)
+          if ((request.quotationSentAt.isNotEmpty
+                  ? request.quotationSentAt
+                  : quote.quotedAt)
+              .isNotEmpty)
             Text(
-              '${kLimousineQuoteExpires.of(language)}: ${formatLimousineUserDate(quote.expiresAt, language)}',
+              '${_t(kLimousineCustomerQuoteSentAt)}: ${formatLimousineUserDate(request.quotationSentAt.isNotEmpty ? request.quotationSentAt : quote.quotedAt, language)}',
+              key: kLimousineCustomerQuoteSentAtKey,
+            ),
+          if ((request.quotationExpiresAt.isNotEmpty
+                  ? request.quotationExpiresAt
+                  : quote.expiresAt)
+              .isNotEmpty)
+            Text(
+              '${_t(kLimousineCustomerQuoteValidUntil)}: ${formatLimousineUserDate(request.quotationExpiresAt.isNotEmpty ? request.quotationExpiresAt : quote.expiresAt, language)}',
+              key: kLimousineCustomerQuoteExpiresAtKey,
             ),
           if (quote.publicText.isNotEmpty)
             Text(

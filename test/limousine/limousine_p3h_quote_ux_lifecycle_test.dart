@@ -245,7 +245,7 @@ void main() {
     test('canonical labels cover requested → viewed → quote received', () {
       expect(
         limousineCustomerStateLabel('requested', AppLanguage.nl),
-        'Aangevraagd',
+        'Aanvraag verzonden',
       );
       expect(
         limousineCustomerStateLabel(
@@ -253,7 +253,7 @@ void main() {
           AppLanguage.nl,
           companyName: 'Hummer Party',
         ),
-        'Bekeken door Hummer Party',
+        'Het bedrijf heeft uw aanvraag bekeken',
       );
       expect(
         limousineCustomerStateLabel('quoted', AppLanguage.nl),
@@ -264,7 +264,7 @@ void main() {
           _request(state: 'viewed_by_company'),
           AppLanguage.nl,
         ),
-        'Bekeken',
+        'Aanvraag bekeken',
       );
       expect(
         limousineQuoteInboxStatusLabel(
@@ -346,9 +346,11 @@ void main() {
           ),
           'Offerte ontvangen',
         );
-        await controller.refreshStatus(manual: true);
+        await Future<void>.delayed(Duration.zero);
         expect(gateway.polls, 1);
         expect(controller.request!.revision, 4);
+        await controller.refreshStatus(manual: true);
+        expect(gateway.polls, 2);
         final reloaded = await history.list();
         expect(reloaded.single.state, 'quoted');
         controller.dispose();

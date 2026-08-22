@@ -10,19 +10,28 @@ import {
 } from "./invoice_company_logo_fetch.js";
 import { renderPdfFromHtml as defaultRenderPdfFromHtml } from "./pdf_render.mjs";
 import {
-  LIMOUSINE_QUOTATION_LOCALES,
   attachLimousineQuotationSnapshot,
   buildLimousineQuotationSnapshotFromRecord,
   freezeLimousineQuotationSellerSnapshot,
   resolveLimousineQuotationSnapshot,
 } from "./limousine_quotation_snapshot.mjs";
+import {
+  formatLimousineQuotationDateTime,
+  formatLimousineQuotationInteger,
+  formatLimousineQuotationMoney,
+  limousineQuotationCopy,
+  normalizeLimousineQuotationLocale,
+  renderLimousineConditionSentences,
+  selectLocalizedQuotationText,
+  translateLimousineJourneyType,
+} from "./limousine_quotation_i18n.mjs";
 
 export const LIMOUSINE_QUOTATION_STATUS_REF_HEADER = "X-Fluxidi-Status-Ref";
 export const LIMOUSINE_QUOTATION_PDF_UNAVAILABLE = "quotation_unavailable";
 export const LIMOUSINE_QUOTATION_PDF_REVISION_NOT_FOUND = "quotation_revision_not_found";
 export const LIMOUSINE_QUOTATION_PDF_RENDER_FAILED = "quotation_pdf_unavailable";
 
-const COPY = Object.freeze({
+const COPY_V1 = Object.freeze({
   nl: {
     title: "Offerte",
     not_invoice: "Dit document is een offerte, geen factuur.",
@@ -149,20 +158,24 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-export function resolveLimousineQuotationLocale(raw) {
-  const token = String(raw || "").trim().toLowerCase();
-  if (LIMOUSINE_QUOTATION_LOCALES.includes(token)) return token;
-  return "nl";
+function copyV1(locale) {
+  const loc = normalizeLimousineQuotationLocale(locale);
+  return COPY_V1[loc] || COPY_V1.nl;
 }
 
-export function limousineQuotationCopy(locale) {
-  const loc = resolveLimousineQuotationLocale(locale);
-  return COPY[loc] || COPY.nl;
+export function resolveLimousineQuotationLocale(raw) {
+  return normalizeLimousineQuotationLocale(raw);
 }
+
+export { limousineQuotationCopy };
 
 export function localizedLimousineQuotationText(map, locale, max = 4000) {
+  return selectLocalizedQuotationText(map, locale, max);
+}
+
+function localizedLimousineQuotationTextV1(map, locale, max = 4000) {
   const src = asObject(map);
-  const loc = resolveLimousineQuotationLocale(locale);
+  const loc = normalizeLimousineQuotationLocale(locale);
   const order = [loc, "nl", "en", "fr", "es"];
   for (const lang of order) {
     const text = String(src[lang] || "").trim();
@@ -220,7 +233,7 @@ function formatMoney(cents, currency, locale) {
 function formatVatRate(rate, locale) {
   const n = Number(rate) || 0;
   const pct = Math.round(n * 10000) / 100;
-  const label = limousineQuotationCopy(locale).vat;
+  const label = limousineQuotationCopy(locale).vat || copyV1(locale).vat;
   return `${escapeLimousineQuotationHtml(label)} ${escapeLimousineQuotationHtml(String(pct))}%`;
 }
 
@@ -229,13 +242,13 @@ function row(label, valueHtml) {
   return `<tr><th>${escapeLimousineQuotationHtml(label)}</th><td>${valueHtml}</td></tr>`;
 }
 
-function listItems(items, locale) {
+function listItemsV1(items, locale) {
   if (!Array.isArray(items) || !items.length) return "";
   const parts = [];
   for (const item of items) {
     const src = asObject(item);
     const label =
-      localizedLimousineQuotationText(src.label, locale) ||
+      localizedLimousineQuotationTextV1(src.label, locale) ||
       src.item_id ||
       src.extra_id ||
       "";
@@ -314,12 +327,16 @@ export function buildLimousineQuotationPrintCss() {
     font-size: 14px;
     margin: 0 0 8px;
   }
-  .terms, .note, .offer-text {
+  .terms, .note, .offer-text, .conditions {
     white-space: normal;
     overflow-wrap: anywhere;
     word-break: break-word;
     font-size: 12px;
     line-height: 1.45;
+  }
+  .conditions {
+    margin: 0;
+    padding-left: 18px;
   }
   .totals {
     page-break-inside: avoid;
@@ -340,8 +357,15 @@ export function buildLimousineQuotationPrintCss() {
 
 export function renderLimousineQuotationHtml(snapshot) {
   const snap = asObject(snapshot);
+  const rendererVersion = Number(snap.renderer_version) || 1;
+  if (rendererVersion < 2) return renderLimousineQuotationHtmlV1(snap);
+  return renderLimousineQuotationHtmlV2(snap);
+}
+
+function renderLimousineQuotationHtmlV1(snapshot) {
+  const snap = asObject(snapshot);
   const locale = resolveLimousineQuotationLocale(snap.locale);
-  const copy = limousineQuotationCopy(locale);
+  const copy = copyV1(locale);
   const seller = asObject(snap.seller_snapshot);
   const request = asObject(snap.request_snapshot);
   const vehicle = asObject(snap.vehicle_snapshot);
@@ -409,8 +433,8 @@ export function renderLimousineQuotationHtml(snapshot) {
   ].join("");
 
   const legalBlocks = [
-    localizedLimousineQuotationText(terms.customer_obligations, locale),
-    localizedLimousineQuotationText(terms.important_information, locale),
+    localizedLimousineQuotationTextV1(terms.customer_obligations, locale),
+    localizedLimousineQuotationTextV1(terms.important_information, locale),
   ]
     .filter(Boolean)
     .map((text) => `<p class="terms">${safeMultilineHtml(text)}</p>`)
@@ -471,13 +495,13 @@ export function renderLimousineQuotationHtml(snapshot) {
     </section>
     <section class="section">
       <h2>${escapeLimousineQuotationHtml(copy.offer)}</h2>
-      <div class="offer-text">${safeMultilineHtml(localizedLimousineQuotationText(offer.public_text, locale))}</div>
+      <div class="offer-text">${safeMultilineHtml(localizedLimousineQuotationTextV1(offer.public_text, locale))}</div>
       <h2>${escapeLimousineQuotationHtml(copy.included)}</h2>
-      ${listItems(offer.included_services, locale)}
+      ${listItemsV1(offer.included_services, locale)}
       <h2>${escapeLimousineQuotationHtml(copy.extras)}</h2>
-      ${listItems(offer.separately_priced_extras, locale)}
+      ${listItemsV1(offer.separately_priced_extras, locale)}
       <h2>${escapeLimousineQuotationHtml(copy.mobilisation)}</h2>
-      <div class="note">${safeMultilineHtml(localizedLimousineQuotationText(offer.mobilisation_disclosure, locale))}</div>
+      <div class="note">${safeMultilineHtml(localizedLimousineQuotationTextV1(offer.mobilisation_disclosure, locale))}</div>
     </section>
     <section class="section">
       <h2>${escapeLimousineQuotationHtml(copy.terms)}</h2>
@@ -488,6 +512,212 @@ export function renderLimousineQuotationHtml(snapshot) {
       ${row(copy.net, formatMoney(totals.total_ex_vat_cents, totals.currency, locale))}
       ${row(formatVatRate(totals.vat_rate, locale), formatMoney(totals.vat_amount_cents, totals.currency, locale))}
       <tr class="grand"><th>${escapeLimousineQuotationHtml(copy.total)}</th><td>${formatMoney(totals.total_incl_vat_cents, totals.currency, locale)}</td></tr>
+    </table>
+    <footer class="quotation-footer">${escapeLimousineQuotationHtml(copy.footer)} · ${escapeLimousineQuotationHtml(copy.not_invoice)}</footer>
+  </div>
+</body>
+</html>`;
+}
+
+function sectionHtml(title, inner) {
+  const body = String(inner || "").trim();
+  if (!title || !body) return "";
+  return `<section class="section"><h2>${escapeLimousineQuotationHtml(title)}</h2>${body}</section>`;
+}
+
+function listItemsV2(items, locale, currency) {
+  if (!Array.isArray(items) || !items.length) return "";
+  const parts = [];
+  for (const item of items) {
+    const src = asObject(item);
+    const label = selectLocalizedQuotationText(src.label, locale);
+    if (!label) continue;
+    const amount =
+      src.amount_cents != null
+        ? ` (${escapeLimousineQuotationHtml(formatLimousineQuotationMoney(src.amount_cents, src.currency || currency || "EUR", locale))})`
+        : "";
+    parts.push(`<li>${escapeLimousineQuotationHtml(label)}${amount}</li>`);
+  }
+  return parts.length ? `<ul>${parts.join("")}</ul>` : "";
+}
+
+function renderLimousineQuotationHtmlV2(snapshot) {
+  const snap = asObject(snapshot);
+  const locale = resolveLimousineQuotationLocale(snap.locale);
+  const copy = limousineQuotationCopy(locale);
+  const seller = asObject(snap.seller_snapshot);
+  const request = asObject(snap.request_snapshot);
+  const vehicle = asObject(snap.vehicle_snapshot);
+  const offer = asObject(snap.offer_snapshot);
+  const totals = asObject(snap.totals_snapshot);
+  const terms = asObject(offer.terms);
+  const logo = asObject(seller.logo);
+  const currency = totals.currency || "EUR";
+  const sellerName =
+    seller.legal_name || seller.trading_name || seller.name || "";
+  const sellerLines = [
+    seller.legal_name,
+    seller.trading_name && seller.trading_name !== seller.legal_name
+      ? seller.trading_name
+      : "",
+    seller.legal_form_label_nl,
+    seller.enterprise_number,
+    seller.vat_number,
+    [seller.address_line, seller.postal_code, seller.city]
+      .filter(Boolean)
+      .join(" "),
+    seller.contact_email,
+  ].filter(Boolean);
+
+  const logoHtml =
+    logo.present === true && logo.data_uri
+      ? `<div class="quotation-logo"><img src="${escapeLimousineQuotationHtml(logo.data_uri)}" alt="${escapeLimousineQuotationHtml(sellerName || copy.provider)}" /></div>`
+      : "";
+
+  const journeyType = translateLimousineJourneyType(request.journey_type, locale);
+  const offerText = selectLocalizedQuotationText(offer.public_text, locale);
+  const included = listItemsV2(offer.included_services, locale, currency);
+  const extras = listItemsV2(offer.separately_priced_extras, locale, currency);
+  const mobilisation = selectLocalizedQuotationText(offer.mobilisation_disclosure, locale);
+  const obligations = selectLocalizedQuotationText(
+    terms.customer_obligations,
+    locale,
+  );
+  const important = selectLocalizedQuotationText(
+    terms.important_information,
+    locale,
+  );
+  const conditionSentences = renderLimousineConditionSentences(terms, {
+    locale,
+    currency,
+  });
+  const conditionsHtml = conditionSentences.length
+    ? `<ul class="conditions">${conditionSentences
+        .map((sentence) => `<li class="terms">${escapeLimousineQuotationHtml(sentence)}</li>`)
+        .join("")}</ul>`
+    : "";
+
+  const journeyRows = [
+    row(copy.journey_type, journeyType ? escapeLimousineQuotationHtml(journeyType) : ""),
+    row(copy.pickup, escapeLimousineQuotationHtml(request.from)),
+    row(copy.destination, escapeLimousineQuotationHtml(request.to)),
+    row(
+      copy.stops,
+      Array.isArray(request.stops) && request.stops.length
+        ? escapeLimousineQuotationHtml(request.stops.join(" · "))
+        : "",
+    ),
+    row(
+      copy.planned_datetime,
+      escapeLimousineQuotationHtml(
+        formatLimousineQuotationDateTime(request.scheduled_pickup_iso, locale),
+      ),
+    ),
+    row(
+      copy.return_pickup,
+      escapeLimousineQuotationHtml(
+        formatLimousineQuotationDateTime(request.return_pickup_iso, locale),
+      ),
+    ),
+    row(
+      copy.duration_minutes,
+      request.requested_duration_minutes != null
+        ? escapeLimousineQuotationHtml(
+            formatLimousineQuotationInteger(request.requested_duration_minutes),
+          )
+        : "",
+    ),
+    row(
+      copy.passengers,
+      request.pax != null
+        ? escapeLimousineQuotationHtml(formatLimousineQuotationInteger(request.pax))
+        : "",
+    ),
+    row(
+      copy.luggage,
+      request.bags != null
+        ? escapeLimousineQuotationHtml(formatLimousineQuotationInteger(request.bags))
+        : "",
+    ),
+    row(copy.occasion, escapeLimousineQuotationHtml(request.occasion)),
+    row(
+      copy.vehicle,
+      escapeLimousineQuotationHtml(vehicle.public_name || ""),
+    ),
+    row(
+      copy.note,
+      request.customer_note ? safeMultilineHtml(request.customer_note) : "",
+    ),
+  ].join("");
+
+  return `<!DOCTYPE html>
+<html lang="${escapeLimousineQuotationHtml(locale)}">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeLimousineQuotationHtml(copy.title)}</title>
+  <style>${buildLimousineQuotationPrintCss()}</style>
+</head>
+<body>
+  <div class="quotation-wrapper">
+    <header class="quotation-header">
+      <div>
+        <h1>${escapeLimousineQuotationHtml(copy.title)}</h1>
+        <p class="disclaimer">${escapeLimousineQuotationHtml(copy.not_invoice)}</p>
+      </div>
+      ${logoHtml}
+    </header>
+    <table class="meta">
+      ${row(copy.quotation_request, escapeLimousineQuotationHtml(snap.quote_request_id))}
+      ${row(copy.revision, escapeLimousineQuotationHtml(String(snap.quote_revision ?? "")))}
+      ${row(
+        copy.issue_date,
+        escapeLimousineQuotationHtml(formatLimousineQuotationDateTime(snap.issued_at, locale)),
+      )}
+      ${row(
+        copy.valid_until,
+        escapeLimousineQuotationHtml(formatLimousineQuotationDateTime(snap.expires_at, locale)),
+      )}
+    </table>
+    ${sectionHtml(
+      copy.provider,
+      sellerLines.map((line) => `<div>${escapeLimousineQuotationHtml(line)}</div>`).join(""),
+    )}
+    ${sectionHtml(copy.journey, `<table class="journey">${journeyRows}</table>`)}
+    ${sectionHtml(
+      copy.offer,
+      offerText ? `<div class="offer-text">${safeMultilineHtml(offerText)}</div>` : "",
+    )}
+    ${sectionHtml(copy.included_services, included)}
+    ${sectionHtml(copy.separately_priced_extras, extras)}
+    ${sectionHtml(
+      copy.mobilisation,
+      mobilisation ? `<div class="note">${safeMultilineHtml(mobilisation)}</div>` : "",
+    )}
+    ${sectionHtml(
+      copy.customer_obligations,
+      obligations ? `<div class="note">${safeMultilineHtml(obligations)}</div>` : "",
+    )}
+    ${sectionHtml(
+      copy.important_information,
+      important ? `<div class="note">${safeMultilineHtml(important)}</div>` : "",
+    )}
+    ${sectionHtml(copy.conditions, conditionsHtml)}
+    <table class="totals">
+      ${row(
+        copy.net,
+        escapeLimousineQuotationHtml(
+          formatLimousineQuotationMoney(totals.total_ex_vat_cents, currency, locale),
+        ),
+      )}
+      ${row(
+        formatVatRate(totals.vat_rate, locale),
+        escapeLimousineQuotationHtml(
+          formatLimousineQuotationMoney(totals.vat_amount_cents, currency, locale),
+        ),
+      )}
+      <tr class="grand"><th>${escapeLimousineQuotationHtml(copy.total_incl_vat)}</th><td>${escapeLimousineQuotationHtml(
+        formatLimousineQuotationMoney(totals.total_incl_vat_cents, currency, locale),
+      )}</td></tr>
     </table>
     <footer class="quotation-footer">${escapeLimousineQuotationHtml(copy.footer)} · ${escapeLimousineQuotationHtml(copy.not_invoice)}</footer>
   </div>
@@ -560,13 +790,15 @@ export function buildLimousineQuotationArtifactKey({
   quoteRequestId,
   revision,
   contentHash,
+  rendererVersion,
 } = {}) {
   const tenant = bookingReferenceScopePart(tenantId, "unknown");
   const company = bookingReferenceScopePart(companyId, "unknown");
   const quote = bookingReferenceScopePart(quoteRequestId, "quote");
   const rev = Math.max(0, Number(revision) || 0);
   const hash = sanitizeTenantString(contentHash, 80).toLowerCase().replace(/[^a-f0-9]/g, "");
-  return `private-artifacts/tenant/${tenant}/company/${company}/limousine-quotes/${quote}/revision-${rev}/quotation-v1-${hash}.pdf`;
+  const version = Math.max(1, Number(rendererVersion) || 1);
+  return `private-artifacts/tenant/${tenant}/company/${company}/limousine-quotes/${quote}/revision-${rev}/quotation-v${version}-${hash}.pdf`;
 }
 
 export function limousineQuotationPdfFilename(quoteRequestId, revision) {
@@ -595,6 +827,7 @@ export async function ensureLimousineQuotationPdfArtifact({
     quoteRequestId: rec.quote_request_id || snap.quote_request_id,
     revision: snap.quote_revision,
     contentHash: snap.content_hash,
+    rendererVersion: snap.renderer_version,
   });
   const storage = env?.PUBLIC_MEDIA;
   if (!storage || typeof storage.get !== "function" || typeof storage.put !== "function") {

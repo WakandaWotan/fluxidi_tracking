@@ -39,8 +39,7 @@ class _LimousineCustomerRequestsSectionState
 
   AppLanguage get _lang => appLanguageNotifier.value;
 
-  bool get _gateOn =>
-      widget.quoteEnabled ?? kLimousineCustomerQuoteGateEnabled;
+  bool get _gateOn => widget.quoteEnabled ?? kLimousineCustomerQuoteGateEnabled;
 
   @override
   void initState() {
@@ -179,9 +178,7 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
     final live = record.request;
     final vehicle = record.vehicleDisplayName.isNotEmpty
         ? record.vehicleDisplayName
-        : (live == null
-              ? ''
-              : limousineQuoteVehicleDisplay(live, language));
+        : (live == null ? '' : limousineQuoteVehicleDisplay(live, language));
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -200,6 +197,7 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
                     record.state,
                     language,
                     companyName: record.companyName,
+                    request: live,
                   ),
                   style: TextStyle(
                     color: palette.gold,
@@ -230,9 +228,10 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
                   ),
                 if (record.from.isNotEmpty || record.to.isNotEmpty)
                   Text(
-                    [record.from, record.to]
-                        .where((part) => part.trim().isNotEmpty)
-                        .join(' → '),
+                    [
+                      record.from,
+                      record.to,
+                    ].where((part) => part.trim().isNotEmpty).join(' → '),
                     style: TextStyle(color: palette.textMuted),
                   ),
                 const SizedBox(height: 4),
@@ -267,19 +266,30 @@ class LimousineCustomerRequestDetailPage extends StatefulWidget {
 }
 
 class _LimousineCustomerRequestDetailPageState
-    extends State<LimousineCustomerRequestDetailPage> {
+    extends State<LimousineCustomerRequestDetailPage>
+    with WidgetsBindingObserver {
   late final LimousineCustomerQuoteController _controller;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = LimousineCustomerQuoteController(
       gateway: widget.gateway,
       historyRepository: widget.history,
     )..restorePersistedRequest(widget.record);
     _controller.addListener(_onChanged);
     if (looksLikeLimousineStatusRef(widget.record.statusRef)) {
-      _controller.refreshStatus(manual: true);
+      _controller.refreshStatus();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _controller.resumePolling();
+    } else {
+      _controller.pausePolling();
     }
   }
 
@@ -289,6 +299,7 @@ class _LimousineCustomerRequestDetailPageState
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onChanged);
     _controller.dispose();
     super.dispose();

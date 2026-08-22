@@ -48,11 +48,30 @@ const Key kLimousineCustomerUnavailableKey = ValueKey<String>(
 const Key kLimousineCustomerQuoteUpdatedKey = ValueKey<String>(
   'limousine_customer_quote_updated',
 );
+const Key kLimousineCustomerViewedAtKey = ValueKey<String>(
+  'limousine_customer_viewed_at',
+);
+const Key kLimousineCustomerQuoteSentAtKey = ValueKey<String>(
+  'limousine_customer_quote_sent_at',
+);
+const Key kLimousineCustomerQuoteExpiresAtKey = ValueKey<String>(
+  'limousine_customer_quote_expires_at',
+);
+const Key kLimousineCustomerQuoteTotalKey = ValueKey<String>(
+  'limousine_customer_quote_total',
+);
 
-const Duration kLimousineStatusAutoPollInterval = Duration(seconds: 60);
+const Duration kLimousineStatusAutoPollInterval = Duration(seconds: 15);
 const Duration kLimousineStatusManualDebounce = Duration(seconds: 8);
-const int kLimousineStatusRateMax = 20;
+const int kLimousineStatusRateMax = 80;
 const Duration kLimousineStatusRateWindow = Duration(minutes: 15);
+
+const Set<String> kLimousineCustomerTransientPollStates = <String>{
+  LimousineQuoteStateId.requested,
+  LimousineQuoteStateId.viewedByCompany,
+  LimousineQuoteStateId.quoted,
+  LimousineQuoteStateId.customerAcceptanceRequired,
+};
 
 const Set<String> kLimousineCustomerCreateAllowedKeys = <String>{
   'public_partner_id',
@@ -850,8 +869,9 @@ bool limousineCustomerCanAccept(
 }
 
 bool limousineCustomerShouldPoll(String state) {
-  return !LimousineQuoteStateId.isTerminal(state) &&
-      LimousineQuoteStateId.normalize(state) != LimousineQuoteStateId.accepted;
+  return kLimousineCustomerTransientPollStates.contains(
+    LimousineQuoteStateId.normalize(state),
+  );
 }
 
 List<String> limousineCustomerRequiredTermsPresent(

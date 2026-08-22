@@ -167,6 +167,22 @@ Map<String, dynamic> _requestSnapshot(LimousineQuoteRequest request) {
       },
     'vehicle_snapshot': request.vehicleSnapshot,
     'pricing_snapshot': request.pricingSnapshot,
+    'quotation_available': request.quotationAvailable,
+    if (request.quotationRevision != null)
+      'quotation_revision': request.quotationRevision,
+    if (request.locale.isNotEmpty) 'locale': request.locale,
+    'company_viewed': request.companyViewed,
+    if (request.companyViewedAt.isNotEmpty)
+      'company_viewed_at': request.companyViewedAt,
+    if (request.quotationSentAt.isNotEmpty)
+      'quotation_sent_at': request.quotationSentAt,
+    if (request.quotationExpiresAt.isNotEmpty)
+      'quotation_expires_at': request.quotationExpiresAt,
+    if (request.quotationTotalInclVatCents != null)
+      'quotation_total_incl_vat_cents': request.quotationTotalInclVatCents,
+    if (request.quotationCurrency.isNotEmpty)
+      'quotation_currency': request.quotationCurrency,
+    if (request.acceptedAt.isNotEmpty) 'accepted_at': request.acceptedAt,
   };
 }
 
@@ -286,10 +302,8 @@ class LimousineCustomerRequestHistoryRepository {
             scheduledPickupIso: request.scheduledPickupIso.isNotEmpty
                 ? request.scheduledPickupIso
                 : item.scheduledPickupIso,
-            vehicleDisplayName: limousineQuoteVehicleDisplay(
-              request,
-              AppLanguage.nl,
-            ).isNotEmpty
+            vehicleDisplayName:
+                limousineQuoteVehicleDisplay(request, AppLanguage.nl).isNotEmpty
                 ? limousineQuoteVehicleDisplay(request, AppLanguage.nl)
                 : item.vehicleDisplayName,
             request: request,

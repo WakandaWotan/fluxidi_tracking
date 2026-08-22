@@ -50,7 +50,7 @@ export const LIMOUSINE_INBOX_INDEX_VERSION = 1;
 export const LIMOUSINE_INBOX_MAX_ENTRIES = 200;
 export const LIMOUSINE_INBOX_PAGE_DEFAULT = 20;
 export const LIMOUSINE_INBOX_PAGE_MAX = 25;
-export const LIMOUSINE_STATUS_RATE_MAX = 20;
+export const LIMOUSINE_STATUS_RATE_MAX = 80;
 export const LIMOUSINE_STATUS_RATE_WINDOW_SECONDS = 15 * 60;
 
 export const LIMOUSINE_INBOX_FORBIDDEN_KEYS = Object.freeze([
@@ -353,7 +353,14 @@ export function buildLimousineCompanyInboxView(record, {
 
 export function projectionContainsForbiddenKey(value, keys = LIMOUSINE_INBOX_FORBIDDEN_KEYS) {
   const rendered = JSON.stringify(value ?? {});
-  return keys.filter((key) => rendered.includes(`"${key}"`) || rendered.includes(key));
+  return keys.filter((key) => {
+    const token = String(key || "").trim();
+    if (!token) return false;
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Token boundaries keep short secrets such as "pan" from matching
+    // company_viewed, while still catching values like hidden@example.com.
+    return new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`, "i").test(rendered);
+  });
 }
 
 export function prevalidateLimousineStatusBody(body) {

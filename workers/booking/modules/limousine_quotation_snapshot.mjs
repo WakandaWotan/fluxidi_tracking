@@ -6,9 +6,11 @@
 
 import { sha256Hex } from "./crypto_utils.js";
 import { sanitizeTenantString } from "./parsing_utils.js";
+import { normalizeLimousineQuotationLocale } from "./limousine_quotation_i18n.mjs";
 
 export const LIMOUSINE_QUOTATION_SCHEMA_VERSION = 1;
-export const LIMOUSINE_QUOTATION_RENDERER_VERSION = 1;
+export const LIMOUSINE_QUOTATION_RENDERER_VERSION_V1 = 1;
+export const LIMOUSINE_QUOTATION_RENDERER_VERSION = 2;
 
 export const LIMOUSINE_QUOTATION_SNAPSHOT_CONFLICT = "quotation_snapshot_conflict";
 export const LIMOUSINE_QUOTATION_SNAPSHOT_MISSING = "quotation_snapshot_missing";
@@ -321,7 +323,7 @@ export async function buildLimousineQuotationSnapshot({
     vatTreatment: asObject(totalsSnapshot).vat_treatment ?? offer.vat_treatment,
     currency: asObject(totalsSnapshot).currency ?? offer.currency,
   });
-  const loc = safeText(locale, 8).toLowerCase();
+  const loc = normalizeLimousineQuotationLocale(locale);
   const body = {
     schema_version: Number(schemaVersion) || LIMOUSINE_QUOTATION_SCHEMA_VERSION,
     renderer_version: Number(rendererVersion) || LIMOUSINE_QUOTATION_RENDERER_VERSION,
@@ -332,7 +334,7 @@ export async function buildLimousineQuotationSnapshot({
     terms_revision: toInt(termsRevision) ?? offer.terms_revision ?? 0,
     issued_at: safeText(issuedAt, 40),
     expires_at: safeText(expiresAt ?? offer.expires_at, 40),
-    locale: LIMOUSINE_QUOTATION_LOCALES.includes(loc) ? loc : "nl",
+    locale: loc,
     seller_snapshot: seller,
     request_snapshot: request,
     vehicle_snapshot: vehicle,
@@ -404,10 +406,20 @@ export function projectLimousineQuotationAvailability(record) {
   if (!snapshot) {
     return { quotation_available: false };
   }
-  return {
+  const totals = asObject(snapshot.totals_snapshot);
+  const out = {
     quotation_available: true,
     quotation_revision: toInt(snapshot.quote_revision) ?? 0,
   };
+  const sentAt = safeText(snapshot.issued_at, 40);
+  const expiresAt = safeText(snapshot.expires_at, 40);
+  if (sentAt) out.quotation_sent_at = sentAt;
+  if (expiresAt) out.quotation_expires_at = expiresAt;
+  const total = toInt(totals.total_incl_vat_cents);
+  if (total != null) out.quotation_total_incl_vat_cents = total;
+  const currency = normalizeCurrency(totals.currency);
+  if (currency) out.quotation_currency = currency;
+  return out;
 }
 
 export function attachLimousineQuotationSnapshot(record, snapshot) {

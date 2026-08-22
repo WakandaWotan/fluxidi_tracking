@@ -268,6 +268,34 @@ const LocalizedText kLimousineCustomerWaitingCopy = LocalizedText(
   es: 'La empresa está revisando su solicitud. El presupuesto aparecerá aquí.',
 );
 
+const LocalizedText kLimousineCustomerCompanyViewedCopy = LocalizedText(
+  nl: 'Het bedrijf heeft uw aanvraag bekeken',
+  en: 'The company has viewed your request',
+  fr: 'L’entreprise a consulté votre demande',
+  es: 'La empresa ha visto su solicitud',
+);
+
+const LocalizedText kLimousineCustomerQuotationReceivedCopy = LocalizedText(
+  nl: 'Offerte ontvangen',
+  en: 'Quotation received',
+  fr: 'Devis reçu',
+  es: 'Presupuesto recibido',
+);
+
+const LocalizedText kLimousineCustomerQuoteSentAt = LocalizedText(
+  nl: 'Verzonden',
+  en: 'Sent',
+  fr: 'Envoyé',
+  es: 'Enviado',
+);
+
+const LocalizedText kLimousineCustomerQuoteValidUntil = LocalizedText(
+  nl: 'Geldig tot',
+  en: 'Valid until',
+  fr: 'Valable jusqu’au',
+  es: 'Válido hasta',
+);
+
 const LocalizedText kLimousineCustomerTermsTitle = LocalizedText(
   nl: 'Boekingsvoorwaarden',
   en: 'Booking terms',
@@ -360,10 +388,10 @@ const LocalizedText kLimousineCustomerRequestsHint = LocalizedText(
 );
 
 const LocalizedText kLimousineCustomerAccepted = LocalizedText(
-  nl: 'Aanbod aanvaard',
-  en: 'Offer accepted',
-  fr: 'Offre acceptée',
-  es: 'Oferta aceptada',
+  nl: 'Offerte geaccepteerd',
+  en: 'Quotation accepted',
+  fr: 'Devis accepté',
+  es: 'Presupuesto aceptado',
 );
 
 const LocalizedText kLimousineCustomerCannotAccept = LocalizedText(
@@ -474,34 +502,34 @@ const LocalizedText kLimousineCustomerMobilisation = LocalizedText(
 const Map<String, LocalizedText> kLimousineCustomerStateLabels =
     <String, LocalizedText>{
       LimousineQuoteStateId.requested: LocalizedText(
-        nl: 'Aangevraagd',
-        en: 'Requested',
-        fr: 'Demandée',
-        es: 'Solicitada',
+        nl: 'Aanvraag verzonden',
+        en: 'Request sent',
+        fr: 'Demande envoyée',
+        es: 'Solicitud enviada',
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
-        nl: 'Bekeken door het bedrijf',
-        en: 'Viewed by the company',
-        fr: 'Vue par l’entreprise',
-        es: 'Vista por la empresa',
+        nl: 'Het bedrijf heeft uw aanvraag bekeken',
+        en: 'The company has viewed your request',
+        fr: 'L’entreprise a consulté votre demande',
+        es: 'La empresa ha visto su solicitud',
       ),
       LimousineQuoteStateId.quoted: LocalizedText(
         nl: 'Offerte ontvangen',
-        en: 'Quote received',
+        en: 'Quotation received',
         fr: 'Devis reçu',
         es: 'Presupuesto recibido',
       ),
       LimousineQuoteStateId.customerAcceptanceRequired: LocalizedText(
-        nl: 'Aanvaarding vereist',
-        en: 'Customer acceptance required',
-        fr: 'Acceptation requise',
-        es: 'Aceptación requerida',
+        nl: 'Offerte ontvangen',
+        en: 'Quotation received',
+        fr: 'Devis reçu',
+        es: 'Presupuesto recibido',
       ),
       LimousineQuoteStateId.accepted: LocalizedText(
-        nl: 'Aanvaard',
-        en: 'Accepted',
-        fr: 'Acceptée',
-        es: 'Aceptada',
+        nl: 'Offerte geaccepteerd',
+        en: 'Quotation accepted',
+        fr: 'Devis accepté',
+        es: 'Presupuesto aceptado',
       ),
       LimousineQuoteStateId.bookingCreated: LocalizedText(
         nl: 'Boeking aangemaakt',
@@ -544,26 +572,46 @@ const Map<String, LocalizedText> kLimousineCustomerStateLabels =
 String limousineCustomerLabel(LocalizedText text, AppLanguage language) =>
     text.of(language);
 
+String limousineCustomerLifecycleState(
+  String state, {
+  LimousineQuoteRequest? request,
+}) {
+  final token = LimousineQuoteStateId.normalize(
+    request?.state.isNotEmpty == true ? request!.state : state,
+  );
+  if (token == LimousineQuoteStateId.bookingCreated) {
+    return LimousineQuoteStateId.bookingCreated;
+  }
+  if (token == LimousineQuoteStateId.accepted) {
+    return LimousineQuoteStateId.accepted;
+  }
+  if (request?.quotationAvailable == true ||
+      token == LimousineQuoteStateId.quoted ||
+      token == LimousineQuoteStateId.customerAcceptanceRequired) {
+    return LimousineQuoteStateId.quoted;
+  }
+  if (request?.companyViewed == true ||
+      (request?.companyViewedAt ?? '').trim().isNotEmpty ||
+      token == LimousineQuoteStateId.viewedByCompany) {
+    return LimousineQuoteStateId.viewedByCompany;
+  }
+  return token;
+}
+
 String limousineCustomerViewedByCompanyLabel(
   AppLanguage language, {
   String companyName = '',
 }) {
-  final name = companyName.trim();
-  if (name.isEmpty) {
-    return kLimousineCustomerStateLabels[LimousineQuoteStateId.viewedByCompany]!
-        .of(language);
-  }
-  return kLimousineCustomerViewedByNamed
-      .of(language)
-      .replaceAll('{company}', name);
+  return kLimousineCustomerCompanyViewedCopy.of(language);
 }
 
 String limousineCustomerStateLabel(
   String state,
   AppLanguage language, {
   String companyName = '',
+  LimousineQuoteRequest? request,
 }) {
-  final token = LimousineQuoteStateId.normalize(state);
+  final token = limousineCustomerLifecycleState(state, request: request);
   if (token == LimousineQuoteStateId.viewedByCompany) {
     return limousineCustomerViewedByCompanyLabel(
       language,

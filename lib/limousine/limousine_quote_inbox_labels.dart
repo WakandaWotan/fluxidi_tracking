@@ -315,10 +315,66 @@ const LocalizedText kLimousineQuoteUnknownState = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteMarkViewed = LocalizedText(
-  nl: 'Markeer als bekeken',
-  en: 'Mark as viewed',
-  fr: 'Marquer comme vu',
-  es: 'Marcar como visto',
+  nl: 'Aanvraag bekeken',
+  en: 'Request viewed',
+  fr: 'Demande consultée',
+  es: 'Solicitud vista',
+);
+
+const LocalizedText kLimousineQuoteViewedConfirmation = LocalizedText(
+  nl: 'Aanvraag bekeken',
+  en: 'Request viewed',
+  fr: 'Demande consultée',
+  es: 'Solicitud vista',
+);
+
+const LocalizedText kLimousineQuoteSendSuccessTitle = LocalizedText(
+  nl: 'Offerte verstuurd',
+  en: 'Quotation sent',
+  fr: 'Devis envoyé',
+  es: 'Presupuesto enviado',
+);
+
+const LocalizedText kLimousineQuoteSendRevision = LocalizedText(
+  nl: 'Revisie',
+  en: 'Revision',
+  fr: 'Révision',
+  es: 'Revisión',
+);
+
+const LocalizedText kLimousineQuoteSendSentAt = LocalizedText(
+  nl: 'Verzonden',
+  en: 'Sent',
+  fr: 'Envoyé',
+  es: 'Enviado',
+);
+
+const LocalizedText kLimousineQuoteLanguageNl = LocalizedText(
+  nl: 'Taal offerte: Nederlands',
+  en: 'Quotation language: Dutch',
+  fr: 'Langue du devis : néerlandais',
+  es: 'Idioma del presupuesto: neerlandés',
+);
+
+const LocalizedText kLimousineQuoteLanguageEn = LocalizedText(
+  nl: 'Taal offerte: Engels',
+  en: 'Quotation language: English',
+  fr: 'Langue du devis : anglais',
+  es: 'Idioma del presupuesto: inglés',
+);
+
+const LocalizedText kLimousineQuoteLanguageFr = LocalizedText(
+  nl: 'Taal offerte: Frans',
+  en: 'Quotation language: French',
+  fr: 'Langue du devis : français',
+  es: 'Idioma del presupuesto: francés',
+);
+
+const LocalizedText kLimousineQuoteLanguageEs = LocalizedText(
+  nl: 'Taal offerte: Spaans',
+  en: 'Quotation language: Spanish',
+  fr: 'Langue du devis : espagnol',
+  es: 'Idioma del presupuesto: español',
 );
 
 const LocalizedText kLimousineQuoteSendQuote = LocalizedText(
@@ -693,10 +749,10 @@ const LocalizedText kLimousineQuoteUnread = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteViewedChip = LocalizedText(
-  nl: 'Bekeken',
-  en: 'Viewed',
-  fr: 'Vu',
-  es: 'Visto',
+  nl: 'Aanvraag bekeken',
+  en: 'Request viewed',
+  fr: 'Demande consultée',
+  es: 'Solicitud vista',
 );
 
 const Map<LimousineQuoteInboxFilter, LocalizedText>
@@ -754,10 +810,10 @@ const Map<String, LocalizedText> kLimousineQuoteInboxStatusLabels =
         es: 'Nuevo',
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
-        nl: 'Bekeken',
-        en: 'Viewed',
-        fr: 'Vu',
-        es: 'Visto',
+        nl: 'Aanvraag bekeken',
+        en: 'Request viewed',
+        fr: 'Demande consultée',
+        es: 'Solicitud vista',
       ),
       LimousineQuoteStateId.quoted: LocalizedText(
         nl: 'Wacht op klant',
@@ -794,10 +850,10 @@ const Map<String, LocalizedText> kLimousineQuoteStateLabels =
         es: 'Solicitado',
       ),
       LimousineQuoteStateId.viewedByCompany: LocalizedText(
-        nl: 'Bekeken',
-        en: 'Viewed',
-        fr: 'Vu',
-        es: 'Visto',
+        nl: 'Aanvraag bekeken',
+        en: 'Request viewed',
+        fr: 'Demande consultée',
+        es: 'Solicitud vista',
       ),
       LimousineQuoteStateId.quoted: LocalizedText(
         nl: 'Offerte verstuurd',
@@ -932,5 +988,21 @@ String limousineQuoteErrorLabel(
     case LimousineQuoteInboxErrorKind.invalid:
     case LimousineQuoteInboxErrorKind.unknown:
       return kLimousineQuoteNetworkFailed.of(language);
+  }
+}
+
+String limousineQuoteDocumentLanguageLabel(
+  String locale,
+  AppLanguage language,
+) {
+  switch (locale.trim().toLowerCase().split('-').first) {
+    case 'en':
+      return kLimousineQuoteLanguageEn.of(language);
+    case 'fr':
+      return kLimousineQuoteLanguageFr.of(language);
+    case 'es':
+      return kLimousineQuoteLanguageEs.of(language);
+    default:
+      return kLimousineQuoteLanguageNl.of(language);
   }
 }

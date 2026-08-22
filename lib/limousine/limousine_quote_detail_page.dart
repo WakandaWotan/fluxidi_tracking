@@ -36,6 +36,8 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
   bool _loading = true;
   String? _banner;
   int _generation = 0;
+  bool _viewedOnce = false;
+  bool _quoteSent = false;
 
   AppLanguage get _lang => appLanguageNotifier.value;
 
@@ -62,12 +64,26 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
         _controller.detail = record;
         _loading = false;
       });
+      await _ensureViewed(record);
     } on LimousineQuoteInboxException catch (error) {
       if (!mounted || gen != _generation) return;
       setState(() {
         _controller.error = error;
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _ensureViewed(LimousineQuoteRequest record) async {
+    if (_viewedOnce) return;
+    _viewedOnce = true;
+    final gen = _generation;
+    try {
+      await _controller.respond(action: 'viewed', record: record);
+      if (!mounted || gen != _generation) return;
+      setState(() {});
+    } catch (_) {
+      if (!mounted || gen != _generation) return;
     }
   }
 
@@ -94,9 +110,10 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
         builder: (_) => LimousineQuoteEditorPage(
           record: record,
           onSubmit: (next) async {
+            final live = _controller.detail ?? record;
             await _controller.respond(
               action: 'quote',
-              record: record,
+              record: live,
               quote: next.toWorkerQuote(),
             );
           },
@@ -104,7 +121,9 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
       ),
     );
     if (!mounted || gen != _generation) return;
-    if (draft != null) setState(() {});
+    if (draft != null) {
+      setState(() => _quoteSent = true);
+    }
   }
 
   Future<void> _decline(LimousineQuoteRequest record) async {
@@ -184,6 +203,17 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(_banner!, style: TextStyle(color: palette.accent)),
           ),
+        if (record.companyViewedAt.isNotEmpty)
+          Padding(
+            key: kLimousineQuoteViewedConfirmationKey,
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              '${_t(kLimousineQuoteViewedConfirmation)} · ${formatLimousineUserDate(record.companyViewedAt, _lang)}',
+              style: TextStyle(color: palette.textSecondary, height: 1.35),
+            ),
+          ),
+        if (_quoteSent && record.quotationAvailable)
+          _sendSuccessCard(palette, record),
         if (actions.readOnly && !actions.canMarkViewed)
           Container(
             key: kLimousineQuoteReadOnlyBannerKey,
@@ -484,6 +514,63 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
             value,
             style: TextStyle(color: palette.textPrimary, height: 1.35),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sendSuccessCard(
+    BusinessThemePalette palette,
+    LimousineQuoteRequest record,
+  ) {
+    final total =
+        record.quotationTotalInclVatCents ?? record.quote?.totalInclVatCents;
+    final sent = record.quotationSentAt.isNotEmpty
+        ? record.quotationSentAt
+        : (record.quote?.quotedAt ?? '');
+    final expires = record.quotationExpiresAt.isNotEmpty
+        ? record.quotationExpiresAt
+        : (record.quote?.expiresAt ?? '');
+    return Container(
+      key: kLimousineQuoteSendSuccessKey,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(kLimousineQuoteSendSuccessTitle),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (total != null)
+            Text(
+              formatLimousineMoney(
+                total,
+                record.quotationCurrency.isNotEmpty
+                    ? record.quotationCurrency
+                    : (record.quote?.currency ?? ''),
+              ),
+            ),
+          if (record.quotationRevision != null)
+            Text(
+              '${_t(kLimousineQuoteSendRevision)} ${record.quotationRevision}',
+            ),
+          if (sent.isNotEmpty)
+            Text(
+              '${_t(kLimousineQuoteSendSentAt)}: ${formatLimousineUserDate(sent, _lang)}',
+            ),
+          if (expires.isNotEmpty)
+            Text(
+              '${kLimousineQuoteExpires.of(_lang)}: ${formatLimousineUserDate(expires, _lang)}',
+            ),
         ],
       ),
     );

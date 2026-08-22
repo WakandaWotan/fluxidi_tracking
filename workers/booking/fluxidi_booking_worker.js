@@ -146,6 +146,7 @@ import {
   LIMOUSINE_QUOTE_STATES as _LIMOUSINE_QUOTE_STATES,
   appendLimousineQuoteAudit as _appendLimousineQuoteAudit,
   applyLimousineCompanyQuoteAction as _applyLimousineCompanyQuoteAction,
+  applyLimousineCompanyViewedAction as _applyLimousineCompanyViewedAction,
   applyLimousineQuoteTransition as _applyLimousineQuoteTransition,
   assertLimousineQuoteAcceptable as _assertLimousineQuoteAcceptable,
   buildLimousineAcceptanceBinding as _buildLimousineAcceptanceBinding,
@@ -46139,16 +46140,16 @@ export default {
         }
 
         if (action === "viewed") {
-          const outcome = _applyLimousineQuoteTransition(record, {
-            to: _LIMOUSINE_QUOTE_STATES.VIEWED_BY_COMPANY,
+          const outcome = _applyLimousineCompanyViewedAction(record, {
             expectedRevision,
             actorType: "company",
-            reasonCode: "viewed",
             nowIso,
           });
           if (!outcome.ok) return json({ ok: false, error: outcome.reason, current_revision: outcome.current_revision }, 409);
           if (outcome.changed) {
-            await _saveLimousineQuoteRecord(env, _appendLimousineQuoteAudit(outcome.record, outcome.audit));
+            await _saveLimousineQuoteRecord(env, outcome.audit
+              ? _appendLimousineQuoteAudit(outcome.record, outcome.audit)
+              : outcome.record);
           }
           return json({ ok: true, quote_request: _publicLimousineQuoteView(outcome.record) }, 200);
         }

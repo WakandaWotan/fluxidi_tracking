@@ -59,6 +59,15 @@ const Key kLimousineCustomerViewQuotationKey = ValueKey<String>(
 const Key kLimousineQuoteReadOnlyBannerKey = ValueKey<String>(
   'limousine_quote_readonly_banner',
 );
+const Key kLimousineQuoteViewedConfirmationKey = ValueKey<String>(
+  'limousine_quote_viewed_confirmation',
+);
+const Key kLimousineQuoteSendSuccessKey = ValueKey<String>(
+  'limousine_quote_send_success',
+);
+const Key kLimousineQuoteLanguageKey = ValueKey<String>(
+  'limousine_quote_language',
+);
 const Key kLimousineQuoteEditorPageKey = ValueKey<String>(
   'limousine_quote_editor_page',
 );
@@ -649,6 +658,14 @@ class LimousineQuoteRequest {
     this.vehicleSnapshot = const <String, dynamic>{},
     this.quotationAvailable = false,
     this.quotationRevision,
+    this.locale = '',
+    this.companyViewed = false,
+    this.companyViewedAt = '',
+    this.quotationSentAt = '',
+    this.quotationExpiresAt = '',
+    this.quotationTotalInclVatCents,
+    this.quotationCurrency = '',
+    this.acceptedAt = '',
   });
 
   final String quoteRequestId;
@@ -680,6 +697,14 @@ class LimousineQuoteRequest {
   final Map<String, dynamic> vehicleSnapshot;
   final bool quotationAvailable;
   final int? quotationRevision;
+  final String locale;
+  final bool companyViewed;
+  final String companyViewedAt;
+  final String quotationSentAt;
+  final String quotationExpiresAt;
+  final int? quotationTotalInclVatCents;
+  final String quotationCurrency;
+  final String acceptedAt;
 
   bool get hasQuotationPdf =>
       quotationAvailable && quotationRevision != null && quotationRevision! > 0;
@@ -800,6 +825,30 @@ class LimousineQuoteRequest {
       quotationRevision: _intOf(
         map['quotation_revision'] ?? map['quotationRevision'],
       ),
+      locale: _text(map['locale'], max: 16),
+      companyViewed:
+          map['company_viewed'] == true || map['companyViewed'] == true,
+      companyViewedAt: _text(
+        map['company_viewed_at'] ?? map['companyViewedAt'],
+        max: 40,
+      ),
+      quotationSentAt: _text(
+        map['quotation_sent_at'] ?? map['quotationSentAt'],
+        max: 40,
+      ),
+      quotationExpiresAt: _text(
+        map['quotation_expires_at'] ?? map['quotationExpiresAt'],
+        max: 40,
+      ),
+      quotationTotalInclVatCents: _intOf(
+        map['quotation_total_incl_vat_cents'] ??
+            map['quotationTotalInclVatCents'],
+      ),
+      quotationCurrency: _text(
+        map['quotation_currency'] ?? map['quotationCurrency'],
+        max: 8,
+      ),
+      acceptedAt: _text(map['accepted_at'] ?? map['acceptedAt'], max: 40),
     );
   }
 
@@ -856,6 +905,25 @@ class LimousineQuoteRequest {
           : vehicleSnapshot,
       quotationAvailable: incoming.quotationAvailable,
       quotationRevision: incoming.quotationRevision ?? quotationRevision,
+      locale: incoming.locale.isNotEmpty ? incoming.locale : locale,
+      companyViewed: incoming.companyViewed,
+      companyViewedAt: incoming.companyViewedAt.isNotEmpty
+          ? incoming.companyViewedAt
+          : companyViewedAt,
+      quotationSentAt: incoming.quotationSentAt.isNotEmpty
+          ? incoming.quotationSentAt
+          : quotationSentAt,
+      quotationExpiresAt: incoming.quotationExpiresAt.isNotEmpty
+          ? incoming.quotationExpiresAt
+          : quotationExpiresAt,
+      quotationTotalInclVatCents:
+          incoming.quotationTotalInclVatCents ?? quotationTotalInclVatCents,
+      quotationCurrency: incoming.quotationCurrency.isNotEmpty
+          ? incoming.quotationCurrency
+          : quotationCurrency,
+      acceptedAt: incoming.acceptedAt.isNotEmpty
+          ? incoming.acceptedAt
+          : acceptedAt,
     );
   }
 }
@@ -970,7 +1038,9 @@ LimousineQuoteActions limousineQuoteActionsFor(
   final canQuote =
       !readOnly &&
       (state == LimousineQuoteStateId.requested ||
-          state == LimousineQuoteStateId.viewedByCompany);
+          state == LimousineQuoteStateId.viewedByCompany ||
+          state == LimousineQuoteStateId.quoted ||
+          state == LimousineQuoteStateId.customerAcceptanceRequired);
   final canDecline =
       !readOnly &&
       (state == LimousineQuoteStateId.requested ||

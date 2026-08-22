@@ -612,6 +612,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   DateTime? _retryAfterUntil;
   Timer? _pollTimer;
   bool _pollingEnabled = false;
+  bool _pageVisible = true;
+  bool _statusInFlight = false;
   final List<DateTime> _statusAttempts = <DateTime>[];
   final List<String> _logSink = <String>[];
 
@@ -1073,6 +1075,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       }
       return;
     }
+    if (_statusInFlight) return;
     if (manual) {
       final last = _lastManualRefreshAt;
       if (last != null &&
@@ -1088,6 +1091,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     if (!_canAttemptStatusNow()) return;
     final generation = ++_statusGeneration;
     final previousRevision = request?.revision ?? 0;
+    final previous = request;
+    _statusInFlight = true;
     try {
       final next = await _gateway.pollStatus(ref!);
       if (generation != _statusGeneration) return;
@@ -1100,11 +1105,11 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         _forgetAcceptedHandoff();
       }
       request = request == null ? next : request!.mergeAuthoritative(next);
-      if (LimousineQuoteStateId.isTerminal(request!.state) ||
-          request!.isUnknownState) {
+      if (!limousineCustomerShouldPoll(request!.state)) {
         stopPolling();
       }
-      if (LimousineQuoteStateId.waitingForCustomer.contains(request!.state)) {
+      if (LimousineQuoteStateId.waitingForCustomer.contains(request!.state) ||
+          request!.quotationAvailable) {
         step = LimousineCustomerQuoteStep.reviewQuote;
       }
       await _persistHistory();
@@ -1122,6 +1127,17 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         phase = LimousineCustomerQuotePhase.unavailable;
         stopPolling();
         notifyListeners();
+        return;
+      }
+      request = previous;
+      _safeLog('status_network');
+    } catch (_) {
+      if (generation != _statusGeneration) return;
+      request = previous;
+      _safeLog('status_network');
+    } finally {
+      if (generation == _statusGeneration) {
+        _statusInFlight = false;
       }
     }
   }
@@ -1137,10 +1153,11 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   }
 
   void startPolling() {
+    _pageVisible = true;
     _pollingEnabled = true;
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(kLimousineStatusAutoPollInterval, (_) {
-      if (!_pollingEnabled) return;
+      if (!_pollingEnabled || !_pageVisible) return;
       final state = request?.state ?? '';
       if (!limousineCustomerShouldPoll(state)) {
         stopPolling();
@@ -1152,19 +1169,31 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
 
   void pausePolling() {
     _pollingEnabled = false;
+    _pageVisible = false;
   }
 
   void resumePolling() {
     if (request == null) return;
     if (!limousineCustomerShouldPoll(request!.state)) return;
+    _pageVisible = true;
     _pollingEnabled = true;
+    if (_pollTimer == null) {
+      startPolling();
+      return;
+    }
+    unawaited(refreshStatus());
   }
 
   void stopPolling() {
     _pollingEnabled = false;
+    _pageVisible = false;
     _pollTimer?.cancel();
     _pollTimer = null;
   }
+
+  bool get statusRefreshInFlight => _statusInFlight;
+  bool get pollingEnabled => _pollingEnabled;
+  bool get pageVisibleForPoll => _pageVisible;
 
   void restorePersistedRequest(LimousineCustomerRequestRecord record) {
     request = record.request;
@@ -1180,6 +1209,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         : LimousineCustomerQuoteStep.waitingCompany;
     if (request != null && limousineCustomerShouldPoll(request!.state)) {
       startPolling();
+      unawaited(refreshStatus());
     }
     notifyListeners();
   }

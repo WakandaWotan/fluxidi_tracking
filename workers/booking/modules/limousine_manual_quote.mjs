@@ -11,6 +11,7 @@
 // and a customer-supplied total is never trusted.
 
 import { projectLimousineQuotationAvailability } from "./limousine_quotation_snapshot.mjs";
+import { normalizeLimousineQuotationLocale } from "./limousine_quotation_i18n.mjs";
 import { offerAllowsPublishedJourneyType } from "./limousine_offers.mjs";
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
 import {
@@ -234,6 +235,58 @@ export function applyLimousineQuoteTransition(record, {
     bookingReference: next.booking_reference,
   });
   return { ok: true, changed: true, record: next, audit };
+}
+
+/// First successful company view stamps company_viewed_at. Later calls are
+/// idempotent and never replace the first timestamp or regress later states.
+export function applyLimousineCompanyViewedAction(record, {
+  expectedRevision = null,
+  actorType = "company",
+  nowIso = null,
+} = {}) {
+  const R = LIMOUSINE_QUOTE_REASONS;
+  const current = asObject(record);
+  const from = normalizeLimousineToken(current.state);
+  const now = nowIso || new Date().toISOString();
+  const existing = safeText(current.company_viewed_at, 40);
+  const stamp = existing || now;
+
+  if (from === S.REQUESTED) {
+    return applyLimousineQuoteTransition(current, {
+      to: S.VIEWED_BY_COMPANY,
+      expectedRevision,
+      actorType,
+      reasonCode: "viewed",
+      nowIso: now,
+      patch: { company_viewed_at: stamp },
+    });
+  }
+
+  if (!Object.values(S).includes(from)) {
+    return { ok: false, reason: R.INVALID_TRANSITION, from, to: S.VIEWED_BY_COMPANY };
+  }
+
+  if (existing) {
+    return {
+      ok: true,
+      changed: false,
+      reason: R.IDEMPOTENT_REPLAY,
+      record: current,
+      audit: null,
+    };
+  }
+
+  return {
+    ok: true,
+    changed: true,
+    reason: R.OK,
+    record: {
+      ...current,
+      company_viewed_at: stamp,
+      updated_at: now,
+    },
+    audit: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,10 +1112,14 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     : null;
   const readiness = evaluateLimousineQuoteAcceptanceReadiness(rec, { nowIso });
   const termsProjection = quote ? projectPublicLimousineQuoteTerms(quote) : null;
+  const viewedAt = safeText(rec.company_viewed_at, 40);
+  const locale = normalizeLimousineQuotationLocale(req.locale);
+  const acceptedAt = safeText(rec.accepted_at, 40);
   return {
     quote_request_id: safeText(rec.quote_request_id, 120),
     state: safeText(rec.state, 40),
     revision: toInt(rec.revision) ?? 0,
+    locale,
     offer_id: safeText(req.offer_id, 64),
     service_class_id: safeText(req.service_class_id, 64),
     ...(req.vehicle_id ? { vehicle_id: safeText(req.vehicle_id, 96) } : {}),
@@ -1103,6 +1160,9 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     ...(rec.booking_reference ? { booking_reference: safeText(rec.booking_reference, 64) } : {}),
     created_at: safeText(rec.created_at, 40),
     updated_at: safeText(rec.updated_at, 40),
+    company_viewed: Boolean(viewedAt) || safeText(rec.state, 40) === S.VIEWED_BY_COMPANY,
+    ...(viewedAt ? { company_viewed_at: viewedAt } : {}),
+    ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
     acceptance_allowed: readiness.acceptance_allowed === true,
     ...(readiness.acceptance_allowed
       ? {}

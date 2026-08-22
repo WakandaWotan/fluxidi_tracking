@@ -329,7 +329,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       returnDestinationAddress: _returnDestination.value,
       returnKind: _activeReturnKind,
       waitDurationSupported: _waitSupported,
-      waitMinutes: limousinePublishedOfferWaitMinutes(_controller.selectedOffer),
+      waitMinutes: limousinePublishedOfferWaitMinutes(
+        _controller.selectedOffer,
+      ),
     );
     if (_wizardStep == LimousineRequestWizardStep.provider &&
         _vehicleMode == LimousineWizardVehicleMode.choose &&
@@ -342,8 +344,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     return gaps;
   }
 
-  bool get _canAdvance =>
-      _gaps.isEmpty && !_controller.offerScopeChanged;
+  bool get _canAdvance => _gaps.isEmpty && !_controller.offerScopeChanged;
 
   bool get _needsDuration {
     if (_controller.draft.journeyType == 'hourly_package') return true;
@@ -783,7 +784,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _t(limousineSubmitErrorLabel(_controller.safeError)),
+                            _t(
+                              limousineSubmitErrorLabel(_controller.safeError),
+                            ),
                             style: TextStyle(
                               color: tokens.danger,
                               height: 1.35,
@@ -798,7 +801,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                                 [
                                   if (_controller.lastHttpStatus > 0)
                                     'HTTP ${_controller.lastHttpStatus}',
-                                  if (_controller.lastSubmitErrorCode.isNotEmpty)
+                                  if (_controller
+                                      .lastSubmitErrorCode
+                                      .isNotEmpty)
                                     _controller.lastSubmitErrorCode,
                                   if (_controller.lastErrorStage.isNotEmpty)
                                     _controller.lastErrorStage,
@@ -882,7 +887,8 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             maxWidth: columnWidth,
             allowSubmitWhenInvalid:
                 _wizardStep == LimousineRequestWizardStep.review,
-            primaryAction: _wizardStep == LimousineRequestWizardStep.review &&
+            primaryAction:
+                _wizardStep == LimousineRequestWizardStep.review &&
                     _intentKind == LimousineCustomerIntentKind.bookingRequest
                 ? kLimousineReviewSubmitBooking
                 : limousineWizardPrimaryAction(_wizardStep, _vehicleMode),
@@ -1177,8 +1183,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         Column(
           key: kLimousineWizardVehicleListKey,
           children: [
-            for (final option in options)
-              _vehicleChoiceCard(option, offer!),
+            for (final option in options) _vehicleChoiceCard(option, offer!),
           ],
         ),
       ];
@@ -1663,7 +1668,10 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         };
         _controller.updateDraft(_syncedDraft().copyWith(locale: locale));
         final ok = await _controller.submitRequest();
-        if (ok) _controller.startPolling();
+        if (ok) {
+          _controller.startPolling();
+          unawaited(_controller.refreshStatus());
+        }
         break;
     }
   }
@@ -1879,7 +1887,8 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     if (_isHotelJourney && _hotelIsPickup && _hotelField.selected != null) {
       return _hotelField.selected;
     }
-    if (_pickup.isRouteReady) return limousineEndpointFromAddress(_pickup.value);
+    if (_pickup.isRouteReady)
+      return limousineEndpointFromAddress(_pickup.value);
     return _controller.draft.fromEndpoint;
   }
 
