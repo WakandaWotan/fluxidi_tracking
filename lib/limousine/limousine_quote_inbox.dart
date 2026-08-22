@@ -71,6 +71,9 @@ const Key kLimousineQuoteLanguageKey = ValueKey<String>(
 const Key kLimousineQuoteEditorPageKey = ValueKey<String>(
   'limousine_quote_editor_page',
 );
+const Key kLimousineQuoteEditorSubmitErrorKey = ValueKey<String>(
+  'limousine_quote_editor_submit_error',
+);
 const Key kLimousineQuoteTotalFieldKey = ValueKey<String>(
   'limousine_quote_total_field',
 );
@@ -351,6 +354,15 @@ int? limousineMajorUnitsToCents(String raw) {
   }
   final cents = whole * 100 + fraction;
   return negative ? -cents : cents;
+}
+
+const Set<String> kLimousineQuoteLocales = <String>{'nl', 'en', 'fr', 'es'};
+
+String normalizeLimousineQuoteLocale(String raw) {
+  final token = raw.trim().toLowerCase().replaceAll('_', '-');
+  if (token.isEmpty) return 'nl';
+  final primary = token.split('-').first;
+  return kLimousineQuoteLocales.contains(primary) ? primary : 'nl';
 }
 
 String limousineCentsToMajorUnits(int cents) {

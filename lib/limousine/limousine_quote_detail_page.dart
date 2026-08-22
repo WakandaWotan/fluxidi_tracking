@@ -37,6 +37,7 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
   String? _banner;
   int _generation = 0;
   bool _viewedOnce = false;
+  bool _viewSettled = false;
   bool _quoteSent = false;
 
   AppLanguage get _lang => appLanguageNotifier.value;
@@ -75,16 +76,24 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
   }
 
   Future<void> _ensureViewed(LimousineQuoteRequest record) async {
-    if (_viewedOnce) return;
+    if (_viewedOnce) {
+      if (!_viewSettled && mounted) setState(() => _viewSettled = true);
+      return;
+    }
     _viewedOnce = true;
     final gen = _generation;
     try {
       await _controller.respond(action: 'viewed', record: record);
-      if (!mounted || gen != _generation) return;
-      setState(() {});
-    } catch (_) {
-      if (!mounted || gen != _generation) return;
-    }
+    } on LimousineQuoteInboxException {
+      try {
+        final fresh = await _gateway.detail(widget.quoteRequestId);
+        if (mounted && gen == _generation) {
+          _controller.detail = fresh;
+        }
+      } catch (_) {}
+    } catch (_) {}
+    if (!mounted || gen != _generation) return;
+    setState(() => _viewSettled = true);
   }
 
   Future<void> _markViewed(LimousineQuoteRequest record) async {
@@ -108,9 +117,11 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
     final draft = await Navigator.of(context).push<LimousineCompanyQuoteDraft>(
       MaterialPageRoute(
         builder: (_) => LimousineQuoteEditorPage(
-          record: record,
+          record: _controller.detail ?? record,
           onSubmit: (next) async {
-            final live = _controller.detail ?? record;
+            final live = await _controller.liveRecordForRespond(
+              _controller.detail ?? record,
+            );
             await _controller.respond(
               action: 'quote',
               record: live,
@@ -121,8 +132,22 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
       ),
     );
     if (!mounted || gen != _generation) return;
-    if (draft != null) {
-      setState(() => _quoteSent = true);
+    if (draft == null) return;
+    try {
+      final fresh = await _gateway.detail(widget.quoteRequestId);
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _controller.detail = fresh;
+        _quoteSent = fresh.quotationAvailable;
+      });
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _quoteSent = _controller.detail?.quotationAvailable ?? false;
+        _banner = error.kind == LimousineQuoteInboxErrorKind.staleRevision
+            ? _t(kLimousineQuoteStaleRevision)
+            : limousineQuoteErrorLabel(error, _lang);
+      });
     }
   }
 
@@ -259,7 +284,7 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
             key: kLimousineQuoteSubmitKey,
             palette: palette,
             label: _t(kLimousineQuoteSendQuote),
-            onPressed: _controller.submitting
+            onPressed: !_viewSettled || _controller.submitting
                 ? null
                 : () => _openQuoteEditor(record),
           ),

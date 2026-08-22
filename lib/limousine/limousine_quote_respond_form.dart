@@ -42,6 +42,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
   String _vatTreatment = '';
   late DateTime _expiresDate;
   bool _submitting = false;
+  String? _submitError;
   LimousineQuoteDraftValidation? _validation;
 
   AppLanguage get _lang => appLanguageNotifier.value;
@@ -142,7 +143,10 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     if (_submitting) return;
     final draft = _completedDraft();
     final validation = validateLimousineCompanyQuoteDraft(draft);
-    setState(() => _validation = validation);
+    setState(() {
+      _validation = validation;
+      _submitError = null;
+    });
     if (!validation.ok) return;
     setState(() => _submitting = true);
     try {
@@ -152,6 +156,22 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
       }
       if (!mounted) return;
       Navigator.of(context).pop(draft);
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _submitError = limousineQuoteErrorLabel(error, _lang);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _submitError = limousineQuoteErrorLabel(
+          const LimousineQuoteInboxException(
+            kind: LimousineQuoteInboxErrorKind.network,
+            code: 'network',
+          ),
+          _lang,
+        );
+      });
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -197,6 +217,15 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       _t(kLimousineQuoteValidationMissing),
+                      style: TextStyle(color: palette.danger, height: 1.35),
+                    ),
+                  ),
+                if (_submitError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _submitError!,
+                      key: kLimousineQuoteEditorSubmitErrorKey,
                       style: TextStyle(color: palette.danger, height: 1.35),
                     ),
                   ),

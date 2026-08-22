@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/limousine/limousine_quote_detail_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_api.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_respond_form.dart';
 
 const String _statusRef = 'limqs1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
@@ -44,12 +45,13 @@ Map<String, dynamic> _quoteJson({
   int? quotationTotalInclVatCents,
   bool acceptanceAllowed = false,
   bool withQuote = false,
+  String locale = 'nl',
 }) {
   return <String, dynamic>{
     'quote_request_id': id,
     'state': state,
     'revision': revision,
-    'locale': 'nl',
+    'locale': locale,
     'offer_id': 'off_1',
     'service_class_id': 'executive_sedan',
     'journey_type': 'point_to_point',
@@ -102,6 +104,7 @@ LimousineQuoteRequest _request({
   bool acceptanceAllowed = false,
   bool withQuote = false,
   int? total,
+  String locale = 'nl',
 }) {
   return LimousineQuoteRequest.fromJson(
     _quoteJson(
@@ -116,6 +119,7 @@ LimousineQuoteRequest _request({
       quotationTotalInclVatCents: total ?? (quotationAvailable ? 18500 : null),
       acceptanceAllowed: acceptanceAllowed,
       withQuote: withQuote || quotationAvailable || acceptanceAllowed,
+      locale: locale,
     ),
   );
 }
@@ -210,10 +214,17 @@ class _StatusGateway with LimousineCustomerQuoteGateway {
 }
 
 class _InboxGateway implements LimousineQuoteInboxGateway {
-  _InboxGateway(this.record);
+  _InboxGateway(
+    this.record, {
+    LimousineQuoteRequest? listRecord,
+    this.staleQuoteBelow,
+  }) : listRecord = listRecord ?? record;
 
   LimousineQuoteRequest record;
+  LimousineQuoteRequest listRecord;
+  int? staleQuoteBelow;
   final List<String> actions = <String>[];
+  final List<int> quoteRevisions = <int>[];
 
   @override
   Future<LimousineQuoteInboxPageData> list({
@@ -224,7 +235,9 @@ class _InboxGateway implements LimousineQuoteInboxGateway {
     String? tenantId,
     String? companyId,
   }) async {
-    return LimousineQuoteInboxPageData(items: <LimousineQuoteRequest>[record]);
+    return LimousineQuoteInboxPageData(
+      items: <LimousineQuoteRequest>[listRecord],
+    );
   }
 
   @override
@@ -257,8 +270,18 @@ class _InboxGateway implements LimousineQuoteInboxGateway {
           companyViewedAt: '2026-08-22T10:05:00Z',
         ),
       );
+      listRecord = record;
     }
     if (action == 'quote') {
+      quoteRevisions.add(expectedRevision);
+      final staleBelow = staleQuoteBelow;
+      if (staleBelow != null && expectedRevision < staleBelow) {
+        throw LimousineQuoteInboxException(
+          kind: LimousineQuoteInboxErrorKind.staleRevision,
+          code: 'stale_revision',
+          currentRevision: record.revision,
+        );
+      }
       record = _request(
         state: 'customer_acceptance_required',
         revision: expectedRevision + 2,
@@ -269,6 +292,7 @@ class _InboxGateway implements LimousineQuoteInboxGateway {
         acceptanceAllowed: true,
         withQuote: true,
       );
+      listRecord = record;
     }
     return LimousineQuoteRespondResult(record: record);
   }
@@ -326,6 +350,26 @@ Future<void> _pump(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
   await tester.pump(const Duration(milliseconds: 50));
+}
+
+Future<void> _largeSurface(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(800, 2000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+Future<void> _fillAndSubmitCompanyQuote(WidgetTester tester) async {
+  await tester.enterText(find.byKey(kLimousineQuoteTotalFieldKey), '185,00');
+  await tester.pump();
+  await tester.ensureVisible(find.byKey(kLimousineQuoteVatFieldKey));
+  await tester.tap(find.byKey(kLimousineQuoteVatFieldKey));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('BTW inbegrepen').last);
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.byKey(kLimousineQuoteSubmitKey));
+  await tester.tap(find.byKey(kLimousineQuoteSubmitKey));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -668,5 +712,185 @@ void main() {
     ).toJson();
     expect(snapshot.containsKey('pdf'), isFalse);
     expect(jsonEncode(snapshot).contains('%PDF'), isFalse);
+  });
+
+  test('A1) viewed then quote uses the latest live revision', () async {
+    final viewed = _request(
+      state: 'viewed_by_company',
+      revision: 2,
+      companyViewed: true,
+      companyViewedAt: '2026-08-22T10:05:00Z',
+    );
+    final gateway = _InboxGateway(
+      viewed,
+      listRecord: _request(),
+      staleQuoteBelow: 2,
+    );
+    final controller = LimousineQuoteInboxController(gateway: gateway);
+    controller.items = <LimousineQuoteRequest>[_request()];
+    final live = await controller.liveRecordForRespond(_request());
+    expect(live.revision, 2);
+    final result = await controller.respond(
+      action: 'quote',
+      record: live,
+      quote: const LimousineCompanyQuoteDraft(
+        totalInclVatCents: 18500,
+        currency: 'EUR',
+        vatTreatment: 'incl',
+        expiresAt: '2099-01-01T00:00:00Z',
+        termsRevision: 1,
+      ).toWorkerQuote(),
+    );
+    expect(gateway.quoteRevisions, <int>[2]);
+    expect(result.record!.quotationAvailable, isTrue);
+    expect(result.record!.state, 'customer_acceptance_required');
+    expect(controller.items.single.quotationAvailable, isTrue);
+  });
+
+  test('A2) stale expected_revision is surfaced and not swallowed', () async {
+    final viewed = _request(
+      state: 'viewed_by_company',
+      revision: 2,
+      companyViewed: true,
+    );
+    final gateway = _InboxGateway(viewed, staleQuoteBelow: 2);
+    final controller = LimousineQuoteInboxController(gateway: gateway);
+    try {
+      await controller.respond(
+        action: 'quote',
+        record: _request(),
+        quote: const LimousineCompanyQuoteDraft(
+          totalInclVatCents: 18500,
+          currency: 'EUR',
+          vatTreatment: 'incl',
+          expiresAt: '2099-01-01T00:00:00Z',
+          termsRevision: 1,
+        ).toWorkerQuote(),
+      );
+      fail('expected stale_revision');
+    } on LimousineQuoteInboxException catch (error) {
+      expect(error.kind, LimousineQuoteInboxErrorKind.staleRevision);
+      expect(error.code, 'stale_revision');
+    }
+    expect(gateway.record.state, 'viewed_by_company');
+    expect(gateway.record.quotationAvailable, isFalse);
+  });
+
+  testWidgets('A2/A10) failed send stays on the filled form', (tester) async {
+    await _largeSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LimousineQuoteEditorPage(
+          record: _request(state: 'viewed_by_company', revision: 1),
+          onSubmit: (_) async {
+            throw const LimousineQuoteInboxException(
+              kind: LimousineQuoteInboxErrorKind.staleRevision,
+              code: 'stale_revision',
+              currentRevision: 2,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await _fillAndSubmitCompanyQuote(tester);
+    expect(find.byKey(kLimousineQuoteEditorPageKey), findsOneWidget);
+    expect(find.byKey(kLimousineQuoteEditorSubmitErrorKey), findsOneWidget);
+    expect(find.text(kLimousineQuoteStaleRevision.nl), findsOneWidget);
+    expect(find.byKey(kLimousineQuoteSendSuccessKey), findsNothing);
+  });
+
+  testWidgets('A1/A3-A9) detail send after viewed reloads committed quote', (
+    tester,
+  ) async {
+    await _largeSurface(tester);
+    final gateway = _InboxGateway(_request(), staleQuoteBelow: 2);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LimousineQuoteDetailPage(
+          quoteRequestId: 'limq_1',
+          initial: gateway.record,
+          gateway: gateway,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(gateway.actions.where((action) => action == 'viewed').length, 1);
+    expect(gateway.record.revision, 2);
+    await tester.ensureVisible(find.byKey(kLimousineQuoteSubmitKey));
+    await tester.tap(find.byKey(kLimousineQuoteSubmitKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kLimousineQuoteEditorPageKey), findsOneWidget);
+    await _fillAndSubmitCompanyQuote(tester);
+    expect(gateway.quoteRevisions, <int>[2]);
+    expect(find.byKey(kLimousineQuoteEditorPageKey), findsNothing);
+    expect(find.byKey(kLimousineQuoteSendSuccessKey), findsOneWidget);
+    expect(find.textContaining('€'), findsWidgets);
+    expect(gateway.record.quotationAvailable, isTrue);
+    expect(gateway.record.state, 'customer_acceptance_required');
+  });
+
+  testWidgets('A1) inbox send uses refreshed revision after viewed', (
+    tester,
+  ) async {
+    await _largeSurface(tester);
+    final viewed = _request(
+      state: 'viewed_by_company',
+      revision: 2,
+      companyViewed: true,
+      companyViewedAt: '2026-08-22T10:05:00Z',
+    );
+    final gateway = _InboxGateway(
+      viewed,
+      listRecord: _request(),
+      staleQuoteBelow: 2,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: LimousineQuoteInboxPage(gateway: gateway)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    final send = find.byKey(
+      limousineQuoteInboxActionKey('limq_1', 'createQuote'),
+    );
+    await tester.ensureVisible(send);
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    await _fillAndSubmitCompanyQuote(tester);
+    expect(gateway.quoteRevisions, <int>[2]);
+    expect(find.byKey(kLimousineQuoteEditorPageKey), findsNothing);
+    expect(gateway.record.quotationAvailable, isTrue);
+    expect(find.text('Offerte verstuurd'), findsWidgets);
+  });
+
+  test('B11-B17) create body keeps request locale and aliases', () {
+    LimousineQuoteCreateDraft draft(String locale) {
+      return LimousineQuoteCreateDraft(
+        publicPartnerId: 'company:fluxidi:fluxidi',
+        offerId: 'off_1',
+        journeyType: 'point_to_point',
+        from: 'Gent',
+        to: 'Brussel',
+        scheduledPickupIso: '2026-09-01T10:00:00Z',
+        locale: locale,
+      );
+    }
+
+    expect(normalizeLimousineQuoteLocale('nl-BE'), 'nl');
+    expect(normalizeLimousineQuoteLocale('en-GB'), 'en');
+    expect(normalizeLimousineQuoteLocale('en_US'), 'en');
+    expect(normalizeLimousineQuoteLocale('fr-BE'), 'fr');
+    expect(normalizeLimousineQuoteLocale('es-ES'), 'es');
+    expect(limousineCustomerCreateBody(draft('nl'))['locale'], 'nl');
+    expect(limousineCustomerCreateBody(draft('en'))['locale'], 'en');
+    expect(limousineCustomerCreateBody(draft('fr'))['locale'], 'fr');
+    expect(limousineCustomerCreateBody(draft('es'))['locale'], 'es');
+    expect(limousineCustomerCreateBody(draft('en-GB'))['locale'], 'en');
+    expect(limousineCustomerCreateBody(draft('fr-FR'))['locale'], 'fr');
+    expect(
+      limousineQuoteDocumentLanguageLabel('en_gb', AppLanguage.nl),
+      kLimousineQuoteLanguageEn.nl,
+    );
   });
 }

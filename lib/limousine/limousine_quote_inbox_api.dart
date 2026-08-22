@@ -479,6 +479,18 @@ class LimousineQuoteInboxController {
     );
   }
 
+  Future<LimousineQuoteRequest> liveRecordForRespond(
+    LimousineQuoteRequest fallback,
+  ) async {
+    final live = await openDetail(fallback.quoteRequestId);
+    if (live != null) return live;
+    throw error ??
+        const LimousineQuoteInboxException(
+          kind: LimousineQuoteInboxErrorKind.network,
+          code: 'detail_unavailable',
+        );
+  }
+
   Future<LimousineQuoteRequest?> openDetail(String id) async {
     final gen = generation;
     try {

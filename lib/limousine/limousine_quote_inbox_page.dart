@@ -229,9 +229,10 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
         builder: (_) => LimousineQuoteEditorPage(
           record: record,
           onSubmit: (next) async {
+            final live = await _controller.liveRecordForRespond(record);
             await _controller.respond(
               action: 'quote',
-              record: record,
+              record: live,
               quote: next.toWorkerQuote(),
             );
           },

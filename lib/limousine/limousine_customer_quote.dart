@@ -742,7 +742,7 @@ Map<String, dynamic> limousineCustomerCreateBody(
     'from': draft.from.trim(),
     'to': draft.to.trim(),
     'scheduled_pickup_iso': draft.scheduledPickupIso.trim(),
-    'locale': draft.locale.trim(),
+    'locale': normalizeLimousineQuoteLocale(draft.locale),
   };
   if (draft.stops.isNotEmpty) {
     body['stops'] = draft.stops

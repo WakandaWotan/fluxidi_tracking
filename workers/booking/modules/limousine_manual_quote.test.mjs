@@ -296,6 +296,29 @@ test("8/12) quote-required extra is carried; customer pricing is rejected", () =
   }
 });
 
+test("request locale aliases persist as quotation locales", () => {
+  const cases = [
+    ["nl-BE", "nl"],
+    ["en-GB", "en"],
+    ["en-US", "en"],
+    ["fr-BE", "fr"],
+    ["fr-FR", "fr"],
+    ["es-ES", "es"],
+    ["en", "en"],
+    ["fr", "fr"],
+    ["es", "es"],
+  ];
+  for (const [raw, expected] of cases) {
+    const out = validateLimousineQuoteRequest(customerRequest({ locale: raw }), {
+      eligible: true,
+      offer: authoritativeOffer(),
+      gateEnabled: true,
+    });
+    assert.equal(out.ok, true, raw);
+    assert.equal(out.request.locale, expected, raw);
+  }
+});
+
 test("state machine: only defined transitions are allowed", () => {
   assert.equal(canTransitionLimousineQuote(S.REQUESTED, S.QUOTED), true);
   assert.equal(canTransitionLimousineQuote(S.QUOTED, S.CUSTOMER_ACCEPTANCE_REQUIRED), true);

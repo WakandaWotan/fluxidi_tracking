@@ -20,6 +20,7 @@ import {
   attachLimousineQuotationSnapshot,
   buildLimousineQuotationSnapshot,
 } from "./limousine_quotation_snapshot.mjs";
+import { renderLimousineQuotationHtml } from "./limousine_quotation_document.mjs";
 import { sealLimousineStatusRef } from "./limousine_status_token.mjs";
 import { unsealLimousineAcceptance } from "./limousine_acceptance_token.mjs";
 
@@ -456,6 +457,94 @@ test("21-26) accept binds current revision and preserves quotation", async () =>
   assert.ok(!src.includes("billit") || src.includes("_prepareLimousineManualBooking"));
   assert.ok(!JSON.stringify(accepted).toLowerCase().includes("peppol"));
   assert.ok(!JSON.stringify(accepted).toLowerCase().includes("billit"));
+});
+
+test("viewed then stale expected_revision is 409; latest revision persists quote", async () => {
+  const { env, kv } = await setup({
+    quotes: [quoteRecord({ id: "limq_p3k_occ" })],
+  });
+  const viewed = await respond(env, { id: "limq_p3k_occ", action: "viewed" });
+  const viewedBody = await viewed.json();
+  assert.equal(viewed.status, 200, JSON.stringify(viewedBody));
+  assert.equal(viewedBody.quote_request.state, "viewed_by_company");
+  assert.ok(viewedBody.quote_request.revision > 1);
+
+  const stale = await sendQuote(env, "limq_p3k_occ", { expectedRevision: 1 });
+  const staleBody = await stale.json();
+  assert.equal(stale.status, 409);
+  assert.equal(staleBody.error, "stale_revision");
+  assert.equal(staleBody.current_revision, viewedBody.quote_request.revision);
+  const storedStale = await kv.get("limousine_quote_record:limq_p3k_occ", { type: "json" });
+  assert.equal(storedStale.state, "viewed_by_company");
+  assert.equal(storedStale.quote, undefined);
+  assert.equal(storedStale.quotation_snapshots, undefined);
+
+  const quoted = await sendQuote(env, "limq_p3k_occ", {
+    expectedRevision: viewedBody.quote_request.revision,
+  });
+  const quotedBody = await quoted.json();
+  assert.equal(quoted.status, 200, JSON.stringify(quotedBody));
+  assert.equal(quotedBody.quote_request.state, "customer_acceptance_required");
+  assert.equal(quotedBody.quote_request.quotation_available, true);
+  assert.ok(quotedBody.quote_request.quotation_revision > 0);
+  const stored = await kv.get("limousine_quote_record:limq_p3k_occ", { type: "json" });
+  assert.ok(stored.quotation_snapshots[String(quotedBody.quote_request.quotation_revision)]);
+  assert.notEqual(stored.state, "requested");
+
+  const sealed = await sealLimousineStatusRef({
+    secret: SECRET,
+    binding: {
+      purpose: "customer_status",
+      tenant_id: TENANT,
+      company_id: COMPANY,
+      quote_request_id: "limq_p3k_occ",
+      customer_fingerprint: "limcf_p3k_owner",
+      created_revision: 1,
+    },
+    issuedAtIso: new Date().toISOString(),
+    ttlMinutes: 60,
+  });
+  const status = await customerStatus(env, sealed.reference);
+  const statusBody = await status.json();
+  assert.equal(status.status, 200, JSON.stringify(statusBody));
+  assert.equal(statusBody.quote_request.quotation_available, true);
+  assert.equal(statusBody.quote_request.state, "customer_acceptance_required");
+  assert.ok(!JSON.stringify(statusBody).includes("limqs1"));
+});
+
+test("request locales persist into snapshot and renderer copy", async () => {
+  const expected = {
+    nl: { title: "Offerte", journey: "Punt-tot-punt", disclaimer: "geen factuur" },
+    en: { title: "Quotation", journey: "Point-to-point", disclaimer: "not an invoice" },
+    fr: { title: "Devis", journey: "Trajet point à point", disclaimer: "pas une facture" },
+    es: { title: "Presupuesto", journey: "Trayecto punto a punto", disclaimer: "no es una factura" },
+  };
+  for (const locale of Object.keys(expected)) {
+    const rec = quoteRecord({ id: `limq_p3k_loc_${locale}` });
+    rec.request = { ...rec.request, locale };
+    const { env, kv } = await setup({ quotes: [rec] });
+    const viewed = await respond(env, { id: rec.quote_request_id, action: "viewed" });
+    const viewedBody = await viewed.json();
+    const quoted = await sendQuote(env, rec.quote_request_id, {
+      expectedRevision: viewedBody.quote_request.revision,
+    });
+    const quotedBody = await quoted.json();
+    assert.equal(quoted.status, 200, JSON.stringify(quotedBody));
+    const stored = await kv.get(`limousine_quote_record:${rec.quote_request_id}`, { type: "json" });
+    const snap = stored.quotation_snapshots[String(quotedBody.quote_request.quotation_revision)];
+    assert.equal(stored.request.locale, locale);
+    assert.equal(snap.locale, locale);
+    const html = renderLimousineQuotationHtml(snap);
+    assert.ok(html.includes(expected[locale].title), locale);
+    assert.ok(html.includes(expected[locale].journey), locale);
+    assert.ok(html.toLowerCase().includes(expected[locale].disclaimer), locale);
+    if (locale !== "nl") {
+      assert.equal(html.includes("Offerte"), false, locale);
+      assert.equal(html.includes("Punt-tot-punt"), false, locale);
+    }
+    assert.equal(html.includes("point_to_point"), false, locale);
+    assert.equal(html.includes("terms_revision"), false, locale);
+  }
 });
 
 test("re-quote keeps earlier snapshot hashes", async () => {

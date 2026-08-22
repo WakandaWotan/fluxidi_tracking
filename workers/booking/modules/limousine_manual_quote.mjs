@@ -811,7 +811,7 @@ export function validateLimousineQuoteRequest(input, {
     selected_extra_ids: selected,
     customer_note: safeText(src.customer_note ?? src.customerNote, 500),
     occasion: safeText(src.occasion, 80),
-    locale: normalizeLimousineToken(src.locale).slice(0, 8),
+    locale: normalizeLimousineQuotationLocale(src.locale),
     requires_manual_extra: requiresManualExtra,
     service_type: LIMOUSINE_SERVICE_TYPE,
     pricing_mode: classified.pricing_mode,

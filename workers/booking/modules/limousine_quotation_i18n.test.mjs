@@ -188,6 +188,20 @@ test("27-42) renderer v2 localizes all four languages without internal keys", as
   }
 });
 
+test("valid non-NL locale never falls back to Dutch system copy", async () => {
+  for (const raw of ["en", "fr", "es", "en-GB", "en-US", "fr-BE", "es-ES"]) {
+    const snap = await snapshotFor(raw);
+    const loc = normalizeLimousineQuotationLocale(raw);
+    assert.equal(snap.locale, loc);
+    assert.notEqual(snap.locale, "nl");
+    const html = renderLimousineQuotationHtml(snap);
+    assert.equal(html.includes("Offerte"), false, raw);
+    assert.equal(html.includes("Punt-tot-punt"), false, raw);
+    assert.equal(html.toLowerCase().includes("geen factuur"), false, raw);
+    assert.ok(html.includes(EXPECTED[loc].title), raw);
+  }
+});
+
 test("empty sections and unknown enums are omitted", async () => {
   const snap = await snapshotFor("nl", {
     journeyType: "not_a_real_journey",

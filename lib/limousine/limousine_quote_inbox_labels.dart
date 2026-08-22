@@ -995,7 +995,7 @@ String limousineQuoteDocumentLanguageLabel(
   String locale,
   AppLanguage language,
 ) {
-  switch (locale.trim().toLowerCase().split('-').first) {
+  switch (normalizeLimousineQuoteLocale(locale)) {
     case 'en':
       return kLimousineQuoteLanguageEn.of(language);
     case 'fr':
