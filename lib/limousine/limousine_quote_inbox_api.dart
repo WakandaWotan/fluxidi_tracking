@@ -3,6 +3,7 @@
 // tokens, status_ref, acceptance_reference or raw records.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -31,6 +32,13 @@ abstract class LimousineQuoteInboxGateway {
     required int expectedRevision,
     Map<String, dynamic>? quote,
     LimousineDeclineDraft? decline,
+    String? tenantId,
+    String? companyId,
+  });
+
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
     String? tenantId,
     String? companyId,
   });
@@ -65,6 +73,16 @@ class HttpLimousineQuoteInboxGateway implements LimousineQuoteInboxGateway {
     return http
         .post(uri, headers: headers, body: body)
         .timeout(const Duration(seconds: 15));
+  }
+
+  Future<http.Response> _getPdf(Uri uri, Map<String, String> headers) {
+    final client = _client;
+    if (client != null) {
+      return client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 30));
+    }
+    return http.get(uri, headers: headers).timeout(const Duration(seconds: 30));
   }
 
   @override
@@ -213,6 +231,63 @@ class HttpLimousineQuoteInboxGateway implements LimousineQuoteInboxGateway {
       }
       return LimousineQuoteRespondResult(
         record: LimousineQuoteRequest.fromJson(record),
+      );
+    } on LimousineQuoteInboxException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.network,
+        code: 'network',
+      );
+    }
+  }
+
+  @override
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    final id = quoteRequestId.trim();
+    if (id.isEmpty || revision < 1) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.notFound,
+        code: 'quotation_unavailable',
+      );
+    }
+    final endpoint = adminTenantCompanyScopedUri(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/limousine/quote-requests/$id/quotation.pdf',
+      ).replace(queryParameters: <String, String>{'revision': '$revision'}),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    if (endpoint.queryParameters.containsKey('status_ref') ||
+        endpoint.queryParameters.containsKey('statusRef')) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.invalid,
+        code: 'status_ref_not_allowed',
+      );
+    }
+    final auth = await resolveCompanyOwnerAuthHeaders(json: false);
+    final headers = <String, String>{
+      ...auth.headers,
+      'Accept': 'application/pdf',
+    };
+    try {
+      final res = await _getPdf(endpoint, headers);
+      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+        return Uint8List.fromList(res.bodyBytes);
+      }
+      final map = _decodeMap(res);
+      _throwIfFailed(res.statusCode, map);
+      throw LimousineQuoteInboxException(
+        kind: res.statusCode == 503
+            ? LimousineQuoteInboxErrorKind.network
+            : LimousineQuoteInboxErrorKind.unknown,
+        code: 'quotation_unavailable',
+        statusCode: res.statusCode,
       );
     } on LimousineQuoteInboxException {
       rethrow;

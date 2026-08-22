@@ -328,6 +328,27 @@ const LocalizedText kLimousineQuoteSendQuote = LocalizedText(
   es: 'Enviar presupuesto',
 );
 
+const LocalizedText kLimousineQuoteViewQuotation = LocalizedText(
+  nl: 'Offerte bekijken',
+  en: 'View quotation',
+  fr: 'Voir le devis',
+  es: 'Ver presupuesto',
+);
+
+const LocalizedText kLimousineQuoteViewQuotationPreviewTitle = LocalizedText(
+  nl: 'Offerte',
+  en: 'Quotation',
+  fr: 'Devis',
+  es: 'Presupuesto',
+);
+
+const LocalizedText kLimousineQuoteViewQuotationError = LocalizedText(
+  nl: 'De offerte-PDF kon niet worden geladen. Probeer opnieuw.',
+  en: 'The quotation PDF could not be loaded. Try again.',
+  fr: 'Le PDF du devis n’a pas pu être chargé. Réessayez.',
+  es: 'No se pudo cargar el PDF del presupuesto. Inténtelo de nuevo.',
+);
+
 const LocalizedText kLimousineQuoteDecline = LocalizedText(
   nl: 'Afwijzen',
   en: 'Decline',

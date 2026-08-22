@@ -44,6 +44,18 @@ const Key kLimousineQuoteSubmitKey = ValueKey<String>('limousine_quote_submit');
 const Key kLimousineQuoteDeclineKey = ValueKey<String>(
   'limousine_quote_decline',
 );
+const Key kLimousineQuoteViewQuotationKey = ValueKey<String>(
+  'limousine_quote_view_quotation',
+);
+const Key kLimousineQuoteViewQuotationLoadingKey = ValueKey<String>(
+  'limousine_quote_view_quotation_loading',
+);
+const Key kLimousineQuoteViewQuotationErrorKey = ValueKey<String>(
+  'limousine_quote_view_quotation_error',
+);
+const Key kLimousineCustomerViewQuotationKey = ValueKey<String>(
+  'limousine_customer_view_quotation',
+);
 const Key kLimousineQuoteReadOnlyBannerKey = ValueKey<String>(
   'limousine_quote_readonly_banner',
 );
@@ -635,6 +647,8 @@ class LimousineQuoteRequest {
     this.occasion = '',
     this.pricingSnapshot = const <String, dynamic>{},
     this.vehicleSnapshot = const <String, dynamic>{},
+    this.quotationAvailable = false,
+    this.quotationRevision,
   });
 
   final String quoteRequestId;
@@ -664,21 +678,28 @@ class LimousineQuoteRequest {
   final String occasion;
   final Map<String, dynamic> pricingSnapshot;
   final Map<String, dynamic> vehicleSnapshot;
+  final bool quotationAvailable;
+  final int? quotationRevision;
+
+  bool get hasQuotationPdf =>
+      quotationAvailable && quotationRevision != null && quotationRevision! > 0;
 
   String get publicVehicleName {
-    final name = (vehicleSnapshot['public_name'] ??
-            vehicleSnapshot['name'] ??
-            vehicleSnapshot['display_name'] ??
-            '')
-        .toString()
-        .trim();
+    final name =
+        (vehicleSnapshot['public_name'] ??
+                vehicleSnapshot['name'] ??
+                vehicleSnapshot['display_name'] ??
+                '')
+            .toString()
+            .trim();
     return name;
   }
 
   String get publicVehiclePhotoUrl {
-    final url = (vehicleSnapshot['photo_url'] ?? vehicleSnapshot['photoUrl'] ?? '')
-        .toString()
-        .trim();
+    final url =
+        (vehicleSnapshot['photo_url'] ?? vehicleSnapshot['photoUrl'] ?? '')
+            .toString()
+            .trim();
     return url.startsWith('https://') ? url : '';
   }
 
@@ -760,14 +781,8 @@ class LimousineQuoteRequest {
         map['missing_terms'] ?? map['missingTerms'],
         max: 64,
       ),
-      serviceType: _text(
-        map['service_type'] ?? map['serviceType'],
-        max: 32,
-      ),
-      pricingMode: _text(
-        map['pricing_mode'] ?? map['pricingMode'],
-        max: 32,
-      ),
+      serviceType: _text(map['service_type'] ?? map['serviceType'], max: 32),
+      pricingMode: _text(map['pricing_mode'] ?? map['pricingMode'], max: 32),
       occasion: _text(map['occasion'], max: 80),
       pricingSnapshot: map['pricing_snapshot'] is Map
           ? Map<String, dynamic>.from(map['pricing_snapshot'] as Map)
@@ -779,6 +794,12 @@ class LimousineQuoteRequest {
           : (map['vehicleSnapshot'] is Map
                 ? Map<String, dynamic>.from(map['vehicleSnapshot'] as Map)
                 : const <String, dynamic>{}),
+      quotationAvailable:
+          map['quotation_available'] == true ||
+          map['quotationAvailable'] == true,
+      quotationRevision: _intOf(
+        map['quotation_revision'] ?? map['quotationRevision'],
+      ),
     );
   }
 
@@ -820,8 +841,12 @@ class LimousineQuoteRequest {
       acceptanceAllowed: incoming.acceptanceAllowed ?? acceptanceAllowed,
       acceptanceBlockedReason: incoming.acceptanceBlockedReason,
       missingTerms: incoming.missingTerms,
-      serviceType: incoming.serviceType.isNotEmpty ? incoming.serviceType : serviceType,
-      pricingMode: incoming.pricingMode.isNotEmpty ? incoming.pricingMode : pricingMode,
+      serviceType: incoming.serviceType.isNotEmpty
+          ? incoming.serviceType
+          : serviceType,
+      pricingMode: incoming.pricingMode.isNotEmpty
+          ? incoming.pricingMode
+          : pricingMode,
       occasion: incoming.occasion.isNotEmpty ? incoming.occasion : occasion,
       pricingSnapshot: incoming.pricingSnapshot.isNotEmpty
           ? incoming.pricingSnapshot
@@ -829,6 +854,8 @@ class LimousineQuoteRequest {
       vehicleSnapshot: incoming.vehicleSnapshot.isNotEmpty
           ? incoming.vehicleSnapshot
           : vehicleSnapshot,
+      quotationAvailable: incoming.quotationAvailable,
+      quotationRevision: incoming.quotationRevision ?? quotationRevision,
     );
   }
 }

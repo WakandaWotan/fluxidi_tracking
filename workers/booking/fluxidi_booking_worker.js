@@ -90,6 +90,18 @@ import {
 } from "./modules/human_booking_id_allocator.mjs";
 
 export { HumanBookingIdSequenceDO };
+import { renderPdfFromHtml } from "./modules/pdf_render.mjs";
+import {
+  attachLimousineQuotationSnapshotAtSend as _attachLimousineQuotationSnapshotAtSend,
+  parseLimousineQuotationRevisionParam as _parseLimousineQuotationRevisionParam,
+  readLimousineStatusRefHeader as _readLimousineStatusRefHeader,
+  serveLimousineQuotationPdf as _serveLimousineQuotationPdf,
+} from "./modules/limousine_quotation_document.mjs";
+import {
+  LIMOUSINE_QUOTATION_SNAPSHOT_MISSING as _LIMOUSINE_QUOTATION_SNAPSHOT_MISSING,
+  buildLimousineAcceptanceBindingFromSnapshot as _buildLimousineAcceptanceBindingFromSnapshot,
+  resolveLimousineQuotationCommercialSource as _resolveLimousineQuotationCommercialSource,
+} from "./modules/limousine_quotation_snapshot.mjs";
 import {
   applyPrimaryCompanyEmailChange,
   collectPrimaryCompanyRecoveryEmails,
@@ -162,8 +174,12 @@ import {
   unsealLimousineAcceptance as _unsealLimousineAcceptance,
 } from "./modules/limousine_acceptance_token.mjs";
 import {
+  LIMOUSINE_STATUS_PURPOSE as _LIMOUSINE_STATUS_PURPOSE,
+  limousineStatusBindingMatches as _limousineStatusBindingMatches,
+  limousineStatusRefLooksWellFormed as _limousineStatusRefLooksWellFormed,
   sealLimousineStatusRef as _sealLimousineStatusRef,
   ttlMinutesFromRange as _limousineStatusTtlMinutesFromRange,
+  unsealLimousineStatusRef as _unsealLimousineStatusRef,
 } from "./modules/limousine_status_token.mjs";
 import {
   buildLimousineCompanyInboxView as _buildLimousineCompanyInboxView,
@@ -976,6 +992,63 @@ function _limousineInboxNotFound() {
   return json({ ok: false, error: "not_found" }, 404);
 }
 
+function _limousineQuotationPdfResponse(served) {
+  if (!served?.ok) {
+    return json({ ok: false, error: served?.error || "quotation_unavailable" }, served?.status || 404);
+  }
+  const bytes = served.bytes instanceof Uint8Array ? served.bytes : new Uint8Array(served.bytes || []);
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      ...corsHeaders(),
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="${served.filename}"`,
+      "Cache-Control": "private, no-store, max-age=0",
+      Pragma: "no-cache",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Length": String(bytes.byteLength),
+    },
+  });
+}
+
+async function _authorizeLimousineCustomerQuotationPdf({ request, env, quoteRequestId }) {
+  const statusRef = _readLimousineStatusRefHeader(request);
+  if (!_limousineStatusRefLooksWellFormed(statusRef)) {
+    return { ok: false, response: json({ ok: false, error: "invalid_status_ref" }, 404) };
+  }
+  const unsealed = await _unsealLimousineStatusRef({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    reference: statusRef,
+  });
+  if (!unsealed.ok) {
+    return { ok: false, response: json({ ok: false, error: "invalid_status_ref" }, 404) };
+  }
+  const binding = unsealed.binding || {};
+  if (sanitizeTenantString(binding.quote_request_id, 120) !== sanitizeTenantString(quoteRequestId, 120)) {
+    return { ok: false, response: json({ ok: false, error: "invalid_status_ref" }, 404) };
+  }
+  const record = await _loadLimousineQuoteRecord(env, quoteRequestId);
+  if (!record) {
+    return { ok: false, response: json({ ok: false, error: "invalid_status_ref" }, 404) };
+  }
+  if (!_limousineTestCompanyAllowlisted(env, record.company_id)) {
+    return { ok: false, response: _limousineAllowlistDenied() };
+  }
+  const expected = {
+    purpose: _LIMOUSINE_STATUS_PURPOSE,
+    tenant_id: record.tenant_id,
+    company_id: record.company_id,
+    quote_request_id: record.quote_request_id,
+    customer_fingerprint: record?.status_access?.customer_fingerprint,
+    created_revision: record?.status_access?.created_revision,
+  };
+  const match = _limousineStatusBindingMatches(binding, expected);
+  if (!match.ok) {
+    return { ok: false, response: json({ ok: false, error: "invalid_status_ref" }, 404) };
+  }
+  return { ok: true, record };
+}
+
 async function _resealLimousineStatusRef(env, record) {
   const access = record?.status_access && typeof record.status_access === "object"
     ? record.status_access
@@ -1175,7 +1248,13 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   }
 
   // The sealed binding must still match the authoritative record exactly.
-  const expected = _buildLimousineAcceptanceBinding(record);
+  const commercial = _resolveLimousineQuotationCommercialSource(record);
+  if (commercial.mode === "missing") {
+    return fail(_LIMOUSINE_QUOTATION_SNAPSHOT_MISSING);
+  }
+  const expected = commercial.mode === "snapshot"
+    ? _buildLimousineAcceptanceBindingFromSnapshot(record, commercial.snapshot)
+    : _buildLimousineAcceptanceBinding(record);
   const match = _limousineAcceptanceBindingMatches(binding, expected);
   if (!match.ok) {
     return fail("limousine_quote_refresh_required", { mismatched_field: match.mismatched_field });
@@ -1188,28 +1267,37 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   if (!stillEligible) return fail("not_eligible");
 
   const quote = record.quote || {};
-  const totalCents = Number(quote.total_incl_vat_cents) || 0;
-  const vatRate = Number(quote.vat_rate) || 0;
-  const currency = String(quote.currency || "").toUpperCase();
+  const snapTotals = commercial.mode === "snapshot" ? commercial.snapshot?.totals_snapshot : null;
+  const snapRequest = commercial.mode === "snapshot" ? commercial.snapshot?.request_snapshot : null;
+  const snapVehicle = commercial.mode === "snapshot" ? commercial.snapshot?.vehicle_snapshot : null;
+  const totalCents = Number(snapTotals?.total_incl_vat_cents ?? quote.total_incl_vat_cents) || 0;
+  const vatRate = Number(snapTotals?.vat_rate ?? quote.vat_rate) || 0;
+  const currency = String(snapTotals?.currency || quote.currency || "").toUpperCase();
   if (!(totalCents > 0) || !currency) return fail("limousine_unavailable");
 
-  // The human total is authoritative: split VAT from it, never recompute it.
-  const inclVat = totalCents / 100;
-  const exVat = vatRate > 0 ? Math.round((inclVat / (1 + vatRate)) * 100) / 100 : inclVat;
+  // Snapshot totals are frozen at send. Legacy records still split VAT from
+  // the human total using the same integer rounding.
+  const inclVat = snapTotals
+    ? Number(snapTotals.price_incl_vat)
+    : totalCents / 100;
+  const exVat = snapTotals
+    ? Number(snapTotals.price_ex_vat)
+    : (vatRate > 0 ? Math.round((inclVat / (1 + vatRate)) * 100) / 100 : inclVat);
+  const priceVat = snapTotals
+    ? Number(snapTotals.price_vat)
+    : Math.round((inclVat - exVat) * 100) / 100;
   const total = {
     ok: true,
     offer_id: binding.offer_id,
     offer_source_revision: binding.offer_source_revision,
     pricing_section_revision: binding.pricing_section_revision,
     service_category: "limousine",
-    journey_type: String(record.request?.journey_type || ""),
+    journey_type: String(snapRequest?.journey_type || record.request?.journey_type || ""),
     service_class_id: binding.service_class_id,
     vehicle_id: binding.vehicle_id,
-    // Published vehicle name from the authoritative quote record, so invoices
-    // and credit notes can name the car the customer actually accepted
-    // instead of printing its internal id.
+    // Published vehicle name from the frozen quotation snapshot when present.
     vehicle_public_name: sanitizeTenantString(
-      record?.request?.vehicle_snapshot?.public_name,
+      snapVehicle?.public_name || record?.request?.vehicle_snapshot?.public_name,
       120,
     ),
     pricing_mode: "manual_quote",
@@ -1235,7 +1323,7 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     total_incl_vat_cents: totalCents,
     price_incl_vat: inclVat,
     price_ex_vat: exVat,
-    price_vat: Math.round((inclVat - exVat) * 100) / 100,
+    price_vat: priceVat,
     vat_rate: vatRate,
   };
 
@@ -1243,17 +1331,27 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     total,
     quoteReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
     acceptedAtIso: unsealed.accepted_at || new Date().toISOString(),
-    scheduledPickupIso: String(record.request?.scheduled_pickup_iso || ""),
+    scheduledPickupIso: String(snapRequest?.scheduled_pickup_iso || record.request?.scheduled_pickup_iso || ""),
     companyId: scope?.company_id || "",
     termsRevision: binding.terms_revision,
   });
+  const quotationTrace = commercial.mode === "snapshot"
+    ? {
+        quotation_revision: commercial.snapshot.quote_revision,
+        quotation_content_hash: commercial.snapshot.content_hash,
+      }
+    : {};
 
   return {
     ok: true,
     record,
     accepted: {
       total,
-      snapshot: { ...snapshot, manual_quote_request_id: binding.quote_request_id },
+      snapshot: {
+        ...snapshot,
+        manual_quote_request_id: binding.quote_request_id,
+        ...quotationTrace,
+      },
       pricing: {
         price_ex_vat: total.price_ex_vat,
         price_vat: total.price_vat,
@@ -46084,6 +46182,20 @@ export default {
           for (const audit of quoted.audits || (quoted.audit ? [quoted.audit] : [])) {
             next = _appendLimousineQuoteAudit(next, audit);
           }
+          const profile = await loadBusinessProfile(env, {
+            tenant_id: next.tenant_id,
+            company_id: next.company_id,
+          });
+          const attached = await _attachLimousineQuotationSnapshotAtSend({
+            env,
+            record: next,
+            profile,
+            nowIso,
+          });
+          if (!attached.ok) {
+            return json({ ok: false, error: attached.reason }, 409);
+          }
+          next = attached.record;
           await _saveLimousineQuoteRecord(env, next);
         }
         return json({ ok: true, quote_request: _publicLimousineQuoteView(next) }, 200);
@@ -46104,6 +46216,13 @@ export default {
           return _limousineAllowlistDenied();
         }
         const nowIso = new Date().toISOString();
+        const commercial = _resolveLimousineQuotationCommercialSource(record);
+        if (commercial.mode === "missing") {
+          return json(
+            { ok: false, error: _LIMOUSINE_QUOTATION_SNAPSHOT_MISSING },
+            409,
+          );
+        }
         const acceptable = _assertLimousineQuoteAcceptable(record, {
           expectedRevision: body?.expected_revision ?? body?.expectedRevision,
           nowIso,
@@ -46124,8 +46243,11 @@ export default {
         if (!accepted.ok) {
           return json({ ok: false, error: accepted.reason, current_revision: accepted.current_revision }, 409);
         }
-        // The binding must reflect the ACCEPTED revision.
-        const binding = _buildLimousineAcceptanceBinding(accepted.record);
+        // The binding must reflect the ACCEPTED revision. New records bind
+        // commercial totals from the immutable quotation snapshot.
+        const binding = commercial.mode === "snapshot"
+          ? _buildLimousineAcceptanceBindingFromSnapshot(accepted.record, commercial.snapshot)
+          : _buildLimousineAcceptanceBinding(accepted.record);
         const sealed = await _sealLimousineAcceptance({
           secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
           binding,
@@ -46274,6 +46396,85 @@ export default {
           loadPaymentCapability: (rec) => _limousinePartnerPaymentCapability(env, rec),
         });
         return json(result.body, result.status);
+      }
+
+      // LIMOUSINE-QUOTE-DOCUMENT-P3J — partner quotation PDF (immutable snapshot).
+      const _limousinePartnerQuotationPdf = url.pathname.match(
+        /^\/admin\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})\/quotation\.pdf$/,
+      );
+      if (_limousinePartnerQuotationPdf && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: null,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTATION_PDF",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const record = await _loadLimousineQuoteRecord(env, _limousinePartnerQuotationPdf[1]);
+        if (!record || !_limousineQuoteScopeMatches(record, scope)) {
+          return _limousineInboxNotFound();
+        }
+        const revision = _parseLimousineQuotationRevisionParam(
+          url,
+          record.quotation_revision ?? null,
+        );
+        if (url.searchParams.has("revision") && revision == null) {
+          return json({ ok: false, error: "quotation_revision_not_found" }, 404);
+        }
+        const served = await _serveLimousineQuotationPdf({
+          env,
+          record,
+          revision,
+          renderPdfFromHtml:
+            typeof env.LIMOUSINE_QUOTATION_RENDER_PDF === "function"
+              ? env.LIMOUSINE_QUOTATION_RENDER_PDF
+              : renderPdfFromHtml,
+        });
+        return _limousineQuotationPdfResponse(served);
+      }
+
+      // LIMOUSINE-QUOTE-DOCUMENT-P3J — customer quotation PDF via status_ref header.
+      const _limousineCustomerQuotationPdf = url.pathname.match(
+        /^\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})\/quotation\.pdf$/,
+      );
+      if (_limousineCustomerQuotationPdf && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const quoteRequestId = _limousineCustomerQuotationPdf[1];
+        const authorized = await _authorizeLimousineCustomerQuotationPdf({
+          request,
+          env,
+          quoteRequestId,
+        });
+        if (!authorized.ok) return authorized.response;
+        const revision = _parseLimousineQuotationRevisionParam(
+          url,
+          authorized.record.quotation_revision ?? null,
+        );
+        if (url.searchParams.has("revision") && revision == null) {
+          return json({ ok: false, error: "quotation_revision_not_found" }, 404);
+        }
+        const served = await _serveLimousineQuotationPdf({
+          env,
+          record: authorized.record,
+          revision,
+          renderPdfFromHtml:
+            typeof env.LIMOUSINE_QUOTATION_RENDER_PDF === "function"
+              ? env.LIMOUSINE_QUOTATION_RENDER_PDF
+              : renderPdfFromHtml,
+        });
+        return _limousineQuotationPdfResponse(served);
       }
 
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..
@@ -103390,59 +103591,6 @@ async function renderPdfFromDlexLayout(layoutDataObj, env) {
   if (!r.ok) {
     const t = await r.text().catch(() => "");
     throw new Error(`DynamicPDF dlex-layout failed: ${r.status} ${t}`.slice(0, 400));
-  }
-
-  const buf = await r.arrayBuffer();
-  return new Uint8Array(buf);
-}
-
-async function renderPdfFromHtml(htmlString, env) {
-  // ✅ PDFShift (preferred): render Shopify HTML invoice to PDF
-  const pdfShiftKey = safeStr(env.PDFSHIFT_API_KEY);
-  if (pdfShiftKey) {
-    const r = await fetch("https://api.pdfshift.io/v3/convert/pdf", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": pdfShiftKey
-      },
-      body: JSON.stringify({
-        source: String(htmlString || ""),
-        landscape: false,
-        use_print: true,
-        sandbox: false,
-        // Keep A4 margins aligned with @page CSS; avoid a near-empty trailing
-        // page when only a few pixels of footer overflow.
-        margin: "10mm",
-        format: "A4",
-      })
-    });
-
-    if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`PDFShift render failed: ${r.status} ${t}`.slice(0, 300));
-    }
-
-    const buf = await r.arrayBuffer();
-    return new Uint8Array(buf);
-  }
-
-  const url = safeStr(env.PDF_RENDER_URL);
-  if (!url) return null;
-
-  const key = safeStr(env.PDF_RENDER_KEY);
-  const headers = { "Content-Type": "application/json" };
-  if (key) headers["Authorization"] = `Bearer ${key}`;
-
-  const r = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ html: String(htmlString || "") })
-  });
-
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`PDF render failed: ${r.status} ${t}`.slice(0, 300));
   }
 
   const buf = await r.arrayBuffer();

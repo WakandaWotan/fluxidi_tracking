@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -120,6 +121,16 @@ class _FakeGateway implements LimousineQuoteInboxGateway {
       kind: LimousineQuoteInboxErrorKind.invalid,
       code: 'unused',
     );
+  }
+
+  @override
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    throw UnimplementedError();
   }
 }
 

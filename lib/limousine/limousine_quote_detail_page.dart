@@ -9,6 +9,7 @@ import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_quote_presentation.dart';
 import 'limousine_quote_respond_form.dart';
+import 'limousine_quotation_pdf_action.dart';
 
 class LimousineQuoteDetailPage extends StatefulWidget {
   const LimousineQuoteDetailPage({
@@ -241,6 +242,18 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
             label: _t(kLimousineQuoteDecline),
             danger: true,
             onPressed: _controller.submitting ? null : () => _decline(record),
+          ),
+        ],
+        if (record.hasQuotationPdf) ...[
+          const SizedBox(height: 8),
+          LimousineQuotationPdfAction(
+            label: _t(kLimousineQuoteViewQuotation),
+            previewTitle: _t(kLimousineQuoteViewQuotationPreviewTitle),
+            errorLabel: _t(kLimousineQuoteViewQuotationError),
+            loadBytes: () => _gateway.fetchQuotationPdf(
+              quoteRequestId: record.quoteRequestId,
+              revision: record.quotationRevision!,
+            ),
           ),
         ],
       ],

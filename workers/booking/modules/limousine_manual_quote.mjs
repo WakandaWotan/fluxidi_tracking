@@ -10,6 +10,7 @@
 // booking engine. A human-approved total is never recomputed with taxi pricing,
 // and a customer-supplied total is never trusted.
 
+import { projectLimousineQuotationAvailability } from "./limousine_quotation_snapshot.mjs";
 import { offerAllowsPublishedJourneyType } from "./limousine_offers.mjs";
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
 import {
@@ -95,6 +96,8 @@ export const LIMOUSINE_QUOTE_REASONS = Object.freeze({
   QUOTE_TERMS_INCOMPLETE: "quote_terms_incomplete",
   STALE_TERMS_REVISION: "stale_terms_revision",
   UNKNOWN_CRITICAL_FIELD: "unknown_critical_field",
+  QUOTATION_SNAPSHOT_CONFLICT: "quotation_snapshot_conflict",
+  QUOTATION_SNAPSHOT_MISSING: "quotation_snapshot_missing",
   JOURNEY_TYPE_NOT_ALLOWED: "journey_type_not_allowed",
   VEHICLE_SCOPE_MISMATCH: LIMOUSINE_UNIFIED_REASONS.VEHICLE_SCOPE_MISMATCH,
   VEHICLE_NOT_PUBLISHED: LIMOUSINE_UNIFIED_REASONS.VEHICLE_NOT_PUBLISHED,
@@ -1107,6 +1110,7 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
           acceptance_blocked_reason: readiness.reason,
           ...(readiness.missing?.length ? { missing_terms: readiness.missing } : {}),
         }),
+    ...projectLimousineQuotationAvailability(rec),
   };
 }
 

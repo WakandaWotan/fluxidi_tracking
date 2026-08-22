@@ -13,6 +13,7 @@ import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_quote_presentation.dart';
+import 'limousine_quotation_pdf_action.dart';
 import 'limousine_wizard_vehicle.dart';
 
 class LimousineCustomerUnavailableBanner extends StatelessWidget {
@@ -62,8 +63,7 @@ class LimousineCustomerStatusView extends StatelessWidget {
                 ? controller.providerDisplayName
                 : controller.selectedProvider?.provider.companyName ?? '')
             .trim();
-    final vehicleName =
-        (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
+    final vehicleName = (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
         ? controller.lockedVehicle!.name.trim()
         : limousineQuoteVehicleDisplay(request, language);
     return Column(
@@ -185,7 +185,10 @@ class LimousineCustomerStatusView extends StatelessWidget {
               fontWeight: FontWeight.w800,
             ),
           ),
-          if (limousineVatTreatmentLabel(quote.vatTreatment, language).isNotEmpty)
+          if (limousineVatTreatmentLabel(
+            quote.vatTreatment,
+            language,
+          ).isNotEmpty)
             Text(limousineVatTreatmentLabel(quote.vatTreatment, language)),
           if (quote.expiresAt.isNotEmpty)
             Text(
@@ -200,6 +203,16 @@ class LimousineCustomerStatusView extends StatelessWidget {
             ),
           const SizedBox(height: 12),
           LimousineCustomerTermsCard(request: request, language: language),
+        ],
+        if (request.hasQuotationPdf) ...[
+          const SizedBox(height: 12),
+          LimousineQuotationPdfAction(
+            buttonKey: kLimousineCustomerViewQuotationKey,
+            label: _t(kLimousineQuoteViewQuotation),
+            previewTitle: _t(kLimousineQuoteViewQuotationPreviewTitle),
+            errorLabel: _t(kLimousineQuoteViewQuotationError),
+            loadBytes: controller.loadQuotationPdf,
+          ),
         ],
         if (request.decline != null)
           Text(

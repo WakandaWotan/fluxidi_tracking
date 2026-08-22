@@ -137,6 +137,16 @@ export function limousineAcceptanceBindingMatches(binding, expected) {
       return { ok: false, mismatched_field: key };
     }
   }
+  for (const key of ["quotation_revision", "quotation_content_hash"]) {
+    const left = a[key];
+    const right = b[key];
+    const leftSet = left != null && String(left) !== "";
+    const rightSet = right != null && String(right) !== "";
+    if (!leftSet && !rightSet) continue;
+    if (String(left ?? "") !== String(right ?? "")) {
+      return { ok: false, mismatched_field: key };
+    }
+  }
   const aExtras = Array.isArray(a.selected_extra_ids) ? [...a.selected_extra_ids].sort() : [];
   const bExtras = Array.isArray(b.selected_extra_ids) ? [...b.selected_extra_ids].sort() : [];
   if (aExtras.join(",") !== bExtras.join(",")) {

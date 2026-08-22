@@ -63,6 +63,14 @@ mixin LimousineCustomerQuoteGateway {
     required int expectedRevision,
     required int termsRevision,
   });
+
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    required String statusRef,
+  }) async {
+    throw UnimplementedError();
+  }
 }
 
 class LimousineCustomerQuoteException implements Exception {
@@ -126,6 +134,16 @@ class HttpLimousineCustomerQuoteGateway
           .timeout(const Duration(seconds: 12));
     }
     return http.get(uri, headers: headers).timeout(const Duration(seconds: 12));
+  }
+
+  Future<http.Response> _getPdf(Uri uri, Map<String, String> headers) {
+    final client = _client;
+    if (client != null) {
+      return client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 30));
+    }
+    return http.get(uri, headers: headers).timeout(const Duration(seconds: 30));
   }
 
   Future<http.Response> _post(
@@ -453,6 +471,65 @@ class HttpLimousineCustomerQuoteGateway
         paymentCapability: capability is Map
             ? BookingPaymentCapability.fromPublicJson(capability)
             : null,
+      );
+    } on LimousineCustomerQuoteException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineCustomerQuoteException(code: 'network');
+    }
+  }
+
+  @override
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    required String statusRef,
+  }) async {
+    if (!looksLikeLimousineStatusRef(statusRef)) {
+      throw const LimousineCustomerQuoteException(
+        code: 'invalid_status_ref',
+        unavailable: true,
+        statusCode: 404,
+      );
+    }
+    final id = quoteRequestId.trim();
+    if (id.isEmpty || revision < 1) {
+      throw const LimousineCustomerQuoteException(
+        code: 'quotation_unavailable',
+        unavailable: true,
+        statusCode: 404,
+      );
+    }
+    final uri = Uri.parse(
+      '$_base/limousine/quote-requests/$id/quotation.pdf',
+    ).replace(queryParameters: <String, String>{'revision': '$revision'});
+    if (uri.queryParameters.containsKey('status_ref') ||
+        uri.queryParameters.containsKey('statusRef') ||
+        uri.path.contains('status_ref')) {
+      throw const LimousineCustomerQuoteException(
+        code: 'status_ref_not_allowed',
+      );
+    }
+    try {
+      final headers = Map<String, String>.from(await _authHeaders());
+      headers['Accept'] = 'application/pdf';
+      headers.remove('Content-Type');
+      headers['X-Fluxidi-Status-Ref'] = statusRef;
+      final res = await _getPdf(uri, headers);
+      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+        return Uint8List.fromList(res.bodyBytes);
+      }
+      final map = _decode(res);
+      if (res.statusCode == 404) {
+        throw LimousineCustomerQuoteException(
+          code: (map['error'] ?? 'quotation_unavailable').toString(),
+          unavailable: true,
+          statusCode: 404,
+        );
+      }
+      throw LimousineCustomerQuoteException(
+        code: (map['error'] ?? 'network').toString(),
+        statusCode: res.statusCode,
       );
     } on LimousineCustomerQuoteException {
       rethrow;
@@ -1105,6 +1182,26 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       startPolling();
     }
     notifyListeners();
+  }
+
+  Future<Uint8List> loadQuotationPdf() async {
+    final live = request;
+    final ref = _statusRef;
+    final revision = live?.quotationRevision;
+    if (live == null ||
+        !live.hasQuotationPdf ||
+        revision == null ||
+        !looksLikeLimousineStatusRef(ref)) {
+      throw const LimousineCustomerQuoteException(
+        code: 'quotation_unavailable',
+        unavailable: true,
+      );
+    }
+    return _gateway.fetchQuotationPdf(
+      quoteRequestId: live.quoteRequestId,
+      revision: revision,
+      statusRef: ref!,
+    );
   }
 
   Future<void> _persistHistory() async {

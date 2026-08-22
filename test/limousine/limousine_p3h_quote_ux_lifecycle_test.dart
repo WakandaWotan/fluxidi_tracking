@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -36,10 +38,7 @@ LimousineQuoteRequest _request({
     'created_at': '2026-08-21T10:00:00Z',
     'updated_at': '2026-08-21T10:00:00Z',
     'vehicle_snapshot': <String, dynamic>{'public_name': vehicleName},
-    'fulfilment': <String, dynamic>{
-      'from': 'Brussel-Zuid',
-      'to': 'Oudenaarde',
-    },
+    'fulfilment': <String, dynamic>{'from': 'Brussel-Zuid', 'to': 'Oudenaarde'},
     if (withQuote)
       'quote': <String, dynamic>{
         'total_incl_vat_cents': 25000,
@@ -107,6 +106,15 @@ class _StatusGateway implements LimousineCustomerQuoteGateway {
   }) async {
     throw const LimousineCustomerQuoteException(code: 'unused');
   }
+
+  @override
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    required String statusRef,
+  }) async {
+    throw UnimplementedError();
+  }
 }
 
 void main() {
@@ -138,10 +146,7 @@ void main() {
       expect(date, DateTime(2026, 8, 28));
       final iso = limousineQuoteExpiresAtIsoFromDate(date);
       expect(DateTime.tryParse(iso), isNotNull);
-      expect(
-        formatLimousineUserDate(iso, AppLanguage.nl),
-        '28 augustus 2026',
-      );
+      expect(formatLimousineUserDate(iso, AppLanguage.nl), '28 augustus 2026');
       expect(limousineLooksLikeRawIsoTimestamp(iso), isTrue);
     });
 
@@ -208,7 +213,10 @@ void main() {
       expect(submit.onPressed, isNull);
       expect(find.text('Vul een geldig offertebedrag in.'), findsWidgets);
 
-      await tester.enterText(find.byKey(kLimousineQuoteTotalFieldKey), '250,00');
+      await tester.enterText(
+        find.byKey(kLimousineQuoteTotalFieldKey),
+        '250,00',
+      );
       await tester.pump();
       await tester.ensureVisible(find.byKey(kLimousineQuoteVatFieldKey));
       await tester.tap(find.byKey(kLimousineQuoteVatFieldKey));
@@ -305,44 +313,47 @@ void main() {
       expect(afterQuote.single.request!.quote!.totalInclVatCents, 25000);
     });
 
-    test('controller restore keeps the live request after a new instance', () async {
-      const statusRef = 'limqs1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
-      final vault = MemoryLimousineCustomerRequestHistoryVault();
-      final history = LimousineCustomerRequestHistoryRepository(vault: vault);
-      await history.upsert(
-        LimousineCustomerRequestRecord(
-          quoteRequestId: 'qr_live_1',
-          statusRef: statusRef,
-          state: 'quoted',
-          companyName: 'Hummer Party',
-          request: _request(state: 'quoted', withQuote: true),
-        ),
-      );
-      final stored = (await history.list()).single;
-      final gateway = _StatusGateway(
-        _request(state: 'quoted', revision: 4, withQuote: true),
-      );
-      final controller = LimousineCustomerQuoteController(
-        gateway: gateway,
-        historyRepository: history,
-      );
-      controller.restorePersistedRequest(stored);
-      expect(controller.request!.quoteRequestId, 'qr_live_1');
-      expect(controller.providerDisplayName, 'Hummer Party');
-      expect(
-        limousineCustomerStateLabel(
-          controller.request!.state,
-          AppLanguage.nl,
-        ),
-        'Offerte ontvangen',
-      );
-      await controller.refreshStatus(manual: true);
-      expect(gateway.polls, 1);
-      expect(controller.request!.revision, 4);
-      final reloaded = await history.list();
-      expect(reloaded.single.state, 'quoted');
-      controller.dispose();
-    });
+    test(
+      'controller restore keeps the live request after a new instance',
+      () async {
+        const statusRef = 'limqs1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
+        final vault = MemoryLimousineCustomerRequestHistoryVault();
+        final history = LimousineCustomerRequestHistoryRepository(vault: vault);
+        await history.upsert(
+          LimousineCustomerRequestRecord(
+            quoteRequestId: 'qr_live_1',
+            statusRef: statusRef,
+            state: 'quoted',
+            companyName: 'Hummer Party',
+            request: _request(state: 'quoted', withQuote: true),
+          ),
+        );
+        final stored = (await history.list()).single;
+        final gateway = _StatusGateway(
+          _request(state: 'quoted', revision: 4, withQuote: true),
+        );
+        final controller = LimousineCustomerQuoteController(
+          gateway: gateway,
+          historyRepository: history,
+        );
+        controller.restorePersistedRequest(stored);
+        expect(controller.request!.quoteRequestId, 'qr_live_1');
+        expect(controller.providerDisplayName, 'Hummer Party');
+        expect(
+          limousineCustomerStateLabel(
+            controller.request!.state,
+            AppLanguage.nl,
+          ),
+          'Offerte ontvangen',
+        );
+        await controller.refreshStatus(manual: true);
+        expect(gateway.polls, 1);
+        expect(controller.request!.revision, 4);
+        final reloaded = await history.list();
+        expect(reloaded.single.state, 'quoted');
+        controller.dispose();
+      },
+    );
   });
 
   group('presentation', () {
@@ -356,8 +367,14 @@ void main() {
         limousineQuoteVehicleDisplay(record, AppLanguage.nl),
         'Hummer stretch',
       );
-      expect(limousineQuoteVehicleDisplay(record, AppLanguage.nl), isNot('vh_1787076028764'));
-      expect(limousineQuoteOfferDisplay(record, AppLanguage.nl), isNot(record.offerId));
+      expect(
+        limousineQuoteVehicleDisplay(record, AppLanguage.nl),
+        isNot('vh_1787076028764'),
+      );
+      expect(
+        limousineQuoteOfferDisplay(record, AppLanguage.nl),
+        isNot(record.offerId),
+      );
       expect(limousineLooksLikeRawVehicleOrOfferId(record.vehicleId), isTrue);
       expect(limousineLooksLikeRawServiceClassId('stretch_limousine'), isTrue);
       final formatted = formatLimousineUserDateTime(
@@ -366,7 +383,10 @@ void main() {
       );
       expect(formatted.contains('augustus'), isTrue);
       expect(limousineLooksLikeRawIsoTimestamp(formatted), isFalse);
-      expect(limousineVatTreatmentLabel('incl', AppLanguage.nl), 'BTW inbegrepen');
+      expect(
+        limousineVatTreatmentLabel('incl', AppLanguage.nl),
+        'BTW inbegrepen',
+      );
       expect(formatLimousineEuroAmount(25000), '€ 250,00');
     });
   });

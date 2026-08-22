@@ -325,7 +325,8 @@ test("10) malformed, expired and tampered status references are rejected", async
   assert.equal(expired.error, LIMOUSINE_STATUS_ERRORS.EXPIRED);
 
   const parts = sealed.reference.split(".");
-  parts[2] = `${parts[2].slice(0, -1)}x`;
+  const sig = parts[2] || "sig";
+  parts[2] = (sig[0] === "A" ? "B" : "A") + sig.slice(1);
   const tampered = await unsealLimousineStatusRef({
     secret: SECRET,
     reference: parts.join("."),

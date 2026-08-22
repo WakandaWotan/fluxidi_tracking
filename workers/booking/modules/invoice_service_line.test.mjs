@@ -347,7 +347,7 @@ test("17) a snapshot without a name omits the field entirely", () => {
 test("18) the name is taken from the authoritative quote record, not the client", () => {
   assert.ok(
     worker.includes(
-      "vehicle_public_name: sanitizeTenantString(\n      record?.request?.vehicle_snapshot?.public_name,",
+      "vehicle_public_name: sanitizeTenantString(\n      snapVehicle?.public_name || record?.request?.vehicle_snapshot?.public_name,",
     ),
   );
   // No client-supplied vehicle name is ever read into the snapshot.

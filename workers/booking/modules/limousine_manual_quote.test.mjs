@@ -17,6 +17,7 @@ import {
   LIMOUSINE_QUOTE_STATES,
   LIMOUSINE_REQUIRED_TERMS_KEYS,
   appendLimousineQuoteAudit,
+  applyLimousineCompanyQuoteAction,
   applyLimousineQuoteTransition,
   assertLimousineQuoteAcceptable,
   buildLimousineAcceptanceBinding,
@@ -25,10 +26,15 @@ import {
   itineraryFingerprint,
   limousineManualQuoteGateEnabled,
   limousineQuoteRequestKey,
+  publicLimousineQuoteView,
   validateLimousineCompanyQuote,
   validateLimousineQuoteRequest,
   validateLimousineTerms,
 } from "./limousine_manual_quote.mjs";
+import {
+  attachLimousineQuotationSnapshot,
+  buildLimousineQuotationSnapshot,
+} from "./limousine_quotation_snapshot.mjs";
 import {
   LIMOUSINE_ACCEPTANCE_ERRORS,
   limousineAcceptanceBindingMatches,
@@ -586,4 +592,94 @@ test("5/7/15/16/17/20/21/22/24) worker wiring: auth, gates, isolation, preservat
   if (calcStart > 0 && calcEnd > calcStart) {
     assert.ok(!worker.slice(calcStart, calcEnd).includes("limousine"));
   }
+});
+
+test("P3J) public view projects quotation availability without snapshot payload", async () => {
+  const legacy = publicLimousineQuoteView(quotedRecord());
+  assert.equal(legacy.quotation_available, false);
+  assert.equal(legacy.quotation_snapshots, undefined);
+  assert.equal(legacy.content_hash, undefined);
+  const snap = await buildLimousineQuotationSnapshot({
+    quoteRequestId: "limq_1",
+    quoteRevision: 3,
+    termsRevision: 3,
+    issuedAt: "2026-08-17T10:00:00Z",
+    expiresAt: "2099-01-01T00:00:00Z",
+    locale: "nl",
+    sellerSnapshot: { legal_name: "Coachline BV" },
+    requestSnapshot: quotedRecord().request,
+    vehicleSnapshot: { public_name: "Executive sedan" },
+    offerSnapshot: quotedRecord().quote,
+  });
+  const withSnap = attachLimousineQuotationSnapshot(quotedRecord(), snap).record;
+  const view = publicLimousineQuoteView(withSnap);
+  assert.equal(view.quotation_available, true);
+  assert.equal(view.quotation_revision, 3);
+  assert.equal(view.content_hash, undefined);
+  assert.equal(view.quotation_snapshots, undefined);
+  assert.equal(JSON.stringify(view).includes(snap.content_hash), false);
+});
+
+test("P3J) re-quote keeps earlier snapshots on the live record", async () => {
+  const snap = await buildLimousineQuotationSnapshot({
+    quoteRequestId: "limq_1",
+    quoteRevision: 3,
+    termsRevision: 3,
+    issuedAt: "2026-08-17T10:00:00Z",
+    expiresAt: "2099-01-01T00:00:00Z",
+    locale: "nl",
+    sellerSnapshot: { legal_name: "Coachline BV" },
+    requestSnapshot: quotedRecord().request,
+    vehicleSnapshot: { public_name: "Executive sedan" },
+    offerSnapshot: quotedRecord().quote,
+  });
+  const seeded = attachLimousineQuotationSnapshot(quotedRecord(), snap).record;
+  const nextQuote = validateLimousineCompanyQuote(
+    {
+      total_incl_vat_cents: 52000,
+      currency: "EUR",
+      terms: { ...TERMS, terms_revision: 4 },
+      expires_at: "2099-02-01T00:00:00Z",
+    },
+    { nowIso: "2026-08-17T12:00:00Z" },
+  );
+  const requote = applyLimousineCompanyQuoteAction(seeded, {
+    expectedRevision: 3,
+    quote: nextQuote.quote,
+    nowIso: "2026-08-17T12:00:00Z",
+  });
+  assert.equal(requote.ok, true);
+  assert.equal(requote.record.quotation_snapshots["3"].content_hash, snap.content_hash);
+  assert.equal(requote.record.quotation_snapshots["3"].totals_snapshot.total_incl_vat_cents, 45000);
+});
+
+test("P3J) quote-send attaches snapshots; decline/viewed/accept/book do not", () => {
+  const worker = readFileSync(join(__dirname, "..", "fluxidi_booking_worker.js"), "utf8");
+  const respondStart = worker.indexOf('"/admin/limousine/quote-requests/respond" && request.method === "POST"');
+  const respondEnd = worker.indexOf('"/limousine/quote-requests/accept" && request.method === "POST"');
+  const respond = worker.slice(respondStart, respondEnd);
+  const quoteBlock = respond.slice(respond.indexOf('if (action !== "quote")'));
+  assert.ok(quoteBlock.includes("_attachLimousineQuotationSnapshotAtSend"));
+  const decline = respond.slice(
+    respond.indexOf('if (action === "decline")'),
+    respond.indexOf('if (action === "viewed")'),
+  );
+  assert.ok(!decline.includes("_attachLimousineQuotationSnapshotAtSend"));
+  const viewed = respond.slice(
+    respond.indexOf('if (action === "viewed")'),
+    respond.indexOf('if (action !== "quote")'),
+  );
+  assert.ok(!viewed.includes("_attachLimousineQuotationSnapshotAtSend"));
+  const acceptStart = worker.indexOf('"/limousine/quote-requests/accept" && request.method === "POST"');
+  const acceptEnd = worker.indexOf("LIMOUSINE-MARKETPLACE-P2C2A — company inbox list");
+  const accept = worker.slice(acceptStart, acceptEnd);
+  assert.ok(!accept.includes("_attachLimousineQuotationSnapshotAtSend"));
+  assert.ok(accept.includes("_buildLimousineAcceptanceBindingFromSnapshot"));
+  assert.ok(!worker.includes("/limousine/quote-requests/reject"));
+  assert.ok(!worker.includes("customer_rejected"));
+  const bookStart = worker.indexOf("async function _prepareLimousineManualBooking");
+  const bookEnd = worker.indexOf("/// LIMOUSINE-MARKETPLACE-P2C1: /book pre-flight");
+  const book = worker.slice(bookStart, bookEnd);
+  assert.ok(!book.includes("_attachLimousineQuotationSnapshotAtSend"));
+  assert.ok(book.includes("quotation_content_hash"));
 });

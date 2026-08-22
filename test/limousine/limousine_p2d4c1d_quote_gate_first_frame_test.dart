@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -61,6 +63,16 @@ class _FakeGateway implements LimousineQuoteInboxGateway {
       code: 'unused',
     );
   }
+
+  @override
+  Future<Uint8List> fetchQuotationPdf({
+    required String quoteRequestId,
+    required int revision,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    throw UnimplementedError();
+  }
 }
 
 Widget _app(Widget child, {Size size = kLimousinePhonePortrait}) {
@@ -74,14 +86,8 @@ Widget _app(Widget child, {Size size = kLimousinePhonePortrait}) {
 
 void _expectComingSoonOnly() {
   expect(find.byType(LimousineQuoteGateOffPanel), findsOneWidget);
-  expect(
-    find.byKey(kLimousineQuoteInboxGateOffKey),
-    findsOneWidget,
-  );
-  expect(
-    find.text(kLimousineQuoteGateOff.of(AppLanguage.nl)),
-    findsOneWidget,
-  );
+  expect(find.byKey(kLimousineQuoteInboxGateOffKey), findsOneWidget);
+  expect(find.text(kLimousineQuoteGateOff.of(AppLanguage.nl)), findsOneWidget);
   expect(find.byType(LimousineQuoteInboxPage), findsNothing);
   expect(find.byKey(kLimousineQuoteInboxPageKey), findsNothing);
   expect(find.byKey(kLimousineQuoteInboxHeroKey), findsNothing);
@@ -100,22 +106,28 @@ void main() {
     businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
   });
 
-  test('compile-time quote gates stay off unless an APK dart-define enables them', () {
-    expect(kLimousineCustomerQuoteGateEnabled, isFalse);
-    expect(kLimousineCustomerManualQuoteGateEnabled, isFalse);
-    expect(limousineQuoteInboxRuntimeEnabled(), isFalse);
-  });
+  test(
+    'compile-time quote gates stay off unless an APK dart-define enables them',
+    () {
+      expect(kLimousineCustomerQuoteGateEnabled, isFalse);
+      expect(kLimousineCustomerManualQuoteGateEnabled, isFalse);
+      expect(limousineQuoteInboxRuntimeEnabled(), isFalse);
+    },
+  );
 
-  test('gate off builds the coming-soon panel without constructing the inbox', () {
-    final gateway = _FakeGateway();
-    final body = limousineQuoteRequestsBody(
-      runtimeEnabled: false,
-      gateway: gateway,
-    );
-    expect(body, isA<LimousineQuoteGateOffPanel>());
-    expect(body, isNot(isA<LimousineQuoteInboxPage>()));
-    expect(gateway.listCalls, 0);
-  });
+  test(
+    'gate off builds the coming-soon panel without constructing the inbox',
+    () {
+      final gateway = _FakeGateway();
+      final body = limousineQuoteRequestsBody(
+        runtimeEnabled: false,
+        gateway: gateway,
+      );
+      expect(body, isA<LimousineQuoteGateOffPanel>());
+      expect(body, isNot(isA<LimousineQuoteInboxPage>()));
+      expect(gateway.listCalls, 0);
+    },
+  );
 
   test('gate on is the only path that constructs the tenant-scoped inbox', () {
     final gateway = _FakeGateway();
@@ -135,12 +147,7 @@ void main() {
   ) async {
     final gateway = _FakeGateway();
     await tester.pumpWidget(
-      _app(
-        limousineQuoteRequestsBody(
-          runtimeEnabled: false,
-          gateway: gateway,
-        ),
-      ),
+      _app(limousineQuoteRequestsBody(runtimeEnabled: false, gateway: gateway)),
     );
     _expectComingSoonOnly();
     expect(gateway.listCalls, 0);
@@ -153,12 +160,7 @@ void main() {
       pages: const [LimousineQuoteInboxPageData(items: [])],
     );
     await tester.pumpWidget(
-      _app(
-        limousineQuoteRequestsBody(
-          runtimeEnabled: false,
-          gateway: gateway,
-        ),
-      ),
+      _app(limousineQuoteRequestsBody(runtimeEnabled: false, gateway: gateway)),
     );
     expect(find.byType(LimousineQuoteInboxPage), findsNothing);
     expect(gateway.listCalls, 0);
@@ -169,12 +171,7 @@ void main() {
   ) async {
     final gateway = _FakeGateway();
     await tester.pumpWidget(
-      _app(
-        limousineQuoteRequestsBody(
-          runtimeEnabled: false,
-          gateway: gateway,
-        ),
-      ),
+      _app(limousineQuoteRequestsBody(runtimeEnabled: false, gateway: gateway)),
     );
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 16));
