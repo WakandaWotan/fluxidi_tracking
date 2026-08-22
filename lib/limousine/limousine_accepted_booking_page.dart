@@ -6,6 +6,7 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import '../payment/booking_billing_identity_form.dart';
 import '../payment/booking_payment_method_tile.dart';
 import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_api.dart';
@@ -45,6 +46,11 @@ class _LimousineAcceptedBookingPageState
 
   String _t(LocalizedText text) => text.of(_lang);
 
+  /// Owned here, like every other booking surface owns its billing fields, so
+  /// nothing the customer types outlives this page.
+  final BookingBillingIdentityControllers _billing =
+      BookingBillingIdentityControllers();
+
   @override
   void initState() {
     super.initState();
@@ -83,7 +89,17 @@ class _LimousineAcceptedBookingPageState
   @override
   void dispose() {
     widget.controller.removeListener(_onChanged);
+    _billing.dispose();
     super.dispose();
+  }
+
+  void _syncBillingIdentity() {
+    widget.controller.updateBillingIdentity(_billing.identity);
+  }
+
+  void _onBillingEnabledChanged(bool enabled) {
+    widget.controller.setBillingEnabled(enabled);
+    _syncBillingIdentity();
   }
 
   @override
@@ -114,6 +130,7 @@ class _LimousineAcceptedBookingPageState
             else ...[
               _review(controller.reviewFor(_lang), palette),
               _paymentSection(controller, palette),
+              _billingSection(controller, palette),
               if (controller.error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
@@ -293,6 +310,71 @@ class _LimousineAcceptedBookingPageState
                   ),
                 ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Buyer billing identity for a company invoice. Private is the default
+  /// and sends nothing; turning the toggle on never changes the accepted
+  /// quote amount.
+  Widget _billingSection(
+    LimousineAcceptedBookingController controller,
+    CustomerThemePalette palette,
+  ) {
+    final missing = controller.missingBillingIdentityField;
+    final warning = missing == null
+        ? null
+        : bookingBillingIdentityMissingFieldMessage(missing, _payText);
+    final interactive = !controller.submitting && !controller.succeeded;
+    return Card(
+      key: kLimousineAcceptedBookingBillingSectionKey,
+      color: palette.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(kLimousineAcceptedBookingBillingTitle),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _t(kLimousineAcceptedBookingBillingSubtitle),
+              style: TextStyle(color: palette.textMuted, fontSize: 12.4),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _t(kLimousineAcceptedBookingBillingPriceUnchanged),
+              style: TextStyle(
+                color: palette.textMuted,
+                fontSize: 11.5,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+            const SizedBox(height: 6),
+            BookingBillingIdentityForm(
+              enabled: controller.billingEnabled,
+              controllers: _billing,
+              t: _payText,
+              onEnabledChanged: interactive ? _onBillingEnabledChanged : null,
+              onChanged: interactive ? _syncBillingIdentity : null,
+              warning: warning,
+              style: BookingBillingFormStyle(
+                accentColor: palette.gold,
+                labelColor: palette.textPrimary,
+                mutedColor: palette.textMuted,
+                fieldBackground: palette.surfaceAlt,
+                fieldBorderColor: palette.border,
+                warningColor: palette.danger,
+              ),
+            ),
           ],
         ),
       ),

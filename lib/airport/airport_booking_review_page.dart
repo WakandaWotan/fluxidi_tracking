@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
+import 'package:fluxidi_tracking/payment/booking_billing_identity.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_method_tile.dart';
@@ -672,75 +673,38 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     });
   }
 
-  bool get _billingAddressComplete =>
-      _billingStreetController.text.trim().isNotEmpty &&
-      _billingPostalController.text.trim().isNotEmpty &&
-      _billingCityController.text.trim().isNotEmpty &&
-      _billingCountryController.text.trim().isNotEmpty;
+  /// The buyer identity the billing section currently holds, in the canonical
+  /// shape taxi, airport and limousine all share.
+  BookingBillingIdentity get _billingIdentityDraft => BookingBillingIdentity(
+    legalName: _billingLegalNameController.text,
+    vatNumber: _billingVatController.text,
+    registrationNumber: _billingRegistrationNumberController.text,
+    street: _billingStreetController.text,
+    postalCode: _billingPostalController.text,
+    city: _billingCityController.text,
+    country: _billingCountryController.text,
+    contactEmail: _billingContactEmailController.text,
+    peppolEndpointId: _billingPeppolEndpointController.text,
+    peppolScheme: _billingPeppolSchemeController.text,
+  );
+
+  bool get _billingAddressComplete => _billingIdentityDraft.addressComplete;
 
   Map<String, dynamic> _buildBillingCustomerPayloadFields({
     required String defaultEmail,
     required String defaultPhone,
   }) {
-    if (!_billingDetailsEnabled) return const <String, dynamic>{};
-    final legalName = _billingLegalNameController.text.trim();
-    final vat = _billingVatController.text.trim();
-    final registrationNumber = _billingRegistrationNumberController.text.trim();
-    final street = _billingStreetController.text.trim();
-    final postal = _billingPostalController.text.trim();
-    final city = _billingCityController.text.trim();
-    final country = _billingCountryController.text.trim().toUpperCase();
-    final contactEmail = _billingContactEmailController.text.trim().isNotEmpty
-        ? _billingContactEmailController.text.trim()
-        : defaultEmail.trim();
-    final contactPhone = defaultPhone.trim();
-    final peppolEndpoint = _billingPeppolEndpointController.text.trim();
-    final peppolScheme = _billingPeppolSchemeController.text.trim();
-
-    final hasAny =
-        legalName.isNotEmpty ||
-        vat.isNotEmpty ||
-        registrationNumber.isNotEmpty ||
-        street.isNotEmpty ||
-        postal.isNotEmpty ||
-        city.isNotEmpty ||
-        country.isNotEmpty ||
-        peppolEndpoint.isNotEmpty ||
-        peppolScheme.isNotEmpty;
-    if (!hasAny) return const <String, dynamic>{};
-
-    final billingCustomer = <String, dynamic>{
-      'customer_type': 'business',
-      'display_name': legalName.isNotEmpty ? legalName : null,
-      'contact_email': contactEmail.isNotEmpty ? contactEmail : null,
-      'contact_phone': contactPhone.isNotEmpty ? contactPhone : null,
-      'legal_name': legalName.isNotEmpty ? legalName : null,
-      'vat_number': vat.isNotEmpty ? vat : null,
-      'company_registration_number': registrationNumber.isNotEmpty
-          ? registrationNumber
-          : null,
-      'billing_address': <String, dynamic>{
-        'street': street.isNotEmpty ? street : null,
-        'postal_code': postal.isNotEmpty ? postal : null,
-        'city': city.isNotEmpty ? city : null,
-        'country': country.isNotEmpty ? country : null,
-      },
-      'peppol': <String, dynamic>{
-        'endpoint_id': peppolEndpoint.isNotEmpty ? peppolEndpoint : null,
-        'scheme': peppolScheme.isNotEmpty ? peppolScheme : null,
-      },
-    };
-    return <String, dynamic>{'billing_customer': billingCustomer};
+    return bookingBillingCustomerPayloadFields(
+      enabled: _billingDetailsEnabled,
+      identity: _billingIdentityDraft,
+      defaultEmail: defaultEmail,
+      defaultPhone: defaultPhone,
+    );
   }
 
   String? _billingCustomerValidationWarning() {
     if (!_billingDetailsEnabled) return null;
-    final hasLegal = _billingLegalNameController.text.trim().isNotEmpty;
-    final hasVat = _billingVatController.text.trim().isNotEmpty;
-    final hasRegistration = _billingRegistrationNumberController.text
-        .trim()
-        .isNotEmpty;
-    if (hasLegal && (hasVat || hasRegistration) && _billingAddressComplete) {
+    if (_billingIdentityDraft.isCompleteForBusinessInvoice) {
       return null;
     }
     return _t(

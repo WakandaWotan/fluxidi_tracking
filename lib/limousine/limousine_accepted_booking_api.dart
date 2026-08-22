@@ -14,6 +14,7 @@ import '../app_strings.dart';
 import '../customer_bookings_store.dart';
 import '../customer_profile_store.dart';
 import '../customer_session_store.dart';
+import '../payment/booking_billing_identity.dart';
 import '../payment/booking_checkout_response.dart';
 import '../payment/booking_payment_options.dart';
 import '../payment/payment_booking_selection.dart';
@@ -303,6 +304,16 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   /// The customer finishes payment from their bookings list.
   bool checkoutStartFailed = false;
 
+  /// Whether the customer asked for a company invoice. Private is the default,
+  /// as it is on the taxi and airport surfaces.
+  bool billingEnabled = false;
+
+  /// What the customer typed into the billing form. Held in memory only: an
+  /// accepted quote is resumable but billing identity is not persisted on any
+  /// booking surface today, so a resumed session asks again rather than
+  /// reusing anyone's stored details.
+  BookingBillingIdentity billingIdentity = BookingBillingIdentity.empty;
+
   int capabilityLoads = 0;
   final List<String> _logSink = <String>[];
   int _bookGeneration = 0;
@@ -353,14 +364,39 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
 
   bool get hasPaymentSelection => paymentSelection != null;
 
-  /// True once the customer may submit: a real capability, a usable choice and
-  /// the acknowledgement the accepted quote requires.
+  /// True when a requested company invoice still lacks a field the existing
+  /// canonical rule requires.
+  bool get billingIdentityIncomplete =>
+      billingEnabled && !billingIdentity.isCompleteForBusinessInvoice;
+
+  /// The first required billing field still missing, or null when nothing is.
+  BookingBillingIdentityField? get missingBillingIdentityField => billingEnabled
+      ? firstMissingBookingBillingIdentityField(billingIdentity)
+      : null;
+
+  /// True once the customer may submit: a real capability, a usable choice, a
+  /// complete billing identity if they asked for an invoice, and the
+  /// acknowledgement the accepted quote requires.
   bool get canConfirmBooking =>
       !submitting &&
       !succeeded &&
       confirmationAcknowledged &&
       !loadingPaymentCapability &&
-      hasPaymentSelection;
+      hasPaymentSelection &&
+      !billingIdentityIncomplete;
+
+  /// Turns the company-invoice choice on or off. Never flips on the customer's
+  /// behalf in either direction.
+  void setBillingEnabled(bool enabled) {
+    if (billingEnabled == enabled) return;
+    billingEnabled = enabled;
+    notifyListeners();
+  }
+
+  void updateBillingIdentity(BookingBillingIdentity identity) {
+    billingIdentity = identity;
+    notifyListeners();
+  }
 
   /// Reads the partner capability and preselects the same default the taxi and
   /// airport pickers use, but only when the partner actually offers it.
@@ -516,12 +552,23 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    // A requested company invoice needs a complete buyer identity. Never
+    // submit partial billing data and never quietly fall back to private.
+    if (billingIdentityIncomplete) {
+      error = LimousineAcceptedBookingError.billingIdentityIncomplete;
+      phase = LimousineAcceptedBookingPhase.failed;
+      _safeLog('book_blocked');
+      notifyListeners();
+      return false;
+    }
     final payload = limousineAcceptedBookPayload(
       handoff: quoteController?.handoff ?? handoff,
       draft: draft,
       customer: loaded!,
       payment: payment,
       request: request,
+      billingEnabled: billingEnabled,
+      billing: billingIdentity,
     );
     if (!limousineAcceptedBookPayloadIsSafe(payload)) {
       error = LimousineAcceptedBookingError.unknownResponse;

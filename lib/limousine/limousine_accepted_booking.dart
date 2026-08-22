@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import '../payment/booking_billing_identity.dart';
 import '../payment/payment_booking_selection.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_quote_inbox.dart';
@@ -54,6 +55,9 @@ const Key kLimousineAcceptedBookingPaymentRetryKey = ValueKey<String>(
 const Key kLimousineAcceptedBookingCheckoutUnavailableKey = ValueKey<String>(
   'limousine_accepted_booking_checkout_unavailable',
 );
+const Key kLimousineAcceptedBookingBillingSectionKey = ValueKey<String>(
+  'limousine_accepted_booking_billing',
+);
 
 /// Key of one payment option row, so a test can tap the method a customer sees.
 Key limousineAcceptedBookingPaymentMethodKey(String methodId) =>
@@ -102,6 +106,12 @@ const Set<String> kLimousineAcceptedBookAllowedKeys = <String>{
   'mollieMethod',
   'qr_preferred',
   'qrPreferred',
+  // Canonical buyer billing identity. `POST /book` derives
+  // billing_customer_snapshot, business_detected and invoice_intent from this
+  // itself, so the client sends identity and never claims intent.
+  'billing_customer',
+  'invoice_email',
+  'invoiceEmail',
   'booking_source',
   'entry_channel',
   'created_by_role',
@@ -120,6 +130,21 @@ const Set<String> kLimousineAcceptedBookForbiddenAuthorityKeys = <String>{
   'service_class_id',
   'itinerary_fingerprint',
   'limousine_entitled',
+  // Invoice authority is the server's. The client supplies buyer identity and
+  // the server derives the intent and the snapshot from it.
+  'invoice_intent',
+  'invoiceIntent',
+  'business_detected',
+  'businessDetected',
+  'invoice_requested',
+  'invoiceRequested',
+  'billing_customer_snapshot',
+  'billingCustomerSnapshot',
+  // The seller is resolved server-side from the company bound to the accepted
+  // quote and may never be described by the client.
+  'seller',
+  'seller_snapshot',
+  'sellerSnapshot',
 };
 
 enum LimousineAcceptedBookingPhase {
@@ -154,6 +179,13 @@ enum LimousineAcceptedBookingError {
 
   /// The partner no longer accepts the chosen method — read again and re-pick.
   paymentMethodUnavailable,
+
+  /// A company invoice was requested but the buyer identity is missing a field
+  /// the existing canonical rule requires.
+  billingIdentityIncomplete,
+
+  /// The server would not accept the billing identity as sent.
+  billingIdentityRejected,
 }
 
 class LimousineAcceptedBookingCustomer {
@@ -323,12 +355,18 @@ LimousineAcceptedBookingError? limousineAcceptedBookPreflightError({
 /// [payment] is the method the customer actually picked. There is no default:
 /// a limousine customer chooses how to pay exactly like a taxi or airport
 /// customer, so a caller that has no choice yet has nothing to send.
+///
+/// [billingEnabled] and [billing] carry the customer's company-invoice choice.
+/// A private booking sends no billing fields at all, so its payload stays
+/// exactly what it was before the choice existed.
 Map<String, dynamic> limousineAcceptedBookPayload({
   required LimousineAcceptedQuoteHandoff handoff,
   required LimousineQuoteCreateDraft draft,
   required LimousineAcceptedBookingCustomer customer,
   required BookingPaymentSelection payment,
   LimousineQuoteRequest? request,
+  bool billingEnabled = false,
+  BookingBillingIdentity billing = BookingBillingIdentity.empty,
 }) {
   final partnerId = handoff.publicPartnerId.trim();
   final phone = customer.phone.trim();
@@ -380,6 +418,22 @@ Map<String, dynamic> limousineAcceptedBookPayload({
   final bags = request?.bags ?? draft.bags;
   if (pax != null) payload['pax'] = pax;
   if (bags != null) payload['bags'] = bags;
+  final billingFields = bookingBillingCustomerPayloadFields(
+    enabled: billingEnabled,
+    identity: billing,
+    defaultEmail: email,
+    defaultPhone: phone,
+  );
+  if (billingFields.isNotEmpty) {
+    payload.addAll(billingFields);
+    // Same legacy alias taxi and airport send so a typed invoice email is the
+    // one the existing invoice mail uses instead of the ride contact address.
+    final invoiceEmail = billing.trimmedContactEmail;
+    if (invoiceEmail.isNotEmpty) {
+      payload['invoice_email'] = invoiceEmail;
+      payload['invoiceEmail'] = invoiceEmail;
+    }
+  }
   return payload;
 }
 
@@ -465,6 +519,9 @@ LimousineAcceptedBookingError limousineAcceptedBookErrorFromCode(String code) {
     case 'stale_revision':
     case 'limousine_quote_not_accepted':
       return LimousineAcceptedBookingError.staleRevision;
+    case 'billing_customer_not_ready':
+    case 'billing_identity_conflict':
+      return LimousineAcceptedBookingError.billingIdentityRejected;
     case 'unauthorized_scope':
       return LimousineAcceptedBookingError.unauthorizedScope;
     case 'missing_customer_scope':

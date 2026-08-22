@@ -40,6 +40,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
+import 'package:fluxidi_tracking/payment/booking_billing_identity.dart';
 import 'package:fluxidi_tracking/payment/booking_checkout_response.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_method_tile.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
@@ -4957,11 +4958,24 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     });
   }
 
-  bool get _billingAddressComplete =>
-      _billingStreetCtrl.text.trim().isNotEmpty &&
-      _billingPostalCtrl.text.trim().isNotEmpty &&
-      _billingCityCtrl.text.trim().isNotEmpty &&
-      _billingCountryCtrl.text.trim().isNotEmpty;
+  /// The buyer identity the billing section currently holds, in the canonical
+  /// shape taxi, airport and limousine all share.
+  BookingBillingIdentity get _billingIdentityDraft => BookingBillingIdentity(
+    legalName: _billingLegalNameCtrl.text,
+    // B11-I: canonical company_registration_number (KBO / enterprise / registry
+    // number). Alternative-or-fallback to VAT for Peppol legal identity.
+    vatNumber: _billingVatCtrl.text,
+    registrationNumber: _billingRegistrationNumberCtrl.text,
+    street: _billingStreetCtrl.text,
+    postalCode: _billingPostalCtrl.text,
+    city: _billingCityCtrl.text,
+    country: _billingCountryCtrl.text,
+    contactEmail: _billingContactEmailCtrl.text,
+    peppolEndpointId: _billingPeppolEndpointCtrl.text,
+    peppolScheme: _billingPeppolSchemeCtrl.text,
+  );
+
+  bool get _billingAddressComplete => _billingIdentityDraft.addressComplete;
 
   /// Builds the optional `billing_customer` payload fragment. Returns an empty
   /// map when the toggle is off or nothing meaningful was entered, so the
@@ -4970,57 +4984,12 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     required String defaultEmail,
     required String defaultPhone,
   }) {
-    if (!_billingDetailsEnabled) return const <String, dynamic>{};
-    final legalName = _billingLegalNameCtrl.text.trim();
-    final vat = _billingVatCtrl.text.trim();
-    // B11-I: canonical company_registration_number (KBO / enterprise / registry
-    // number). Alternative-or-fallback to VAT for Peppol legal identity.
-    final registrationNumber = _billingRegistrationNumberCtrl.text.trim();
-    final street = _billingStreetCtrl.text.trim();
-    final postal = _billingPostalCtrl.text.trim();
-    final city = _billingCityCtrl.text.trim();
-    final country = _billingCountryCtrl.text.trim().toUpperCase();
-    final contactEmail = _billingContactEmailCtrl.text.trim().isNotEmpty
-        ? _billingContactEmailCtrl.text.trim()
-        : defaultEmail.trim();
-    final contactPhone = defaultPhone.trim();
-    final peppolEndpoint = _billingPeppolEndpointCtrl.text.trim();
-    final peppolScheme = _billingPeppolSchemeCtrl.text.trim();
-
-    final hasAny =
-        legalName.isNotEmpty ||
-        vat.isNotEmpty ||
-        registrationNumber.isNotEmpty ||
-        street.isNotEmpty ||
-        postal.isNotEmpty ||
-        city.isNotEmpty ||
-        country.isNotEmpty ||
-        peppolEndpoint.isNotEmpty ||
-        peppolScheme.isNotEmpty;
-    if (!hasAny) return const <String, dynamic>{};
-
-    final billingCustomer = <String, dynamic>{
-      'customer_type': 'business',
-      'display_name': legalName.isNotEmpty ? legalName : null,
-      'contact_email': contactEmail.isNotEmpty ? contactEmail : null,
-      'contact_phone': contactPhone.isNotEmpty ? contactPhone : null,
-      'legal_name': legalName.isNotEmpty ? legalName : null,
-      'vat_number': vat.isNotEmpty ? vat : null,
-      'company_registration_number': registrationNumber.isNotEmpty
-          ? registrationNumber
-          : null,
-      'billing_address': <String, dynamic>{
-        'street': street.isNotEmpty ? street : null,
-        'postal_code': postal.isNotEmpty ? postal : null,
-        'city': city.isNotEmpty ? city : null,
-        'country': country.isNotEmpty ? country : null,
-      },
-      'peppol': <String, dynamic>{
-        'endpoint_id': peppolEndpoint.isNotEmpty ? peppolEndpoint : null,
-        'scheme': peppolScheme.isNotEmpty ? peppolScheme : null,
-      },
-    };
-    return <String, dynamic>{'billing_customer': billingCustomer};
+    return bookingBillingCustomerPayloadFields(
+      enabled: _billingDetailsEnabled,
+      identity: _billingIdentityDraft,
+      defaultEmail: defaultEmail,
+      defaultPhone: defaultPhone,
+    );
   }
 
   /// Light, non-blocking on-device check. Returns a localized warning string
@@ -5028,14 +4997,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   /// incomplete; null when nothing to warn about. Never blocks the booking.
   String? _billingCustomerValidationWarning() {
     if (!_billingDetailsEnabled) return null;
-    final hasLegal = _billingLegalNameCtrl.text.trim().isNotEmpty;
-    final hasVat = _billingVatCtrl.text.trim().isNotEmpty;
     // B11-I: KBO / company registration number satisfies the same legal-identity
     // slot as VAT for Peppol readiness. Either is enough here.
-    final hasRegistration = _billingRegistrationNumberCtrl.text
-        .trim()
-        .isNotEmpty;
-    if (hasLegal && (hasVat || hasRegistration) && _billingAddressComplete) {
+    if (_billingIdentityDraft.isCompleteForBusinessInvoice) {
       return null;
     }
     return _localizedText(

@@ -127,6 +127,38 @@ const LocalizedText kLimousineAcceptedBookingPaymentRetry = LocalizedText(
   es: 'Intentar de nuevo',
 );
 
+const LocalizedText kLimousineAcceptedBookingBillingTitle = LocalizedText(
+  nl: 'Factuurgegevens',
+  en: 'Billing details',
+  fr: 'Données de facturation',
+  es: 'Datos de facturación',
+);
+
+const LocalizedText kLimousineAcceptedBookingBillingSubtitle = LocalizedText(
+  nl:
+      'Boek je privé, dan hoef je niets in te vullen. Heb je een '
+      'bedrijfsfactuur nodig, vul dan de gegevens van je onderneming in.',
+  en:
+      'Booking privately needs nothing here. If you need a company invoice, '
+      'fill in your business details.',
+  fr:
+      'Pour une réservation privée, rien à remplir. Si vous avez besoin '
+      'd’une facture d’entreprise, indiquez les données de votre société.',
+  es:
+      'Si reservas como particular, no hace falta rellenar nada. Si necesitas '
+      'una factura de empresa, introduce los datos de tu sociedad.',
+);
+
+/// Reassurance that asking for an invoice changes only the document, never the
+/// accepted quote amount.
+const LocalizedText kLimousineAcceptedBookingBillingPriceUnchanged =
+    LocalizedText(
+      nl: 'Het geaccepteerde totaalbedrag verandert hier niet door.',
+      en: 'This does not change the accepted total.',
+      fr: 'Cela ne modifie pas le montant total accepté.',
+      es: 'Esto no cambia el total aceptado.',
+    );
+
 /// Shown when the server created the booking but the checkout page could not
 /// be opened. The ride exists; only the payment still has to be finished.
 const LocalizedText
@@ -253,5 +285,36 @@ kLimousineAcceptedBookingErrors =
         en: 'This payment method is no longer offered. Choose another method.',
         fr: 'Ce mode de paiement n’est plus proposé. Choisissez-en un autre.',
         es: 'Este método de pago ya no está disponible. Elija otro método.',
+      ),
+      LimousineAcceptedBookingError.billingIdentityIncomplete: LocalizedText(
+        nl:
+            'De factuurgegevens zijn nog niet compleet. Vul bedrijfsnaam, '
+            'btw- of ondernemingsnummer en het volledige factuuradres in.',
+        en:
+            'The billing details are not complete yet. Fill in the company '
+            'name, a VAT or company registration number and the full billing '
+            'address.',
+        fr:
+            'Les données de facturation sont incomplètes. Indiquez le nom de '
+            'l’entreprise, un numéro de TVA ou d’entreprise et l’adresse de '
+            'facturation complète.',
+        es:
+            'Los datos de facturación aún no están completos. Introduzca el '
+            'nombre de la empresa, un número de IVA o de registro y la '
+            'dirección de facturación completa.',
+      ),
+      LimousineAcceptedBookingError.billingIdentityRejected: LocalizedText(
+        nl:
+            'De factuurgegevens werden niet aanvaard. Controleer de '
+            'bedrijfsnaam, het btw-nummer en het factuuradres.',
+        en:
+            'The billing details were not accepted. Check the company name, '
+            'the VAT number and the billing address.',
+        fr:
+            'Les données de facturation ont été refusées. Vérifiez le nom de '
+            'l’entreprise, le numéro de TVA et l’adresse de facturation.',
+        es:
+            'Los datos de facturación no se aceptaron. Compruebe el nombre de '
+            'la empresa, el número de IVA y la dirección de facturación.',
       ),
     };
