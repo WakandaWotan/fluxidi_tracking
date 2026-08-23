@@ -2328,6 +2328,29 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
   }
 
+  Widget _customerCancelDialogContent() {
+    final preview = limousineCancellationPreviewFromDetails(
+      _view.source,
+      pickupIso: _view.pickupIso,
+      paymentStatus: _view.rawPaymentStatus,
+    );
+    if (preview == null) {
+      return Text(
+        _t(
+          nl: 'Deze boeking wordt geannuleerd. De chauffeur en agenda worden bijgewerkt.',
+          en: 'This booking will be cancelled. The driver and calendar will be updated.',
+          fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
+          es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
+        ),
+      );
+    }
+    final body = limousineCancellationPreviewBody(preview);
+    return Text(
+      key: kLimousineCancellationPreviewKey,
+      _t(nl: body.nl, en: body.en, fr: body.fr, es: body.es),
+    );
+  }
+
   Future<void> _cancelBookingServerSide() async {
     final bookingId = widget.bookingId.trim();
     if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
@@ -2379,16 +2402,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               es: 'Cancelar reserva',
             ),
           ),
-          content: Text(
-            _t(
-              nl: 'Deze boeking wordt geannuleerd. De chauffeur en agenda worden bijgewerkt.',
-              en: 'This booking will be cancelled. The driver and calendar will be updated.',
-              fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
-              es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
-            ),
-          ),
+          content: _customerCancelDialogContent(),
           actions: [
             TextButton(
+              key: kLimousineCancellationKeepKey,
               onPressed: () => Navigator.of(ctx).pop(false),
               child: Text(
                 _t(
@@ -2400,6 +2417,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               ),
             ),
             FilledButton(
+              key: kLimousineCancellationConfirmKey,
               onPressed: () => Navigator.of(ctx).pop(true),
               child: Text(
                 _t(
