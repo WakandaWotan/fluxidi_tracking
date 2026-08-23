@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/limousine/limousine_taxi_qr_isolation.dart';
 import 'package:fluxidi_tracking/widgets/fluxidi_decode_sized_asset_image.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -2637,7 +2638,7 @@ class _BusinessOrientationFlowPageState
   @override
   void initState() {
     super.initState();
-    debugPrint('[ORIENTATION_FLOW][OPEN] totalPages=${_cards.length}');
+    debugPrint('[ORIENTATION_FLOW][OPEN] totalPages=${_orientationCards().length}');
     _logCurrentPage();
     _entranceController.forward();
     // Card 1 tablet-hero videos are initialised lazily and only one
@@ -2918,7 +2919,12 @@ class _BusinessOrientationFlowPageState
   /// truth. Returns the const [_cards] list as-is today; kept as a
   /// method so a future dynamic/filtered tour can slot in without
   /// touching call sites.
-  List<_OrientationCardData> _orientationCards() => _cards;
+  List<_OrientationCardData> _orientationCards() {
+    if (companyShouldShowTaxiBookingQr()) return _cards;
+    return _cards
+        .where((card) => card.id != 'public_booking_link')
+        .toList(growable: false);
+  }
 
   /// Convenience: the card currently shown, derived from [_index].
   _OrientationCardData get _currentCard => _orientationCards()[_index];
@@ -2929,8 +2935,8 @@ class _BusinessOrientationFlowPageState
 
   void _logCurrentPage() {
     debugPrint(
-      '[ORIENTATION_FLOW][PAGE] index=${_index + 1}/${_cards.length} '
-      'card=${_cards[_index].id}',
+      '[ORIENTATION_FLOW][PAGE] index=${_index + 1}/${_orientationCards().length} '
+      'card=${_orientationCards()[_index].id}',
     );
   }
 
@@ -2946,7 +2952,7 @@ class _BusinessOrientationFlowPageState
       if (!mounted) return;
       final size = MediaQuery.sizeOf(context);
       _syncHeroVideoPlayback(
-        isWelcome: _cards[next].layout == _OrientationCardLayout.welcome,
+        isWelcome: _orientationCards()[next].layout == _OrientationCardLayout.welcome,
         isTabletPortrait: size.width < size.height && size.shortestSide >= 600,
         isTabletLandscape: size.width > size.height && size.shortestSide >= 600,
       );
@@ -2955,7 +2961,7 @@ class _BusinessOrientationFlowPageState
 
   Future<void> _goNext() async {
     if (!mounted) return;
-    if (_index >= _cards.length - 1) {
+    if (_index >= _orientationCards().length - 1) {
       _finish();
       return;
     }
@@ -2977,8 +2983,8 @@ class _BusinessOrientationFlowPageState
   void _skip() {
     if (!mounted) return;
     debugPrint(
-      '[ORIENTATION_FLOW][SKIP] from_index=${_index + 1}/${_cards.length} '
-      'card=${_cards[_index].id}',
+      '[ORIENTATION_FLOW][SKIP] from_index=${_index + 1}/${_orientationCards().length} '
+      'card=${_orientationCards()[_index].id}',
     );
     (widget.onSkip ?? widget.onFinish).call();
   }
@@ -3008,7 +3014,7 @@ class _BusinessOrientationFlowPageState
     if (!mounted) return;
     debugPrint(
       '[ORIENTATION_FLOW][FINISH] '
-      'last_index=${_index + 1}/${_cards.length}',
+      'last_index=${_index + 1}/${_orientationCards().length}',
     );
     widget.onFinish();
   }
@@ -3370,9 +3376,9 @@ class _BusinessOrientationFlowPageState
                       child: PageView.builder(
                         controller: _pageController,
                         onPageChanged: _onPageChanged,
-                        itemCount: _cards.length,
+                        itemCount: _orientationCards().length,
                         itemBuilder: (ctx, i) {
-                          final _OrientationCardData card = _cards[i];
+                          final _OrientationCardData card = _orientationCards()[i];
                           // Card 1 tablet landscape: empty
                           // transparent slot. The dedicated full-
                           // viewport hero behind this Stack is what
@@ -3508,7 +3514,7 @@ class _BusinessOrientationFlowPageState
                     ),
                     _buildBottomBar(
                       isCompactHeight,
-                      isLast: _index == _cards.length - 1,
+                      isLast: _index == _orientationCards().length - 1,
                       landscapeFullHero:
                           useLandscapeFullHero ||
                           useCentralCockpitPortraitFullHero ||
@@ -3545,7 +3551,7 @@ class _BusinessOrientationFlowPageState
   }
 
   Widget _buildTopBar(bool compact, {bool elevatedSkip = false}) {
-    final isLast = _index == _cards.length - 1;
+    final isLast = _index == _orientationCards().length - 1;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -3557,7 +3563,7 @@ class _BusinessOrientationFlowPageState
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: <Widget>[
           Text(
-            '${_index + 1} / ${_cards.length}',
+            '${_index + 1} / ${_orientationCards().length}',
             style: const TextStyle(
               color: Colors.white60,
               fontSize: 12,
@@ -3744,7 +3750,7 @@ class _BusinessOrientationFlowPageState
   Widget _buildDots() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
-      children: List<Widget>.generate(_cards.length, (i) {
+      children: List<Widget>.generate(_orientationCards().length, (i) {
         final bool active = i == _index;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 220),

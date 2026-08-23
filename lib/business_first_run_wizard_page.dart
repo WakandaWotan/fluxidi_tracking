@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_settings_page.dart';
+import 'package:fluxidi_tracking/limousine/limousine_taxi_qr_isolation.dart';
 
 /// Setup-choice page shown right after [CompanyOnboardingPage] succeeds,
 /// before any settings flow starts. Lets the freshly-onboarded operator
@@ -471,19 +472,26 @@ class _BusinessFirstRunWizardPageState
 
   int _index = 0;
 
+  List<_BusinessFirstRunStep> get _visibleSteps {
+    if (companyShouldShowTaxiBookingQr()) return _steps;
+    return _steps
+        .where((step) => step.sectionId != 'public_booking_link')
+        .toList(growable: false);
+  }
+
   @override
   void initState() {
     super.initState();
-    debugPrint('[FIRST_RUN_WIZARD][OPEN] totalSteps=${_steps.length}');
+    debugPrint('[FIRST_RUN_WIZARD][OPEN] totalSteps=${_visibleSteps.length}');
     _logCurrentStep();
   }
 
   void _logCurrentStep() {
-    final step = _steps[_index];
+    final step = _visibleSteps[_index];
     // 1-based index for human-friendly logs that match the AppBar strip
     // ("Stap 1 van 11") so QA can correlate with the on-screen progress.
     debugPrint(
-      '[FIRST_RUN_WIZARD][STEP] index=${_index + 1}/${_steps.length} '
+      '[FIRST_RUN_WIZARD][STEP] index=${_index + 1}/${_visibleSteps.length} '
       'section=${step.sectionId}'
       '${step.optional ? ' optional=true' : ''}',
     );
@@ -518,12 +526,12 @@ class _BusinessFirstRunWizardPageState
   /// wizard from second-guessing the save architecture.
   void _handleStepSaved() {
     if (!mounted) return;
-    final fromSection = _steps[_index].sectionId;
+    final fromSection = _visibleSteps[_index].sectionId;
     debugPrint(
       '[FIRST_RUN_WIZARD][SAVE_NEXT] from=$fromSection '
-      'index=${_index + 1}/${_steps.length}',
+      'index=${_index + 1}/${_visibleSteps.length}',
     );
-    if (_index >= _steps.length - 1) {
+    if (_index >= _visibleSteps.length - 1) {
       debugPrint('[FIRST_RUN_WIZARD][FINISH] last_section=$fromSection');
       widget.onFinished();
       return;
@@ -542,24 +550,24 @@ class _BusinessFirstRunWizardPageState
   /// menu ("Finish setup later").
   void _handleSkipCurrentStep() {
     if (!mounted) return;
-    final fromSection = _steps[_index].sectionId;
+    final fromSection = _visibleSteps[_index].sectionId;
     // Always emit the generic per-step skip log so QA can see EVERY
     // skip event regardless of section.
     debugPrint(
       '[FIRST_RUN_WIZARD][SKIP_STEP] section=$fromSection '
-      'from_index=${_index + 1}/${_steps.length}',
+      'from_index=${_index + 1}/${_visibleSteps.length}',
     );
     // Targeted logs for the optional integration steps so QA can grep
     // for them quickly without scanning all SKIP_STEP lines.
     if (fromSection == 'google_calendar') {
       debugPrint(
         '[FIRST_RUN_WIZARD][SKIP_GOOGLE_CALENDAR] '
-        'from_index=${_index + 1}/${_steps.length}',
+        'from_index=${_index + 1}/${_visibleSteps.length}',
       );
     } else if (fromSection == 'airport_fixed_fares') {
       debugPrint(
         '[FIRST_RUN_WIZARD][SKIP_AIRPORT_FIXED_FARES] '
-        'from_index=${_index + 1}/${_steps.length}',
+        'from_index=${_index + 1}/${_visibleSteps.length}',
       );
     }
     _handleStepSaved();
@@ -623,8 +631,8 @@ class _BusinessFirstRunWizardPageState
     if (!mounted) return;
     debugPrint(
       '[FIRST_RUN_WIZARD][SKIP] '
-      'from_index=${_index + 1}/${_steps.length} '
-      'section=${_steps[_index].sectionId}',
+      'from_index=${_index + 1}/${_visibleSteps.length} '
+      'section=${_visibleSteps[_index].sectionId}',
     );
     final cb = widget.onSkipped ?? widget.onFinished;
     cb();
@@ -635,7 +643,7 @@ class _BusinessFirstRunWizardPageState
     return AnimatedBuilder(
       animation: appLanguageNotifier,
       builder: (context, _) {
-        final step = _steps[_index];
+        final step = _visibleSteps[_index];
         // The top-right AppBar action skips ONE step on every step
         // (required and optional). This prevents users from accidentally
         // abandoning the entire wizard by tapping a per-step skip
@@ -671,7 +679,7 @@ class _BusinessFirstRunWizardPageState
           stepTitle: _t(step.title),
           stepSubtitle: _t(step.subtitle),
           stepIndex: _index + 1,
-          stepTotal: _steps.length,
+          stepTotal: _visibleSteps.length,
           onStepSaved: _handleStepSaved,
           onSkipStep: _handleSkipCurrentStep,
           skipStepLabel: stepSkipLabel,

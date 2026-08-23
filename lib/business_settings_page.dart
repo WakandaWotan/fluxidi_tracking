@@ -30,6 +30,7 @@ import 'package:fluxidi_tracking/limousine/limousine_public_service_persist.dart
 import 'package:fluxidi_tracking/limousine/limousine_quote_requests_nav.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
+import 'package:fluxidi_tracking/limousine/limousine_taxi_qr_isolation.dart';
 import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
@@ -11643,7 +11644,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     },
                   ),
                 ),
-              if (_shouldShowSection('public_booking_link'))
+              if (_shouldShowSection('public_booking_link') &&
+                  companyShouldShowTaxiBookingQr())
                 ValueListenableBuilder<ActiveCompanySession?>(
                   valueListenable: activeCompanySessionNotifier,
                   builder: (context, activeSession, __) {

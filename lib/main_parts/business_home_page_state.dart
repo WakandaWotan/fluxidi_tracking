@@ -3903,22 +3903,23 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 );
               },
             ),
-            card(
-              actionKey: 'booking_link',
-              title: _t(
-                nl: 'Deel boekingslink',
-                en: 'Share booking link',
-                fr: 'Partager le lien de réservation',
-                es: 'Compartir enlace de reserva',
+            if (companyShouldShowTaxiBookingQr())
+              card(
+                actionKey: 'booking_link',
+                title: _t(
+                  nl: 'Deel boekingslink',
+                  en: 'Share booking link',
+                  fr: 'Partager le lien de réservation',
+                  es: 'Compartir enlace de reserva',
+                ),
+                subtitle: _t(
+                  nl: 'Link + QR',
+                  en: 'Link + QR',
+                  fr: 'Lien + QR',
+                  es: 'Enlace + QR',
+                ),
+                onTap: () => _showPublicBookingShareQuickAccess(context),
               ),
-              subtitle: _t(
-                nl: 'Link + QR',
-                en: 'Link + QR',
-                fr: 'Lien + QR',
-                es: 'Enlace + QR',
-              ),
-              onTap: () => _showPublicBookingShareQuickAccess(context),
-            ),
             card(
               actionKey: 'planning',
               title: _t(
@@ -5427,6 +5428,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   compact: compactQuickAction,
                                 ),
                               ),
+                              if (companyShouldShowTaxiBookingQr())
                               SizedBox(
                                 width: cardWidth,
                                 height: businessQuickActionCardHeight,
