@@ -17,6 +17,7 @@ import 'limousine_customer_quote_labels.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 
 class LimousineAcceptedBookingPage extends StatefulWidget {
   const LimousineAcceptedBookingPage({
@@ -460,6 +461,14 @@ class _LimousineAcceptedBookingPageState
                 localizedMap(review.mobilisationDisclosure),
               ),
             const SizedBox(height: 8),
+            if (review.totalExVatCents != null)
+              Text(
+                '${_t(kLimousineQuoteNetAmount)}: ${formatLimousineEuroAmount(review.totalExVatCents!)}',
+              ),
+            if (review.vatAmountCents != null)
+              Text(
+                '${limousineVatRatePercentLabel(review.vatRate, _lang)}: ${formatLimousineEuroAmount(review.vatAmountCents!)}',
+              ),
             Text(
               formatLimousineMoney(review.totalInclVatCents, review.currency),
               style: TextStyle(
@@ -468,8 +477,11 @@ class _LimousineAcceptedBookingPageState
                 fontWeight: FontWeight.w800,
               ),
             ),
+            Text(_t(kLimousineQuoteGrossAmount)),
             if (review.vatTreatment.isNotEmpty)
-              Text('${_t(kLimousineCustomerVat)}: ${review.vatTreatment}'),
+              Text(
+                '${_t(kLimousineCustomerVat)}: ${limousineVatTreatmentLabel(review.vatTreatment, _lang)}',
+              ),
             Text(
               '${kLimousineQuoteTermsRevision.of(_lang)}: ${review.termsRevision}',
             ),

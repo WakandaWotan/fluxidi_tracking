@@ -377,14 +377,43 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
     final quote = record.quote;
     final rows = <Widget>[];
     if (quote != null) {
+      final money = limousineCanonicalMoneyFromRequest(record);
+      if (money?.netCents != null) {
+        rows.add(
+          _kv(
+            palette,
+            _t(kLimousineQuoteNetAmount),
+            formatLimousineEuroAmount(money!.netCents!),
+          ),
+        );
+      }
+      if (money?.vatCents != null) {
+        rows.add(
+          _kv(
+            palette,
+            limousineVatRatePercentLabel(
+              money?.vatRate ?? quote.vatRate,
+              _lang,
+            ),
+            formatLimousineEuroAmount(money!.vatCents!),
+          ),
+        );
+      }
       rows.add(
         _kv(
           palette,
-          _t(kLimousineQuoteTotal),
-          formatLimousineEuroAmount(quote.totalInclVatCents),
+          _t(kLimousineQuoteGrossAmount),
+          formatLimousineEuroAmount(
+            money?.grossCents ?? quote.totalInclVatCents,
+          ),
         ),
       );
-      final vatLabel = limousineVatTreatmentLabel(quote.vatTreatment, _lang);
+      final vatLabel = limousineVatTreatmentLabel(
+        money?.vatTreatment.isNotEmpty == true
+            ? money!.vatTreatment
+            : quote.vatTreatment,
+        _lang,
+      );
       if (vatLabel.isNotEmpty) {
         rows.add(_kv(palette, _t(kLimousineQuoteVatTreatment), vatLabel));
       }
@@ -548,8 +577,11 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
     BusinessThemePalette palette,
     LimousineQuoteRequest record,
   ) {
+    final money = limousineCanonicalMoneyFromRequest(record);
     final total =
-        record.quotationTotalInclVatCents ?? record.quote?.totalInclVatCents;
+        money?.grossCents ??
+        record.quotationTotalInclVatCents ??
+        record.quote?.totalInclVatCents;
     final sent = record.quotationSentAt.isNotEmpty
         ? record.quotationSentAt
         : (record.quote?.quotedAt ?? '');
@@ -575,6 +607,14 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
               fontWeight: FontWeight.w800,
             ),
           ),
+          if (money?.netCents != null)
+            Text(
+              '${_t(kLimousineQuoteNetAmount)}: ${formatLimousineEuroAmount(money!.netCents!)}',
+            ),
+          if (money?.vatCents != null)
+            Text(
+              '${limousineVatRatePercentLabel(money?.vatRate, _lang)}: ${formatLimousineEuroAmount(money!.vatCents!)}',
+            ),
           if (total != null)
             Text(
               formatLimousineMoney(

@@ -217,17 +217,35 @@ class LimousineCustomerStatusView extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
           ),
           const SizedBox(height: 6),
-          Text(
-            formatLimousineEuroAmount(
-              request.quotationTotalInclVatCents ?? quote.totalInclVatCents,
-            ),
-            key: kLimousineCustomerQuoteTotalKey,
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
+          ...() {
+            final money = limousineCanonicalMoneyFromRequest(request);
+            final gross = money?.grossCents ?? quote.totalInclVatCents;
+            final net = money?.netCents;
+            final vat = money?.vatCents;
+            return <Widget>[
+              if (net != null)
+                Text(
+                  '${kLimousineQuoteNetAmount.of(language)}: ${formatLimousineEuroAmount(net)}',
+                  key: kLimousineCustomerQuoteNetKey,
+                ),
+              if (vat != null)
+                Text(
+                  '${limousineVatRatePercentLabel(money?.vatRate ?? quote.vatRate, language)}: ${formatLimousineEuroAmount(vat)}',
+                  key: kLimousineCustomerQuoteVatKey,
+                ),
+              Text(
+                formatLimousineEuroAmount(gross),
+                key: kLimousineCustomerQuoteTotalKey,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if ((money?.hasSplit ?? false))
+                Text(kLimousineQuoteGrossAmount.of(language)),
+            ];
+          }(),
           if ((request.quotationCurrency.isNotEmpty
                   ? request.quotationCurrency
                   : quote.currency)
@@ -238,10 +256,19 @@ class LimousineCustomerStatusView extends StatelessWidget {
                   : quote.currency,
             ),
           if (limousineVatTreatmentLabel(
-            quote.vatTreatment,
+            request.quotationVatTreatment.isNotEmpty
+                ? request.quotationVatTreatment
+                : quote.vatTreatment,
             language,
           ).isNotEmpty)
-            Text(limousineVatTreatmentLabel(quote.vatTreatment, language)),
+            Text(
+              limousineVatTreatmentLabel(
+                request.quotationVatTreatment.isNotEmpty
+                    ? request.quotationVatTreatment
+                    : quote.vatTreatment,
+                language,
+              ),
+            ),
           if ((request.quotationSentAt.isNotEmpty
                   ? request.quotationSentAt
                   : quote.quotedAt)

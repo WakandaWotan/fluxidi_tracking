@@ -11,6 +11,7 @@ import 'limousine_quote_inbox_labels.dart';
 const String kLimousineQuoteVatIncl = 'incl';
 const String kLimousineQuoteVatExcl = 'excl';
 const String kLimousineQuoteVatNone = 'none';
+const double kLimousineStandardVatRate = 0.21;
 
 const Set<String> kLimousineKnownVatTreatments = <String>{
   kLimousineQuoteVatIncl,
@@ -21,9 +22,7 @@ const Set<String> kLimousineKnownVatTreatments = <String>{
 const String kLimousineDefaultQuoteCurrency = 'EUR';
 const int kLimousineDefaultQuoteValidityDays = 7;
 
-final RegExp _rawIsoTimestamp = RegExp(
-  r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}',
-);
+final RegExp _rawIsoTimestamp = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}');
 
 bool limousineLooksLikeRawIsoTimestamp(String text) {
   return _rawIsoTimestamp.hasMatch(text.trim());
@@ -193,6 +192,109 @@ String _formatLocalDate(DateTime local, AppLanguage language) {
     ],
   };
   return '${local.day} ${months[local.month - 1]} ${local.year}';
+}
+
+String limousineQuoteEnteredAmountLabel(String raw, AppLanguage language) {
+  switch (raw.trim().toLowerCase()) {
+    case kLimousineQuoteVatExcl:
+      return kLimousineQuoteAmountExclVat.of(language);
+    case kLimousineQuoteVatIncl:
+      return kLimousineQuoteAmountInclVat.of(language);
+    case kLimousineQuoteVatNone:
+      return kLimousineQuoteAmountNoVat.of(language);
+    default:
+      return kLimousineQuoteTotal.of(language);
+  }
+}
+
+double? limousineQuoteSubmittedVatRate(String treatment) {
+  switch (treatment.trim().toLowerCase()) {
+    case kLimousineQuoteVatNone:
+      return 0;
+    case kLimousineQuoteVatIncl:
+    case kLimousineQuoteVatExcl:
+      return kLimousineStandardVatRate;
+    default:
+      return null;
+  }
+}
+
+class LimousineCanonicalMoney {
+  const LimousineCanonicalMoney({
+    required this.grossCents,
+    this.netCents,
+    this.vatCents,
+    this.vatRate,
+    this.vatTreatment = '',
+    this.currency = '',
+  });
+
+  final int grossCents;
+  final int? netCents;
+  final int? vatCents;
+  final num? vatRate;
+  final String vatTreatment;
+  final String currency;
+
+  bool get hasSplit => netCents != null && vatCents != null;
+}
+
+LimousineCanonicalMoney? limousineCanonicalMoneyFromRequest(
+  LimousineQuoteRequest record,
+) {
+  return limousineCanonicalMoneyFromStored(
+    quotationGrossCents: record.quotationTotalInclVatCents,
+    quotationNetCents: record.quotationTotalExVatCents,
+    quotationVatCents: record.quotationVatAmountCents,
+    quotationVatRate: record.quotationVatRate,
+    quotationVatTreatment: record.quotationVatTreatment,
+    quotationCurrency: record.quotationCurrency,
+    quoteGrossCents: record.quote?.totalInclVatCents,
+    quoteNetCents: record.quote?.totalExVatCents,
+    quoteVatCents: record.quote?.vatAmountCents,
+    quoteVatRate: record.quote?.vatRate,
+    quoteVatTreatment: record.quote?.vatTreatment ?? '',
+    quoteCurrency: record.quote?.currency ?? '',
+  );
+}
+
+LimousineCanonicalMoney? limousineCanonicalMoneyFromStored({
+  int? quotationGrossCents,
+  int? quotationNetCents,
+  int? quotationVatCents,
+  num? quotationVatRate,
+  String quotationVatTreatment = '',
+  String quotationCurrency = '',
+  int? quoteGrossCents,
+  int? quoteNetCents,
+  int? quoteVatCents,
+  num? quoteVatRate,
+  String quoteVatTreatment = '',
+  String quoteCurrency = '',
+}) {
+  final gross = quotationGrossCents ?? quoteGrossCents;
+  if (gross == null || gross <= 0) return null;
+  return LimousineCanonicalMoney(
+    grossCents: gross,
+    netCents: quotationNetCents ?? quoteNetCents,
+    vatCents: quotationVatCents ?? quoteVatCents,
+    vatRate: quotationVatRate ?? quoteVatRate,
+    vatTreatment: quotationVatTreatment.trim().isNotEmpty
+        ? quotationVatTreatment
+        : quoteVatTreatment,
+    currency: quotationCurrency.trim().isNotEmpty
+        ? quotationCurrency
+        : quoteCurrency,
+  );
+}
+
+String limousineVatRatePercentLabel(num? rate, AppLanguage language) {
+  if (rate == null) return kLimousineQuoteVatAmount.of(language);
+  final percent = rate <= 1 ? rate * 100 : rate;
+  final shown = percent == percent.roundToDouble()
+      ? percent.round().toString()
+      : percent.toString().replaceFirst(RegExp(r'\.?0+$'), '');
+  return '${kLimousineQuoteVatAmount.of(language)} $shown%';
 }
 
 String limousineVatTreatmentLabel(String raw, AppLanguage language) {

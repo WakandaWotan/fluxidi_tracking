@@ -263,6 +263,7 @@ const List<String> kLimousineRequiredTermsKeys = <String>[
 ];
 
 const Set<String> kLimousineKnownQuotePayloadKeys = <String>{
+  'entered_amount_cents',
   'total_incl_vat_cents',
   'currency',
   'vat_treatment',
@@ -545,6 +546,9 @@ class LimousineQuotedPrice {
   const LimousineQuotedPrice({
     required this.totalInclVatCents,
     required this.currency,
+    this.enteredAmountCents,
+    this.totalExVatCents,
+    this.vatAmountCents,
     this.vatTreatment = '',
     this.vatRate,
     this.publicText = const <String, String>{},
@@ -559,6 +563,9 @@ class LimousineQuotedPrice {
 
   final int totalInclVatCents;
   final String currency;
+  final int? enteredAmountCents;
+  final int? totalExVatCents;
+  final int? vatAmountCents;
   final String vatTreatment;
   final num? vatRate;
   final Map<String, String> publicText;
@@ -591,6 +598,13 @@ class LimousineQuotedPrice {
     return LimousineQuotedPrice(
       totalInclVatCents: cents,
       currency: currency,
+      enteredAmountCents: _intOf(
+        map['entered_amount_cents'] ?? map['enteredAmountCents'],
+      ),
+      totalExVatCents: _intOf(
+        map['total_ex_vat_cents'] ?? map['totalExVatCents'],
+      ),
+      vatAmountCents: _intOf(map['vat_amount_cents'] ?? map['vatAmountCents']),
       vatTreatment: _text(map['vat_treatment'] ?? map['vatTreatment'], max: 16),
       vatRate: map['vat_rate'] is num
           ? map['vat_rate'] as num
@@ -676,6 +690,11 @@ class LimousineQuoteRequest {
     this.quotationSentAt = '',
     this.quotationExpiresAt = '',
     this.quotationTotalInclVatCents,
+    this.quotationTotalExVatCents,
+    this.quotationVatAmountCents,
+    this.quotationEnteredAmountCents,
+    this.quotationVatRate,
+    this.quotationVatTreatment = '',
     this.quotationCurrency = '',
     this.acceptedAt = '',
     this.publicPartnerId = '',
@@ -716,6 +735,11 @@ class LimousineQuoteRequest {
   final String quotationSentAt;
   final String quotationExpiresAt;
   final int? quotationTotalInclVatCents;
+  final int? quotationTotalExVatCents;
+  final int? quotationVatAmountCents;
+  final int? quotationEnteredAmountCents;
+  final num? quotationVatRate;
+  final String quotationVatTreatment;
   final String quotationCurrency;
   final String acceptedAt;
   final String publicPartnerId;
@@ -858,6 +882,25 @@ class LimousineQuoteRequest {
         map['quotation_total_incl_vat_cents'] ??
             map['quotationTotalInclVatCents'],
       ),
+      quotationTotalExVatCents: _intOf(
+        map['quotation_total_ex_vat_cents'] ?? map['quotationTotalExVatCents'],
+      ),
+      quotationVatAmountCents: _intOf(
+        map['quotation_vat_amount_cents'] ?? map['quotationVatAmountCents'],
+      ),
+      quotationEnteredAmountCents: _intOf(
+        map['quotation_entered_amount_cents'] ??
+            map['quotationEnteredAmountCents'],
+      ),
+      quotationVatRate: map['quotation_vat_rate'] is num
+          ? map['quotation_vat_rate'] as num
+          : num.tryParse(
+              '${map['quotation_vat_rate'] ?? map['quotationVatRate'] ?? ''}',
+            ),
+      quotationVatTreatment: _text(
+        map['quotation_vat_treatment'] ?? map['quotationVatTreatment'],
+        max: 16,
+      ),
       quotationCurrency: _text(
         map['quotation_currency'] ?? map['quotationCurrency'],
         max: 8,
@@ -939,6 +982,16 @@ class LimousineQuoteRequest {
           : quotationExpiresAt,
       quotationTotalInclVatCents:
           incoming.quotationTotalInclVatCents ?? quotationTotalInclVatCents,
+      quotationTotalExVatCents:
+          incoming.quotationTotalExVatCents ?? quotationTotalExVatCents,
+      quotationVatAmountCents:
+          incoming.quotationVatAmountCents ?? quotationVatAmountCents,
+      quotationEnteredAmountCents:
+          incoming.quotationEnteredAmountCents ?? quotationEnteredAmountCents,
+      quotationVatRate: incoming.quotationVatRate ?? quotationVatRate,
+      quotationVatTreatment: incoming.quotationVatTreatment.isNotEmpty
+          ? incoming.quotationVatTreatment
+          : quotationVatTreatment,
       quotationCurrency: incoming.quotationCurrency.isNotEmpty
           ? incoming.quotationCurrency
           : quotationCurrency,
@@ -1124,6 +1177,7 @@ class LimousineCompanyQuoteDraft {
 
   Map<String, dynamic> toWorkerQuote() {
     return <String, dynamic>{
+      'entered_amount_cents': totalInclVatCents,
       'total_incl_vat_cents': totalInclVatCents,
       'currency': limousineCurrencyOf(currency),
       'vat_treatment': vatTreatment.trim(),

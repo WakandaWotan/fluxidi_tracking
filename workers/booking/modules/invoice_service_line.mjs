@@ -40,6 +40,12 @@ function limousineAcceptedSnapshot(rec) {
       return candidate;
     }
   }
+  if (
+    rec.service_type === LIMOUSINE_SERVICE_TYPE ||
+    rec.serviceType === LIMOUSINE_SERVICE_TYPE
+  ) {
+    return { service_type: LIMOUSINE_SERVICE_TYPE };
+  }
   return null;
 }
 

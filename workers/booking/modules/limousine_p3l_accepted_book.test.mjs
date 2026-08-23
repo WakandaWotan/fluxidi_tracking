@@ -12,8 +12,15 @@ import {
   buildLimousineAcceptanceBinding,
   publicLimousinePartnerId,
   publicLimousineQuoteView,
+  validateLimousineCompanyQuote,
 } from "./limousine_manual_quote.mjs";
 import { sealLimousineAcceptance } from "./limousine_acceptance_token.mjs";
+import {
+  attachLimousineQuotationSnapshot,
+  buildLimousineAcceptanceBindingFromSnapshot,
+  buildLimousineQuotationSnapshotFromRecord,
+} from "./limousine_quotation_snapshot.mjs";
+import { invoiceServiceLineLabel } from "./invoice_service_line.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKER_SRC = readFileSync(join(__dirname, "..", "fluxidi_booking_worker.js"), "utf8");
@@ -525,4 +532,73 @@ test("3-16) accepted /book QR + billing keeps seller, price, dispatch eligibilit
       wrong.res.status !== 200,
     JSON.stringify(wrong.body),
   );
+});
+
+test("exclusive 600 @ 21% books frozen 600/126/726", async () => {
+  const quoted = validateLimousineCompanyQuote({
+    entered_amount_cents: 60000,
+    vat_treatment: "excl",
+    vat_rate: 0.21,
+    currency: "EUR",
+    terms: TERMS,
+    expires_at: "2099-01-01T00:00:00Z",
+  });
+  assert.equal(quoted.ok, true);
+  let record = quoteRecord({ id: "limq_p3m_excl" });
+  record.quote = {
+    ...record.quote,
+    ...quoted.quote,
+  };
+  const snap = await buildLimousineQuotationSnapshotFromRecord({ record });
+  record = attachLimousineQuotationSnapshot(record, snap).record;
+  assert.equal(record.quotation_snapshots[String(record.quotation_revision)].totals_snapshot.total_incl_vat_cents, 72600);
+  const { env, kv } = await setup({ quotes: [record] });
+  const sealed = await sealLimousineAcceptance({
+    secret: SECRET,
+    binding: buildLimousineAcceptanceBindingFromSnapshot(record, snap),
+    ttlMinutes: 120,
+  });
+  assert.equal(sealed.ok, true, JSON.stringify(sealed));
+  const res = await worker.fetch(
+    jsonReq("/book", {
+      token: "cus-global-p3l",
+      body: bookBody({
+        acceptanceReference: sealed.reference,
+        paymentMethod: "qr_code",
+        extra: {
+          __booking_id: "2026-08-726",
+          __public_booking_reference: "FLX-P3M-726",
+          __planning_reference: "PLN-P3M-726",
+        },
+      }),
+    }),
+    env,
+    {},
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  const stored = await kv.get("booking:2026-08-726", { type: "json" });
+  assert.ok(stored, JSON.stringify(body));
+  const accepted = stored.quote?.limousine_accepted_price || stored.limousine_accepted_price;
+  assert.equal(accepted.price_ex_vat, 600);
+  assert.equal(accepted.price_vat, 126);
+  assert.equal(accepted.price_incl_vat, 726);
+  assert.equal(accepted.total_ex_vat_cents, 60000);
+  assert.equal(accepted.vat_amount_cents, 12600);
+  assert.equal(accepted.total_incl_vat_cents, 72600);
+  assert.equal(accepted.vat_treatment, "excl");
+  assert.equal(stored.quote?.pricing?.price_ex_vat, 600);
+  assert.equal(stored.quote?.pricing?.price_vat, 126);
+  assert.equal(stored.quote?.pricing?.price_incl_vat, 726);
+  assert.equal(Math.round(Number(stored.price_incl_vat || stored.quote?.pricing?.price_incl_vat) * 100), 72600);
+  assert.equal(stored.service_type || stored.serviceType, "limousine");
+  assert.equal(accepted.entered_amount_cents, 60000);
+  assert.equal(accepted.vat_rate, 0.21);
+  const serviceLine = invoiceServiceLineLabel({
+    service_type: "limousine",
+    limousine_accepted_price: accepted,
+  });
+  assert.match(serviceLine, /^Limousinevervoer/);
+  assert.ok(!serviceLine.includes("Taxidienst"));
+  assert.ok(!serviceLine.includes("Taxirit"));
 });

@@ -10,7 +10,11 @@
 // booking engine. A human-approved total is never recomputed with taxi pricing,
 // and a customer-supplied total is never trusted.
 
-import { projectLimousineQuotationAvailability } from "./limousine_quotation_snapshot.mjs";
+import {
+  deriveLimousineQuotationTotals,
+  projectLimousineQuotationAvailability,
+  resolveLimousineEnteredAmountCents,
+} from "./limousine_quotation_snapshot.mjs";
 import { normalizeLimousineQuotationLocale } from "./limousine_quotation_i18n.mjs";
 import { offerAllowsPublishedJourneyType } from "./limousine_offers.mjs";
 import { normalizeLimousineToken } from "./limousine_provider_eligibility.mjs";
@@ -856,8 +860,8 @@ export function limousineQuoteRequestKey({ tenantId, companyId, customerRef, req
 export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
   const R = LIMOUSINE_QUOTE_REASONS;
   const src = asObject(input);
-  const totalCents = toInt(src.total_incl_vat_cents ?? src.totalInclVatCents);
-  if (totalCents == null || totalCents <= 0) {
+  const enteredCents = resolveLimousineEnteredAmountCents(src);
+  if (enteredCents == null || enteredCents <= 0) {
     return { ok: false, reason: R.INVALID_AMOUNT };
   }
   const currency = normalizeCurrency(src.currency);
@@ -874,14 +878,26 @@ export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
   const now = nowIso || new Date().toISOString();
   const expiresAt = safeText(src.expires_at ?? src.expiresAt, 40) ||
     new Date(Date.parse(now) + 48 * 3600 * 1000).toISOString();
+  const totals = deriveLimousineQuotationTotals({
+    enteredAmountCents: enteredCents,
+    vatRate: src.vat_rate ?? src.vatRate,
+    vatTreatment: src.vat_treatment ?? src.vatTreatment,
+    currency,
+  });
 
   return {
     ok: true,
     quote: {
-      total_incl_vat_cents: totalCents,
+      entered_amount_cents: totals.entered_amount_cents,
+      total_ex_vat_cents: totals.total_ex_vat_cents,
+      vat_amount_cents: totals.vat_amount_cents,
+      total_incl_vat_cents: totals.total_incl_vat_cents,
+      price_ex_vat: totals.price_ex_vat,
+      price_vat: totals.price_vat,
+      price_incl_vat: totals.price_incl_vat,
       currency,
-      vat_treatment: safeText(src.vat_treatment ?? src.vatTreatment, 16) || "incl",
-      vat_rate: Number(src.vat_rate ?? src.vatRate) || 0,
+      vat_treatment: totals.vat_treatment,
+      vat_rate: totals.vat_rate,
       vat_rate_source: safeText(src.vat_rate_source ?? src.vatRateSource, 64) || "company_quote",
       public_text: localized(src.public_text ?? src.publicText, 1200),
       included_services: termsCheck.terms.included_services,
@@ -919,8 +935,20 @@ export function buildLimousineAcceptanceBinding(record) {
     company_id: safeText(rec.company_id, 96),
     quote_request_id: safeText(rec.quote_request_id, 120),
     quote_revision: toInt(rec.revision) ?? 0,
+    ...(toInt(quote.entered_amount_cents) != null
+      ? { entered_amount_cents: toInt(quote.entered_amount_cents) }
+      : {}),
+    ...(toInt(quote.total_ex_vat_cents) != null
+      ? { total_ex_vat_cents: toInt(quote.total_ex_vat_cents) }
+      : {}),
+    ...(toInt(quote.vat_amount_cents) != null
+      ? { vat_amount_cents: toInt(quote.vat_amount_cents) }
+      : {}),
     total_incl_vat_cents: toInt(quote.total_incl_vat_cents) ?? 0,
     currency: normalizeCurrency(quote.currency),
+    ...(quote.vat_rate != null && quote.vat_rate !== ""
+      ? { vat_rate: Number(quote.vat_rate) || 0 }
+      : {}),
     vat_treatment: safeText(quote.vat_treatment, 16),
     offer_id: safeText(request.offer_id, 64),
     offer_source_revision: toInt(rec.offer_source_revision) ?? 0,
@@ -1154,7 +1182,21 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     ...(quote
       ? {
           quote: {
+            ...(toInt(quote.entered_amount_cents) != null
+              ? { entered_amount_cents: toInt(quote.entered_amount_cents) }
+              : {}),
+            ...(toInt(quote.total_ex_vat_cents) != null
+              ? { total_ex_vat_cents: toInt(quote.total_ex_vat_cents) }
+              : {}),
+            ...(toInt(quote.vat_amount_cents) != null
+              ? { vat_amount_cents: toInt(quote.vat_amount_cents) }
+              : {}),
             total_incl_vat_cents: toInt(quote.total_incl_vat_cents) ?? 0,
+            ...(quote.price_ex_vat != null ? { price_ex_vat: Number(quote.price_ex_vat) } : {}),
+            ...(quote.price_vat != null ? { price_vat: Number(quote.price_vat) } : {}),
+            ...(quote.price_incl_vat != null
+              ? { price_incl_vat: Number(quote.price_incl_vat) }
+              : {}),
             currency: normalizeCurrency(quote.currency),
             vat_treatment: safeText(quote.vat_treatment, 16),
             vat_rate: Number(quote.vat_rate) || 0,
@@ -1193,6 +1235,9 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
 function companyQuoteIdentity(quote) {
   const q = asObject(quote);
   return JSON.stringify({
+    entered_amount_cents: toInt(q.entered_amount_cents),
+    total_ex_vat_cents: toInt(q.total_ex_vat_cents),
+    vat_amount_cents: toInt(q.vat_amount_cents),
     total_incl_vat_cents: toInt(q.total_incl_vat_cents),
     currency: normalizeCurrency(q.currency),
     vat_treatment: safeText(q.vat_treatment, 16),

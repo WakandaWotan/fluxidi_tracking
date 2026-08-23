@@ -202,7 +202,7 @@ void main() {
       expect(find.textContaining('centen'), findsNothing);
       expect(find.text('Voorwaardenrevisie'), findsNothing);
       expect(find.text('EUR'), findsWidgets);
-      expect(find.text('Totaalbedrag'), findsOneWidget);
+      expect(find.text('Bedrag'), findsOneWidget);
       expect(find.textContaining('incl'), findsNothing);
       await tester.ensureVisible(find.byKey(kLimousineQuoteSubmitKey));
       await tester.pump();

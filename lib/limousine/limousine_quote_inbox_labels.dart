@@ -595,10 +595,52 @@ const LocalizedText kLimousineQuoteCustomerNote = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteTotal = LocalizedText(
-  nl: 'Totaalbedrag',
-  en: 'Total amount',
-  fr: 'Montant total',
-  es: 'Importe total',
+  nl: 'Bedrag',
+  en: 'Amount',
+  fr: 'Montant',
+  es: 'Importe',
+);
+
+const LocalizedText kLimousineQuoteAmountExclVat = LocalizedText(
+  nl: 'Bedrag excl. btw',
+  en: 'Amount excl. VAT',
+  fr: 'Montant hors TVA',
+  es: 'Importe sin IVA',
+);
+
+const LocalizedText kLimousineQuoteAmountInclVat = LocalizedText(
+  nl: 'Bedrag incl. btw',
+  en: 'Amount incl. VAT',
+  fr: 'Montant TVA comprise',
+  es: 'Importe con IVA',
+);
+
+const LocalizedText kLimousineQuoteAmountNoVat = LocalizedText(
+  nl: 'Bedrag (geen btw)',
+  en: 'Amount (no VAT)',
+  fr: 'Montant (pas de TVA)',
+  es: 'Importe (sin IVA)',
+);
+
+const LocalizedText kLimousineQuoteNetAmount = LocalizedText(
+  nl: 'Bedrag excl. btw',
+  en: 'Amount excl. VAT',
+  fr: 'Montant hors TVA',
+  es: 'Importe sin IVA',
+);
+
+const LocalizedText kLimousineQuoteVatAmount = LocalizedText(
+  nl: 'Btw',
+  en: 'VAT',
+  fr: 'TVA',
+  es: 'IVA',
+);
+
+const LocalizedText kLimousineQuoteGrossAmount = LocalizedText(
+  nl: 'Totaal incl. btw',
+  en: 'Total incl. VAT',
+  fr: 'Total TVA comprise',
+  es: 'Total con IVA',
 );
 
 const LocalizedText kLimousineQuoteCurrency = LocalizedText(

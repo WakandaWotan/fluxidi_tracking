@@ -818,11 +818,21 @@ export function buildLimousineAcceptedSnapshot({
     selected_extras: total.selected_extras,
     mobilisation: total.mobilisation,
     subtotal_cents: total.subtotal_cents,
+    ...(total.entered_amount_cents != null
+      ? { entered_amount_cents: total.entered_amount_cents }
+      : {}),
+    ...(total.total_ex_vat_cents != null
+      ? { total_ex_vat_cents: total.total_ex_vat_cents }
+      : {}),
+    ...(total.vat_amount_cents != null
+      ? { vat_amount_cents: total.vat_amount_cents }
+      : {}),
     total_incl_vat_cents: total.total_incl_vat_cents,
     price_incl_vat: total.price_incl_vat,
     price_ex_vat: total.price_ex_vat,
     price_vat: total.price_vat,
     vat_rate: total.vat_rate,
+    ...(total.vat_treatment ? { vat_treatment: total.vat_treatment } : {}),
     currency: total.currency,
     scheduled_pickup_iso: scheduledPickupIso,
     terms_revision: toInt(termsRevision) ?? 0,

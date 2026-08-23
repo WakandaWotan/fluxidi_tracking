@@ -226,6 +226,9 @@ class LimousineAcceptedBookingReview {
     required this.includedServices,
     required this.mobilisationDisclosure,
     required this.totalInclVatCents,
+    this.totalExVatCents,
+    this.vatAmountCents,
+    this.vatRate,
     required this.currency,
     required this.vatTreatment,
     required this.termsRevision,
@@ -250,6 +253,9 @@ class LimousineAcceptedBookingReview {
   final List<Map<String, dynamic>> includedServices;
   final Map<String, String> mobilisationDisclosure;
   final int totalInclVatCents;
+  final int? totalExVatCents;
+  final int? vatAmountCents;
+  final num? vatRate;
   final String currency;
   final String vatTreatment;
   final int termsRevision;
@@ -316,9 +322,16 @@ LimousineAcceptedBookingReview buildLimousineAcceptedBookingReview({
     includedServices: quote?.includedServices ?? const [],
     mobilisationDisclosure:
         quote?.mobilisationDisclosure ?? const <String, String>{},
-    totalInclVatCents: handoff.totalInclVatCents,
+    totalInclVatCents:
+        request?.quotationTotalInclVatCents ?? handoff.totalInclVatCents,
+    totalExVatCents:
+        request?.quotationTotalExVatCents ?? quote?.totalExVatCents,
+    vatAmountCents: request?.quotationVatAmountCents ?? quote?.vatAmountCents,
+    vatRate: request?.quotationVatRate ?? quote?.vatRate,
     currency: handoff.currency,
-    vatTreatment: quote?.vatTreatment ?? '',
+    vatTreatment: request?.quotationVatTreatment.isNotEmpty == true
+        ? request!.quotationVatTreatment
+        : (quote?.vatTreatment ?? ''),
     termsRevision: handoff.termsRevision,
     terms: quote?.terms ?? const <String, dynamic>{},
   );

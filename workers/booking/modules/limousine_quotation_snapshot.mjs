@@ -17,6 +17,16 @@ export const LIMOUSINE_QUOTATION_SNAPSHOT_MISSING = "quotation_snapshot_missing"
 
 export const LIMOUSINE_QUOTATION_LOCALES = Object.freeze(["nl", "en", "fr", "es"]);
 
+export const LIMOUSINE_STANDARD_VAT_RATE = 0.21;
+export const LIMOUSINE_VAT_TREATMENT_INCL = "incl";
+export const LIMOUSINE_VAT_TREATMENT_EXCL = "excl";
+export const LIMOUSINE_VAT_TREATMENT_NONE = "none";
+export const LIMOUSINE_VAT_TREATMENTS = Object.freeze([
+  LIMOUSINE_VAT_TREATMENT_INCL,
+  LIMOUSINE_VAT_TREATMENT_EXCL,
+  LIMOUSINE_VAT_TREATMENT_NONE,
+]);
+
 export const LIMOUSINE_QUOTATION_FORBIDDEN_SOURCE_KEYS = Object.freeze([
   "status_ref",
   "statusRef",
@@ -128,26 +138,90 @@ export async function hashLimousineQuotationSnapshotBody(body) {
   return sha256Hex(stableLimousineQuotationJson(body));
 }
 
+export function normalizeLimousineVatTreatment(value) {
+  const token = safeText(value, 16).toLowerCase();
+  if (token === LIMOUSINE_VAT_TREATMENT_EXCL) return LIMOUSINE_VAT_TREATMENT_EXCL;
+  if (token === LIMOUSINE_VAT_TREATMENT_NONE) return LIMOUSINE_VAT_TREATMENT_NONE;
+  return LIMOUSINE_VAT_TREATMENT_INCL;
+}
+
+export function resolveLimousineEnteredAmountCents(input = {}) {
+  const src = asObject(input);
+  return toInt(
+    src.entered_amount_cents ??
+      src.enteredAmountCents ??
+      src.quoted_amount_cents ??
+      src.quotedAmountCents ??
+      src.total_incl_vat_cents ??
+      src.totalInclVatCents,
+  );
+}
+
+function resolveLimousineVatRate(treatment, rawRate) {
+  if (treatment === LIMOUSINE_VAT_TREATMENT_NONE) return 0;
+  if (rawRate == null || rawRate === "") return LIMOUSINE_STANDARD_VAT_RATE;
+  const rate = Number(rawRate);
+  if (!Number.isFinite(rate) || rate < 0) return LIMOUSINE_STANDARD_VAT_RATE;
+  return rate;
+}
+
+function majorFromCents(cents) {
+  return Math.round(Number(cents) || 0) / 100;
+}
+
+function splitInclusiveEnteredCents(grossCents, rate) {
+  if (!(rate > 0)) {
+    return { netCents: grossCents, vatCents: 0, grossCents };
+  }
+  // Preserve the existing inclusive rounding: euro-major then back to cents.
+  const inclVat = grossCents / 100;
+  const exVat = Math.round((inclVat / (1 + rate)) * 100) / 100;
+  const vatAmount = Math.round((inclVat - exVat) * 100) / 100;
+  return {
+    netCents: Math.round(exVat * 100),
+    vatCents: Math.round(vatAmount * 100),
+    grossCents,
+  };
+}
+
+function splitExclusiveEnteredCents(netCents, rate) {
+  if (!(rate > 0)) {
+    return { netCents, vatCents: 0, grossCents: netCents };
+  }
+  const vatCents = Math.round(netCents * rate);
+  return {
+    netCents,
+    vatCents,
+    grossCents: netCents + vatCents,
+  };
+}
+
 export function deriveLimousineQuotationTotals({
+  enteredAmountCents,
   totalInclVatCents,
   vatRate,
   vatTreatment,
   currency,
 } = {}) {
-  const totalIncl = toInt(totalInclVatCents) ?? 0;
-  const rate = Number(vatRate) || 0;
-  const treatment = safeText(vatTreatment, 16) || "incl";
+  const entered =
+    toInt(enteredAmountCents) ?? toInt(totalInclVatCents) ?? 0;
+  const treatment = normalizeLimousineVatTreatment(vatTreatment);
+  const rate = resolveLimousineVatRate(treatment, vatRate);
   const cur = normalizeCurrency(currency);
-  const inclVat = totalIncl / 100;
-  const exVat = rate > 0 ? Math.round((inclVat / (1 + rate)) * 100) / 100 : inclVat;
-  const vatAmount = Math.round((inclVat - exVat) * 100) / 100;
+  const split =
+    treatment === LIMOUSINE_VAT_TREATMENT_EXCL
+      ? splitExclusiveEnteredCents(entered, rate)
+      : treatment === LIMOUSINE_VAT_TREATMENT_NONE || !(rate > 0)
+        ? { netCents: entered, vatCents: 0, grossCents: entered }
+        : splitInclusiveEnteredCents(entered, rate);
   return {
-    total_incl_vat_cents: totalIncl,
-    total_ex_vat_cents: Math.round(exVat * 100),
-    vat_amount_cents: Math.round(vatAmount * 100),
-    price_incl_vat: inclVat,
-    price_ex_vat: exVat,
-    price_vat: vatAmount,
+    entered_amount_cents: entered,
+    total_ex_vat_cents: split.netCents,
+    vat_amount_cents: split.vatCents,
+    total_incl_vat_cents: split.grossCents,
+    price_ex_vat: majorFromCents(split.netCents),
+    price_vat: majorFromCents(split.vatCents),
+    price_incl_vat: majorFromCents(split.grossCents),
     vat_rate: rate,
     vat_treatment: treatment,
     currency: cur,
@@ -288,9 +362,16 @@ export function freezeLimousineQuotationOfferSnapshot(input = {}) {
     terms_revision: toInt(src.terms_revision ?? terms.terms_revision) ?? 0,
     quoted_at: safeText(src.quoted_at, 40),
     expires_at: safeText(src.expires_at, 40),
-    vat_treatment: safeText(src.vat_treatment, 16) || "incl",
+    vat_treatment: normalizeLimousineVatTreatment(src.vat_treatment),
     vat_rate: Number(src.vat_rate) || 0,
     currency: normalizeCurrency(src.currency),
+    ...(toInt(src.entered_amount_cents ?? src.enteredAmountCents) != null
+      ? {
+          entered_amount_cents: toInt(
+            src.entered_amount_cents ?? src.enteredAmountCents,
+          ),
+        }
+      : {}),
     total_incl_vat_cents: toInt(src.total_incl_vat_cents) ?? 0,
   };
 }
@@ -316,13 +397,28 @@ export async function buildLimousineQuotationSnapshot({
   const vehicle = freezeLimousineQuotationVehicleSnapshot(vehicleSnapshot);
   const offer = freezeLimousineQuotationOfferSnapshot(offerSnapshot);
   const seller = freezeLimousineQuotationSellerSnapshot(sellerSnapshot);
+  const totalsInput = asObject(totalsSnapshot);
+  const enteredFromTotals = toInt(
+    totalsInput.entered_amount_cents ?? totalsInput.enteredAmountCents,
+  );
+  const enteredFromOffer = toInt(offer.entered_amount_cents);
+  const enteredAmountCents =
+    (enteredFromTotals != null && enteredFromTotals > 0
+      ? enteredFromTotals
+      : null) ??
+    (enteredFromOffer != null && enteredFromOffer > 0 ? enteredFromOffer : null) ??
+    toInt(totalsInput.total_incl_vat_cents) ??
+    toInt(offer.total_incl_vat_cents);
   const totals = deriveLimousineQuotationTotals({
-    totalInclVatCents:
-      asObject(totalsSnapshot).total_incl_vat_cents ?? offer.total_incl_vat_cents,
-    vatRate: asObject(totalsSnapshot).vat_rate ?? offer.vat_rate,
-    vatTreatment: asObject(totalsSnapshot).vat_treatment ?? offer.vat_treatment,
-    currency: asObject(totalsSnapshot).currency ?? offer.currency,
+    enteredAmountCents,
+    vatRate: totalsInput.vat_rate ?? offer.vat_rate,
+    vatTreatment: totalsInput.vat_treatment ?? offer.vat_treatment,
+    currency: totalsInput.currency ?? offer.currency,
   });
+  offer.entered_amount_cents = totals.entered_amount_cents;
+  offer.total_incl_vat_cents = totals.total_incl_vat_cents;
+  offer.vat_rate = totals.vat_rate;
+  offer.vat_treatment = totals.vat_treatment;
   const loc = normalizeLimousineQuotationLocale(locale);
   const body = {
     schema_version: Number(schemaVersion) || LIMOUSINE_QUOTATION_SCHEMA_VERSION,
@@ -417,6 +513,15 @@ export function projectLimousineQuotationAvailability(record) {
   if (expiresAt) out.quotation_expires_at = expiresAt;
   const total = toInt(totals.total_incl_vat_cents);
   if (total != null) out.quotation_total_incl_vat_cents = total;
+  const net = toInt(totals.total_ex_vat_cents);
+  if (net != null) out.quotation_total_ex_vat_cents = net;
+  const vat = toInt(totals.vat_amount_cents);
+  if (vat != null) out.quotation_vat_amount_cents = vat;
+  const entered = toInt(totals.entered_amount_cents);
+  if (entered != null) out.quotation_entered_amount_cents = entered;
+  if (totals.vat_rate != null) out.quotation_vat_rate = totals.vat_rate;
+  const treatment = safeText(totals.vat_treatment, 16);
+  if (treatment) out.quotation_vat_treatment = treatment;
   const currency = normalizeCurrency(totals.currency);
   if (currency) out.quotation_currency = currency;
   return out;
@@ -470,8 +575,20 @@ export function buildLimousineAcceptanceBindingFromSnapshot(record, snapshot) {
     company_id: safeText(rec.company_id, 96),
     quote_request_id: safeText(rec.quote_request_id, 120),
     quote_revision: toInt(rec.revision) ?? 0,
+    ...(toInt(totals.entered_amount_cents) != null
+      ? { entered_amount_cents: toInt(totals.entered_amount_cents) }
+      : {}),
+    ...(toInt(totals.total_ex_vat_cents) != null
+      ? { total_ex_vat_cents: toInt(totals.total_ex_vat_cents) }
+      : {}),
+    ...(toInt(totals.vat_amount_cents) != null
+      ? { vat_amount_cents: toInt(totals.vat_amount_cents) }
+      : {}),
     total_incl_vat_cents: toInt(totals.total_incl_vat_cents) ?? 0,
     currency: normalizeCurrency(totals.currency),
+    ...(totals.vat_rate != null && totals.vat_rate !== ""
+      ? { vat_rate: Number(totals.vat_rate) || 0 }
+      : {}),
     vat_treatment: safeText(totals.vat_treatment, 16),
     offer_id: safeText(request.offer_id, 64),
     offer_source_revision: toInt(snap.offer_source_revision) ?? 0,

@@ -271,6 +271,59 @@ test("derive totals match the manual-book VAT split", () => {
   assert.equal(totals.price_vat, Math.round((inclVat - exVat) * 100) / 100);
 });
 
+test("exclusive 600 at 21% stores net 600 / VAT 126 / gross 726", () => {
+  const totals = deriveLimousineQuotationTotals({
+    enteredAmountCents: 60000,
+    vatRate: 0.21,
+    vatTreatment: "excl",
+    currency: "EUR",
+  });
+  assert.equal(totals.entered_amount_cents, 60000);
+  assert.equal(totals.total_ex_vat_cents, 60000);
+  assert.equal(totals.vat_amount_cents, 12600);
+  assert.equal(totals.total_incl_vat_cents, 72600);
+  assert.equal(totals.price_ex_vat, 600);
+  assert.equal(totals.price_vat, 126);
+  assert.equal(totals.price_incl_vat, 726);
+  assert.equal(totals.vat_treatment, "excl");
+  assert.equal(totals.vat_rate, 0.21);
+});
+
+test("inclusive 600 at 21% keeps the historical reverse split", () => {
+  const totals = deriveLimousineQuotationTotals({
+    enteredAmountCents: 60000,
+    vatRate: 0.21,
+    vatTreatment: "incl",
+    currency: "EUR",
+  });
+  assert.equal(totals.total_incl_vat_cents, 60000);
+  assert.equal(totals.total_ex_vat_cents, 49587);
+  assert.equal(totals.vat_amount_cents, 10413);
+  assert.equal(totals.vat_treatment, "incl");
+});
+
+test("no VAT and zero rate keep net equal to gross", () => {
+  const none = deriveLimousineQuotationTotals({
+    enteredAmountCents: 60000,
+    vatRate: 0.21,
+    vatTreatment: "none",
+    currency: "EUR",
+  });
+  assert.equal(none.total_ex_vat_cents, 60000);
+  assert.equal(none.vat_amount_cents, 0);
+  assert.equal(none.total_incl_vat_cents, 60000);
+  assert.equal(none.vat_rate, 0);
+  const zero = deriveLimousineQuotationTotals({
+    enteredAmountCents: 60000,
+    vatRate: 0,
+    vatTreatment: "excl",
+    currency: "EUR",
+  });
+  assert.equal(zero.total_ex_vat_cents, 60000);
+  assert.equal(zero.vat_amount_cents, 0);
+  assert.equal(zero.total_incl_vat_cents, 60000);
+});
+
 test("legacy records project quotation_available false", () => {
   const view = projectLimousineQuotationAvailability({ revision: 3, quote: {} });
   assert.deepEqual(view, { quotation_available: false });

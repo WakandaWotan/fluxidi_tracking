@@ -88,6 +88,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
       totalInclVatCents: limousineMajorUnitsToCents(_total.text),
       currency: kLimousineDefaultQuoteCurrency,
       vatTreatment: _vatTreatment,
+      vatRate: limousineQuoteSubmittedVatRate(_vatTreatment),
       expiresAt: limousineQuoteExpiresAtIsoFromDate(_expiresDate),
       cancellationDeadlineHours: int.tryParse(_cancelHours.text.trim()),
       cancellationPenaltyPercent: int.tryParse(_cancelPenalty.text.trim()),
@@ -231,7 +232,7 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                   ),
                 _moneyField(
                   palette,
-                  _t(kLimousineQuoteTotal),
+                  limousineQuoteEnteredAmountLabel(_vatTreatment, _lang),
                   _total,
                   key: kLimousineQuoteTotalFieldKey,
                   error: _errorFor('total_incl_vat_cents'),

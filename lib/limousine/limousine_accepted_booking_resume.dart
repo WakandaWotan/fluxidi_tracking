@@ -306,6 +306,11 @@ Map<String, dynamic> _reviewToJson(LimousineAcceptedBookingReview review) {
     'included_services': review.includedServices,
     'mobilisation_disclosure': review.mobilisationDisclosure,
     'total_incl_vat_cents': review.totalInclVatCents,
+    if (review.totalExVatCents != null)
+      'total_ex_vat_cents': review.totalExVatCents,
+    if (review.vatAmountCents != null)
+      'vat_amount_cents': review.vatAmountCents,
+    if (review.vatRate != null) 'vat_rate': review.vatRate,
     'currency': review.currency,
     'vat_treatment': review.vatTreatment,
     'terms_revision': review.termsRevision,
@@ -371,6 +376,11 @@ LimousineAcceptedBookingReview? _reviewFromJson(
     includedServices: mapList(map['included_services']),
     mobilisationDisclosure: stringMap(map['mobilisation_disclosure']),
     totalInclVatCents: _intOf(map['total_incl_vat_cents']) ?? totalInclVatCents,
+    totalExVatCents: _intOf(map['total_ex_vat_cents']),
+    vatAmountCents: _intOf(map['vat_amount_cents']),
+    vatRate: map['vat_rate'] is num
+        ? map['vat_rate'] as num
+        : num.tryParse('${map['vat_rate'] ?? ''}'),
     currency: (map['currency'] ?? currency).toString(),
     vatTreatment: (map['vat_treatment'] ?? '').toString(),
     termsRevision: _intOf(map['terms_revision']) ?? termsRevision,

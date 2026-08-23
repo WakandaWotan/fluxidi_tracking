@@ -216,7 +216,10 @@ String? limousineQuoteInboxAuthoritativeAmount(
 ) {
   final quote = record.quote;
   if (quote == null) return null;
-  final money = formatLimousineEuroAmount(quote.totalInclVatCents);
+  final canonical = limousineCanonicalMoneyFromRequest(record);
+  final money = formatLimousineEuroAmount(
+    canonical?.grossCents ?? quote.totalInclVatCents,
+  );
   final state = LimousineQuoteStateId.normalize(record.state);
   final suffix =
       state == LimousineQuoteStateId.accepted ||

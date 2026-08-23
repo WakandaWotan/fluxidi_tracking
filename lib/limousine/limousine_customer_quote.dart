@@ -60,6 +60,12 @@ const Key kLimousineCustomerQuoteExpiresAtKey = ValueKey<String>(
 const Key kLimousineCustomerQuoteTotalKey = ValueKey<String>(
   'limousine_customer_quote_total',
 );
+const Key kLimousineCustomerQuoteNetKey = ValueKey<String>(
+  'limousine_customer_quote_net',
+);
+const Key kLimousineCustomerQuoteVatKey = ValueKey<String>(
+  'limousine_customer_quote_vat',
+);
 const Key kLimousineCustomerStatusRefreshFailedKey = ValueKey<String>(
   'limousine_customer_status_refresh_failed',
 );
@@ -139,6 +145,7 @@ const Set<String> kLimousineCustomerBookAllowedKeys = <String>{
 };
 
 const Set<String> kLimousineCustomerForbiddenSubmitKeys = <String>{
+  'entered_amount_cents',
   'total_incl_vat_cents',
   'taxi_price',
   'price_incl_vat',

@@ -1310,11 +1310,13 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   const snapVehicle = commercial.mode === "snapshot" ? commercial.snapshot?.vehicle_snapshot : null;
   const totalCents = Number(snapTotals?.total_incl_vat_cents ?? quote.total_incl_vat_cents) || 0;
   const vatRate = Number(snapTotals?.vat_rate ?? quote.vat_rate) || 0;
+  const vatTreatment = String(snapTotals?.vat_treatment || quote.vat_treatment || "").trim();
   const currency = String(snapTotals?.currency || quote.currency || "").toUpperCase();
   if (!(totalCents > 0) || !currency) return fail("limousine_unavailable");
 
-  // Snapshot totals are frozen at send. Legacy records still split VAT from
-  // the human total using the same integer rounding.
+  // Snapshot totals are frozen at send. Copy them exactly. Legacy records
+  // without a snapshot keep the historical inclusive reverse-split and are
+  // never reinterpreted in place.
   const inclVat = snapTotals
     ? Number(snapTotals.price_incl_vat)
     : totalCents / 100;
@@ -1324,6 +1326,15 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   const priceVat = snapTotals
     ? Number(snapTotals.price_vat)
     : Math.round((inclVat - exVat) * 100) / 100;
+  const netCents = snapTotals
+    ? Number(snapTotals.total_ex_vat_cents)
+    : Math.round(exVat * 100);
+  const vatCents = snapTotals
+    ? Number(snapTotals.vat_amount_cents)
+    : Math.round(priceVat * 100);
+  const enteredCents = Number(
+    snapTotals?.entered_amount_cents ?? quote.entered_amount_cents ?? totalCents,
+  );
   const total = {
     ok: true,
     offer_id: binding.offer_id,
@@ -1358,11 +1369,15 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     mobilisation: { included: false, charged_separately: false, disclosure: binding.mobilisation_disclosure || {} },
     currency,
     subtotal_cents: totalCents,
+    entered_amount_cents: enteredCents,
+    total_ex_vat_cents: netCents,
+    vat_amount_cents: vatCents,
     total_incl_vat_cents: totalCents,
     price_incl_vat: inclVat,
     price_ex_vat: exVat,
     price_vat: priceVat,
     vat_rate: vatRate,
+    vat_treatment: vatTreatment,
   };
 
   const snapshot = _buildLimousineAcceptedSnapshot({
@@ -1394,6 +1409,8 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
         price_ex_vat: total.price_ex_vat,
         price_vat: total.price_vat,
         price_incl_vat: total.price_incl_vat,
+        vat_rate: vatRate,
+        vat_treatment: vatTreatment,
         note: "limousine:manual_quote",
         breakdown: {
           kind: "limousine_manual_quote",
@@ -1401,7 +1418,12 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
           quote_revision: binding.quote_revision,
           terms_revision: binding.terms_revision,
           currency,
+          entered_amount_cents: enteredCents,
+          total_ex_vat_cents: netCents,
+          vat_amount_cents: vatCents,
           total_incl_vat_cents: totalCents,
+          vat_rate: vatRate,
+          vat_treatment: vatTreatment,
         },
       },
       pricingSource: "limousine_manual_quote",
@@ -58648,12 +58670,32 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
     const num = Number(value);
     return Number.isFinite(num) ? num : fallback;
   };
+  const _limousineInvoiceAccepted = (record) => {
+    const snap =
+      record?.quote?.limousine_accepted_price ||
+      record?.limousine_accepted_price;
+    return (
+      snap?.service_category === "limousine" ||
+      snap?.service_type === "limousine" ||
+      String(record?.service_type || "").toLowerCase() === "limousine"
+    );
+  };
   const customerEmail = pickFirstValidEmail(
     booking?.custEmail,
     booking?.customer_email,
     booking?.customerEmail,
     booking?.email,
   );
+  const _limoPriceSnap =
+    rec?.quote?.limousine_accepted_price || rec?.limousine_accepted_price;
+  const _limoNetCents = Number(_limoPriceSnap?.total_ex_vat_cents);
+  const _limoVatCents = Number(_limoPriceSnap?.vat_amount_cents);
+  const _limoGrossCents = Number(_limoPriceSnap?.total_incl_vat_cents);
+  const _limoHasFrozenCents =
+    Number.isInteger(_limoNetCents) &&
+    Number.isInteger(_limoVatCents) &&
+    Number.isInteger(_limoGrossCents) &&
+    _limoGrossCents > 0;
   const invoiceResult = await generateAndSendInvoice({
     env,
     booking: {
@@ -58693,7 +58735,18 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
         0,
       ),
       tier: safeStr(booking?.tier),
-      service: safeStr(booking?.service),
+      service: _limousineInvoiceAccepted(rec)
+        ? "limousine"
+        : safeStr(booking?.service),
+      serviceType: _limousineInvoiceAccepted(rec)
+        ? "limousine"
+        : safeStr(booking?.service_type ?? rec?.service_type),
+      limousine_accepted_price:
+        rec?.quote?.limousine_accepted_price ||
+        rec?.limousine_accepted_price ||
+        null,
+      omitService: _limousineInvoiceAccepted(rec),
+      omitTier: _limousineInvoiceAccepted(rec),
       pax: parseNum(booking?.pax, 0),
       bags: parseNum(booking?.bags, 0),
       waitMinutes: parseNum(booking?.wait_min, 0),
@@ -58717,19 +58770,37 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
       customerVat: safeStr(booking?.vat_number),
       customerCompany: safeStr(booking?.company_name),
       invoiceAddress: safeStr(booking?.invoice_address),
-      vat_rate: parseNum(booking?.vat_rate, 0.06),
+      vat_rate: parseNum(
+        rec?.quote?.limousine_accepted_price?.vat_rate ??
+          rec?.quote?.pricing?.vat_rate ??
+          booking?.vat_rate,
+        0.06,
+      ),
       subtotalEx: parseNum(
-        booking?.price_ex_vat ?? _pick(rec, ["quote", "pricing", "price_ex_vat"], 0),
+        rec?.quote?.limousine_accepted_price?.price_ex_vat ??
+          booking?.price_ex_vat ??
+          _pick(rec, ["quote", "pricing", "price_ex_vat"], 0),
         0,
       ),
       vatAmount: parseNum(
-        booking?.price_vat ?? _pick(rec, ["quote", "pricing", "price_vat"], 0),
+        rec?.quote?.limousine_accepted_price?.price_vat ??
+          booking?.price_vat ??
+          _pick(rec, ["quote", "pricing", "price_vat"], 0),
         0,
       ),
       total: parseNum(
-        booking?.price_incl_vat ?? _pick(rec, ["quote", "pricing", "price_incl_vat"], 0),
+        rec?.quote?.limousine_accepted_price?.price_incl_vat ??
+          booking?.price_incl_vat ??
+          _pick(rec, ["quote", "pricing", "price_incl_vat"], 0),
         0,
       ),
+      ...(_limoHasFrozenCents
+        ? {
+            subtotalExFixed: (_limoNetCents / 100).toFixed(2),
+            vatAmountFixed: (_limoVatCents / 100).toFixed(2),
+            totalFixed: (_limoGrossCents / 100).toFixed(2),
+          }
+        : {}),
       priceMainIncl: parseNum(booking?.price_incl_vat_main, 0),
       priceReturnIncl: parseNum(booking?.price_incl_vat_return, 0),
       legs: _invoiceRoundtripLegsForReceiptPdf(rec, booking),
