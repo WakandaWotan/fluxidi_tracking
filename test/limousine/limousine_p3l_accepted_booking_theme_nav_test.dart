@@ -603,6 +603,7 @@ void main() {
       'lib/main_parts/driver_home_page_state.dart',
     ).readAsStringSync();
     expect(source.contains('_driverRideCardSurfaceGradient'), isTrue);
+    expect(source.contains('if (!palette.isDark)'), isTrue);
     expect(
       source.contains(
         'if (isLightEmerald) return _lightEmeraldSurfaceGradient();',

@@ -2914,7 +2914,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isMiddayGold,
     required bool isMidnightBlue,
   }) {
-    if (isLightEmerald) return _lightEmeraldSurfaceGradient();
+    final variant = driverThemeNotifier.value;
+    final palette = paletteForDriverTheme(variant);
+    if (!palette.isDark) {
+      if (isLightEmerald) return _lightEmeraldSurfaceGradient();
+      final pairing = driverRideCardColors(variant);
+      return LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [pairing.surface, pairing.surface],
+      );
+    }
     if (isMiddayGold) return _middayGoldSurfaceGradient();
     if (isMidnightBlue) return _midnightBlueSurfaceGradient();
     return const LinearGradient(
