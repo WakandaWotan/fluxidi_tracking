@@ -809,8 +809,8 @@ class _ReceiptPdfActionRunner {
         return 'es';
       case AppLanguage.nl:
         return 'nl';
-    case AppLanguage.de:
-      return 'en';
+      case AppLanguage.de:
+        return 'en';
     }
   }
 
@@ -846,7 +846,6 @@ class _ReceiptPdfActionRunner {
       final doc = pw.Document();
       final baseFont = await PdfGoogleFonts.notoSansRegular();
       final boldFont = await PdfGoogleFonts.notoSansBold();
-      final amounts = _resolvedReceiptAmounts(item);
       final paymentStatusRaw = _firstPathText(item, const [
         ['payment_status'],
         ['paymentStatus'],
@@ -1203,18 +1202,7 @@ class _ReceiptPdfActionRunner {
               _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
             if (!isLegReceipt) ..._roundtripProjectionPdfRows(item, boldFont),
             pw.Divider(color: PdfColors.grey400),
-            _pdfInfoRow(
-              _receiptText('subtotalExVat'),
-              '€ ${amounts.subtotal.toStringAsFixed(2)}',
-            ),
-            _pdfInfoRow(
-              '${_receiptText('vatAmount')} (${(amounts.vatRate * 100).toStringAsFixed(0)}%)',
-              '€ ${amounts.vatAmount.toStringAsFixed(2)}',
-            ),
-            _pdfInfoRow(
-              _receiptText('total'),
-              '€ ${amounts.total.toStringAsFixed(2)}',
-            ),
+            ..._settlementPdfAmountRows(item),
             pw.SizedBox(height: 16),
             pw.Text(
               footerText,
@@ -3180,8 +3168,69 @@ class _ReceiptPdfActionRunner {
     return null;
   }
 
+  static LimousineCanonicalMoney? _limousineAcceptedMoney(
+    _TripHistoryItem item,
+  ) {
+    return limousineCanonicalMoneyFromBookingDetails(
+      Map<String, dynamic>.from(item.bookingDetails),
+    );
+  }
+
+  static List<pw.Widget> _settlementPdfAmountRows(_TripHistoryItem item) {
+    final frozen = _limousineAcceptedMoney(item);
+    if (frozen != null) {
+      return limousineQuoteMoneyLines(
+            money: frozen,
+            language: appLanguageNotifier.value,
+          )
+          .map(
+            (line) =>
+                _pdfInfoRow(line.label, formatLimousineEuroAmount(line.cents)),
+          )
+          .toList();
+    }
+    final amounts = _resolvedReceiptAmounts(item);
+    return <pw.Widget>[
+      _pdfInfoRow(
+        _receiptText('subtotalExVat'),
+        '€ ${amounts.subtotal.toStringAsFixed(2)}',
+      ),
+      _pdfInfoRow(
+        limousineVatRatePercentLabel(
+          amounts.vatRate,
+          appLanguageNotifier.value,
+        ),
+        '€ ${amounts.vatAmount.toStringAsFixed(2)}',
+      ),
+      _pdfInfoRow(
+        _receiptText('total'),
+        '€ ${amounts.total.toStringAsFixed(2)}',
+      ),
+    ];
+  }
+
   static ({double subtotal, double vatAmount, double total, double vatRate})
   _resolvedReceiptAmounts(_TripHistoryItem item) {
+    final frozen = _limousineAcceptedMoney(item);
+    if (frozen != null && frozen.hasSplit) {
+      final rate = frozen.vatRate?.toDouble() ?? 0.0;
+      return (
+        subtotal: frozen.netCents! / 100.0,
+        vatAmount: frozen.vatCents! / 100.0,
+        total: frozen.grossCents / 100.0,
+        vatRate: rate > 1.0 ? rate / 100.0 : rate,
+      );
+    }
+    if (limousineBookingHasFrozenAcceptedPrice(
+      Map<String, dynamic>.from(item.bookingDetails),
+    )) {
+      final total =
+          _receiptTotalAmount(item) ??
+          _detailDouble(item, 'total') ??
+          _detailDouble(item, 'booking_total_eur') ??
+          0.0;
+      return (subtotal: total, vatAmount: 0.0, total: total, vatRate: 0.0);
+    }
     final settingsVatRate = businessSettingsNotifier.value.pricingVatRate;
     final vatRateCandidates = <double?>[
       _detailDouble(item, 'vat_rate'),

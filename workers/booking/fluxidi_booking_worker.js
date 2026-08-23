@@ -46238,7 +46238,14 @@ export default {
 
         if (action !== "quote") return json({ ok: false, error: "unknown_action" }, 400);
 
-        const validatedQuote = _validateLimousineCompanyQuote(body?.quote ?? body, { nowIso });
+        const taxProfile = await loadTaxProfile(env, {
+          tenant_id: record.tenant_id,
+          company_id: record.company_id,
+        }, { allowTenantLegacyFallback: false });
+        const validatedQuote = _validateLimousineCompanyQuote(body?.quote ?? body, {
+          nowIso,
+          companyTaxProfile: taxProfile,
+        });
         if (!validatedQuote.ok) {
           return json({
             ok: false,
@@ -58770,12 +58777,25 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
       customerVat: safeStr(booking?.vat_number),
       customerCompany: safeStr(booking?.company_name),
       invoiceAddress: safeStr(booking?.invoice_address),
-      vat_rate: parseNum(
-        rec?.quote?.limousine_accepted_price?.vat_rate ??
-          rec?.quote?.pricing?.vat_rate ??
-          booking?.vat_rate,
-        0.06,
-      ),
+      vat_rate: _limousineInvoiceAccepted(rec)
+        ? parseNum(
+            rec?.quote?.limousine_accepted_price?.vat_rate ??
+              rec?.quote?.pricing?.vat_rate,
+            0,
+          )
+        : parseNum(
+            rec?.quote?.pricing?.vat_rate ?? booking?.vat_rate,
+            0.06,
+          ),
+      vat_rate_percent: _limousineInvoiceAccepted(rec)
+        ? Math.round(
+            (parseNum(
+              rec?.quote?.limousine_accepted_price?.vat_rate ??
+                rec?.quote?.pricing?.vat_rate,
+              0,
+            ) || 0) * 10000,
+          ) / 100
+        : undefined,
       subtotalEx: parseNum(
         rec?.quote?.limousine_accepted_price?.price_ex_vat ??
           booking?.price_ex_vat ??
@@ -66425,6 +66445,9 @@ async function handleBooking(payload, env, request, options = {}) {
       ? _allocateLimousineOperationalLegs(_limousineAccepted.total)
       : null;
     const _limousineHasReturnLeg = _limousineLegAllocation?.has_return_leg === true;
+    const persistedVatRate = _limousineAccepted
+      ? Number(_limousineAccepted.total?.vat_rate) || 0
+      : vat_rate;
     // The customer accepted an offer for ONE specific car, so the canonical
     // allocator must reserve that car or refuse the booking. The value comes
     // from the sealed acceptance snapshot (server-side), never from the
@@ -67443,7 +67466,7 @@ async function handleBooking(payload, env, request, options = {}) {
             vat_number: biz.vat_number || "",
             invoice_address: biz.invoice_address || "",
             invoice_email: biz.invoice_email || customerContact.email || "",
-            vat_rate,
+            vat_rate: persistedVatRate,
             price_ex_vat: totalPricing?.price_ex_vat,
             price_vat: totalPricing?.price_vat,
             price_incl_vat: totalPricing?.price_incl_vat,
@@ -67545,7 +67568,7 @@ async function handleBooking(payload, env, request, options = {}) {
               vat_number: biz.vat_number || "",
               invoice_address: biz.invoice_address || "",
               invoice_email: biz.invoice_email || customerContact.email || "",
-              vat_rate,
+              vat_rate: persistedVatRate,
               price_ex_vat: totalPricing?.price_ex_vat,
               price_vat: totalPricing?.price_vat,
               price_incl_vat: totalPricing?.price_incl_vat,
@@ -67971,7 +67994,7 @@ async function handleBooking(payload, env, request, options = {}) {
           price_vat: totalPricing?.price_vat,
           price_incl_vat_main: mainPricing?.price_incl_vat,
           price_incl_vat_return: returnPricing?.price_incl_vat,
-          vat_rate
+          vat_rate: persistedVatRate
         };
 
         const title = `🚖 Fluxidi — ${humanServiceLabel(service)} — ${safeStr(payload?.name || payload?.custName || payload?.customer_name || "Klant")}`;
@@ -68449,7 +68472,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           vat_number: biz.vat_number || "",
           invoice_address: biz.invoice_address || "",
           invoice_email: biz.invoice_email || customerContact.email || "",
-          vat_rate,
+          vat_rate: persistedVatRate,
           price_ex_vat: totalPricing?.price_ex_vat,
           price_vat: totalPricing?.price_vat,
           price_incl_vat: totalPricing?.price_incl_vat,
@@ -68849,7 +68872,13 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       extra_service_label: extra.label,
 
       // price (TOTAL: main + return if enabled)
-      vat_rate,
+      vat_rate: persistedVatRate,
+      ...(_limousineAccepted
+        ? {
+            vat_rate_percent:
+              Math.round((Number(persistedVatRate) || 0) * 10000) / 100,
+          }
+        : {}),
       price_ex_vat: totalPricing?.price_ex_vat,
       price_vat: totalPricing?.price_vat,
       price_incl_vat: totalPricing?.price_incl_vat,
@@ -94743,7 +94772,16 @@ async function handleManualReceiptEmail(
       customerVat: safeStr(booking?.vat_number),
       customerCompany: safeStr(booking?.company_name),
       invoiceAddress: safeStr(booking?.invoice_address),
-      vat_rate: parseNum(booking?.vat_rate, 0.06),
+      vat_rate: parseNum(
+        rec?.quote?.limousine_accepted_price?.vat_rate ?? booking?.vat_rate,
+        rec?.quote?.limousine_accepted_price ? 0 : 0.06,
+      ),
+      vat_rate_percent: rec?.quote?.limousine_accepted_price
+        ? Math.round(
+            (parseNum(rec?.quote?.limousine_accepted_price?.vat_rate, 0) || 0) *
+              10000,
+          ) / 100
+        : undefined,
       subtotalEx: parseNum(
         booking?.price_ex_vat ?? _pick(rec, ["quote", "pricing", "price_ex_vat"], 0),
         0,
@@ -99075,6 +99113,8 @@ function _collectBookingPricingExplicitVatRateCandidates(
     rec?.booking?.vatRatePercent,
     rec?.payload?.vat_rate_percent,
     rec?.payload?.vatRatePercent,
+    _pick(rec, ["quote", "limousine_accepted_price", "vat_rate"], null),
+    _pick(rec, ["limousine_accepted_price", "vat_rate"], null),
     rec?.vat_rate,
     rec?.vatRate,
     rec?.booking?.vat_rate,
@@ -103699,15 +103739,15 @@ ${buildInvoicePrintCss()}
   <table class="totals">
     <tbody>
       <tr>
-        <td>Subtotaal (excl. btw)</td>
+        <td>${serviceLineLabel !== DEFAULT_INVOICE_SERVICE_LINE_LABEL ? "Bedrag excl. btw" : "Subtotaal (excl. btw)"}</td>
         <td class="right">${eur(d.subtotalEx, d.subtotalExFixed)}</td>
       </tr>
       <tr>
-        <td>BTW (${escapeHtml(vatRatePct == null ? "—" : String(vatRatePct))}%)</td>
+        <td>BTW ${escapeHtml(vatRatePct == null ? "—" : String(vatRatePct))}%</td>
         <td class="right">${eur(d.vatAmount, d.vatAmountFixed)}</td>
       </tr>
       <tr>
-        <td>Totaal (incl. btw)</td>
+        <td>${serviceLineLabel !== DEFAULT_INVOICE_SERVICE_LINE_LABEL ? "Totaal incl. btw" : "Totaal (incl. btw)"}</td>
         <td class="right">${eur(d.total, d.totalFixed)}</td>
       </tr>
     </tbody>

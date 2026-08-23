@@ -534,7 +534,7 @@ test("3-16) accepted /book QR + billing keeps seller, price, dispatch eligibilit
   );
 });
 
-test("exclusive 600 @ 21% books frozen 600/126/726", async () => {
+test("exclusive 600 @ company 6% books frozen 600/36/636", async () => {
   const quoted = validateLimousineCompanyQuote({
     entered_amount_cents: 60000,
     vat_treatment: "excl",
@@ -542,7 +542,7 @@ test("exclusive 600 @ 21% books frozen 600/126/726", async () => {
     currency: "EUR",
     terms: TERMS,
     expires_at: "2099-01-01T00:00:00Z",
-  });
+  }, { companyTaxProfile: { vatEnabled: true, vatRate: 0.06 } });
   assert.equal(quoted.ok, true);
   let record = quoteRecord({ id: "limq_p3m_excl" });
   record.quote = {
@@ -551,7 +551,7 @@ test("exclusive 600 @ 21% books frozen 600/126/726", async () => {
   };
   const snap = await buildLimousineQuotationSnapshotFromRecord({ record });
   record = attachLimousineQuotationSnapshot(record, snap).record;
-  assert.equal(record.quotation_snapshots[String(record.quotation_revision)].totals_snapshot.total_incl_vat_cents, 72600);
+  assert.equal(record.quotation_snapshots[String(record.quotation_revision)].totals_snapshot.total_incl_vat_cents, 63600);
   const { env, kv } = await setup({ quotes: [record] });
   const sealed = await sealLimousineAcceptance({
     secret: SECRET,
@@ -581,19 +581,19 @@ test("exclusive 600 @ 21% books frozen 600/126/726", async () => {
   assert.ok(stored, JSON.stringify(body));
   const accepted = stored.quote?.limousine_accepted_price || stored.limousine_accepted_price;
   assert.equal(accepted.price_ex_vat, 600);
-  assert.equal(accepted.price_vat, 126);
-  assert.equal(accepted.price_incl_vat, 726);
+  assert.equal(accepted.price_vat, 36);
+  assert.equal(accepted.price_incl_vat, 636);
   assert.equal(accepted.total_ex_vat_cents, 60000);
-  assert.equal(accepted.vat_amount_cents, 12600);
-  assert.equal(accepted.total_incl_vat_cents, 72600);
+  assert.equal(accepted.vat_amount_cents, 3600);
+  assert.equal(accepted.total_incl_vat_cents, 63600);
   assert.equal(accepted.vat_treatment, "excl");
   assert.equal(stored.quote?.pricing?.price_ex_vat, 600);
-  assert.equal(stored.quote?.pricing?.price_vat, 126);
-  assert.equal(stored.quote?.pricing?.price_incl_vat, 726);
-  assert.equal(Math.round(Number(stored.price_incl_vat || stored.quote?.pricing?.price_incl_vat) * 100), 72600);
+  assert.equal(stored.quote?.pricing?.price_vat, 36);
+  assert.equal(stored.quote?.pricing?.price_incl_vat, 636);
+  assert.equal(Math.round(Number(stored.price_incl_vat || stored.quote?.pricing?.price_incl_vat) * 100), 63600);
   assert.equal(stored.service_type || stored.serviceType, "limousine");
   assert.equal(accepted.entered_amount_cents, 60000);
-  assert.equal(accepted.vat_rate, 0.21);
+  assert.equal(accepted.vat_rate, 0.06);
   const serviceLine = invoiceServiceLineLabel({
     service_type: "limousine",
     limousine_accepted_price: accepted,

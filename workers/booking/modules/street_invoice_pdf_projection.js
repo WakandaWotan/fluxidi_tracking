@@ -167,6 +167,16 @@ export function resolveInvoiceVatRatePercent({
     bookingRecord && typeof bookingRecord === "object" ? bookingRecord : {};
   const booking =
     rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const limoAccepted =
+    rec?.quote?.limousine_accepted_price || rec?.limousine_accepted_price;
+  const limoRate = normalizeVatRatePercent(limoAccepted?.vat_rate);
+  if (limoRate != null) {
+    return {
+      ok: true,
+      ratePercent: limoRate,
+      source: "limousine_accepted_price",
+    };
+  }
   const bookingRate = normalizeVatRatePercent(
     booking.vat_rate_percent ??
       rec.vat_rate_percent ??

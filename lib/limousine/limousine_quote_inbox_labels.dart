@@ -640,7 +640,14 @@ const LocalizedText kLimousineQuoteGrossAmount = LocalizedText(
   nl: 'Totaal incl. btw',
   en: 'Total incl. VAT',
   fr: 'Total TVA comprise',
-  es: 'Total con IVA',
+  es: 'Total IVA incluido',
+);
+
+const LocalizedText kLimousineQuoteCompanyVatRate = LocalizedText(
+  nl: 'Btw-tarief (bedrijfsinstellingen)',
+  en: 'VAT rate (company settings)',
+  fr: 'Taux TVA (paramètres de l’entreprise)',
+  es: 'Tipo de IVA (ajustes de la empresa)',
 );
 
 const LocalizedText kLimousineQuoteCurrency = LocalizedText(

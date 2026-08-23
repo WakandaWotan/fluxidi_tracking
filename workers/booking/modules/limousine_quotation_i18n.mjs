@@ -34,7 +34,10 @@ export const LIMOUSINE_QUOTATION_I18N_KEYS = Object.freeze([
   "no_show",
   "overtime",
   "net",
+  "amount_incl_vat",
+  "amount_no_vat",
   "vat",
+  "vat_of_which",
   "total_incl_vat",
   "currency",
   "footer",
@@ -97,9 +100,12 @@ const COPY = Object.freeze({
     waiting_time: "Wachttijd",
     no_show: "Niet opdagen",
     overtime: "Overuren",
-    net: "Netto",
+    net: "Bedrag excl. btw",
+    amount_incl_vat: "Bedrag incl. btw",
+    amount_no_vat: "Bedrag (geen btw)",
     vat: "BTW",
-    total_incl_vat: "Totaal incl. BTW",
+    vat_of_which: "Waarvan",
+    total_incl_vat: "Totaal incl. btw",
     currency: "Valuta",
     footer: "Offerte — geen factuur",
     return_pickup: "Terugrit",
@@ -136,9 +142,12 @@ const COPY = Object.freeze({
     waiting_time: "Waiting time",
     no_show: "No-show",
     overtime: "Overtime",
-    net: "Net",
+    net: "Amount excl. VAT",
+    amount_incl_vat: "Amount incl. VAT",
+    amount_no_vat: "Amount (no VAT)",
     vat: "VAT",
-    total_incl_vat: "Total including VAT",
+    vat_of_which: "Of which",
+    total_incl_vat: "Total incl. VAT",
     currency: "Currency",
     footer: "Quotation — not an invoice",
     return_pickup: "Return journey",
@@ -175,9 +184,12 @@ const COPY = Object.freeze({
     waiting_time: "Temps d’attente",
     no_show: "Non-présentation",
     overtime: "Heures supplémentaires",
-    net: "Net",
+    net: "Montant hors TVA",
+    amount_incl_vat: "Montant TVA comprise",
+    amount_no_vat: "Montant (pas de TVA)",
     vat: "TVA",
-    total_incl_vat: "Total TTC",
+    vat_of_which: "Dont",
+    total_incl_vat: "Total TVA comprise",
     currency: "Devise",
     footer: "Devis — pas une facture",
     return_pickup: "Retour",
@@ -214,8 +226,11 @@ const COPY = Object.freeze({
     waiting_time: "Tiempo de espera",
     no_show: "No presentación",
     overtime: "Horas extra",
-    net: "Neto",
+    net: "Importe sin IVA",
+    amount_incl_vat: "Importe con IVA",
+    amount_no_vat: "Importe (sin IVA)",
     vat: "IVA",
+    vat_of_which: "De los cuales",
     total_incl_vat: "Total IVA incluido",
     currency: "Moneda",
     footer: "Presupuesto — no es una factura",
@@ -417,6 +432,61 @@ export function formatLimousineQuotationPercent(value, locale) {
       ? String(n)
       : String(n).replace(".", ",");
   return `${body}%`;
+}
+
+export function formatLimousineVatPercentNumber(rate) {
+  const n = Number(rate);
+  const fraction = Number.isFinite(n) ? (n > 1 ? n / 100 : Math.max(0, n)) : 0;
+  const pct = Math.round(fraction * 10000) / 100;
+  return Number.isInteger(pct) ? String(pct) : String(pct);
+}
+
+export function formatLimousineVatRateLabel(rate, locale, { treatment = "" } = {}) {
+  const loc = normalizeLimousineQuotationLocale(locale);
+  const copy = limousineQuotationCopy(loc);
+  const pct = formatLimousineVatPercentNumber(rate);
+  const gap = loc === "fr" || loc === "es" ? " %" : "%";
+  const rateText = `${copy.vat} ${pct}${gap}`;
+  if (String(treatment).trim().toLowerCase() === "incl") {
+    return `${copy.vat_of_which} ${rateText}`;
+  }
+  return rateText;
+}
+
+export function limousineQuotationTotalsRows({ totals = {}, locale } = {}) {
+  const loc = normalizeLimousineQuotationLocale(locale);
+  const copy = limousineQuotationCopy(loc);
+  const src = totals && typeof totals === "object" ? totals : {};
+  const treatment = String(src.vat_treatment || "").trim().toLowerCase();
+  const rateLabel = formatLimousineVatRateLabel(src.vat_rate, loc, { treatment });
+  const entered = Number(src.entered_amount_cents);
+  const net = Number(src.total_ex_vat_cents) || 0;
+  const vat = Number(src.vat_amount_cents) || 0;
+  const gross = Number(src.total_incl_vat_cents) || 0;
+  if (treatment === "incl") {
+    return [
+      {
+        label: copy.amount_incl_vat,
+        cents: Number.isFinite(entered) && entered > 0 ? entered : gross,
+      },
+      { label: rateLabel, cents: vat, isVat: true },
+      { label: copy.net, cents: net },
+    ];
+  }
+  if (treatment === "none") {
+    return [
+      {
+        label: copy.amount_no_vat,
+        cents: Number.isFinite(entered) && entered > 0 ? entered : gross || net,
+      },
+      { label: rateLabel, cents: vat, isVat: true },
+    ];
+  }
+  return [
+    { label: copy.net, cents: net },
+    { label: rateLabel, cents: vat, isVat: true },
+    { label: copy.total_incl_vat, cents: gross, isGrand: true },
+  ];
 }
 
 export function formatLimousineQuotationInteger(value) {

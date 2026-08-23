@@ -17,7 +17,14 @@ export const LIMOUSINE_QUOTATION_SNAPSHOT_MISSING = "quotation_snapshot_missing"
 
 export const LIMOUSINE_QUOTATION_LOCALES = Object.freeze(["nl", "en", "fr", "es"]);
 
-export const LIMOUSINE_STANDARD_VAT_RATE = 0.21;
+// Company tax profile is the only default rate authority. Never invent 21%
+// and never fall back to a taxi/airport pricing profile.
+export const LIMOUSINE_COMPANY_DEFAULT_VAT_RATE = 0.06;
+export const LIMOUSINE_VAT_RATE_SOURCE_COMPANY_TAX_PROFILE =
+  "company_tax_profile";
+export const LIMOUSINE_VAT_RATE_SOURCE_COMPANY_TAX_PROFILE_DISABLED =
+  "company_tax_profile_disabled";
+export const LIMOUSINE_VAT_RATE_SOURCE_TREATMENT_NONE = "treatment_none";
 export const LIMOUSINE_VAT_TREATMENT_INCL = "incl";
 export const LIMOUSINE_VAT_TREATMENT_EXCL = "excl";
 export const LIMOUSINE_VAT_TREATMENT_NONE = "none";
@@ -157,11 +164,48 @@ export function resolveLimousineEnteredAmountCents(input = {}) {
   );
 }
 
+export function resolveLimousineAuthoritativeVatRate({
+  treatment,
+  companyTaxProfile = null,
+} = {}) {
+  const normalized = normalizeLimousineVatTreatment(treatment);
+  if (normalized === LIMOUSINE_VAT_TREATMENT_NONE) {
+    return {
+      vat_rate: 0,
+      vat_rate_source: LIMOUSINE_VAT_RATE_SOURCE_TREATMENT_NONE,
+    };
+  }
+  const src =
+    companyTaxProfile &&
+    typeof companyTaxProfile === "object" &&
+    !Array.isArray(companyTaxProfile)
+      ? companyTaxProfile
+      : {};
+  const enabled = src.vatEnabled === false || src.vat_enabled === false
+    ? false
+    : true;
+  if (!enabled) {
+    return {
+      vat_rate: 0,
+      vat_rate_source: LIMOUSINE_VAT_RATE_SOURCE_COMPANY_TAX_PROFILE_DISABLED,
+    };
+  }
+  const raw = Number(src.vatRate ?? src.vat_rate);
+  const rate =
+    Number.isFinite(raw) && raw >= 0 && raw <= 1
+      ? raw
+      : LIMOUSINE_COMPANY_DEFAULT_VAT_RATE;
+  return {
+    vat_rate: rate,
+    vat_rate_source: LIMOUSINE_VAT_RATE_SOURCE_COMPANY_TAX_PROFILE,
+  };
+}
+
 function resolveLimousineVatRate(treatment, rawRate) {
   if (treatment === LIMOUSINE_VAT_TREATMENT_NONE) return 0;
-  if (rawRate == null || rawRate === "") return LIMOUSINE_STANDARD_VAT_RATE;
+  if (rawRate == null || rawRate === "") return LIMOUSINE_COMPANY_DEFAULT_VAT_RATE;
   const rate = Number(rawRate);
-  if (!Number.isFinite(rate) || rate < 0) return LIMOUSINE_STANDARD_VAT_RATE;
+  if (!Number.isFinite(rate) || rate < 0) return LIMOUSINE_COMPANY_DEFAULT_VAT_RATE;
   return rate;
 }
 

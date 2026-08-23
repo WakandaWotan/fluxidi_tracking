@@ -378,36 +378,24 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
     final rows = <Widget>[];
     if (quote != null) {
       final money = limousineCanonicalMoneyFromRequest(record);
-      if (money?.netCents != null) {
+      if (money != null) {
+        for (final line in limousineQuoteMoneyLines(
+          money: money,
+          language: _lang,
+        )) {
+          rows.add(
+            _kv(palette, line.label, formatLimousineEuroAmount(line.cents)),
+          );
+        }
+      } else {
         rows.add(
           _kv(
             palette,
-            _t(kLimousineQuoteNetAmount),
-            formatLimousineEuroAmount(money!.netCents!),
+            _t(kLimousineQuoteGrossAmount),
+            formatLimousineEuroAmount(quote.totalInclVatCents),
           ),
         );
       }
-      if (money?.vatCents != null) {
-        rows.add(
-          _kv(
-            palette,
-            limousineVatRatePercentLabel(
-              money?.vatRate ?? quote.vatRate,
-              _lang,
-            ),
-            formatLimousineEuroAmount(money!.vatCents!),
-          ),
-        );
-      }
-      rows.add(
-        _kv(
-          palette,
-          _t(kLimousineQuoteGrossAmount),
-          formatLimousineEuroAmount(
-            money?.grossCents ?? quote.totalInclVatCents,
-          ),
-        ),
-      );
       final vatLabel = limousineVatTreatmentLabel(
         money?.vatTreatment.isNotEmpty == true
             ? money!.vatTreatment
@@ -607,15 +595,13 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
               fontWeight: FontWeight.w800,
             ),
           ),
-          if (money?.netCents != null)
-            Text(
-              '${_t(kLimousineQuoteNetAmount)}: ${formatLimousineEuroAmount(money!.netCents!)}',
-            ),
-          if (money?.vatCents != null)
-            Text(
-              '${limousineVatRatePercentLabel(money?.vatRate, _lang)}: ${formatLimousineEuroAmount(money!.vatCents!)}',
-            ),
-          if (total != null)
+          if (money != null)
+            ...limousineQuoteMoneyLines(money: money, language: _lang).map(
+              (line) => Text(
+                '${line.label}: ${formatLimousineEuroAmount(line.cents)}',
+              ),
+            )
+          else if (total != null)
             Text(
               formatLimousineMoney(
                 total,

@@ -461,23 +461,32 @@ class _LimousineAcceptedBookingPageState
                 localizedMap(review.mobilisationDisclosure),
               ),
             const SizedBox(height: 8),
-            if (review.totalExVatCents != null)
-              Text(
-                '${_t(kLimousineQuoteNetAmount)}: ${formatLimousineEuroAmount(review.totalExVatCents!)}',
-              ),
-            if (review.vatAmountCents != null)
-              Text(
-                '${limousineVatRatePercentLabel(review.vatRate, _lang)}: ${formatLimousineEuroAmount(review.vatAmountCents!)}',
-              ),
-            Text(
-              formatLimousineMoney(review.totalInclVatCents, review.currency),
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            Text(_t(kLimousineQuoteGrossAmount)),
+            ...() {
+              final money = LimousineCanonicalMoney(
+                grossCents: review.totalInclVatCents,
+                netCents: review.totalExVatCents,
+                vatCents: review.vatAmountCents,
+                vatRate: review.vatRate,
+                vatTreatment: review.vatTreatment,
+                currency: review.currency,
+              );
+              return limousineQuoteMoneyLines(
+                money: money,
+                language: _lang,
+              ).map((line) {
+                return Text(
+                  '${line.label}: ${formatLimousineEuroAmount(line.cents)}',
+                  style: line.emphasize
+                      ? TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        )
+                      : null,
+                );
+              }).toList();
+            }(),
+            if (review.currency.isNotEmpty) Text(review.currency),
             if (review.vatTreatment.isNotEmpty)
               Text(
                 '${_t(kLimousineCustomerVat)}: ${limousineVatTreatmentLabel(review.vatTreatment, _lang)}',

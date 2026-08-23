@@ -19,7 +19,9 @@ import {
   formatLimousineQuotationDateTime,
   formatLimousineQuotationInteger,
   formatLimousineQuotationMoney,
+  formatLimousineVatRateLabel,
   limousineQuotationCopy,
+  limousineQuotationTotalsRows,
   normalizeLimousineQuotationLocale,
   renderLimousineConditionSentences,
   selectLocalizedQuotationText,
@@ -57,9 +59,9 @@ const COPY_V1 = Object.freeze({
     extras: "Meerprijs extra's",
     mobilisation: "Mobilisatie",
     terms: "Voorwaarden",
-    net: "Netto",
+    net: "Bedrag excl. btw",
     vat: "BTW",
-    total: "Totaal incl. BTW",
+    total: "Totaal incl. btw",
     footer: "Offerte — geen factuur",
   },
   en: {
@@ -87,7 +89,7 @@ const COPY_V1 = Object.freeze({
     extras: "Paid extras",
     mobilisation: "Mobilisation",
     terms: "Terms",
-    net: "Net",
+    net: "Amount excl. VAT",
     vat: "VAT",
     total: "Total incl. VAT",
     footer: "Quotation — not an invoice",
@@ -117,9 +119,9 @@ const COPY_V1 = Object.freeze({
     extras: "Suppléments",
     mobilisation: "Mobilisation",
     terms: "Conditions",
-    net: "Net",
+    net: "Montant hors TVA",
     vat: "TVA",
-    total: "Total TTC",
+    total: "Total TVA comprise",
     footer: "Devis — pas une facture",
   },
   es: {
@@ -147,9 +149,9 @@ const COPY_V1 = Object.freeze({
     extras: "Extras de pago",
     mobilisation: "Movilización",
     terms: "Condiciones",
-    net: "Neto",
+    net: "Importe sin IVA",
     vat: "IVA",
-    total: "Total IVA incl.",
+    total: "Total IVA incluido",
     footer: "Presupuesto — no es una factura",
   },
 });
@@ -230,11 +232,23 @@ function formatMoney(cents, currency, locale) {
   }
 }
 
-function formatVatRate(rate, locale) {
-  const n = Number(rate) || 0;
-  const pct = Math.round(n * 10000) / 100;
-  const label = limousineQuotationCopy(locale).vat || copyV1(locale).vat;
-  return `${escapeLimousineQuotationHtml(label)} ${escapeLimousineQuotationHtml(String(pct))}%`;
+function formatVatRate(rate, locale, treatment = "") {
+  return escapeLimousineQuotationHtml(
+    formatLimousineVatRateLabel(rate, locale, { treatment }),
+  );
+}
+
+function totalsRowsHtml(totals, locale, { moneyFn, grandClass = "grand" } = {}) {
+  const rows = limousineQuotationTotalsRows({ totals, locale });
+  return rows
+    .map((item) => {
+      const amount = moneyFn(item.cents);
+      if (item.isGrand) {
+        return `<tr class="${grandClass}"><th>${escapeLimousineQuotationHtml(item.label)}</th><td>${amount}</td></tr>`;
+      }
+      return row(item.label, amount);
+    })
+    .join("");
 }
 
 function row(label, valueHtml) {
@@ -509,9 +523,9 @@ function renderLimousineQuotationHtmlV1(snapshot) {
       ${legalBlocks}
     </section>
     <table class="totals">
-      ${row(copy.net, formatMoney(totals.total_ex_vat_cents, totals.currency, locale))}
-      ${row(formatVatRate(totals.vat_rate, locale), formatMoney(totals.vat_amount_cents, totals.currency, locale))}
-      <tr class="grand"><th>${escapeLimousineQuotationHtml(copy.total)}</th><td>${formatMoney(totals.total_incl_vat_cents, totals.currency, locale)}</td></tr>
+      ${totalsRowsHtml(totals, locale, {
+        moneyFn: (cents) => formatMoney(cents, totals.currency, locale),
+      })}
     </table>
     <footer class="quotation-footer">${escapeLimousineQuotationHtml(copy.footer)} · ${escapeLimousineQuotationHtml(copy.not_invoice)}</footer>
   </div>
@@ -703,21 +717,12 @@ function renderLimousineQuotationHtmlV2(snapshot) {
     )}
     ${sectionHtml(copy.conditions, conditionsHtml)}
     <table class="totals">
-      ${row(
-        copy.net,
-        escapeLimousineQuotationHtml(
-          formatLimousineQuotationMoney(totals.total_ex_vat_cents, currency, locale),
-        ),
-      )}
-      ${row(
-        formatVatRate(totals.vat_rate, locale),
-        escapeLimousineQuotationHtml(
-          formatLimousineQuotationMoney(totals.vat_amount_cents, currency, locale),
-        ),
-      )}
-      <tr class="grand"><th>${escapeLimousineQuotationHtml(copy.total_incl_vat)}</th><td>${escapeLimousineQuotationHtml(
-        formatLimousineQuotationMoney(totals.total_incl_vat_cents, currency, locale),
-      )}</td></tr>
+      ${totalsRowsHtml(totals, locale, {
+        moneyFn: (cents) =>
+          escapeLimousineQuotationHtml(
+            formatLimousineQuotationMoney(cents, currency, locale),
+          ),
+      })}
     </table>
     <footer class="quotation-footer">${escapeLimousineQuotationHtml(copy.footer)} · ${escapeLimousineQuotationHtml(copy.not_invoice)}</footer>
   </div>

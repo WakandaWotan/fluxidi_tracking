@@ -220,30 +220,47 @@ class LimousineCustomerStatusView extends StatelessWidget {
           ...() {
             final money = limousineCanonicalMoneyFromRequest(request);
             final gross = money?.grossCents ?? quote.totalInclVatCents;
-            final net = money?.netCents;
-            final vat = money?.vatCents;
+            final lines = money == null
+                ? const <LimousineQuoteMoneyLine>[]
+                : limousineQuoteMoneyLines(money: money, language: language);
+            final vatLabel = limousineVatRatePercentLabel(
+              money?.vatRate ?? quote.vatRate,
+              language,
+              inclusive:
+                  (money?.vatTreatment ?? quote.vatTreatment)
+                      .trim()
+                      .toLowerCase() ==
+                  kLimousineQuoteVatIncl,
+            );
             return <Widget>[
-              if (net != null)
+              for (final line in lines)
                 Text(
-                  '${kLimousineQuoteNetAmount.of(language)}: ${formatLimousineEuroAmount(net)}',
-                  key: kLimousineCustomerQuoteNetKey,
+                  '${line.label}: ${formatLimousineEuroAmount(line.cents)}',
+                  key: line.emphasize
+                      ? kLimousineCustomerQuoteTotalKey
+                      : line.label == vatLabel
+                      ? kLimousineCustomerQuoteVatKey
+                      : line.label == kLimousineQuoteNetAmount.of(language)
+                      ? kLimousineCustomerQuoteNetKey
+                      : null,
+                  style: line.emphasize
+                      ? TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        )
+                      : null,
                 ),
-              if (vat != null)
+              if (lines.isEmpty)
                 Text(
-                  '${limousineVatRatePercentLabel(money?.vatRate ?? quote.vatRate, language)}: ${formatLimousineEuroAmount(vat)}',
-                  key: kLimousineCustomerQuoteVatKey,
+                  formatLimousineEuroAmount(gross),
+                  key: kLimousineCustomerQuoteTotalKey,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              Text(
-                formatLimousineEuroAmount(gross),
-                key: kLimousineCustomerQuoteTotalKey,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              if ((money?.hasSplit ?? false))
-                Text(kLimousineQuoteGrossAmount.of(language)),
             ];
           }(),
           if ((request.quotationCurrency.isNotEmpty

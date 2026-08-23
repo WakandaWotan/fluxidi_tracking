@@ -28,6 +28,7 @@ class _CompanyBookingOverviewItem {
   final bool isRoundtripParent;
   final String referenceText;
   final String parentReferenceText;
+
   /// Canonical server creation timestamp (ISO). Empty when absent on the row.
   /// Used only for newest-created-first list ordering — never pickup/updated.
   final String createdAtIso;
@@ -1671,6 +1672,9 @@ class _CompanyBookingOverviewItem {
     final num? subtotalExVat = isOperationalLeg
         ? _firstNum(raw, const <String>['leg_price_ex_vat', 'legPriceExVat'])
         : _firstNum(raw, const <String>[
+            'quote.limousine_accepted_price.price_ex_vat',
+            'record.quote.limousine_accepted_price.price_ex_vat',
+            'booking.quote.limousine_accepted_price.price_ex_vat',
             'price_ex_vat',
             'priceExVat',
             'total_price_ex_vat',
@@ -1682,6 +1686,9 @@ class _CompanyBookingOverviewItem {
     final num? vatAmount = isOperationalLeg
         ? _firstNum(raw, const <String>['leg_price_vat', 'legPriceVat'])
         : _firstNum(raw, const <String>[
+            'quote.limousine_accepted_price.price_vat',
+            'record.quote.limousine_accepted_price.price_vat',
+            'booking.quote.limousine_accepted_price.price_vat',
             'price_vat',
             'priceVat',
             'total_price_vat',
@@ -1691,20 +1698,37 @@ class _CompanyBookingOverviewItem {
             'record.quote.pricing.price_vat',
           ]);
     final num? vatRatePercentRaw = _firstNum(raw, const <String>[
+      'quote.limousine_accepted_price.vat_rate',
+      'record.quote.limousine_accepted_price.vat_rate',
+      'booking.quote.limousine_accepted_price.vat_rate',
       'vat_rate',
       'vatRate',
+      'vat_rate_percent',
       'quote.pricing.vat_rate',
       'record.quote.pricing.vat_rate',
     ]);
+    final looksLimousine =
+        _firstText(raw, const <String>[
+              'service_type',
+              'serviceType',
+              'record.service_type',
+              'record.booking.service_type',
+              'booking.service_type',
+            ]).trim().toLowerCase() ==
+            'limousine' ||
+        _path(raw, 'quote.limousine_accepted_price') is Map ||
+        _path(raw, 'record.quote.limousine_accepted_price') is Map;
     // Backend stores vat_rate as a fraction (e.g. 0.06). Normalize to percent
-    // when below 1; otherwise treat as an already-percent value. When no rate
-    // is present, derive it from ex + vat only (never guessed otherwise).
+    // when below 1; otherwise treat as an already-percent value. Taxi may
+    // derive a display percent from the split. Limousine never infers the
+    // rate from the VAT amount — only the frozen snapshot rate is shown.
     num? vatRatePercent;
     if (vatRatePercentRaw != null) {
       vatRatePercent = vatRatePercentRaw <= 1
           ? vatRatePercentRaw * 100
           : vatRatePercentRaw;
-    } else if (subtotalExVat != null &&
+    } else if (!looksLimousine &&
+        subtotalExVat != null &&
         subtotalExVat != 0 &&
         vatAmount != null) {
       vatRatePercent = (vatAmount / subtotalExVat) * 100;

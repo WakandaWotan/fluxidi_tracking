@@ -226,7 +226,9 @@ String? limousineQuoteInboxAuthoritativeAmount(
           state == LimousineQuoteStateId.bookingCreated
       ? kLimousineQuoteInboxAmountAccepted.of(language)
       : kLimousineQuoteInboxAmountOffered.of(language);
-  return '$money $suffix';
+  final rate = canonical?.vatRate ?? quote.vatRate;
+  if (rate == null) return '$money $suffix';
+  return '$money $suffix · ${limousineVatRatePercentLabel(rate, language)}';
 }
 
 double limousineQuoteInboxContentWidth(double viewportWidth) {

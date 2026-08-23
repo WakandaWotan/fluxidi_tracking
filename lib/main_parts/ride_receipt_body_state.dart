@@ -3021,7 +3021,34 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     return _resolvedReceiptBusinessFields().isBusinessDocument;
   }
 
+  LimousineCanonicalMoney? _limousineAcceptedMoney() {
+    return limousineCanonicalMoneyFromBookingDetails(
+      Map<String, dynamic>.from(item.bookingDetails),
+    );
+  }
+
+  double? _limousineAcceptedVatRate() {
+    final frozen = _limousineAcceptedMoney()?.vatRate;
+    if (frozen != null && frozen.isFinite) return frozen.toDouble();
+    final quote = item.bookingDetails['quote'];
+    if (quote is! Map) return null;
+    final accepted = quote['limousine_accepted_price'];
+    if (accepted is! Map) return null;
+    final raw = accepted['vat_rate'] ?? accepted['vatRate'];
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString().replaceAll(',', '.') ?? '');
+  }
+
   double _resolvedVatRate() {
+    final frozen = _limousineAcceptedVatRate();
+    if (frozen != null && frozen.isFinite) {
+      return frozen > 1.0 ? frozen / 100.0 : frozen;
+    }
+    if (limousineBookingHasFrozenAcceptedPrice(
+      Map<String, dynamic>.from(item.bookingDetails),
+    )) {
+      return 0;
+    }
     final settingsVatRate = businessSettingsNotifier.value.pricingVatRate;
     final candidates = <double?>[
       _detailDouble('vat_rate'),
@@ -3039,6 +3066,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
 
   ({double subtotal, double vatAmount, double total, double vatRate})
   _resolvedReceiptAmounts() {
+    final frozen = _limousineAcceptedMoney();
+    if (frozen != null && frozen.hasSplit) {
+      final rate = frozen.vatRate?.toDouble() ?? 0.0;
+      return (
+        subtotal: frozen.netCents! / 100.0,
+        vatAmount: frozen.vatCents! / 100.0,
+        total: frozen.grossCents / 100.0,
+        vatRate: rate > 1.0 ? rate / 100.0 : rate,
+      );
+    }
     final vatRate = _resolvedVatRate();
     final total =
         _receiptTotalAmount() ??
@@ -3065,6 +3102,60 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       total: total.isFinite ? total : 0.0,
       vatRate: vatRate.isFinite ? vatRate : 0.0,
     );
+  }
+
+  List<Widget> _settlementAmountRows() {
+    final frozen = _limousineAcceptedMoney();
+    if (frozen != null) {
+      return limousineQuoteMoneyLines(
+            money: frozen,
+            language: appLanguageNotifier.value,
+          )
+          .map(
+            (line) => _receiptRow(
+              line.label,
+              formatLimousineEuroAmount(line.cents),
+              highlight: line.emphasize,
+            ),
+          )
+          .toList();
+    }
+    return <Widget>[
+      _receiptRow(_receiptText('total'), _totalText(), highlight: true),
+    ];
+  }
+
+  List<pw.Widget> _settlementPdfAmountRows() {
+    final frozen = _limousineAcceptedMoney();
+    if (frozen != null) {
+      return limousineQuoteMoneyLines(
+            money: frozen,
+            language: appLanguageNotifier.value,
+          )
+          .map(
+            (line) =>
+                _pdfInfoRow(line.label, formatLimousineEuroAmount(line.cents)),
+          )
+          .toList();
+    }
+    final amounts = _resolvedReceiptAmounts();
+    return <pw.Widget>[
+      _pdfInfoRow(
+        _receiptText('subtotalExVat'),
+        '€ ${amounts.subtotal.toStringAsFixed(2)}',
+      ),
+      _pdfInfoRow(
+        limousineVatRatePercentLabel(
+          amounts.vatRate,
+          appLanguageNotifier.value,
+        ),
+        '€ ${amounts.vatAmount.toStringAsFixed(2)}',
+      ),
+      _pdfInfoRow(
+        _receiptText('total'),
+        '€ ${amounts.total.toStringAsFixed(2)}',
+      ),
+    ];
   }
 
   String _sanitizeFilePart(String value) {
@@ -3226,7 +3317,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       final doc = pw.Document();
       final baseFont = await PdfGoogleFonts.notoSansRegular();
       final boldFont = await PdfGoogleFonts.notoSansBold();
-      final amounts = _resolvedReceiptAmounts();
       final paymentStatusRaw = _firstDetailPathText(const [
         ['payment_status'],
         ['paymentStatus'],
@@ -3530,18 +3620,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
             if (businessFields.isBusinessDocument)
               _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
             pw.Divider(color: PdfColors.grey400),
-            _pdfInfoRow(
-              _receiptText('subtotalExVat'),
-              '€ ${amounts.subtotal.toStringAsFixed(2)}',
-            ),
-            _pdfInfoRow(
-              '${_receiptText('vatAmount')} (${(amounts.vatRate * 100).toStringAsFixed(0)}%)',
-              '€ ${amounts.vatAmount.toStringAsFixed(2)}',
-            ),
-            _pdfInfoRow(
-              _receiptText('total'),
-              '€ ${amounts.total.toStringAsFixed(2)}',
-            ),
+            ..._settlementPdfAmountRows(),
             pw.SizedBox(height: 16),
             pw.Text(
               footerText,
@@ -6815,11 +6894,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                         _receiptText('actualWaitingTime'),
                         _formatWait(item.waitSecondsTotal),
                       ),
-                      _receiptRow(
-                        _receiptText('total'),
-                        _totalText(),
-                        highlight: true,
-                      ),
+                      ..._settlementAmountRows(),
                       if (_hasAnyRawCustomerContact) ...[
                         _sectionTitle(_receiptText('customerDetails')),
                         _optionalReceiptRow(

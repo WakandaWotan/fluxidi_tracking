@@ -41,28 +41,30 @@ const TERMS = {
   overtime_cents_per_hour: 9000,
 };
 
-function assertExclusive600(totals) {
+function assertExclusive600At6(totals) {
   assert.equal(totals.entered_amount_cents, 60000);
   assert.equal(totals.total_ex_vat_cents, 60000);
-  assert.equal(totals.vat_amount_cents, 12600);
-  assert.equal(totals.total_incl_vat_cents, 72600);
+  assert.equal(totals.vat_amount_cents, 3600);
+  assert.equal(totals.total_incl_vat_cents, 63600);
   assert.equal(totals.price_ex_vat, 600);
-  assert.equal(totals.price_vat, 126);
-  assert.equal(totals.price_incl_vat, 726);
-  assert.equal(totals.vat_rate, 0.21);
+  assert.equal(totals.price_vat, 36);
+  assert.equal(totals.price_incl_vat, 636);
+  assert.equal(totals.vat_rate, 0.06);
   assert.equal(totals.vat_treatment, "excl");
 }
 
-test("exclusive company quote stores canonical net/VAT/gross", () => {
+const COMPANY_VAT_6 = { vatEnabled: true, vatRate: 0.06, vatDisplayMode: "excl" };
+
+test("exclusive company quote stores canonical net/VAT/gross at company 6%", () => {
   const out = validateLimousineCompanyQuote({
     entered_amount_cents: 60000,
     vat_treatment: "excl",
     vat_rate: 0.21,
     currency: "EUR",
     terms: TERMS,
-  });
+  }, { companyTaxProfile: COMPANY_VAT_6 });
   assert.equal(out.ok, true);
-  assertExclusive600(out.quote);
+  assertExclusive600At6(out.quote);
 });
 
 test("legacy total_incl_vat_cents is entered amount, not gross", () => {
@@ -72,9 +74,9 @@ test("legacy total_incl_vat_cents is entered amount, not gross", () => {
     vat_rate: 0.21,
     currency: "EUR",
     terms: TERMS,
-  });
+  }, { companyTaxProfile: COMPANY_VAT_6 });
   assert.equal(out.ok, true);
-  assertExclusive600(out.quote);
+  assertExclusive600At6(out.quote);
 });
 
 test("snapshot freezes exclusive 600 without downstream reinterpretation", async () => {
@@ -85,7 +87,7 @@ test("snapshot freezes exclusive 600 without downstream reinterpretation", async
     currency: "EUR",
     terms: TERMS,
     expires_at: "2099-01-01T00:00:00Z",
-  }).quote;
+  }, { companyTaxProfile: COMPANY_VAT_6 }).quote;
   const rec = {
     quote_request_id: "limq_p3m_excl",
     tenant_id: "t1",
@@ -102,14 +104,14 @@ test("snapshot freezes exclusive 600 without downstream reinterpretation", async
     quote,
   };
   const snap = await buildLimousineQuotationSnapshotFromRecord({ record: rec });
-  assertExclusive600(snap.totals_snapshot);
+  assertExclusive600At6(snap.totals_snapshot);
   const attached = attachLimousineQuotationSnapshot(rec, snap);
   assert.equal(attached.ok, true);
   const frozen = attached.record.quotation_snapshots["4"].totals_snapshot;
-  assertExclusive600(frozen);
+  assertExclusive600At6(frozen);
   rec.quote.entered_amount_cents = 1;
   rec.quote.total_incl_vat_cents = 1;
-  assertExclusive600(attached.record.quotation_snapshots["4"].totals_snapshot);
+  assertExclusive600At6(attached.record.quotation_snapshots["4"].totals_snapshot);
 });
 
 test("acceptance binds frozen exclusive cents additively", async () => {
@@ -120,7 +122,7 @@ test("acceptance binds frozen exclusive cents additively", async () => {
     currency: "EUR",
     terms: TERMS,
     expires_at: "2099-01-01T00:00:00Z",
-  }).quote;
+  }, { companyTaxProfile: COMPANY_VAT_6 }).quote;
   const rec = {
     quote_request_id: "limq_p3m_bind",
     tenant_id: "t1",
@@ -139,9 +141,9 @@ test("acceptance binds frozen exclusive cents additively", async () => {
   const binding = buildLimousineAcceptanceBindingFromSnapshot(withSnap, snap);
   assert.equal(binding.entered_amount_cents, 60000);
   assert.equal(binding.total_ex_vat_cents, 60000);
-  assert.equal(binding.vat_amount_cents, 12600);
-  assert.equal(binding.total_incl_vat_cents, 72600);
-  assert.equal(binding.vat_rate, 0.21);
+  assert.equal(binding.vat_amount_cents, 3600);
+  assert.equal(binding.total_incl_vat_cents, 63600);
+  assert.equal(binding.vat_rate, 0.06);
   assert.equal(binding.vat_treatment, "excl");
   assert.equal(
     limousineAcceptanceBindingMatches(binding, binding).ok,
@@ -161,7 +163,7 @@ test("acceptance binds frozen exclusive cents additively", async () => {
 test("accepted-price snapshot copies frozen exclusive cents", () => {
   const totals = deriveLimousineQuotationTotals({
     enteredAmountCents: 60000,
-    vatRate: 0.21,
+    vatRate: 0.06,
     vatTreatment: "excl",
     currency: "EUR",
   });
@@ -184,13 +186,13 @@ test("accepted-price snapshot copies frozen exclusive cents", () => {
     companyId: "c1",
   });
   assert.equal(snapshot.price_ex_vat, 600);
-  assert.equal(snapshot.price_vat, 126);
-  assert.equal(snapshot.price_incl_vat, 726);
+  assert.equal(snapshot.price_vat, 36);
+  assert.equal(snapshot.price_incl_vat, 636);
   assert.equal(snapshot.total_ex_vat_cents, 60000);
-  assert.equal(snapshot.vat_amount_cents, 12600);
-  assert.equal(snapshot.total_incl_vat_cents, 72600);
+  assert.equal(snapshot.vat_amount_cents, 3600);
+  assert.equal(snapshot.total_incl_vat_cents, 63600);
   assert.equal(snapshot.vat_treatment, "excl");
-  assert.equal(snapshot.vat_rate, 0.21);
+  assert.equal(snapshot.vat_rate, 0.06);
   assert.equal(
     invoiceServiceLineLabel({ limousine_accepted_price: snapshot }),
     "Limousinevervoer",
@@ -206,19 +208,19 @@ test("Billit reconciliation consumes stored exclusive cents, not a recompute", (
   const authoritative = resolveAuthoritativeIssuedTotalInclVatCents({
     immutable_snapshot: {
       totals: {
-        total_incl_vat: 726,
+        total_incl_vat: 636,
         subtotal_ex_vat: 600,
-        vat_amount: 126,
+        vat_amount: 36,
       },
     },
     totals: {
-      total_incl_vat: 726,
+      total_incl_vat: 636,
       subtotal_ex_vat: 600,
-      vat_amount: 126,
+      vat_amount: 36,
     },
   });
   assert.equal(authoritative.ok, true);
-  assert.equal(authoritative.total_incl_vat_cents, 72600);
+  assert.equal(authoritative.total_incl_vat_cents, 63600);
 });
 
 test("legacy snapshot without entered amount is not rewritten by attach", async () => {
@@ -302,7 +304,7 @@ test("live quote binding without snapshot does not invent exclusive math", () =>
   assert.equal(binding.total_ex_vat_cents, undefined);
 });
 
-test("quotation HTML prints frozen exclusive 600/126/726 and never reverse-splits", async () => {
+test("quotation HTML prints frozen exclusive 600/36/636 and never reverse-splits", async () => {
   const quote = validateLimousineCompanyQuote({
     entered_amount_cents: 60000,
     vat_treatment: "excl",
@@ -310,7 +312,7 @@ test("quotation HTML prints frozen exclusive 600/126/726 and never reverse-split
     currency: "EUR",
     terms: TERMS,
     expires_at: "2099-01-01T00:00:00Z",
-  }).quote;
+  }, { companyTaxProfile: COMPANY_VAT_6 }).quote;
   const rec = {
     quote_request_id: "limq_p3m_pdf",
     tenant_id: "t1",
@@ -334,14 +336,17 @@ test("quotation HTML prints frozen exclusive 600/126/726 and never reverse-split
   });
   const html = renderLimousineQuotationHtml(snap);
   const net = formatLimousineQuotationMoney(60000, "EUR", "nl");
-  const vat = formatLimousineQuotationMoney(12600, "EUR", "nl");
-  const gross = formatLimousineQuotationMoney(72600, "EUR", "nl");
+  const vat = formatLimousineQuotationMoney(3600, "EUR", "nl");
+  const gross = formatLimousineQuotationMoney(63600, "EUR", "nl");
   const wrongNet = formatLimousineQuotationMoney(49587, "EUR", "nl");
   assert.ok(html.includes(net), html);
   assert.ok(html.includes(vat), html);
   assert.ok(html.includes(gross), html);
+  assert.ok(html.includes("BTW 6%"), html);
+  assert.ok(html.includes("Bedrag excl. btw"), html);
+  assert.ok(html.includes("Totaal incl. btw"), html);
   assert.ok(!html.includes(wrongNet), html);
-  assert.ok(html.includes("Totaal") || html.includes("incl"), html);
+  assert.ok(!html.includes("BTW 21%"), html);
 });
 
 test("invoice heading and frozen cents stay on stored exclusive totals", () => {
@@ -357,11 +362,11 @@ test("invoice heading and frozen cents stay on stored exclusive totals", () => {
           service_type: "limousine",
           service_category: "limousine",
           price_ex_vat: 600,
-          price_vat: 126,
-          price_incl_vat: 726,
+          price_vat: 36,
+          price_incl_vat: 636,
           total_ex_vat_cents: 60000,
-          vat_amount_cents: 12600,
-          total_incl_vat_cents: 72600,
+          vat_amount_cents: 3600,
+          total_incl_vat_cents: 63600,
           vat_treatment: "excl",
         },
       },

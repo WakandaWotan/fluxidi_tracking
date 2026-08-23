@@ -83,6 +83,9 @@ const Key kLimousineQuoteExpiresFieldKey = ValueKey<String>(
 const Key kLimousineQuoteVatFieldKey = ValueKey<String>(
   'limousine_quote_vat_field',
 );
+const Key kLimousineQuoteCompanyVatRateKey = ValueKey<String>(
+  'limousine_quote_company_vat_rate',
+);
 const Key kLimousineQuoteCurrencyValueKey = ValueKey<String>(
   'limousine_quote_currency_value',
 );

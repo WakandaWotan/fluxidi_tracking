@@ -13,6 +13,7 @@
 import {
   deriveLimousineQuotationTotals,
   projectLimousineQuotationAvailability,
+  resolveLimousineAuthoritativeVatRate,
   resolveLimousineEnteredAmountCents,
 } from "./limousine_quotation_snapshot.mjs";
 import { normalizeLimousineQuotationLocale } from "./limousine_quotation_i18n.mjs";
@@ -857,7 +858,10 @@ export function limousineQuoteRequestKey({ tenantId, companyId, customerRef, req
 
 /// Validates an authorized company quote. Amounts are integer cents only; no
 /// internal cost, base address, driver or subscription data may be included.
-export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
+export function validateLimousineCompanyQuote(
+  input,
+  { nowIso = null, companyTaxProfile = null } = {},
+) {
   const R = LIMOUSINE_QUOTE_REASONS;
   const src = asObject(input);
   const enteredCents = resolveLimousineEnteredAmountCents(src);
@@ -878,9 +882,15 @@ export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
   const now = nowIso || new Date().toISOString();
   const expiresAt = safeText(src.expires_at ?? src.expiresAt, 40) ||
     new Date(Date.parse(now) + 48 * 3600 * 1000).toISOString();
+  // Client vat_rate is not an override. Company tax profile is the only
+  // default authority. Per-quote rate override is not a supported product.
+  const resolved = resolveLimousineAuthoritativeVatRate({
+    treatment: src.vat_treatment ?? src.vatTreatment,
+    companyTaxProfile,
+  });
   const totals = deriveLimousineQuotationTotals({
     enteredAmountCents: enteredCents,
-    vatRate: src.vat_rate ?? src.vatRate,
+    vatRate: resolved.vat_rate,
     vatTreatment: src.vat_treatment ?? src.vatTreatment,
     currency,
   });
@@ -898,7 +908,7 @@ export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
       currency,
       vat_treatment: totals.vat_treatment,
       vat_rate: totals.vat_rate,
-      vat_rate_source: safeText(src.vat_rate_source ?? src.vatRateSource, 64) || "company_quote",
+      vat_rate_source: resolved.vat_rate_source,
       public_text: localized(src.public_text ?? src.publicText, 1200),
       included_services: termsCheck.terms.included_services,
       separately_priced_extras: termsCheck.terms.paid_extras,

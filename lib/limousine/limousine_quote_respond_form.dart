@@ -88,7 +88,10 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
       totalInclVatCents: limousineMajorUnitsToCents(_total.text),
       currency: kLimousineDefaultQuoteCurrency,
       vatTreatment: _vatTreatment,
-      vatRate: limousineQuoteSubmittedVatRate(_vatTreatment),
+      vatRate: limousineQuoteSubmittedVatRate(
+        _vatTreatment,
+        vat: resolveActiveVatConfig(),
+      ),
       expiresAt: limousineQuoteExpiresAtIsoFromDate(_expiresDate),
       cancellationDeadlineHours: int.tryParse(_cancelHours.text.trim()),
       cancellationPenaltyPercent: int.tryParse(_cancelPenalty.text.trim()),
@@ -180,138 +183,149 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<BusinessThemeVariant>(
-      valueListenable: businessThemeNotifier,
-      builder: (context, variant, _) {
-        final palette = paletteForBusinessTheme(variant);
-        final missing = _validation?.missing ?? _currentValidation().missing;
-        final canSubmit = !_submitting && missing.isEmpty;
-        return Scaffold(
-          key: kLimousineQuoteEditorPageKey,
-          backgroundColor: palette.background,
-          appBar: AppBar(
-            backgroundColor: palette.background,
-            foregroundColor: palette.textPrimary,
-            title: Text(_t(kLimousineQuoteEditorTitle)),
-          ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    limousineQuoteDocumentLanguageLabel(
-                      widget.record.locale,
-                      _lang,
+    return ValueListenableBuilder<BackendTaxProfile?>(
+      valueListenable: localBackendTaxProfileNotifier,
+      builder: (context, _, __) {
+        return ValueListenableBuilder<BusinessThemeVariant>(
+          valueListenable: businessThemeNotifier,
+          builder: (context, variant, _) {
+            final palette = paletteForBusinessTheme(variant);
+            final missing =
+                _validation?.missing ?? _currentValidation().missing;
+            final canSubmit = !_submitting && missing.isEmpty;
+            return Scaffold(
+              key: kLimousineQuoteEditorPageKey,
+              backgroundColor: palette.background,
+              appBar: AppBar(
+                backgroundColor: palette.background,
+                foregroundColor: palette.textPrimary,
+                title: Text(_t(kLimousineQuoteEditorTitle)),
+              ),
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        limousineQuoteDocumentLanguageLabel(
+                          widget.record.locale,
+                          _lang,
+                        ),
+                        key: kLimousineQuoteLanguageKey,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                    key: kLimousineQuoteLanguageKey,
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontWeight: FontWeight.w700,
+                    if (missing.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          _t(kLimousineQuoteValidationMissing),
+                          style: TextStyle(color: palette.danger, height: 1.35),
+                        ),
+                      ),
+                    if (_submitError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          _submitError!,
+                          key: kLimousineQuoteEditorSubmitErrorKey,
+                          style: TextStyle(color: palette.danger, height: 1.35),
+                        ),
+                      ),
+                    _moneyField(
+                      palette,
+                      limousineQuoteEnteredAmountLabel(_vatTreatment, _lang),
+                      _total,
+                      key: kLimousineQuoteTotalFieldKey,
+                      error: _errorFor('total_incl_vat_cents'),
                     ),
-                  ),
-                ),
-                if (missing.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      _t(kLimousineQuoteValidationMissing),
-                      style: TextStyle(color: palette.danger, height: 1.35),
+                    _currencyRow(palette),
+                    _vatPicker(palette),
+                    _companyVatRateRow(palette),
+                    _expiresField(palette),
+                    const SizedBox(height: 8),
+                    Text(
+                      _t(kLimousineQuoteOptionalSection),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                if (_submitError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      _submitError!,
-                      key: kLimousineQuoteEditorSubmitErrorKey,
-                      style: TextStyle(color: palette.danger, height: 1.35),
+                    const SizedBox(height: 10),
+                    _intField(
+                      palette,
+                      _t(kLimousineQuoteCancelDeadline),
+                      _cancelHours,
                     ),
-                  ),
-                _moneyField(
-                  palette,
-                  limousineQuoteEnteredAmountLabel(_vatTreatment, _lang),
-                  _total,
-                  key: kLimousineQuoteTotalFieldKey,
-                  error: _errorFor('total_incl_vat_cents'),
-                ),
-                _currencyRow(palette),
-                _vatPicker(palette),
-                _expiresField(palette),
-                const SizedBox(height: 8),
-                Text(
-                  _t(kLimousineQuoteOptionalSection),
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _intField(
-                  palette,
-                  _t(kLimousineQuoteCancelDeadline),
-                  _cancelHours,
-                ),
-                _intField(
-                  palette,
-                  _t(kLimousineQuoteCancelPenalty),
-                  _cancelPenalty,
-                ),
-                _intField(
-                  palette,
-                  _t(kLimousineQuoteWaitingIncluded),
-                  _waitingIncluded,
-                ),
-                _moneyField(
-                  palette,
-                  _t(kLimousineQuoteWaitingOverage),
-                  _waitingOverage,
-                ),
-                _intField(palette, _t(kLimousineQuoteNoShow), _noShow),
-                _moneyField(palette, _t(kLimousineQuoteOvertime), _overtime),
-                _field(
-                  palette,
-                  _t(kLimousineQuoteIncludedServices),
-                  _included,
-                  maxLines: 2,
-                ),
-                _field(
-                  palette,
-                  _t(kLimousineQuoteMobilisation),
-                  _mobilisation,
-                  maxLines: 2,
-                ),
-                _field(
-                  palette,
-                  _t(kLimousineQuoteCustomerObligations),
-                  _obligations,
-                  maxLines: 2,
-                ),
-                _field(
-                  palette,
-                  _t(kLimousineQuoteImportantInfo),
-                  _important,
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 48,
-                  child: FilledButton(
-                    key: kLimousineQuoteSubmitKey,
-                    onPressed: canSubmit ? _submit : null,
-                    child: Text(
-                      _submitting
-                          ? _t(kLimousineQuoteSubmitting)
-                          : _t(kLimousineQuoteSendQuote),
+                    _intField(
+                      palette,
+                      _t(kLimousineQuoteCancelPenalty),
+                      _cancelPenalty,
                     ),
-                  ),
+                    _intField(
+                      palette,
+                      _t(kLimousineQuoteWaitingIncluded),
+                      _waitingIncluded,
+                    ),
+                    _moneyField(
+                      palette,
+                      _t(kLimousineQuoteWaitingOverage),
+                      _waitingOverage,
+                    ),
+                    _intField(palette, _t(kLimousineQuoteNoShow), _noShow),
+                    _moneyField(
+                      palette,
+                      _t(kLimousineQuoteOvertime),
+                      _overtime,
+                    ),
+                    _field(
+                      palette,
+                      _t(kLimousineQuoteIncludedServices),
+                      _included,
+                      maxLines: 2,
+                    ),
+                    _field(
+                      palette,
+                      _t(kLimousineQuoteMobilisation),
+                      _mobilisation,
+                      maxLines: 2,
+                    ),
+                    _field(
+                      palette,
+                      _t(kLimousineQuoteCustomerObligations),
+                      _obligations,
+                      maxLines: 2,
+                    ),
+                    _field(
+                      palette,
+                      _t(kLimousineQuoteImportantInfo),
+                      _important,
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        key: kLimousineQuoteSubmitKey,
+                        onPressed: canSubmit ? _submit : null,
+                        child: Text(
+                          _submitting
+                              ? _t(kLimousineQuoteSubmitting)
+                              : _t(kLimousineQuoteSendQuote),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -331,6 +345,30 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
         child: Text(
           kLimousineDefaultQuoteCurrency,
           key: kLimousineQuoteCurrencyValueKey,
+          style: TextStyle(color: palette.textPrimary),
+        ),
+      ),
+    );
+  }
+
+  Widget _companyVatRateRow(BusinessThemePalette palette) {
+    final vat = resolveActiveVatConfig();
+    final rateText = vat.vatEnabled
+        ? limousineVatRatePercentLabel(vat.vatRate, _lang)
+        : limousineVatRatePercentLabel(0, _lang);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: _t(kLimousineQuoteCompanyVatRate),
+          labelStyle: TextStyle(color: palette.textMuted),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: palette.border),
+          ),
+        ),
+        child: Text(
+          rateText,
+          key: kLimousineQuoteCompanyVatRateKey,
           style: TextStyle(color: palette.textPrimary),
         ),
       ),
