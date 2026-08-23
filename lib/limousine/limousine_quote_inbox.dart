@@ -678,6 +678,7 @@ class LimousineQuoteRequest {
     this.quotationTotalInclVatCents,
     this.quotationCurrency = '',
     this.acceptedAt = '',
+    this.publicPartnerId = '',
   });
 
   final String quoteRequestId;
@@ -717,6 +718,7 @@ class LimousineQuoteRequest {
   final int? quotationTotalInclVatCents;
   final String quotationCurrency;
   final String acceptedAt;
+  final String publicPartnerId;
 
   bool get hasQuotationPdf =>
       quotationAvailable && quotationRevision != null && quotationRevision! > 0;
@@ -861,6 +863,13 @@ class LimousineQuoteRequest {
         max: 8,
       ),
       acceptedAt: _text(map['accepted_at'] ?? map['acceptedAt'], max: 40),
+      publicPartnerId: _text(
+        map['public_partner_id'] ??
+            map['publicPartnerId'] ??
+            map['partner_id'] ??
+            map['partnerId'],
+        max: 120,
+      ),
     );
   }
 
@@ -936,6 +945,9 @@ class LimousineQuoteRequest {
       acceptedAt: incoming.acceptedAt.isNotEmpty
           ? incoming.acceptedAt
           : acceptedAt,
+      publicPartnerId: incoming.publicPartnerId.isNotEmpty
+          ? incoming.publicPartnerId
+          : publicPartnerId,
     );
   }
 }

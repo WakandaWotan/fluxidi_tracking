@@ -455,6 +455,31 @@ CustomerThemePalette paletteForCustomerTheme(CustomerThemeVariant variant) {
   }
 }
 
+ThemeData themeForCustomerPalette(
+  ThemeData base,
+  CustomerThemePalette palette,
+) {
+  final brightness = palette.isDark ? Brightness.dark : Brightness.light;
+  return base.copyWith(
+    brightness: brightness,
+    scaffoldBackgroundColor: palette.background,
+    colorScheme: base.colorScheme.copyWith(
+      brightness: brightness,
+      surface: palette.surface,
+      onSurface: palette.textPrimary,
+      onSurfaceVariant: palette.textMuted,
+    ),
+    textTheme: base.textTheme.apply(
+      bodyColor: palette.textPrimary,
+      displayColor: palette.textPrimary,
+    ),
+    disabledColor: palette.textMuted.withOpacity(0.72),
+    checkboxTheme: base.checkboxTheme.copyWith(
+      side: BorderSide(color: palette.textMuted),
+    ),
+  );
+}
+
 CustomerThemeMetadata customerThemeMetadata(CustomerThemeVariant variant) {
   switch (variant) {
     case CustomerThemeVariant.premiumLight:

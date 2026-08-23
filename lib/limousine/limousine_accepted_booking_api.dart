@@ -527,6 +527,8 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
       entryEnabled: entryEnabled,
       handoff: quoteController?.handoff ?? handoff,
       customer: loaded,
+      draft: draft,
+      request: request,
     );
     if (preflight != null) {
       error = preflight;

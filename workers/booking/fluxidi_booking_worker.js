@@ -194,6 +194,7 @@ import {
   pageLimousineInboxEntries as _pageLimousineInboxEntries,
   parseLimousineInboxQuery as _parseLimousineInboxQuery,
   upsertLimousineInboxEntry as _upsertLimousineInboxEntry,
+  isLimousineGlobalCustomerSession as _isLimousineGlobalCustomerSession,
 } from "./modules/limousine_quote_inbox.mjs";
 import {
   allocateLimousineOperationalLegs as _allocateLimousineOperationalLegs,
@@ -1189,12 +1190,29 @@ async function _computeLimousineMobilisationRoutes(env, offer, { from, to }) {
   }
 }
 
+async function _resolveAcceptedQuoteBookScope(env, body) {
+  const acceptanceRef = safeStr(
+    body?.limousine_acceptance_reference ?? body?.limousineAcceptanceReference,
+  );
+  if (!acceptanceRef) return null;
+  const unsealed = await _unsealLimousineAcceptance({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    reference: acceptanceRef,
+  });
+  if (!unsealed.ok) return null;
+  const record = await _loadLimousineQuoteRecord(env, unsealed.binding?.quote_request_id);
+  const tenantId = sanitizeTenantString(record?.tenant_id, 80);
+  const companyId = sanitizeTenantString(record?.company_id, 80);
+  if (!tenantId || !companyId) return null;
+  return { tenant_id: tenantId, company_id: companyId, hasScope: true };
+}
+
 /// LIMOUSINE-MARKETPLACE-P2C2: accepted MANUAL quote pre-flight. Unseals and
 /// verifies the opaque acceptance reference, re-reads the authoritative quote
 /// record, revalidates eligibility for NEW bookings, checks expiry and the
 /// exact revision binding, and returns the human-approved total unchanged.
 /// A client total is never read; taxi pricing is never used.
-async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceReference }) {
+async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceReference, customerSession = null } = {}) {
   const fail = (error, extra = {}) => ({
     ok: false,
     response: { ok: false, error, service_category: "limousine", ...extra },
@@ -1212,10 +1230,29 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   }
   const record = await _loadLimousineQuoteRecord(env, binding.quote_request_id);
   if (!record) return fail("unknown_quote_request");
-  if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
+  const sellerScope = {
+    tenant_id: sanitizeTenantString(record.tenant_id, 96),
+    company_id: sanitizeTenantString(record.company_id, 96),
+  };
+  const claimedTenant = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 96);
+  const claimedCompany = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 96);
+  const claimedIsCustomerGlobal = _isLimousineGlobalCustomerSession({
+    tenant_id: claimedTenant,
+    company_id: claimedCompany,
+  });
+  // A customer booking carries the accepted seller, never the customer-global
+  // session. Empty/global claims are resolved from the sealed quote. A real
+  // company/partner claim must still match the accepted seller.
+  if (claimedTenant && claimedCompany && !claimedIsCustomerGlobal) {
+    if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
+  }
   const customerRef = sanitizeTenantString(
-    scope?.customer_id ??
+    customerSession?.customer_id ??
+      customerSession?.customerId ??
+      scope?.customer_id ??
       scope?.customerId ??
+      payload?.customer_id ??
+      payload?.customerId ??
       payload?.customer_reference ??
       payload?.customerReference,
     160,
@@ -1226,8 +1263,8 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   );
   if (storedFingerprint && customerRef) {
     const sessionFingerprint = _buildLimousineCustomerFingerprint({
-      tenantId: scope?.tenant_id,
-      companyId: scope?.company_id,
+      tenantId: sellerScope.tenant_id,
+      companyId: sellerScope.company_id,
       customerRef,
       quoteRequestId: record.quote_request_id,
       itineraryFingerprint: record?.request?.itinerary_fingerprint,
@@ -1262,9 +1299,9 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   }
 
   // Company must still be allowed to take NEW bookings.
-  const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+  const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, sellerScope);
   if (!suspensionGuard.ok) return fail("subscription_suspended");
-  const stillEligible = await _resolveLimousineProviderEligibility(env, scope);
+  const stillEligible = await _resolveLimousineProviderEligibility(env, sellerScope);
   if (!stillEligible) return fail("not_eligible");
 
   const quote = record.quote || {};
@@ -1333,7 +1370,7 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     quoteReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
     acceptedAtIso: unsealed.accepted_at || new Date().toISOString(),
     scheduledPickupIso: String(snapRequest?.scheduled_pickup_iso || record.request?.scheduled_pickup_iso || ""),
-    companyId: scope?.company_id || "",
+    companyId: sellerScope.company_id || scope?.company_id || "",
     termsRevision: binding.terms_revision,
   });
   const quotationTrace = commercial.mode === "snapshot"
@@ -44335,6 +44372,7 @@ export default {
         });
         let requestScope = null;
         let routedPublicPartner = null;
+        let acceptedQuoteSellerScope = null;
         if (requestedPublicPartnerId) {
           routedPublicPartner = await resolvePublicPartnerBookingScope(
             env,
@@ -44352,13 +44390,19 @@ export default {
             hasScope: true,
           };
         } else {
-          const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
-          requestScope = resolveExplicitBookingRequestScope({
-            request,
-            url,
-            body,
-            allowLegacyFallback: allowLegacyScopeFallback,
-          });
+          const acceptedScope = await _resolveAcceptedQuoteBookScope(env, body);
+          if (acceptedScope?.hasScope) {
+            requestScope = acceptedScope;
+            acceptedQuoteSellerScope = acceptedScope;
+          } else {
+            const allowLegacyScopeFallback = String(env?.ALLOW_LEGACY_SCOPE_FALLBACK || "").trim().toLowerCase() === "true";
+            requestScope = resolveExplicitBookingRequestScope({
+              request,
+              url,
+              body,
+              allowLegacyFallback: allowLegacyScopeFallback,
+            });
+          }
         }
         if (!requestScope?.hasScope) {
           return json(
@@ -44386,6 +44430,20 @@ export default {
           tenantScope: requestScope,
           isDriverAppBooking,
         });
+        const trustedAcceptedSeller = !isDriverAppBooking &&
+          !routedPublicPartner?.ok &&
+          acceptedQuoteSellerScope?.hasScope
+          ? {
+              ok: true,
+              tenant_id: acceptedQuoteSellerScope.tenant_id,
+              company_id: acceptedQuoteSellerScope.company_id,
+              partner_id: _canonicalPublicPartnerIdFromScope(acceptedQuoteSellerScope),
+              trusted_source: "accepted_quote_seller",
+            }
+          : null;
+        const trustedBookScope = routedPublicPartner?.ok
+          ? routedPublicPartner
+          : trustedAcceptedSeller;
         const normalizedBody = {
           ...body,
           ...(driverAppScope.trustedFields || {}),
@@ -44393,17 +44451,17 @@ export default {
           tenantId: requestScope.tenant_id,
           company_id: requestScope.company_id,
           companyId: requestScope.company_id,
-          ...(routedPublicPartner?.ok && !isDriverAppBooking
+          ...(trustedBookScope?.ok && !isDriverAppBooking
             ? {
                 __trusted_tenant_context: {
-                  tenant_id: routedPublicPartner.tenant_id,
-                  company_id: routedPublicPartner.company_id,
-                  trusted_source: "public_partner_route",
+                  tenant_id: trustedBookScope.tenant_id,
+                  company_id: trustedBookScope.company_id,
+                  trusted_source: trustedBookScope.trusted_source || "public_partner_route",
                 },
-                public_partner_id: routedPublicPartner.partner_id,
-                publicPartnerId: routedPublicPartner.partner_id,
-                partner_id: routedPublicPartner.partner_id,
-                partnerId: routedPublicPartner.partner_id,
+                public_partner_id: trustedBookScope.partner_id,
+                publicPartnerId: trustedBookScope.partner_id,
+                partner_id: trustedBookScope.partner_id,
+                partnerId: trustedBookScope.partner_id,
               }
             : {}),
         };
@@ -44422,7 +44480,9 @@ export default {
           );
           if (!bookingSuspensionGuard.ok) {
             return _subscriptionBlockedResponse({
-              scope: routedPublicPartner?.ok ? "public" : "company",
+              scope: routedPublicPartner?.ok || acceptedQuoteSellerScope?.hasScope
+                ? "public"
+                : "company",
             });
           }
         }
@@ -44430,7 +44490,7 @@ export default {
           ? _createLimousineSubmitRequestId()
           : "";
         const out = await handleBooking(normalizedBody, env, request, {
-          trustedPublicPartnerScope: isDriverAppBooking ? null : routedPublicPartner,
+          trustedPublicPartnerScope: isDriverAppBooking ? null : trustedBookScope,
           explicitAssignmentTrusted: explicitAssignmentTrust.trusted === true,
           explicitAssignmentTrustSource: explicitAssignmentTrust.source || "",
           limousineRequestId: limousineBookRequestId,
@@ -65916,7 +65976,7 @@ async function handleBooking(payload, env, request, options = {}) {
         received: { date: safeStr(payload?.date), time: safeStr(payload?.time), pickup_iso: pickupIsoRaw }
       };
     }
-    const tenantContext = resolveBookingTenantContext({ payload, request, env });
+    let tenantContext = resolveBookingTenantContext({ payload, request, env });
     if (!tenantContext?.hasScope) {
       return { ok: false, error: "missing_tenant_scope" };
     }
@@ -66223,7 +66283,10 @@ async function handleBooking(payload, env, request, options = {}) {
         return { ok: false, error: "limousine_book_disabled" };
       }
       let _limousineTrustedBookCompany = "";
-      if (tenantContext.tenant_resolution_mode === "trusted_route") {
+      if (
+        tenantContext.tenant_resolution_mode === "trusted_route" ||
+        tenantContext.tenant_resolution_mode === "accepted_quote_seller"
+      ) {
         _limousineTrustedBookCompany = sanitizeTenantString(tenantContext.company_id, 80);
       } else if (_limousineAllowlistConfigured(env)) {
         try {
@@ -66256,10 +66319,22 @@ async function handleBooking(payload, env, request, options = {}) {
         }
         const manual = await _prepareLimousineManualBooking(env, tenantContext, payload, {
           acceptanceReference: _limousineAcceptanceReference,
+          customerSession: await _loadCustomerSessionFromRequest(request, env),
         });
         if (!manual.ok) return manual.response;
         _limousineAccepted = manual.accepted;
         _limousineManualQuoteRecord = manual.record;
+        const sellerTenant = sanitizeTenantString(manual.record?.tenant_id, 80);
+        const sellerCompany = sanitizeTenantString(manual.record?.company_id, 80);
+        if (sellerTenant && sellerCompany) {
+          tenantContext = {
+            ...tenantContext,
+            hasScope: true,
+            tenant_id: sellerTenant,
+            company_id: sellerCompany,
+            tenant_resolution_mode: "accepted_quote_seller",
+          };
+        }
       } else {
         const limousinePreflight = await _prepareLimousineBooking(env, tenantContext, payload, {
           from,
@@ -66481,14 +66556,21 @@ async function handleBooking(payload, env, request, options = {}) {
     // LIMOUSINE-MARKETPLACE-P2C1: reuse the route already computed by the
     // Limousine pre-flight so the same authoritative distance/duration is used
     // and Mapbox is not called twice.
-    const routeOut = _limousineRouteCache || await routeFromTextsWithStopsDetailed({
+    const routeOut = _limousineRouteCache || (_limousineAccepted
+      ? {
+          route: { distance: 0, duration: 0 },
+          legs: [],
+          resolved_from_point: null,
+          resolved_to_point: null,
+        }
+      : await routeFromTextsWithStopsDetailed({
       fromText: from,
       toText: to,
       fromPoint,
       toPoint,
       stopsTexts: stops,
       token: env.MAPBOX_TOKEN
-    });
+    }));
     const routeResolvedPickupCoords = _allocatorResolvePointCoordinates({
       resolved_waypoint: routeOut?.resolved_from_point,
     });

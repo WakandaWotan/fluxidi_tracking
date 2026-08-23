@@ -159,11 +159,12 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       'return_destination',
       listen: false,
     );
-    if (widget.resumeRepository != null) {
-      unawaited(_controller.detectSecureResume());
-    }
     final initialOffer = widget.initialOffer;
     final initialPartner = (widget.initialPublicPartnerId ?? '').trim();
+    final startingNewOffer = initialOffer != null && initialPartner.isNotEmpty;
+    if (widget.resumeRepository != null && !startingNewOffer) {
+      unawaited(_controller.detectSecureResume());
+    }
     if (initialOffer != null && initialPartner.isNotEmpty) {
       _controller.applyShowroomSelection(
         publicPartnerId: initialPartner,

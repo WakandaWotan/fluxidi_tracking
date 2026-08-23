@@ -2909,6 +2909,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  LinearGradient _driverRideCardSurfaceGradient({
+    required bool isLightEmerald,
+    required bool isMiddayGold,
+    required bool isMidnightBlue,
+  }) {
+    if (isLightEmerald) return _lightEmeraldSurfaceGradient();
+    if (isMiddayGold) return _middayGoldSurfaceGradient();
+    if (isMidnightBlue) return _midnightBlueSurfaceGradient();
+    return const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
+    );
+  }
+
   LinearGradient _lightEmeraldSelectedSurfaceGradient() {
     // Soft mint highlight for active nav / selected chips on the light shell.
     return const LinearGradient(
@@ -36238,15 +36253,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
       decoration: BoxDecoration(
-        gradient: isMiddayGold
-            ? _middayGoldSurfaceGradient()
-            : (isMidnightBlue
-                  ? _midnightBlueSurfaceGradient()
-                  : const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
-                    )),
+        gradient: _driverRideCardSurfaceGradient(
+          isLightEmerald: isLightEmerald,
+          isMiddayGold: isMiddayGold,
+          isMidnightBlue: isMidnightBlue,
+        ),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: isCustomHuisstijl
@@ -36607,15 +36618,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           return Container(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
             decoration: BoxDecoration(
-              gradient: isMiddayGold
-                  ? _middayGoldSurfaceGradient()
-                  : (isMidnightBlue
-                        ? _midnightBlueSurfaceGradient()
-                        : const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
-                          )),
+              gradient: _driverRideCardSurfaceGradient(
+                isLightEmerald: isLightEmerald,
+                isMiddayGold: isMiddayGold,
+                isMidnightBlue: isMidnightBlue,
+              ),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
                 color: isCustomHuisstijl
@@ -36671,7 +36678,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             height: 28,
                             margin: const EdgeInsets.symmetric(vertical: 4),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.34),
+                              color: cardMuted.withOpacity(0.55),
                               borderRadius: BorderRadius.circular(99),
                             ),
                           ),
@@ -36692,8 +36699,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                             b.from ?? '—',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: cardPrimary,
                               fontSize: 15.1,
                               fontWeight: FontWeight.w700,
                               height: 1.2,
@@ -36841,15 +36848,11 @@ class _DriverHomePageState extends State<DriverHomePage>
             18,
           ),
           decoration: BoxDecoration(
-            gradient: isMiddayGold
-                ? _middayGoldSurfaceGradient()
-                : (isMidnightBlue
-                      ? _midnightBlueSurfaceGradient()
-                      : const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF151515), Color(0xFF0B0B0B)],
-                        )),
+            gradient: _driverRideCardSurfaceGradient(
+              isLightEmerald: isLightEmerald,
+              isMiddayGold: isMiddayGold,
+              isMidnightBlue: isMidnightBlue,
+            ),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isCustomHuisstijl
@@ -36877,9 +36880,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.035),
+                  color: isLightEmerald
+                      ? cardPrimary.withOpacity(0.04)
+                      : Colors.white.withOpacity(0.035),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withOpacity(0.07)),
+                  border: Border.all(
+                    color: isLightEmerald
+                        ? cardPrimary.withOpacity(0.10)
+                        : Colors.white.withOpacity(0.07),
+                  ),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -36899,7 +36908,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           height: narrow ? 28 : 32,
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.30),
+                            color: cardMuted.withOpacity(0.55),
                             borderRadius: BorderRadius.circular(99),
                           ),
                         ),
@@ -36919,8 +36928,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                             b.from ?? '—',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: cardPrimary,
                               fontWeight: FontWeight.w700,
                               height: 1.2,
                             ),

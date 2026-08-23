@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
@@ -357,11 +360,17 @@ class _LimousineCustomerRequestDetailPageState
     _controller = LimousineCustomerQuoteController(
       gateway: widget.gateway,
       historyRepository: widget.history,
+      resumeRepository: LimousineAcceptedBookingResumeRepository(),
     )..restorePersistedRequest(widget.record);
     _controller.addListener(_onChanged);
     if (looksLikeLimousineStatusRef(widget.record.statusRef)) {
       _controller.refreshStatus();
     }
+    unawaited(
+      _controller.restoreAcceptedResumeForQuote(
+        quoteRequestId: widget.record.quoteRequestId,
+      ),
+    );
   }
 
   @override
@@ -389,23 +398,29 @@ class _LimousineCustomerRequestDetailPageState
   Widget build(BuildContext context) {
     final language = appLanguageNotifier.value;
     final palette = paletteForCustomerTheme(customerThemeNotifier.value);
-    return Scaffold(
-      key: kLimousineCustomerRequestDetailKey,
-      backgroundColor: palette.background,
-      appBar: AppBar(
+    return Theme(
+      data: themeForCustomerPalette(Theme.of(context), palette),
+      child: Scaffold(
+        key: kLimousineCustomerRequestDetailKey,
         backgroundColor: palette.background,
-        foregroundColor: palette.textPrimary,
-        title: Text(kLimousineCustomerStatusTitle.of(language)),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          LimousineCustomerStatusView(
-            controller: _controller,
-            language: language,
-            palette: palette,
+        appBar: AppBar(
+          backgroundColor: palette.background,
+          foregroundColor: palette.textPrimary,
+          title: Text(kLimousineCustomerStatusTitle.of(language)),
+        ),
+        body: DefaultTextStyle(
+          style: TextStyle(color: palette.textPrimary, height: 1.35),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              LimousineCustomerStatusView(
+                controller: _controller,
+                language: language,
+                palette: palette,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

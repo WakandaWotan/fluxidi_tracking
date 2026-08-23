@@ -1104,6 +1104,20 @@ export function observeLimousineQuoteExpiry(record, { nowIso = null } = {}) {
 /// Customer/company-safe projection of a manual-quote record. Never exposes
 /// internal costs, the operating-base address, driver data, subscription
 /// internals, audit, status tokens, itinerary fingerprints or raw payloads.
+export function publicLimousinePartnerId(record) {
+  const rec = asObject(record);
+  const req = asObject(rec.request);
+  const stored = safeText(
+    rec.public_partner_id ?? rec.publicPartnerId ?? req.public_partner_id ?? req.publicPartnerId,
+    120,
+  );
+  if (stored) return stored;
+  const tenant = safeText(rec.tenant_id, 96);
+  const company = safeText(rec.company_id, 96);
+  if (!tenant || !company) return "";
+  return `company:${tenant}:${company}`;
+}
+
 export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
   const rec = asObject(record);
   const req = asObject(rec.request);
@@ -1115,6 +1129,7 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
   const viewedAt = safeText(rec.company_viewed_at, 40);
   const locale = normalizeLimousineQuotationLocale(req.locale);
   const acceptedAt = safeText(rec.accepted_at, 40);
+  const partnerId = publicLimousinePartnerId(rec);
   return {
     quote_request_id: safeText(rec.quote_request_id, 120),
     state: safeText(rec.state, 40),
@@ -1163,6 +1178,7 @@ export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
     company_viewed: Boolean(viewedAt) || safeText(rec.state, 40) === S.VIEWED_BY_COMPANY,
     ...(viewedAt ? { company_viewed_at: viewedAt } : {}),
     ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
+    ...(partnerId ? { public_partner_id: partnerId } : {}),
     acceptance_allowed: readiness.acceptance_allowed === true,
     ...(readiness.acceptance_allowed
       ? {}

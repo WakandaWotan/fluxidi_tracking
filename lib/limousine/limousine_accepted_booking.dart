@@ -324,10 +324,20 @@ LimousineAcceptedBookingReview buildLimousineAcceptedBookingReview({
   );
 }
 
+String firstLimousinePublicPartnerId(Iterable<String?> values) {
+  for (final value in values) {
+    final text = (value ?? '').trim();
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
 LimousineAcceptedBookingError? limousineAcceptedBookPreflightError({
   required bool entryEnabled,
   LimousineAcceptedQuoteHandoff? handoff,
   LimousineAcceptedBookingCustomer? customer,
+  LimousineQuoteCreateDraft? draft,
+  LimousineQuoteRequest? request,
 }) {
   if (!entryEnabled) return LimousineAcceptedBookingError.gateOff;
   if (handoff == null || handoff.acceptanceReference.trim().isEmpty) {
@@ -336,7 +346,11 @@ LimousineAcceptedBookingError? limousineAcceptedBookPreflightError({
   if (!looksLikeLimousineAcceptanceRef(handoff.acceptanceReference)) {
     return LimousineAcceptedBookingError.malformedAcceptanceReference;
   }
-  if (handoff.publicPartnerId.trim().isEmpty) {
+  if (firstLimousinePublicPartnerId(<String?>[
+    handoff.publicPartnerId,
+    draft?.publicPartnerId,
+    request?.publicPartnerId,
+  ]).isEmpty) {
     return LimousineAcceptedBookingError.unauthorizedScope;
   }
   if (handoff.from.trim().isEmpty ||
@@ -368,7 +382,11 @@ Map<String, dynamic> limousineAcceptedBookPayload({
   bool billingEnabled = false,
   BookingBillingIdentity billing = BookingBillingIdentity.empty,
 }) {
-  final partnerId = handoff.publicPartnerId.trim();
+  final partnerId = firstLimousinePublicPartnerId(<String?>[
+    handoff.publicPartnerId,
+    draft.publicPartnerId,
+    request?.publicPartnerId,
+  ]);
   final phone = customer.phone.trim();
   final email = customer.email.trim();
   final name = customer.name.trim();

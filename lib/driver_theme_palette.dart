@@ -95,6 +95,26 @@ const DriverThemePalette _lightEmeraldPalette = DriverThemePalette(
   isDark: false,
 );
 
+/// Surface/foreground pairing used by chauffeur ride cards.
+/// Light themes keep the light card surface; dark themes keep dark cards.
+({Color surface, Color foreground, Color muted}) driverRideCardColors(
+  DriverThemeVariant variant,
+) {
+  final palette = paletteForDriverTheme(variant);
+  if (!palette.isDark) {
+    return (
+      surface: const Color(0xFFF7FAF8),
+      foreground: palette.textPrimary,
+      muted: palette.textMuted,
+    );
+  }
+  return (
+    surface: palette.surface,
+    foreground: palette.textPrimary,
+    muted: palette.textMuted,
+  );
+}
+
 DriverThemePalette paletteForDriverTheme(DriverThemeVariant variant) {
   switch (variant) {
     case DriverThemeVariant.nightGold:

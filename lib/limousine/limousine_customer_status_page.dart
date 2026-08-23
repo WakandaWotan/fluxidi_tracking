@@ -67,7 +67,7 @@ class LimousineCustomerStatusView extends StatelessWidget {
         ? controller.lockedVehicle!.name.trim()
         : limousineQuoteVehicleDisplay(request, language);
     final refreshFailed = controller.statusRefreshFailed;
-    return Column(
+    final content = Column(
       key: kLimousineCustomerStatusPageKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -347,6 +347,13 @@ class LimousineCustomerStatusView extends StatelessWidget {
           ),
         ),
       ],
+    );
+    return Theme(
+      data: themeForCustomerPalette(Theme.of(context), palette),
+      child: DefaultTextStyle(
+        style: TextStyle(color: palette.textPrimary, height: 1.35),
+        child: content,
+      ),
     );
   }
 }

@@ -42,6 +42,7 @@ class LimousineCustomerRequestRecord {
     this.from = '',
     this.to = '',
     this.scheduledPickupIso = '',
+    this.publicPartnerId = '',
     this.request,
     this.updatedAt = '',
   });
@@ -55,6 +56,7 @@ class LimousineCustomerRequestRecord {
   final String from;
   final String to;
   final String scheduledPickupIso;
+  final String publicPartnerId;
   final LimousineQuoteRequest? request;
   final String updatedAt;
 
@@ -66,6 +68,7 @@ class LimousineCustomerRequestRecord {
     String? from,
     String? to,
     String? scheduledPickupIso,
+    String? publicPartnerId,
     LimousineQuoteRequest? request,
     String? updatedAt,
   }) {
@@ -79,6 +82,7 @@ class LimousineCustomerRequestRecord {
       from: from ?? this.from,
       to: to ?? this.to,
       scheduledPickupIso: scheduledPickupIso ?? this.scheduledPickupIso,
+      publicPartnerId: publicPartnerId ?? this.publicPartnerId,
       request: request ?? this.request,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -96,6 +100,7 @@ class LimousineCustomerRequestRecord {
       'from': from,
       'to': to,
       'scheduled_pickup_iso': scheduledPickupIso,
+      'public_partner_id': publicPartnerId,
       'updated_at': updatedAt,
       if (request != null) 'request': _requestSnapshot(request!),
     };
@@ -126,6 +131,13 @@ class LimousineCustomerRequestRecord {
       from: (map['from'] ?? '').toString().trim(),
       to: (map['to'] ?? '').toString().trim(),
       scheduledPickupIso: (map['scheduled_pickup_iso'] ?? '').toString().trim(),
+      publicPartnerId:
+          (map['public_partner_id'] ??
+                  map['publicPartnerId'] ??
+                  request?.publicPartnerId ??
+                  '')
+              .toString()
+              .trim(),
       request: request,
       updatedAt: (map['updated_at'] ?? '').toString().trim(),
     );
@@ -183,6 +195,8 @@ Map<String, dynamic> _requestSnapshot(LimousineQuoteRequest request) {
     if (request.quotationCurrency.isNotEmpty)
       'quotation_currency': request.quotationCurrency,
     if (request.acceptedAt.isNotEmpty) 'accepted_at': request.acceptedAt,
+    if (request.publicPartnerId.isNotEmpty)
+      'public_partner_id': request.publicPartnerId,
   };
 }
 

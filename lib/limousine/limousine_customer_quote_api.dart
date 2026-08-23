@@ -1107,6 +1107,10 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         _forgetAcceptedHandoff();
       }
       request = request == null ? next : request!.mergeAuthoritative(next);
+      if (draft.publicPartnerId.trim().isEmpty &&
+          (request?.publicPartnerId ?? '').trim().isNotEmpty) {
+        draft = draft.copyWith(publicPartnerId: request!.publicPartnerId);
+      }
       statusRefreshFailed = false;
       phase = LimousineCustomerQuotePhase.live;
       if (!limousineCustomerShouldPoll(request!.state)) {
@@ -1218,11 +1222,44 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     step = LimousineQuoteStateId.waitingForCustomer.contains(record.state)
         ? LimousineCustomerQuoteStep.reviewQuote
         : LimousineCustomerQuoteStep.waitingCompany;
+    final partnerId = firstLimousinePublicPartnerId(<String?>[
+      draft.publicPartnerId,
+      record.publicPartnerId,
+      record.request?.publicPartnerId,
+    ]);
+    draft = draft.copyWith(
+      publicPartnerId: partnerId,
+      from: draft.from.isNotEmpty ? draft.from : record.from,
+      to: draft.to.isNotEmpty ? draft.to : record.to,
+      scheduledPickupIso: draft.scheduledPickupIso.isNotEmpty
+          ? draft.scheduledPickupIso
+          : record.scheduledPickupIso,
+      offerId: draft.offerId.isNotEmpty
+          ? draft.offerId
+          : (record.request?.offerId ?? ''),
+    );
     if (request != null && limousineCustomerShouldPoll(request!.state)) {
       startPolling();
       unawaited(refreshStatus());
     }
     notifyListeners();
+  }
+
+  Future<LimousineAcceptedBookingResumeEnvelope?>
+  restoreAcceptedResumeForQuote({required String quoteRequestId}) async {
+    final repo = _resumeRepository;
+    if (repo == null) return null;
+    final customerId = ((await _customerIdLoader()) ?? '').trim();
+    if (customerId.isEmpty) return null;
+    final envelope = await repo.restore(
+      scope: LimousineAcceptedBookingResumeScope(customerId: customerId),
+    );
+    if (envelope == null) return null;
+    if (envelope.handoff.quoteRequestId.trim() != quoteRequestId.trim()) {
+      return null;
+    }
+    applySecureResumeEnvelope(envelope);
+    return envelope;
   }
 
   Future<Uint8List> loadQuotationPdf() async {
@@ -1263,6 +1300,10 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         from: live.fulfilment?.from ?? draft.from,
         to: live.fulfilment?.to ?? draft.to,
         scheduledPickupIso: live.scheduledPickupIso,
+        publicPartnerId: firstLimousinePublicPartnerId(<String?>[
+          draft.publicPartnerId,
+          live.publicPartnerId,
+        ]),
         request: live,
         updatedAt: live.updatedAt,
       ),
@@ -1301,11 +1342,23 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
           totalInclVatCents: result.request.quote?.totalInclVatCents ?? 0,
           currency: result.request.quote?.currency ?? '',
           offerId: result.request.offerId,
-          publicPartnerId: draft.publicPartnerId,
-          from: draft.from,
-          to: draft.to,
+          publicPartnerId: firstLimousinePublicPartnerId(<String?>[
+            draft.publicPartnerId,
+            result.request.publicPartnerId,
+            selectedProvider?.provider.partnerId,
+          ]),
+          from: draft.from.isNotEmpty
+              ? draft.from
+              : (result.request.fulfilment?.from ?? ''),
+          to: draft.to.isNotEmpty
+              ? draft.to
+              : (result.request.fulfilment?.to ?? ''),
           scheduledPickupIso: result.request.scheduledPickupIso,
         );
+        if (handoff!.publicPartnerId.isNotEmpty &&
+            draft.publicPartnerId.trim().isEmpty) {
+          draft = draft.copyWith(publicPartnerId: handoff!.publicPartnerId);
+        }
         restoredFromSecureResume = false;
         secureResumeReview = buildLimousineAcceptedBookingReview(
           handoff: handoff!,

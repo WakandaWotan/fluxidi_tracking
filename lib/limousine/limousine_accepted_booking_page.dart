@@ -106,90 +106,98 @@ class _LimousineAcceptedBookingPageState
   Widget build(BuildContext context) {
     final palette = paletteForCustomerTheme(customerThemeNotifier.value);
     final controller = widget.controller;
-    return Scaffold(
-      key: kLimousineAcceptedBookingPageKey,
-      backgroundColor: palette.background,
-      appBar: AppBar(
+    return Theme(
+      data: themeForCustomerPalette(Theme.of(context), palette),
+      child: Scaffold(
+        key: kLimousineAcceptedBookingPageKey,
         backgroundColor: palette.background,
-        foregroundColor: palette.textPrimary,
-        title: Text(_t(kLimousineAcceptedBookingTitle)),
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          children: [
-            if (!_entryEnabled)
-              Text(
-                _t(
-                  kLimousineAcceptedBookingErrors[LimousineAcceptedBookingError
-                      .gateOff]!,
-                ),
-              )
-            else if (controller.phase == LimousineAcceptedBookingPhase.success)
-              _success(controller, palette)
-            else ...[
-              _review(controller.reviewFor(_lang), palette),
-              _paymentSection(controller, palette),
-              _billingSection(controller, palette),
-              if (controller.error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
+        appBar: AppBar(
+          backgroundColor: palette.background,
+          foregroundColor: palette.textPrimary,
+          title: Text(_t(kLimousineAcceptedBookingTitle)),
+        ),
+        body: SafeArea(
+          child: DefaultTextStyle(
+            style: TextStyle(color: palette.textPrimary, height: 1.35),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              children: [
+                if (!_entryEnabled)
+                  Text(
                     _t(
-                      kLimousineAcceptedBookingErrors[controller.error] ??
-                          kLimousineAcceptedBookingRetryable,
+                      kLimousineAcceptedBookingErrors[LimousineAcceptedBookingError
+                          .gateOff]!,
                     ),
+                  )
+                else if (controller.phase ==
+                    LimousineAcceptedBookingPhase.success)
+                  _success(controller, palette)
+                else ...[
+                  _review(controller.reviewFor(_lang), palette),
+                  _paymentSection(controller, palette),
+                  _billingSection(controller, palette),
+                  if (controller.error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        _t(
+                          kLimousineAcceptedBookingErrors[controller.error] ??
+                              kLimousineAcceptedBookingRetryable,
+                        ),
+                      ),
+                    ),
+                  if (controller.phase ==
+                      LimousineAcceptedBookingPhase.submitting)
+                    Padding(
+                      key: kLimousineAcceptedBookingCreatingKey,
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(_t(kLimousineAcceptedBookingCreating)),
+                    ),
+                  if (controller.phase !=
+                      LimousineAcceptedBookingPhase.success) ...[
+                    CheckboxListTile(
+                      key: kLimousineAcceptedBookingConfirmKey,
+                      value: controller.confirmationAcknowledged,
+                      onChanged: controller.submitting
+                          ? null
+                          : (value) => controller.setConfirmationAcknowledged(
+                              value == true,
+                            ),
+                      title: Text(_t(kLimousineAcceptedBookingConfirm)),
+                    ),
+                    FilledButton(
+                      key: kLimousineAcceptedBookingSubmitKey,
+                      onPressed: controller.canConfirmBooking
+                          ? () => controller.confirmBooking()
+                          : null,
+                      child: Text(_t(kLimousineAcceptedBookingSubmit)),
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: kLimousineAcceptedBookingBackToQuoteKey,
+                    onPressed:
+                        widget.onBackToQuote ??
+                        () => Navigator.of(context).maybePop(),
+                    child: Text(_t(kLimousineAcceptedBookingBackToQuote)),
                   ),
                 ),
-              if (controller.phase == LimousineAcceptedBookingPhase.submitting)
-                Padding(
-                  key: kLimousineAcceptedBookingCreatingKey,
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(_t(kLimousineAcceptedBookingCreating)),
-                ),
-              if (controller.phase !=
-                  LimousineAcceptedBookingPhase.success) ...[
-                CheckboxListTile(
-                  key: kLimousineAcceptedBookingConfirmKey,
-                  value: controller.confirmationAcknowledged,
-                  onChanged: controller.submitting
-                      ? null
-                      : (value) => controller.setConfirmationAcknowledged(
-                          value == true,
-                        ),
-                  title: Text(_t(kLimousineAcceptedBookingConfirm)),
-                ),
-                FilledButton(
-                  key: kLimousineAcceptedBookingSubmitKey,
-                  onPressed: controller.canConfirmBooking
-                      ? () => controller.confirmBooking()
-                      : null,
-                  child: Text(_t(kLimousineAcceptedBookingSubmit)),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: kLimousineAcceptedBookingBackToProfileKey,
+                    onPressed:
+                        widget.onBackToProfile ??
+                        () => Navigator.of(context).maybePop(),
+                    child: Text(_t(kLimousineAcceptedBookingBackToProfile)),
+                  ),
                 ),
               ],
-            ],
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                key: kLimousineAcceptedBookingBackToQuoteKey,
-                onPressed:
-                    widget.onBackToQuote ??
-                    () => Navigator.of(context).maybePop(),
-                child: Text(_t(kLimousineAcceptedBookingBackToQuote)),
-              ),
             ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                key: kLimousineAcceptedBookingBackToProfileKey,
-                onPressed:
-                    widget.onBackToProfile ??
-                    () => Navigator.of(context).maybePop(),
-                child: Text(_t(kLimousineAcceptedBookingBackToProfile)),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
