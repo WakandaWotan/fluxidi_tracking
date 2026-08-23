@@ -164,10 +164,46 @@ import {
   limousineManualQuoteGateEnabled as _limousineManualQuoteGateEnabledRaw,
   limousineQuoteRequestKey as _limousineQuoteRequestKey,
   observeLimousineQuoteExpiry as _observeLimousineQuoteExpiry,
+  publicLimousinePartnerId as _publicLimousinePartnerId,
   publicLimousineQuoteView as _publicLimousineQuoteView,
   validateLimousineCompanyQuote as _validateLimousineCompanyQuote,
   validateLimousineQuoteRequest as _validateLimousineQuoteRequest,
 } from "./modules/limousine_manual_quote.mjs";
+import {
+  LIMOUSINE_EXTERNAL_ORIGIN as _LIMOUSINE_EXTERNAL_ORIGIN,
+  LIMOUSINE_EXTERNAL_ERRORS as _LIMOUSINE_EXTERNAL_ERRORS,
+  LIMOUSINE_EXTERNAL_INVITE_RATE_MAX as _LIMOUSINE_EXTERNAL_INVITE_RATE_MAX,
+  LIMOUSINE_EXTERNAL_RATE_WINDOW_SECONDS as _LIMOUSINE_EXTERNAL_RATE_WINDOW_SECONDS,
+  LIMOUSINE_EXTERNAL_SESSION_RATE_MAX as _LIMOUSINE_EXTERNAL_SESSION_RATE_MAX,
+  buildLimousineExternalCleanUrl as _buildLimousineExternalCleanUrl,
+  buildLimousineExternalContactRecord as _buildLimousineExternalContactRecord,
+  buildLimousineExternalInvitationRecord as _buildLimousineExternalInvitationRecord,
+  buildLimousineExternalInvitationUrl as _buildLimousineExternalInvitationUrl,
+  buildLimousineExternalSessionRecord as _buildLimousineExternalSessionRecord,
+  guestCustomerFromExternalContact as _guestCustomerFromExternalContact,
+  limousineExternalContactKey as _limousineExternalContactKey,
+  limousineExternalInviteKey as _limousineExternalInviteKey,
+  limousineExternalInviteRateKey as _limousineExternalInviteRateKey,
+  limousineExternalSessionCookieHeader as _limousineExternalSessionCookieHeader,
+  limousineExternalSessionKey as _limousineExternalSessionKey,
+  limousineExternalSessionRateKey as _limousineExternalSessionRateKey,
+  limousineExternalInvitationBindingMatches as _limousineExternalInvitationBindingMatches,
+  markLimousineExternalInvitationOpened as _markLimousineExternalInvitationOpened,
+  markLimousineExternalInvitationShared as _markLimousineExternalInvitationShared,
+  newLimousineExternalId as _newLimousineExternalId,
+  parseLimousineInvitePathToken as _parseLimousineInvitePathToken,
+  projectLimousineCompanyContactSummary as _projectLimousineCompanyContactSummary,
+  publicLimousineExternalCustomerView as _publicLimousineExternalCustomerView,
+  readLimousineExternalSessionCookie as _readLimousineExternalSessionCookie,
+  sanitizeLimousineExternalLog as _sanitizeLimousineExternalLog,
+  sealLimousineExternalInvitation as _sealLimousineExternalInvitation,
+  sealLimousineExternalSession as _sealLimousineExternalSession,
+  unsealLimousineExternalInvitation as _unsealLimousineExternalInvitation,
+  unsealLimousineExternalSession as _unsealLimousineExternalSession,
+  validateLimousineExternalContact as _validateLimousineExternalContact,
+  withLimousineExternalDeliveryView as _withLimousineExternalDeliveryView,
+} from "./modules/limousine_external_customer.mjs";
+import { renderLimousineExternalQuotationPage as _renderLimousineExternalQuotationPage } from "./modules/limousine_external_customer_page.mjs";
 import {
   attachLimousineBookObservability as _attachLimousineBookObservability,
   createLimousineSubmitRequestId as _createLimousineSubmitRequestId,
@@ -999,6 +1035,141 @@ async function _observeAndPersistLimousineExpiry(env, record, nowIso) {
 
 function _limousineInboxNotFound() {
   return json({ ok: false, error: "not_found" }, 404);
+}
+
+function _limousineExternalHtml(content, { status = 200, cookie = "" } = {}) {
+  const headers = {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "private, no-store, max-age=0",
+    Pragma: "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    ...corsHeaders(),
+  };
+  if (cookie) headers["Set-Cookie"] = cookie;
+  return new Response(content, { status, headers });
+}
+
+function _limousineExternalJson(body, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, no-store, max-age=0",
+      ...corsHeaders(),
+      ...extraHeaders,
+    },
+  });
+}
+
+async function _loadLimousineExternalJson(env, key) {
+  if (!key || !env?.BOOKING_KV) return null;
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    return raw && typeof raw === "object" ? raw : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _saveLimousineExternalJson(env, key, record) {
+  if (!key || !env?.BOOKING_KV) return;
+  await env.BOOKING_KV.put(key, JSON.stringify(record));
+}
+
+async function _loadLimousineExternalInviteForRecord(env, record) {
+  return _loadLimousineExternalJson(
+    env,
+    _limousineExternalInviteKey(record?.external_invitation_id),
+  );
+}
+
+async function _companyInboxViewWithExternal(env, record, extras = {}) {
+  const invite = await _loadLimousineExternalInviteForRecord(env, record);
+  return _withLimousineExternalDeliveryView(
+    _buildLimousineCompanyInboxView(record, extras),
+    invite,
+    record,
+  );
+}
+
+async function _resolveLimousineExternalSession(request, env, { nowIso = null } = {}) {
+  const token = _readLimousineExternalSessionCookie(request.headers.get("Cookie"));
+  if (!token) return { ok: false, error: _LIMOUSINE_EXTERNAL_ERRORS.SESSION_REQUIRED };
+  const rate = await _incrementSimpleRateLimit({
+    env,
+    rateKey: await _limousineExternalSessionRateKey(token),
+    maxCount: _LIMOUSINE_EXTERNAL_SESSION_RATE_MAX,
+    windowSeconds: _LIMOUSINE_EXTERNAL_RATE_WINDOW_SECONDS,
+  });
+  if (rate?.limited) return { ok: false, error: "rate_limited", status: 429 };
+  const unsealed = await _unsealLimousineExternalSession({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    reference: token,
+    nowIso,
+  });
+  if (!unsealed.ok) return { ok: false, error: _LIMOUSINE_EXTERNAL_ERRORS.SESSION_REQUIRED };
+  const session = await _loadLimousineExternalJson(
+    env,
+    _limousineExternalSessionKey(unsealed.binding.session_id),
+  );
+  const record = await _loadLimousineQuoteRecord(env, unsealed.binding.quote_request_id);
+  if (
+    !session ||
+    !record ||
+    !_limousineQuoteScopeMatches(record, unsealed.binding) ||
+    sanitizeTenantString(session.quote_request_id, 120) !==
+      sanitizeTenantString(record.quote_request_id, 120)
+  ) {
+    return { ok: false, error: _LIMOUSINE_EXTERNAL_ERRORS.SESSION_REQUIRED };
+  }
+  return { ok: true, token, session, record, binding: unsealed.binding };
+}
+
+async function _acceptLimousineQuoteRecord(env, record, expectedRevision, nowIso) {
+  const commercial = _resolveLimousineQuotationCommercialSource(record);
+  if (commercial.mode === "missing") {
+    return { ok: false, status: 409, error: _LIMOUSINE_QUOTATION_SNAPSHOT_MISSING };
+  }
+  const acceptable = _assertLimousineQuoteAcceptable(record, {
+    expectedRevision,
+    nowIso,
+  });
+  if (!acceptable.ok) {
+    return {
+      ok: false,
+      status: 409,
+      error: acceptable.reason,
+      current_revision: acceptable.current_revision,
+    };
+  }
+  const accepted = _applyLimousineQuoteTransition(record, {
+    to: _LIMOUSINE_QUOTE_STATES.ACCEPTED,
+    expectedRevision,
+    actorType: "customer",
+    reasonCode: "customer_accepted",
+    nowIso,
+  });
+  if (!accepted.ok) {
+    return {
+      ok: false,
+      status: 409,
+      error: accepted.reason,
+      current_revision: accepted.current_revision,
+    };
+  }
+  const binding = commercial.mode === "snapshot"
+    ? _buildLimousineAcceptanceBindingFromSnapshot(accepted.record, commercial.snapshot)
+    : _buildLimousineAcceptanceBinding(accepted.record);
+  const sealed = await _sealLimousineAcceptance({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    binding,
+    acceptedAtIso: nowIso,
+    ttlMinutes: 60,
+  });
+  if (!sealed.ok) return { ok: false, status: 500, error: sealed.error };
+  const next = _appendLimousineQuoteAudit(accepted.record, accepted.audit);
+  await _saveLimousineQuoteRecord(env, next);
+  return { ok: true, record: next, acceptance_reference: sealed.reference, expires_at: sealed.expires_at };
 }
 
 function _limousineQuotationPdfResponse(served) {
@@ -45906,6 +46077,618 @@ export default {
       }
 
       // =====================================================================
+      // P3P — external customer invitation + guest quotation surface.
+      // Reuses the existing quote/accept/book engines. status_ref stays out
+      // of URLs. Gate-off performs zero reads/writes.
+      // =====================================================================
+      if (url.pathname === "/admin/limousine/quote-requests/create-external" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_LIMOUSINE_EXTERNAL_CREATE",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        if (!suspensionGuard.ok) return _subscriptionBlockedResponse({ scope: "company" });
+        const contactCheck = _validateLimousineExternalContact(body?.contact ?? body);
+        if (!contactCheck.ok) {
+          return json({ ok: false, error: contactCheck.reason, field: contactCheck.field }, 400);
+        }
+        const eligible = await _resolveLimousineProviderEligibility(env, scope);
+        const { offer } = await _loadAuthoritativeLimousineOffer(
+          env,
+          scope,
+          body?.request?.offer_id ?? body?.offer_id ?? body?.offerId,
+        );
+        let publishedVehicles = [];
+        try {
+          const partnerKeys = buildScopedPartnerKeys(scope);
+          const profileRecord = partnerKeys
+            ? await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" })
+            : null;
+          publishedVehicles = Array.isArray(profileRecord?.partner_profile?.vehicles)
+            ? profileRecord.partner_profile.vehicles
+            : [];
+        } catch (_) {
+          publishedVehicles = [];
+        }
+        const validated = _validateLimousineQuoteRequest(body?.request ?? body, {
+          eligible,
+          offer,
+          gateEnabled: true,
+          publishedVehicles,
+        });
+        if (!validated.ok) {
+          return json({ ok: false, error: validated.reason, field: validated.field }, 400);
+        }
+        const nowIso = new Date().toISOString();
+        const taxProfile = await loadTaxProfile(env, {
+          tenant_id: scope.tenant_id,
+          company_id: scope.company_id,
+        }, { allowTenantLegacyFallback: false });
+        const validatedQuote = _validateLimousineCompanyQuote(body?.quote ?? body, {
+          nowIso,
+          companyTaxProfile: taxProfile,
+        });
+        if (!validatedQuote.ok) {
+          return json({
+            ok: false,
+            error: validatedQuote.reason,
+            missing: validatedQuote.missing,
+            unknown: validatedQuote.unknown,
+          }, 400);
+        }
+        const contactId = _newLimousineExternalId("limxc_");
+        const invitationId = _newLimousineExternalId("limxi_");
+        const quoteRequestId = `limq_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+        const customerRef = `ext:${contactId}`;
+        const idempotencySeed = [
+          scope.tenant_id,
+          scope.company_id,
+          contactCheck.contact.mail || "",
+          contactCheck.contact.mobile || "",
+          validated.request.itinerary_fingerprint,
+        ].join("~");
+        const idempotencyKey = `limousine_external_quote:${scope.tenant_id}:${scope.company_id}:${(await sha256Hex(idempotencySeed)).slice(0, 32)}`;
+        const existingId = safeStr(await env.BOOKING_KV.get(idempotencyKey));
+        if (existingId) {
+          const existing = await _loadLimousineQuoteRecord(env, existingId);
+          if (existing && _limousineQuoteScopeMatches(existing, scope)) {
+            const invite = await _loadLimousineExternalInviteForRecord(env, existing);
+            const sealedExisting = await _sealLimousineExternalInvitation({
+              secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+              binding: {
+                tenant_id: existing.tenant_id,
+                company_id: existing.company_id,
+                quote_request_id: existing.quote_request_id,
+                invitation_id: existing.external_invitation_id,
+                contact_id: existing.external_contact_id,
+              },
+              issuedAtIso: nowIso,
+            });
+            const contact = await _loadLimousineExternalJson(
+              env,
+              _limousineExternalContactKey(existing.external_contact_id),
+            );
+            return json({
+              ok: true,
+              idempotent: true,
+              quote_request: await _companyInboxViewWithExternal(env, existing),
+              invitation_url: sealedExisting.ok
+                ? _buildLimousineExternalInvitationUrl(getBaseUrl(request), sealedExisting.reference)
+                : "",
+              contact: _projectLimousineCompanyContactSummary(contact),
+            }, 200);
+          }
+        }
+        const customerFingerprint = _buildLimousineCustomerFingerprint({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          customerRef,
+          quoteRequestId,
+          itineraryFingerprint: validated.request.itinerary_fingerprint,
+        });
+        const sealedStatus = await _sealLimousineStatusRef({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            purpose: "customer_status",
+            tenant_id: scope.tenant_id,
+            company_id: scope.company_id,
+            quote_request_id: quoteRequestId,
+            customer_fingerprint: customerFingerprint,
+            created_revision: 1,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealedStatus.ok) {
+          return json({ ok: false, error: sealedStatus.error || "internal_error" }, 500);
+        }
+        let record = {
+          quote_request_id: quoteRequestId,
+          tenant_id: scope.tenant_id,
+          company_id: scope.company_id,
+          public_partner_id: _publicLimousinePartnerId({
+            tenant_id: scope.tenant_id,
+            company_id: scope.company_id,
+          }),
+          state: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+          revision: 1,
+          last_transition_from: "",
+          last_transition_to: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+          request: validated.request,
+          pricing_snapshot: validated.snapshot || null,
+          offer_source_revision: offer?.source_revision ?? 0,
+          created_at: nowIso,
+          updated_at: nowIso,
+          audit: [],
+          origin: { channel: _LIMOUSINE_EXTERNAL_ORIGIN, created_by: "company" },
+          external_contact_id: contactId,
+          external_invitation_id: invitationId,
+          status_access: {
+            customer_fingerprint: customerFingerprint,
+            issued_at: sealedStatus.issued_at,
+            expires_at: sealedStatus.expires_at,
+            created_revision: 1,
+          },
+        };
+        record = _appendLimousineQuoteAudit(
+          record,
+          _buildLimousineQuoteAuditEntry({
+            from: "",
+            to: _LIMOUSINE_QUOTE_STATES.REQUESTED,
+            revision: 1,
+            actorType: "company",
+            reasonCode: "external_requested",
+            nowIso,
+          }),
+        );
+        const quoted = _applyLimousineCompanyQuoteAction(record, {
+          expectedRevision: 1,
+          quote: validatedQuote.quote,
+          nowIso,
+        });
+        if (!quoted.ok) {
+          return json({ ok: false, error: quoted.reason, current_revision: quoted.current_revision }, 409);
+        }
+        let next = quoted.record;
+        for (const audit of quoted.audits || (quoted.audit ? [quoted.audit] : [])) {
+          next = _appendLimousineQuoteAudit(next, audit);
+        }
+        const profile = await loadBusinessProfile(env, {
+          tenant_id: next.tenant_id,
+          company_id: next.company_id,
+        });
+        const attached = await _attachLimousineQuotationSnapshotAtSend({
+          env,
+          record: next,
+          profile,
+          nowIso,
+        });
+        if (!attached.ok) return json({ ok: false, error: attached.reason }, 409);
+        next = attached.record;
+        const contactBuilt = _buildLimousineExternalContactRecord({
+          contactId,
+          quoteRequestId,
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          contact: contactCheck.contact,
+          nowIso,
+        });
+        if (!contactBuilt.ok) {
+          return json({ ok: false, error: contactBuilt.reason }, 400);
+        }
+        const sealedInvite = await _sealLimousineExternalInvitation({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            tenant_id: scope.tenant_id,
+            company_id: scope.company_id,
+            quote_request_id: quoteRequestId,
+            invitation_id: invitationId,
+            contact_id: contactId,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealedInvite.ok) return json({ ok: false, error: "invitation_unavailable" }, 500);
+        const inviteRecord = _buildLimousineExternalInvitationRecord({
+          invitationId,
+          quoteRequestId,
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          contactId,
+          nowIso,
+          expiresAt: sealedInvite.expires_at,
+        });
+        await _saveLimousineQuoteRecord(env, next);
+        await _saveLimousineExternalJson(env, _limousineExternalContactKey(contactId), contactBuilt.record);
+        await _saveLimousineExternalJson(env, _limousineExternalInviteKey(invitationId), inviteRecord);
+        await env.BOOKING_KV.put(idempotencyKey, quoteRequestId, { expirationTtl: 60 * 60 * 24 * 30 });
+        _logLimousineSubmit(_sanitizeLimousineExternalLog({
+          route: "/admin/limousine/quote-requests/create-external",
+          service_type: "limousine",
+          tenant: scope.tenant_id,
+          company: scope.company_id,
+          quote_request_id: quoteRequestId,
+          origin: _LIMOUSINE_EXTERNAL_ORIGIN,
+          http_status: 200,
+        }));
+        return json({
+          ok: true,
+          quote_request: await _companyInboxViewWithExternal(env, next),
+          invitation_url: _buildLimousineExternalInvitationUrl(getBaseUrl(request), sealedInvite.reference),
+          contact: _projectLimousineCompanyContactSummary(contactBuilt.record),
+        }, 200);
+      }
+
+      const _limousineExternalInviteAction = url.pathname.match(
+        /^\/admin\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})\/invitation$/,
+      );
+      if (_limousineExternalInviteAction && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request, url, env, body, routeLabel: "ADMIN_LIMOUSINE_EXTERNAL_INVITE",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const record = await _loadLimousineQuoteRecord(env, _limousineExternalInviteAction[1]);
+        if (!record || !_limousineQuoteScopeMatches(record, scope)) return _limousineInboxNotFound();
+        const invite = await _loadLimousineExternalInviteForRecord(env, record);
+        if (!invite) return _limousineInboxNotFound();
+        const nowIso = new Date().toISOString();
+        const action = sanitizeTenantString(body?.action, 16).toLowerCase();
+        const nextInvite = action === "share" || action === "copy"
+          ? _markLimousineExternalInvitationShared(invite, nowIso)
+          : invite;
+        if (nextInvite !== invite) {
+          await _saveLimousineExternalJson(env, _limousineExternalInviteKey(invite.invitation_id), nextInvite);
+        }
+        const sealed = await _sealLimousineExternalInvitation({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            tenant_id: record.tenant_id,
+            company_id: record.company_id,
+            quote_request_id: record.quote_request_id,
+            invitation_id: record.external_invitation_id,
+            contact_id: record.external_contact_id,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealed.ok) return json({ ok: false, error: "invitation_unavailable" }, 500);
+        return json({
+          ok: true,
+          invitation_url: _buildLimousineExternalInvitationUrl(getBaseUrl(request), sealed.reference),
+          quote_request: await _companyInboxViewWithExternal(env, record),
+        }, 200);
+      }
+
+      const _limousineExternalContactGet = url.pathname.match(
+        /^\/admin\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})\/contact$/,
+      );
+      if (_limousineExternalContactGet && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request, url, env, body: null, routeLabel: "ADMIN_LIMOUSINE_EXTERNAL_CONTACT",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
+        const record = await _loadLimousineQuoteRecord(env, _limousineExternalContactGet[1]);
+        if (!record || !_limousineQuoteScopeMatches(record, scope)) return _limousineInboxNotFound();
+        const contact = await _loadLimousineExternalJson(
+          env,
+          _limousineExternalContactKey(record.external_contact_id),
+        );
+        if (!contact) return _limousineInboxNotFound();
+        return json({
+          ok: true,
+          contact: _projectLimousineCompanyContactSummary(contact),
+          quote_request: await _companyInboxViewWithExternal(env, record),
+        }, 200);
+      }
+
+      const inviteToken = _parseLimousineInvitePathToken(url.pathname);
+      if (inviteToken && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return _limousineExternalHtml(
+            _renderLimousineExternalQuotationPage({ missingSession: true }),
+            { status: 404 },
+          );
+        }
+        const rate = await _incrementSimpleRateLimit({
+          env,
+          rateKey: await _limousineExternalInviteRateKey(inviteToken),
+          maxCount: _LIMOUSINE_EXTERNAL_INVITE_RATE_MAX,
+          windowSeconds: _LIMOUSINE_EXTERNAL_RATE_WINDOW_SECONDS,
+        });
+        if (rate?.limited) {
+          return _limousineExternalHtml(
+            _renderLimousineExternalQuotationPage({ missingSession: true }),
+            { status: 429 },
+          );
+        }
+        const nowIso = new Date().toISOString();
+        const unsealed = await _unsealLimousineExternalInvitation({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          reference: inviteToken,
+          nowIso,
+        });
+        const failInvite = () => _limousineExternalHtml(
+          _renderLimousineExternalQuotationPage({ missingSession: true }),
+          { status: 404 },
+        );
+        if (!unsealed.ok) return failInvite();
+        const record = await _loadLimousineQuoteRecord(env, unsealed.binding.quote_request_id);
+        const invite = await _loadLimousineExternalJson(
+          env,
+          _limousineExternalInviteKey(unsealed.binding.invitation_id),
+        );
+        if (
+          !record ||
+          !invite ||
+          !_limousineQuoteScopeMatches(record, unsealed.binding) ||
+          !_limousineExternalInvitationBindingMatches(unsealed.binding, invite) ||
+          !_limousineTestCompanyAllowlisted(env, record.company_id)
+        ) {
+          return failInvite();
+        }
+        const opened = _markLimousineExternalInvitationOpened(invite, nowIso);
+        if (opened !== invite) {
+          await _saveLimousineExternalJson(env, _limousineExternalInviteKey(invite.invitation_id), opened);
+        }
+        const sessionId = _newLimousineExternalId("limxs_");
+        const sealedSession = await _sealLimousineExternalSession({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            tenant_id: record.tenant_id,
+            company_id: record.company_id,
+            quote_request_id: record.quote_request_id,
+            invitation_id: invite.invitation_id,
+            contact_id: invite.contact_id,
+            session_id: sessionId,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealedSession.ok) return failInvite();
+        await _saveLimousineExternalJson(
+          env,
+          _limousineExternalSessionKey(sessionId),
+          _buildLimousineExternalSessionRecord({
+            sessionId,
+            invitation: opened,
+            nowIso,
+            expiresAt: sealedSession.expires_at,
+          }),
+        );
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: _buildLimousineExternalCleanUrl(getBaseUrl(request)),
+            "Set-Cookie": _limousineExternalSessionCookieHeader(sealedSession.reference, {
+              expiresAtIso: sealedSession.expires_at,
+              secure: url.protocol === "https:",
+            }),
+            "Cache-Control": "private, no-store, max-age=0",
+          },
+        });
+      }
+
+      if (url.pathname === "/l/q" && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return _limousineExternalHtml(
+            _renderLimousineExternalQuotationPage({ missingSession: true }),
+            { status: 404 },
+          );
+        }
+        const session = await _resolveLimousineExternalSession(request, env);
+        const locale = session.ok ? session.record?.request?.locale : "nl";
+        return _limousineExternalHtml(
+          _renderLimousineExternalQuotationPage({
+            locale,
+            missingSession: !session.ok,
+          }),
+          { status: session.ok ? 200 : 401 },
+        );
+      }
+
+      if (url.pathname === "/l/api/quotation" && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return _limousineExternalJson({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const resolved = await _resolveLimousineExternalSession(request, env);
+        if (!resolved.ok) {
+          return _limousineExternalJson({ ok: false, error: resolved.error }, resolved.status || 401);
+        }
+        const profile = await loadBusinessProfile(env, {
+          tenant_id: resolved.record.tenant_id,
+          company_id: resolved.record.company_id,
+        });
+        const req = resolved.record.request || {};
+        return _limousineExternalJson({
+          ok: true,
+          quote_request: _publicLimousineExternalCustomerView(resolved.record, {
+            seller: {
+              name: profile?.trading_name || profile?.legal_name || "",
+              trading_name: profile?.trading_name || "",
+            },
+            payment_capability: await _limousinePartnerPaymentCapability(env, resolved.record),
+          }),
+          trip: {
+            from: req.from || "",
+            to: req.to || "",
+            stops: Array.isArray(req.stops) ? req.stops : [],
+          },
+          seller: {
+            name: profile?.trading_name || profile?.legal_name || "",
+            trading_name: profile?.trading_name || "",
+          },
+          payment_capability: await _limousinePartnerPaymentCapability(env, resolved.record),
+        });
+      }
+
+      if (url.pathname === "/l/api/quotation.pdf" && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return _limousineExternalJson({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const resolved = await _resolveLimousineExternalSession(request, env);
+        if (!resolved.ok) {
+          return _limousineExternalJson({ ok: false, error: resolved.error }, resolved.status || 401);
+        }
+        const served = await _serveLimousineQuotationPdf({
+          env,
+          record: resolved.record,
+          revision: resolved.record.quotation_revision ?? null,
+          renderPdfFromHtml:
+            typeof env.LIMOUSINE_QUOTATION_RENDER_PDF === "function"
+              ? env.LIMOUSINE_QUOTATION_RENDER_PDF
+              : renderPdfFromHtml,
+        });
+        return _limousineQuotationPdfResponse(served);
+      }
+
+      if (url.pathname === "/l/api/accept" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return _limousineExternalJson({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const resolved = await _resolveLimousineExternalSession(request, env);
+        if (!resolved.ok) {
+          return _limousineExternalJson({ ok: false, error: resolved.error }, resolved.status || 401);
+        }
+        const body = await safeJson(request);
+        const nowIso = new Date().toISOString();
+        const accepted = await _acceptLimousineQuoteRecord(
+          env,
+          resolved.record,
+          body?.expected_revision ?? body?.expectedRevision ?? resolved.record.revision,
+          nowIso,
+        );
+        if (!accepted.ok) {
+          return _limousineExternalJson({
+            ok: false,
+            error: accepted.error,
+            current_revision: accepted.current_revision,
+          }, accepted.status || 409);
+        }
+        await _saveLimousineExternalJson(env, _limousineExternalSessionKey(resolved.session.session_id), {
+          ...resolved.session,
+          acceptance_reference: accepted.acceptance_reference,
+          accepted_at: nowIso,
+        });
+        return _limousineExternalJson({
+          ok: true,
+          quote_request: _publicLimousineQuoteView(accepted.record),
+          payment_capability: await _limousinePartnerPaymentCapability(env, accepted.record),
+          expires_at: accepted.expires_at,
+        });
+      }
+
+      if (url.pathname === "/l/api/book" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env) || !_limousineBookGateEnabled(env)) {
+          return _limousineExternalJson({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const resolved = await _resolveLimousineExternalSession(request, env);
+        if (!resolved.ok) {
+          return _limousineExternalJson({ ok: false, error: resolved.error }, resolved.status || 401);
+        }
+        const body = await safeJson(request);
+        let record = resolved.record;
+        let acceptanceReference = resolved.session.acceptance_reference;
+        if (record.state !== _LIMOUSINE_QUOTE_STATES.ACCEPTED && record.state !== _LIMOUSINE_QUOTE_STATES.BOOKING_CREATED) {
+          const accepted = await _acceptLimousineQuoteRecord(env, record, record.revision, new Date().toISOString());
+          if (!accepted.ok) {
+            return _limousineExternalJson({ ok: false, error: accepted.error }, accepted.status || 409);
+          }
+          record = accepted.record;
+          acceptanceReference = accepted.acceptance_reference;
+          await _saveLimousineExternalJson(env, _limousineExternalSessionKey(resolved.session.session_id), {
+            ...resolved.session,
+            acceptance_reference: acceptanceReference,
+          });
+        }
+        if (!acceptanceReference) {
+          return _limousineExternalJson({ ok: false, error: "acceptance_required" }, 409);
+        }
+        const contact = await _loadLimousineExternalJson(
+          env,
+          _limousineExternalContactKey(resolved.session.contact_id),
+        );
+        const req = record.request || {};
+        const paymentMethod = sanitizeTenantString(body?.payment_method ?? body?.paymentMethod, 40) || "qr_code";
+        const mollieMethod = !["qr_code", "in_vehicle_card", "cash"].includes(paymentMethod);
+        const bookPayload = {
+          public_partner_id: record.public_partner_id || _publicLimousinePartnerId(record),
+          limousine_acceptance_reference: acceptanceReference,
+          from: req.from,
+          to: req.to,
+          pickup_iso: req.scheduled_pickup_iso,
+          service: "limousine",
+          service_category: "limousine",
+          pax: req.pax,
+          bags: req.bags,
+          payment_method: paymentMethod,
+          payment_mode: mollieMethod ? "mollie" : "manual",
+          payment_provider: mollieMethod ? "mollie" : "manual",
+          customer_reference: `ext:${resolved.session.contact_id}`,
+          customer: _guestCustomerFromExternalContact(contact),
+          ...(body?.billing_customer ? { billing_customer: body.billing_customer } : {}),
+          ...(body?.__booking_id ? { __booking_id: body.__booking_id } : {}),
+          ...(body?.__public_booking_reference
+            ? { __public_booking_reference: body.__public_booking_reference }
+            : {}),
+          ...(body?.__planning_reference
+            ? { __planning_reference: body.__planning_reference }
+            : {}),
+        };
+        const acceptedScope = await _resolveAcceptedQuoteBookScope(env, bookPayload);
+        const requestScope = acceptedScope?.hasScope
+          ? acceptedScope
+          : { tenant_id: record.tenant_id, company_id: record.company_id, hasScope: true };
+        const trustedBookScope = {
+          ok: true,
+          tenant_id: requestScope.tenant_id,
+          company_id: requestScope.company_id,
+          partner_id: bookPayload.public_partner_id,
+          trusted_source: "accepted_quote_seller",
+        };
+        const normalizedBody = {
+          ...bookPayload,
+          tenant_id: requestScope.tenant_id,
+          tenantId: requestScope.tenant_id,
+          company_id: requestScope.company_id,
+          companyId: requestScope.company_id,
+          __trusted_tenant_context: {
+            tenant_id: trustedBookScope.tenant_id,
+            company_id: trustedBookScope.company_id,
+            trusted_source: "accepted_quote_seller",
+          },
+        };
+        const out = await handleBooking(normalizedBody, env, request, {
+          trustedPublicPartnerScope: trustedBookScope,
+          limousineRequestId: _createLimousineSubmitRequestId(),
+        });
+        return json(out, out?.ok ? 200 : (out?.status || 400));
+      }
+
+      // =====================================================================
       // LIMOUSINE-MARKETPLACE-P2C2 — manual quote lifecycle.
       // Every route is behind LIMOUSINE_MANUAL_QUOTE_ENABLED (default OFF) and
       // performs zero reads/writes while the gate is off.
@@ -46417,7 +47200,7 @@ export default {
           const observed = await _observeAndPersistLimousineExpiry(env, loaded, nowIso);
           if (parsed.state && observed.record.state !== parsed.state) continue;
           items.push(
-            _buildLimousineCompanyInboxView(observed.record, {
+            await _companyInboxViewWithExternal(env, observed.record, {
               activity_seq: entry.activity_seq,
               transitions_blocked: transitionsBlocked,
             }),
@@ -46470,7 +47253,7 @@ export default {
         return json(
           {
             ok: true,
-            quote_request: _buildLimousineCompanyInboxView(observed.record, {
+            quote_request: await _companyInboxViewWithExternal(env, observed.record, {
               activity_seq: indexed?.activity_seq ?? null,
               transitions_blocked: !suspensionGuard.ok,
             }),
