@@ -100,16 +100,21 @@ const LimousineAcceptedBookingCustomer _customer =
     );
 
 class _BookGateway implements LimousineAcceptedBookingGateway {
-  _BookGateway({this.raw = _mollieRaw});
+  _BookGateway({this.raw = _mollieRaw, this.throwCode});
 
   int calls = 0;
   Map<String, dynamic>? lastPayload;
   Map<String, dynamic> raw;
+  String? throwCode;
 
   @override
   Future<LimousineAcceptedBookResult> book(Map<String, dynamic> payload) async {
     calls += 1;
     lastPayload = payload;
+    final code = throwCode;
+    if (code != null) {
+      throw LimousineAcceptedBookException(code: code, statusCode: 502);
+    }
     return LimousineAcceptedBookResult(
       bookingId: (raw['booking_id'] ?? '').toString(),
       publicReference: (raw['public_reference'] ?? '').toString(),
@@ -280,6 +285,27 @@ void main() {
       expect(gateway.calls, 1);
       expect(launches, 2);
       expect(controller.checkoutPending, isTrue);
+      controller.dispose();
+    });
+
+    test('checkout create failure keeps Bancontact and shows a retry error', () async {
+      final gateway = _BookGateway(throwCode: 'payment_checkout_unavailable');
+      final controller = _controller(gateway: gateway);
+      controller.selectPaymentMethod(PaymentMethodIds.bancontact);
+      controller.setConfirmationAcknowledged(true);
+      expect(await controller.confirmBooking(), isFalse);
+      expect(controller.succeeded, isFalse);
+      expect(controller.checkoutPending, isFalse);
+      expect(
+        controller.error,
+        LimousineAcceptedBookingError.checkoutCreateFailed,
+      );
+      expect(controller.selectedPaymentMethodId, PaymentMethodIds.bancontact);
+      expect(gateway.calls, 1);
+      expect(
+        limousineAcceptedBookErrorFromCode('payment_checkout_unavailable'),
+        LimousineAcceptedBookingError.checkoutCreateFailed,
+      );
       controller.dispose();
     });
 

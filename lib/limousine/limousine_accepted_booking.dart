@@ -187,6 +187,10 @@ enum LimousineAcceptedBookingError {
   /// The partner no longer accepts the chosen method — read again and re-pick.
   paymentMethodUnavailable,
 
+  /// Shared Mollie checkout could not be created. The chosen method stays
+  /// selected so the customer can retry without a second picker dance.
+  checkoutCreateFailed,
+
   /// A company invoice was requested but the buyer identity is missing a field
   /// the existing canonical rule requires.
   billingIdentityIncomplete,
@@ -571,10 +575,12 @@ LimousineAcceptedBookingError limousineAcceptedBookErrorFromCode(String code) {
     case 'limousine_book_disabled':
     case 'manual_quote_gate_off':
       return LimousineAcceptedBookingError.bookDisabled;
+    // Checkout failed after the method was accepted. Keep the selection.
+    case 'payment_checkout_unavailable':
+      return LimousineAcceptedBookingError.checkoutCreateFailed;
     // The partner's payment configuration changed after the picker read it.
     case 'payment_method_disabled_for_company':
     case 'payment_method_not_supported_for_mollie_checkout':
-    case 'payment_checkout_unavailable':
     case 'mollie_connect_not_configured':
       return LimousineAcceptedBookingError.paymentMethodUnavailable;
     case 'ambiguous_timeout':

@@ -66566,6 +66566,16 @@ async function handleBooking(payload, env, request, options = {}) {
       payload.service_type = _LIMOUSINE_SERVICE_TYPE;
       payload.serviceType = _LIMOUSINE_SERVICE_TYPE;
       payload.service_category = _LIMOUSINE_SERVICE_TYPE;
+      // Shared Mollie checkout calls taxi /quote unless the payload already
+      // carries an accepted client quote. Frozen limousine totals must never
+      // re-enter taxi pricing.
+      if (
+        _limousineAccepted.total &&
+        _limousineAccepted.total.ok === true &&
+        _limousineAccepted.total.price_incl_vat != null
+      ) {
+        payload.quote = _limousineAccepted.total;
+      }
     }
     const bookingIntent = buildBookingIntentDescriptor({
       tenant_id: tenantContext.tenant_id,

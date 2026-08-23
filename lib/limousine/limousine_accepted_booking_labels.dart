@@ -294,6 +294,16 @@ kLimousineAcceptedBookingErrors =
         fr: 'Ce mode de paiement n’est plus proposé. Choisissez-en un autre.',
         es: 'Este método de pago ya no está disponible. Elija otro método.',
       ),
+      LimousineAcceptedBookingError.checkoutCreateFailed: LocalizedText(
+        nl:
+            'De beveiligde betaalpagina kon niet worden aangemaakt. '
+            'Probeer opnieuw.',
+        en: 'The secure payment page could not be created. Try again.',
+        fr:
+            'La page de paiement sécurisée n’a pas pu être créée. '
+            'Réessayez.',
+        es: 'No se pudo crear la página de pago segura. Inténtelo de nuevo.',
+      ),
       LimousineAcceptedBookingError.billingIdentityIncomplete: LocalizedText(
         nl:
             'De factuurgegevens zijn nog niet compleet. Vul bedrijfsnaam, '

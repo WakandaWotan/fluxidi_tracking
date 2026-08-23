@@ -334,6 +334,10 @@ test("worker still clamps taxi pax 1..3 and limousine 1..16", () => {
   assert.ok(WORKER_SRC.includes("_freezeLimousineAcceptedRideFacts"));
   assert.ok(WORKER_SRC.includes("_readFrozenLimousineCancellationTerms"));
   assert.ok(!WORKER_SRC.includes("billit.createInvoice"));
+  const attachQuote = WORKER_SRC.indexOf("payload.quote = _limousineAccepted.total");
+  const firstMollie = WORKER_SRC.indexOf("const pay = await mollieCreatePayment(");
+  assert.ok(attachQuote > 0, "accepted totals must become the shared Mollie client quote");
+  assert.ok(firstMollie > attachQuote, "client quote must be attached before Mollie create");
 });
 
 test("accepted 8/2 without service tokens stays 8/2 and freezes 24/25/100", async () => {
