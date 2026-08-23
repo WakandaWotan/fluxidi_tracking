@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/limousine/limousine_accepted_booking_page.dart'
 import 'package:fluxidi_tracking/limousine/limousine_cancellation_terms.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_quote.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox.dart';
+import 'package:fluxidi_tracking/payment/booking_checkout_response.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
 import 'package:fluxidi_tracking/payment/payment_booking_selection.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
@@ -226,6 +227,21 @@ void main() {
       );
       expect(car.paymentMode, 'manual');
       expect(car.isMollieCheckout, isFalse);
+    });
+
+    test('Bancontact PPRO checkout URL is customer-safe', () {
+      expect(
+        isCustomerSafeCheckoutUrl(
+          'https://redirect.ppro.com/bancontact/p3o',
+        ),
+        isTrue,
+      );
+      expect(
+        bookingCheckoutUrl(const <String, dynamic>{
+          'checkout_url': 'https://redirect.ppro.com/bancontact/p3o',
+        }),
+        'https://redirect.ppro.com/bancontact/p3o',
+      );
     });
 
     test('missing checkout URL blocks success and keeps the booking', () async {

@@ -338,6 +338,7 @@ test("worker still clamps taxi pax 1..3 and limousine 1..16", () => {
   const firstMollie = WORKER_SRC.indexOf("const pay = await mollieCreatePayment(");
   assert.ok(attachQuote > 0, "accepted totals must become the shared Mollie client quote");
   assert.ok(firstMollie > attachQuote, "client quote must be attached before Mollie create");
+  assert.match(WORKER_SRC, /host === "ppro\.com" \|\| host\.endsWith\("\.ppro\.com"\)/);
 });
 
 test("accepted 8/2 without service tokens stays 8/2 and freezes 24/25/100", async () => {

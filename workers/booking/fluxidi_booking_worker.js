@@ -66025,7 +66025,12 @@ function normalizeMollieCheckoutUrl(value) {
   }
   if (safeStr(parsed?.protocol).toLowerCase() !== "https:") return "";
   const host = safeStr(parsed?.hostname).toLowerCase();
-  if (!host || !host.includes("mollie.")) return "";
+  if (!host) return "";
+  // Bancontact live checkout is hosted on Mollie's PPRO redirect, not
+  // www.mollie.com. Keep this tighter than "any https host".
+  const mollieHost = host.includes("mollie.");
+  const pproHost = host === "ppro.com" || host.endsWith(".ppro.com");
+  if (!mollieHost && !pproHost) return "";
   return parsed.toString();
 }
 
