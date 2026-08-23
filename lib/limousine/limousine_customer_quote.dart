@@ -60,6 +60,15 @@ const Key kLimousineCustomerQuoteExpiresAtKey = ValueKey<String>(
 const Key kLimousineCustomerQuoteTotalKey = ValueKey<String>(
   'limousine_customer_quote_total',
 );
+const Key kLimousineCustomerStatusRefreshFailedKey = ValueKey<String>(
+  'limousine_customer_status_refresh_failed',
+);
+const Key kLimousineCustomerRequestStaleKey = ValueKey<String>(
+  'limousine_customer_request_stale',
+);
+
+Key limousineCustomerRequestRetryKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_customer_request_retry_$quoteRequestId');
 
 const Duration kLimousineStatusAutoPollInterval = Duration(seconds: 15);
 const Duration kLimousineStatusManualDebounce = Duration(seconds: 8);

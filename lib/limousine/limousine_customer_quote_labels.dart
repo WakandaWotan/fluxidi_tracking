@@ -93,6 +93,13 @@ const LocalizedText kLimousineCustomerRefresh = LocalizedText(
   es: 'Actualizar',
 );
 
+const LocalizedText kLimousineCustomerStatusRefreshFailed = LocalizedText(
+  nl: 'Status kon niet worden bijgewerkt. Probeer opnieuw.',
+  en: 'Status could not be updated. Try again.',
+  fr: 'Le statut n’a pas pu être mis à jour. Réessayez.',
+  es: 'No se pudo actualizar el estado. Inténtelo de nuevo.',
+);
+
 const LocalizedText kLimousineCustomerEmptyDiscovery = LocalizedText(
   nl: 'Er zijn momenteel geen limousineaanbieders beschikbaar.',
   en: 'No limousine providers are currently available.',

@@ -33,6 +33,7 @@ import {
   emptyLimousineInboxIndex,
   encodeLimousineInboxCursor,
   executeLimousineStatusRead,
+  isLimousineGlobalCustomerSession,
   limousineInboxIndexKey,
   limousineStatusRateKey,
   pageLimousineInboxEntries,
@@ -41,6 +42,14 @@ import {
   projectionContainsForbiddenKey,
   upsertLimousineInboxEntry,
 } from "./limousine_quote_inbox.mjs";
+import {
+  attachLimousineQuotationSnapshot,
+  buildLimousineQuotationSnapshot,
+} from "./limousine_quotation_snapshot.mjs";
+import {
+  LIMOUSINE_STATUS_KEY_PURPOSE,
+  sealLimousineAead,
+} from "./limousine_aead_token.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const S = LIMOUSINE_QUOTE_STATES;
@@ -151,6 +160,55 @@ async function statusBindingFor(record, { ttlMinutes = 60, issuedAtIso = "2026-0
     },
     issuedAtIso,
     ttlMinutes,
+  });
+}
+
+async function quotedRecordWithSnapshot(overrides = {}) {
+  const record = quotedRecord(overrides);
+  const snap = await buildLimousineQuotationSnapshot({
+    quoteRequestId: record.quote_request_id,
+    quoteRevision: record.revision,
+    termsRevision: 3,
+    issuedAt: "2026-08-17T10:00:00Z",
+    expiresAt: "2099-01-01T00:00:00Z",
+    locale: "nl",
+    sellerSnapshot: { legal_name: "Coachline BV" },
+    requestSnapshot: record.request,
+    vehicleSnapshot: { public_name: "Executive sedan" },
+    offerSnapshot: record.quote,
+  });
+  return attachLimousineQuotationSnapshot(record, snap).record;
+}
+
+function quotedRecordForCustomer({
+  customerRef,
+  quoteRequestId,
+  tenantId = "t1",
+  companyId = "c1",
+} = {}) {
+  const validated = validateLimousineQuoteRequest(customerRequest(), {
+    eligible: true,
+    offer: offer(),
+    gateEnabled: true,
+  });
+  const fingerprint = buildLimousineCustomerFingerprint({
+    tenantId,
+    companyId,
+    customerRef,
+    quoteRequestId,
+    itineraryFingerprint: validated.request.itinerary_fingerprint,
+  });
+  return quotedRecord({
+    quote_request_id: quoteRequestId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    request: validated.request,
+    status_access: {
+      customer_fingerprint: fingerprint,
+      issued_at: "2026-08-17T09:00:00Z",
+      expires_at: "2026-09-16T09:00:00Z",
+      created_revision: 1,
+    },
   });
 }
 
@@ -547,4 +605,180 @@ test("status token version cannot be confused with an acceptance reference", asy
   });
   assert.equal(missingKv.status, 500);
   assert.equal(missingKv.limiter_called, false);
+});
+
+function assertQuotedStatusSuccess(result, record) {
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.quote_request.state, S.CUSTOMER_ACCEPTANCE_REQUIRED);
+  assert.equal(result.body.quote_request.quotation_available, true);
+  assert.equal(result.body.quote_request.quotation_revision, record.quotation_revision);
+  assert.equal(result.body.status_ref, undefined);
+}
+
+test("global customer session is only the explicit global/global form", () => {
+  assert.equal(
+    isLimousineGlobalCustomerSession({ tenant_id: "global", company_id: "global" }),
+    true,
+  );
+  assert.equal(
+    isLimousineGlobalCustomerSession({ tenant_id: "GLOBAL", company_id: "Global" }),
+    true,
+  );
+  assert.equal(
+    isLimousineGlobalCustomerSession({ tenant_id: "t1", company_id: "c1" }),
+    false,
+  );
+  assert.equal(
+    isLimousineGlobalCustomerSession({ tenant_id: "global", company_id: "c1" }),
+    false,
+  );
+  assert.equal(
+    isLimousineGlobalCustomerSession({ tenant_id: "t1", company_id: "global" }),
+    false,
+  );
+});
+
+test("status-ref security matrix: global, scoped, capability, and fail-closed", async () => {
+  const record = await quotedRecordWithSnapshot();
+  const sealed = await statusBindingFor(record);
+  const otherQuote = quotedRecordForCustomer({
+    customerRef: "cust_2",
+    quoteRequestId: "limq_2",
+  });
+  const otherSealed = await statusBindingFor(otherQuote);
+
+  const globalSame = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    },
+  );
+  assertQuotedStatusSuccess(globalSame.result, record);
+
+  const noSession = await runStatus({ status_ref: sealed.reference }, { record });
+  assertQuotedStatusSuccess(noSession.result, record);
+
+  const globalOther = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_OTHER" },
+    },
+  );
+  assert.equal(globalOther.result.status, 404);
+  assert.equal(globalOther.result.body.error, "invalid_status_ref");
+
+  const scopedSame = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "t1", company_id: "c1", customer_id: "cust_1" },
+    },
+  );
+  assertQuotedStatusSuccess(scopedSame.result, record);
+
+  const scopedWrongCompany = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "t1", company_id: "c2", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(scopedWrongCompany.result.status, 404);
+
+  const scopedWrongTenant = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "t2", company_id: "c1", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(scopedWrongTenant.result.status, 404);
+
+  const wrongQuoteBound = await runStatus(
+    { status_ref: otherSealed.reference },
+    { record },
+  );
+  assert.equal(wrongQuoteBound.result.status, 404);
+
+  const expired = await executeLimousineStatusRead({
+    body: { status_ref: sealed.reference },
+    nowIso: "2026-08-18T12:00:00Z",
+    secret: SECRET,
+    bookingKvPresent: true,
+    customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    rateLimit: async () => ({ limited: false }),
+    loadRecord: async () => record,
+  });
+  assert.equal(expired.status, 404);
+  assert.equal(expired.loaded_record, false);
+
+  const wrongPurpose = await sealLimousineAead({
+    secret: SECRET,
+    version: LIMOUSINE_STATUS_TOKEN_VERSION,
+    purpose: LIMOUSINE_STATUS_KEY_PURPOSE,
+    payload: {
+      v: LIMOUSINE_STATUS_TOKEN_VERSION,
+      purpose: "customer_acceptance",
+      binding: {
+        purpose: "customer_acceptance",
+        tenant_id: record.tenant_id,
+        company_id: record.company_id,
+        quote_request_id: record.quote_request_id,
+        customer_fingerprint: record.status_access.customer_fingerprint,
+        created_revision: 1,
+      },
+      issued_at: "2026-08-17T10:00:00Z",
+      expires_at: "2099-01-01T00:00:00Z",
+    },
+  });
+  assert.equal(wrongPurpose.ok, true);
+  const purposeDenied = await runStatus(
+    { status_ref: wrongPurpose.reference },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(purposeDenied.result.status, 404);
+
+  const malformed = await runStatus(
+    { status_ref: "limqs1.not-a-valid.token" },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(malformed.result.status, 404);
+  assert.equal(malformed.loadCalls, 0);
+
+  const bareId = await runStatus(
+    { quote_request_id: record.quote_request_id },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(bareId.result.status, 404);
+  assert.equal(bareId.loadCalls, 0);
+
+  const missingCustomer = await runStatus(
+    { status_ref: sealed.reference },
+    {
+      record,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "" },
+    },
+  );
+  assert.equal(missingCustomer.result.status, 404);
+
+  const secondCustomerQuote = await runStatus(
+    { status_ref: otherSealed.reference },
+    {
+      record: otherQuote,
+      customerSession: { tenant_id: "global", company_id: "global", customer_id: "cust_1" },
+    },
+  );
+  assert.equal(secondCustomerQuote.result.status, 404);
 });

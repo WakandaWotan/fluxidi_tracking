@@ -92,6 +92,19 @@ function safeText(value, max) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+const LIMOUSINE_GLOBAL_CUSTOMER_SCOPE = "global";
+
+/// Fluxidi phone/customer identity is intentionally cross-tenant:
+/// `tenant_id = global` and `company_id = global`. That session must not be
+/// treated as a partner-scoped company login.
+export function isLimousineGlobalCustomerSession(session) {
+  const src = asObject(session);
+  return (
+    safeText(src.tenant_id, 96).toLowerCase() === LIMOUSINE_GLOBAL_CUSTOMER_SCOPE &&
+    safeText(src.company_id, 96).toLowerCase() === LIMOUSINE_GLOBAL_CUSTOMER_SCOPE
+  );
+}
+
 function sanitizeScopePart(value) {
   return safeText(value, 96).toLowerCase().replace(/[^a-z0-9._:-]+/g, "");
 }
@@ -463,20 +476,29 @@ export async function executeLimousineStatusRead({
   }
   if (customerSession) {
     const session = asObject(customerSession);
+    const globalCustomer = isLimousineGlobalCustomerSession(session);
     if (
-      safeText(session.tenant_id, 96) !== safeText(binding.tenant_id, 96) ||
-      safeText(session.company_id, 96) !== safeText(binding.company_id, 96)
+      !globalCustomer &&
+      (safeText(session.tenant_id, 96) !== safeText(binding.tenant_id, 96) ||
+        safeText(session.company_id, 96) !== safeText(binding.company_id, 96))
     ) {
       return { ...STATUS_FAIL, wrote: false, loaded_record: true, limiter_called: true };
     }
+    const customerRef = safeText(session.customer_id, 160);
+    if (!customerRef || !safeText(binding.customer_fingerprint, 80)) {
+      return { ...STATUS_FAIL, wrote: false, loaded_record: true, limiter_called: true };
+    }
+    // Global sessions are not partner-scoped. Rebuild the create-time
+    // fingerprint on the quote's tenant/company so the same customer still
+    // matches and a different customer still fails closed.
     const sessionFp = buildLimousineCustomerFingerprint({
-      tenantId: session.tenant_id,
-      companyId: session.company_id,
-      customerRef: session.customer_id,
+      tenantId: globalCustomer ? binding.tenant_id : session.tenant_id,
+      companyId: globalCustomer ? binding.company_id : session.company_id,
+      customerRef,
       quoteRequestId: binding.quote_request_id,
       itineraryFingerprint: asObject(record.request).itinerary_fingerprint,
     });
-    if (sessionFp !== binding.customer_fingerprint) {
+    if (!sessionFp || sessionFp !== binding.customer_fingerprint) {
       return { ...STATUS_FAIL, wrote: false, loaded_record: true, limiter_called: true };
     }
   }

@@ -587,6 +587,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   String lastErrorStage = '';
   String lastRequestId = '';
   bool quoteUpdated = false;
+  bool statusRefreshFailed = false;
   bool termsAcknowledged = false;
   bool discovering = false;
   bool loadingProvider = false;
@@ -1071,6 +1072,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     if (!looksLikeLimousineStatusRef(ref)) {
       if (request != null) {
         phase = LimousineCustomerQuotePhase.unavailable;
+        statusRefreshFailed = true;
         notifyListeners();
       }
       return;
@@ -1105,8 +1107,12 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         _forgetAcceptedHandoff();
       }
       request = request == null ? next : request!.mergeAuthoritative(next);
+      statusRefreshFailed = false;
+      phase = LimousineCustomerQuotePhase.live;
       if (!limousineCustomerShouldPoll(request!.state)) {
         stopPolling();
+      } else if (_pageVisible && !_pollingEnabled) {
+        startPolling();
       }
       if (LimousineQuoteStateId.waitingForCustomer.contains(request!.state) ||
           request!.quotationAvailable) {
@@ -1123,8 +1129,11 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         _safeLog('status_rate_limited');
         return;
       }
-      if (error.unavailable) {
+      if (error.unavailable ||
+          error.statusCode == 401 ||
+          error.statusCode == 403) {
         phase = LimousineCustomerQuotePhase.unavailable;
+        statusRefreshFailed = true;
         stopPolling();
         notifyListeners();
         return;
@@ -1174,12 +1183,13 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
 
   void resumePolling() {
     if (request == null) return;
-    if (!limousineCustomerShouldPoll(request!.state)) return;
+    if (!statusRefreshFailed && !limousineCustomerShouldPoll(request!.state)) {
+      return;
+    }
     _pageVisible = true;
     _pollingEnabled = true;
     if (_pollTimer == null) {
       startPolling();
-      return;
     }
     unawaited(refreshStatus());
   }
@@ -1202,6 +1212,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
         : null;
     providerDisplayName = record.companyName;
     quoteUpdated = false;
+    statusRefreshFailed = false;
     termsAcknowledged = false;
     phase = LimousineCustomerQuotePhase.live;
     step = LimousineQuoteStateId.waitingForCustomer.contains(record.state)

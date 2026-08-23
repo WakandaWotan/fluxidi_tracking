@@ -66,25 +66,49 @@ class LimousineCustomerStatusView extends StatelessWidget {
     final vehicleName = (controller.lockedVehicle?.name ?? '').trim().isNotEmpty
         ? controller.lockedVehicle!.name.trim()
         : limousineQuoteVehicleDisplay(request, language);
+    final refreshFailed = controller.statusRefreshFailed;
     return Column(
       key: kLimousineCustomerStatusPageKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Chip(
-          label: Text(
-            limousineCustomerStateLabel(
-              request.state,
-              language,
-              companyName: companyName,
-              request: request,
+        if (refreshFailed)
+          Card(
+            key: kLimousineCustomerStatusRefreshFailedKey,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_t(kLimousineCustomerStatusRefreshFailed)),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () => controller.refreshStatus(manual: true),
+                    child: Text(_t(kLimousineCustomerRefresh)),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Chip(
+            label: Text(
+              limousineCustomerStateLabel(
+                request.state,
+                language,
+                companyName: companyName,
+                request: request,
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 8),
-        if (LimousineQuoteStateId.normalize(
-              limousineCustomerLifecycleState(request.state, request: request),
-            ) ==
-            LimousineQuoteStateId.requested)
+        if (!refreshFailed &&
+            LimousineQuoteStateId.normalize(
+                  limousineCustomerLifecycleState(
+                    request.state,
+                    request: request,
+                  ),
+                ) ==
+                LimousineQuoteStateId.requested)
           Padding(
             key: kLimousineQuoteSubmitConfirmationKey,
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -127,8 +151,9 @@ class LimousineCustomerStatusView extends StatelessWidget {
               ],
             ),
           ),
-        if (limousineCustomerLifecycleState(request.state, request: request) ==
-            LimousineQuoteStateId.viewedByCompany)
+        if (!refreshFailed &&
+            limousineCustomerLifecycleState(request.state, request: request) ==
+                LimousineQuoteStateId.viewedByCompany)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Column(

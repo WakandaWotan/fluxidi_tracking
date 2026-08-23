@@ -30,11 +30,13 @@ class LimousineCustomerRequestsSection extends StatefulWidget {
 }
 
 class _LimousineCustomerRequestsSectionState
-    extends State<LimousineCustomerRequestsSection> {
+    extends State<LimousineCustomerRequestsSection>
+    with WidgetsBindingObserver {
   late final LimousineCustomerRequestHistoryRepository _history;
   late final LimousineCustomerQuoteGateway _gateway;
   List<LimousineCustomerRequestRecord> _items =
       const <LimousineCustomerRequestRecord>[];
+  Set<String> _staleIds = <String>{};
   bool _loading = true;
 
   AppLanguage get _lang => appLanguageNotifier.value;
@@ -44,9 +46,23 @@ class _LimousineCustomerRequestsSectionState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _history = widget.history ?? LimousineCustomerRequestHistoryRepository();
     _gateway = widget.gateway ?? HttpLimousineCustomerQuoteGateway();
     _reload();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reload();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   Future<void> _reload() async {
@@ -54,9 +70,11 @@ class _LimousineCustomerRequestsSectionState
     try {
       final items = await _history.list();
       final refreshed = <LimousineCustomerRequestRecord>[];
+      final stale = <String>{};
       for (final item in items) {
         if (!looksLikeLimousineStatusRef(item.statusRef)) {
           refreshed.add(item);
+          stale.add(item.quoteRequestId);
           continue;
         }
         try {
@@ -75,16 +93,50 @@ class _LimousineCustomerRequestsSectionState
           refreshed.add(next);
         } catch (_) {
           refreshed.add(item);
+          stale.add(item.quoteRequestId);
         }
       }
       if (!mounted) return;
       setState(() {
         _items = refreshed;
+        _staleIds = stale;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _retry(LimousineCustomerRequestRecord item) async {
+    if (!looksLikeLimousineStatusRef(item.statusRef)) return;
+    try {
+      final live = await _gateway.pollStatus(item.statusRef);
+      final next = item.copyWith(
+        state: live.state,
+        from: live.fulfilment?.from ?? item.from,
+        to: live.fulfilment?.to ?? item.to,
+        scheduledPickupIso: live.scheduledPickupIso.isNotEmpty
+            ? live.scheduledPickupIso
+            : item.scheduledPickupIso,
+        request: live,
+        updatedAt: live.updatedAt,
+      );
+      await _history.upsert(next);
+      if (!mounted) return;
+      setState(() {
+        _staleIds = Set<String>.from(_staleIds)..remove(item.quoteRequestId);
+        _items = _items
+            .map(
+              (row) => row.quoteRequestId == next.quoteRequestId ? next : row,
+            )
+            .toList(growable: false);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _staleIds = Set<String>.from(_staleIds)..add(item.quoteRequestId);
+      });
     }
   }
 
@@ -134,7 +186,9 @@ class _LimousineCustomerRequestsSectionState
                       record: item,
                       language: _lang,
                       palette: palette,
+                      stale: _staleIds.contains(item.quoteRequestId),
                       onOpen: () => _open(item),
+                      onRetry: () => _retry(item),
                     ),
                 ],
               ),
@@ -165,13 +219,17 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
     required this.record,
     required this.language,
     required this.palette,
+    required this.stale,
     required this.onOpen,
+    required this.onRetry,
   });
 
   final LimousineCustomerRequestRecord record;
   final AppLanguage language;
   final CustomerThemePalette palette;
+  final bool stale;
   final VoidCallback onOpen;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -192,19 +250,30 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  limousineCustomerStateLabel(
-                    record.state,
-                    language,
-                    companyName: record.companyName,
-                    request: live,
+                if (stale)
+                  Text(
+                    kLimousineCustomerStatusRefreshFailed.of(language),
+                    key: kLimousineCustomerRequestStaleKey,
+                    style: TextStyle(
+                      color: palette.gold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
+                  )
+                else
+                  Text(
+                    limousineCustomerStateLabel(
+                      record.state,
+                      language,
+                      companyName: record.companyName,
+                      request: live,
+                    ),
+                    style: TextStyle(
+                      color: palette.gold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
                   ),
-                  style: TextStyle(
-                    color: palette.gold,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12.5,
-                  ),
-                ),
                 if (record.companyName.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -239,6 +308,17 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
                   record.quoteRequestId,
                   style: TextStyle(color: palette.textMuted, fontSize: 12),
                 ),
+                if (stale)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: limousineCustomerRequestRetryKey(
+                        record.quoteRequestId,
+                      ),
+                      onPressed: onRetry,
+                      child: Text(kLimousineCustomerRefresh.of(language)),
+                    ),
+                  ),
               ],
             ),
           ),
