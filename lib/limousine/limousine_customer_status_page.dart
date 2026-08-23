@@ -465,20 +465,25 @@ class LimousineCustomerTermsCard extends StatelessWidget {
     ];
     if (rows.isEmpty) return const SizedBox.shrink();
 
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       key: kLimousineCustomerTermsCardKey,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              kLimousineCustomerTermsTitle.of(language),
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            ...rows,
-          ],
+      color: scheme.surface,
+      child: DefaultTextStyle.merge(
+        style: TextStyle(color: scheme.onSurface, height: 1.35),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                kLimousineCustomerTermsTitle.of(language),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              ...rows,
+            ],
+          ),
         ),
       ),
     );

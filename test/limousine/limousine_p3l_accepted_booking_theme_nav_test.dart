@@ -551,6 +551,25 @@ void main() {
         );
         expect(price.style?.color, palette.textPrimary);
         expect(find.byKey(kLimousineCustomerTermsCardKey), findsOneWidget);
+        final termsCard = tester.widget<Card>(
+          find.byKey(kLimousineCustomerTermsCardKey),
+        );
+        expect(termsCard.color, palette.surface);
+        final termsTitle = tester.widget<Text>(
+          find.text(kLimousineCustomerTermsTitle.nl),
+        );
+        final termsStyle = DefaultTextStyle.of(
+          tester.element(find.text(kLimousineCustomerTermsTitle.nl)),
+        );
+        expect(termsStyle.style.color, palette.textPrimary);
+        expect(
+          brandSignatureContrastRatio(
+            termsStyle.style.color ?? palette.textPrimary,
+            termsCard.color ?? palette.surface,
+          ),
+          greaterThanOrEqualTo(4.5),
+        );
+        expect(termsTitle.data, kLimousineCustomerTermsTitle.nl);
         final accept = tester.widget<FilledButton>(
           find.byKey(kLimousineCustomerAcceptKey),
         );

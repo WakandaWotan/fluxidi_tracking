@@ -463,11 +463,17 @@ ThemeData themeForCustomerPalette(
   return base.copyWith(
     brightness: brightness,
     scaffoldBackgroundColor: palette.background,
+    canvasColor: palette.background,
+    cardColor: palette.surface,
     colorScheme: base.colorScheme.copyWith(
       brightness: brightness,
       surface: palette.surface,
       onSurface: palette.textPrimary,
       onSurfaceVariant: palette.textMuted,
+    ),
+    cardTheme: base.cardTheme.copyWith(
+      color: palette.surface,
+      surfaceTintColor: Colors.transparent,
     ),
     textTheme: base.textTheme.apply(
       bodyColor: palette.textPrimary,
