@@ -254,9 +254,9 @@ export function renderLimousineExternalQuotationPage({
       const accepted = q.state === "accepted" || q.state === "booking_created";
       const booked = q.state === "booking_created";
       const methods = ((data.payment_capability || {}).public_payment_options || []).map((item) => {
-        const id = item.id || item.method || item.payment_method;
-        const label = item.label || item.name || id;
-        return '<option value="' + id + '">' + label + '</option>';
+        const id = typeof item === "string" ? item : (item.id || item.method || item.payment_method || "");
+        const label = typeof item === "string" ? item : (item.label || item.name || id);
+        return id ? '<option value="' + id + '">' + label + '</option>' : "";
       }).join("");
       document.getElementById("status").textContent = accepted ? T.accepted : "";
       document.getElementById("app").innerHTML = [

@@ -541,6 +541,12 @@ test("14/16) booking after acceptance reuses the manual path", async () => {
   const stored = await kv.get("booking:2026-08-701", { type: "json" });
   assert.ok(stored, JSON.stringify(body));
   assert.equal(String(stored.payment_mode || stored.paymentMode).toLowerCase(), "manual");
+  const loaded = await kv.get(
+    `limousine_quote_record:${created.json.quote_request.quote_request_id}`,
+    { type: "json" },
+  );
+  assert.equal(loaded?.state, "booking_created");
+  assert.ok(String(loaded?.booking_reference || "").length > 0);
   const keys = [...kv.store.keys()].join(",");
   assert.ok(!keys.toLowerCase().includes("billit_outbox"));
   assert.ok(!keys.toLowerCase().includes("peppol_outbox"));
@@ -552,6 +558,7 @@ test("15) Mollie path is reused by guest book", () => {
   assert.ok(WORKER_SRC.includes("limousine_acceptance_reference: acceptanceReference"));
   assert.ok(WORKER_SRC.includes("payment_method: paymentMethod"));
   assert.ok(WORKER_SRC.includes('payment_mode: mollieMethod ? "mollie" : "manual"'));
+  assert.ok(WORKER_SRC.includes("await _markLimousineAcceptedQuoteConsumed(env,"));
 });
 
 test("17/18) no second invoice engine and Billit/Peppol stay untouched", () => {

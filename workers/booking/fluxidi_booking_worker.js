@@ -46685,6 +46685,19 @@ export default {
           trustedPublicPartnerScope: trustedBookScope,
           limousineRequestId: _createLimousineSubmitRequestId(),
         });
+        if (out?.ok) {
+          const bookingReference = sanitizeTenantString(
+            out.public_booking_reference ||
+              out.publicBookingReference ||
+              out.booking_id ||
+              out.bookingId,
+            64,
+          );
+          await _markLimousineAcceptedQuoteConsumed(env, {
+            quoteRequestId: record.quote_request_id,
+            bookingReference,
+          });
+        }
         return json(out, out?.ok ? 200 : (out?.status || 400));
       }
 
