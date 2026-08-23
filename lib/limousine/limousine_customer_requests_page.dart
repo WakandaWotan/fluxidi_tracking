@@ -192,6 +192,7 @@ class _LimousineCustomerRequestsSectionState
                       stale: _staleIds.contains(item.quoteRequestId),
                       onOpen: () => _open(item),
                       onRetry: () => _retry(item),
+                      onHide: () => _hide(item),
                     ),
                 ],
               ),
@@ -215,6 +216,38 @@ class _LimousineCustomerRequestsSectionState
     if (!mounted) return;
     await _reload();
   }
+
+  Future<void> _hide(LimousineCustomerRequestRecord record) async {
+    final hideLabel = limousineCustomerHideActionLabel(
+      state: record.state,
+      request: record.request,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(kLimousineCustomerHideConfirmTitle.of(_lang)),
+        content: Text(kLimousineCustomerHideConfirmBody.of(_lang)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(kLimousineCustomerCancel.of(_lang)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(hideLabel.of(_lang)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _history.removeByQuoteRequestId(record.quoteRequestId);
+    if (!mounted) return;
+    setState(() {
+      _items = _items
+          .where((item) => item.quoteRequestId != record.quoteRequestId)
+          .toList(growable: false);
+    });
+  }
 }
 
 class _LimousineCustomerRequestCard extends StatelessWidget {
@@ -225,6 +258,7 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
     required this.stale,
     required this.onOpen,
     required this.onRetry,
+    required this.onHide,
   });
 
   final LimousineCustomerRequestRecord record;
@@ -233,97 +267,214 @@ class _LimousineCustomerRequestCard extends StatelessWidget {
   final bool stale;
   final VoidCallback onOpen;
   final VoidCallback onRetry;
+  final VoidCallback onHide;
 
   @override
   Widget build(BuildContext context) {
     final live = record.request;
+    final isDark = palette.isDark;
+    final primaryTextColor = isDark ? Colors.white : palette.textPrimary;
+    final secondaryTextColor = isDark
+        ? Colors.white.withOpacity(0.86)
+        : palette.textMuted;
+    final tertiaryTextColor = isDark
+        ? Colors.white.withOpacity(0.66)
+        : palette.textMuted;
     final vehicle = record.vehicleDisplayName.isNotEmpty
         ? record.vehicleDisplayName
         : (live == null ? '' : limousineQuoteVehicleDisplay(live, language));
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onOpen,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (stale)
-                  Text(
-                    kLimousineCustomerStatusRefreshFailed.of(language),
-                    key: kLimousineCustomerRequestStaleKey,
-                    style: TextStyle(
-                      color: palette.gold,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12.5,
+    final badge = stale
+        ? kLimousineCustomerStatusRefreshFailed.of(language)
+        : limousineCustomerCardStateLabel(
+            record.state,
+            language,
+            companyName: record.companyName,
+            request: live,
+          );
+    final amountCents = live?.quote?.totalInclVatCents;
+    final amount = amountCents != null && amountCents > 0
+        ? formatLimousineEuroAmount(amountCents)
+        : '';
+    final hideLabel = limousineCustomerHideActionLabel(
+      state: record.state,
+      request: live,
+    );
+    return Container(
+      key: limousineCustomerRequestCardKey(record.quoteRequestId),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? <Color>[palette.surface, palette.surfaceAlt, palette.background]
+              : <Color>[palette.surface, palette.surfaceAlt, palette.surface],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark
+              ? palette.gold.withOpacity(0.24)
+              : palette.border.withOpacity(0.9),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withOpacity(0.28)
+                : palette.shadow.withOpacity(0.22),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
                     ),
-                  )
-                else
-                  Text(
-                    limousineCustomerStateLabel(
-                      record.state,
-                      language,
-                      companyName: record.companyName,
-                      request: live,
+                    decoration: BoxDecoration(
+                      color: palette.gold.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: palette.gold.withOpacity(0.45)),
                     ),
-                    style: TextStyle(
-                      color: palette.gold,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12.5,
+                    child: Text(
+                      badge,
+                      key: stale ? kLimousineCustomerRequestStaleKey : null,
+                      style: TextStyle(
+                        color: palette.gold.withOpacity(0.98),
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                if (record.companyName.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    record.companyName,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
+                  const Spacer(),
+                  if (amount.isNotEmpty)
+                    Text(
+                      amount,
+                      style: TextStyle(
+                        color: palette.gold.withOpacity(0.98),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
                 ],
-                if (vehicle.isNotEmpty)
-                  Text(vehicle, style: TextStyle(color: palette.textMuted)),
-                if (record.scheduledPickupIso.isNotEmpty)
-                  Text(
-                    limousineQuoteDisplayOrEmpty(
-                      record.scheduledPickupIso,
-                      language,
-                    ),
-                    style: TextStyle(color: palette.textMuted),
-                  ),
-                if (record.from.isNotEmpty || record.to.isNotEmpty)
-                  Text(
-                    [
-                      record.from,
-                      record.to,
-                    ].where((part) => part.trim().isNotEmpty).join(' → '),
-                    style: TextStyle(color: palette.textMuted),
-                  ),
-                const SizedBox(height: 4),
+              ),
+              if (record.companyName.isNotEmpty) ...[
+                const SizedBox(height: 10),
                 Text(
-                  record.quoteRequestId,
-                  style: TextStyle(color: palette.textMuted, fontSize: 12),
+                  record.companyName,
+                  style: TextStyle(
+                    color: primaryTextColor,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
                 ),
-                if (stale)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
+              ],
+              if (vehicle.isNotEmpty)
+                Text(
+                  vehicle,
+                  style: TextStyle(color: secondaryTextColor, fontSize: 12.8),
+                ),
+              if (record.scheduledPickupIso.isNotEmpty)
+                Text(
+                  limousineQuoteDisplayOrEmpty(
+                    record.scheduledPickupIso,
+                    language,
+                  ),
+                  style: TextStyle(color: secondaryTextColor, fontSize: 12.1),
+                ),
+              if (record.from.isNotEmpty || record.to.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      children: [
+                        Icon(
+                          Icons.radio_button_checked,
+                          size: 11.5,
+                          color: palette.gold.withOpacity(0.94),
+                        ),
+                        Container(
+                          width: 1.8,
+                          height: 30,
+                          margin: const EdgeInsets.symmetric(vertical: 3),
+                          color: palette.gold.withOpacity(0.35),
+                        ),
+                        const Icon(
+                          Icons.location_on,
+                          size: 13.5,
+                          color: Color(0xFF34D29A),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            record.from,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: primaryTextColor,
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            record.to,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: secondaryTextColor,
+                              fontSize: 12.8,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                record.quoteRequestId,
+                style: TextStyle(color: tertiaryTextColor, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (stale)
+                    TextButton(
                       key: limousineCustomerRequestRetryKey(
                         record.quoteRequestId,
                       ),
                       onPressed: onRetry,
                       child: Text(kLimousineCustomerRefresh.of(language)),
                     ),
+                  const Spacer(),
+                  TextButton(
+                    key: limousineCustomerRequestHideKey(record.quoteRequestId),
+                    onPressed: onHide,
+                    child: Text(hideLabel.of(language)),
                   ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

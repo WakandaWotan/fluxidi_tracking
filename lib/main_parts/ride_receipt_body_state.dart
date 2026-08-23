@@ -751,15 +751,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   /// `compliance_register_receipt_bridge.dart` so the receipt UI's
   /// "effective paid" detection agrees with the hydration merge guards.
   bool _isPaidStatusValue(Object? value) {
-    if (value == null) return false;
-    if (value is bool) return value;
-    final text = value.toString().trim().toLowerCase();
-    if (text.isEmpty) return false;
-    return text == 'paid' ||
-        text == 'settled' ||
-        text == 'confirmed' ||
-        text == 'completed' ||
-        text == 'success';
+    return isCanonicalPaidStatusValue(value);
   }
 
   /// Comprehensive paid-state detection for the receipt UI. Returns `true`
@@ -834,7 +826,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       final text = _cleanContactText(_detailAt(path));
       if (text != null && text.isNotEmpty && text != '—') return true;
     }
-    return false;
+    return resolveCanonicalRideIsPaid(
+      historyRaw: item.rawSource,
+      historyDetails: item.bookingDetails,
+    );
   }
 
   String? _mapText(Map<String, dynamic> map, String key) {

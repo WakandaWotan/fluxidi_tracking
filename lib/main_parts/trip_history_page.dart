@@ -314,6 +314,8 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
   ({int total, int completed, int cancelled, double revenue})?
   _authoritativeSummary;
   bool _summaryNeutralWhileSyncing = false;
+  final Map<String, Map<String, dynamic>> _paymentByBookingId =
+      <String, Map<String, dynamic>>{};
 
   _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
     _TripHistoryItem item, {
@@ -721,7 +723,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       cacheUsed: true,
     );
     setState(() {
-      _items = painted;
+      _items = painted.map(_overlayCanonicalPaymentOnItem).toList();
       _localReadCompleted = true;
       _syncStatus = _TripHistorySyncStatus.syncing;
       _summaryNeutralWhileSyncing = paintPlan.summaryNeutral;
@@ -836,13 +838,36 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       mergedByTripId[item.tripId.trim()] = item;
     }
     for (final item in latestLocalItems) {
-      mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
+      final tripId = item.tripId.trim();
+      final existing = mergedByTripId[tripId];
+      if (existing == null) {
+        mergedByTripId[tripId] = item;
+        continue;
+      }
+      final localPaid = resolveCanonicalRideIsPaid(
+        historyRaw: item.rawSource,
+        historyDetails: item.bookingDetails,
+      );
+      final remotePaid = resolveCanonicalRideIsPaid(
+        historyRaw: existing.rawSource,
+        historyDetails: existing.bookingDetails,
+      );
+      if (localPaid && !remotePaid) {
+        final fields = extractCanonicalPaymentFields(item.rawSource);
+        fields.addAll(extractCanonicalPaymentFields(item.bookingDetails));
+        mergedByTripId[tripId] = existing.copyWith(
+          rawSource: overlayCanonicalPaymentFields(existing.rawSource, fields),
+          bookingDetails: overlayCanonicalPaymentFields(
+            existing.bookingDetails,
+            fields,
+          ),
+        );
+      }
     }
     final merged = _finalizeItems(
       mergedByTripId.values,
       sourceTag: 'trip_history_fetch_merge',
-      cacheUsed:
-          safeBackendItems.isEmpty && latestLocalItems.isNotEmpty,
+      cacheUsed: safeBackendItems.isEmpty && latestLocalItems.isNotEmpty,
     );
     final nextSummary = _summary(merged);
     debugPrint(
@@ -850,13 +875,15 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       'backend_count=${safeBackendItems.length} '
       'local_count=${latestLocalItems.length} merged_count=${merged.length}',
     );
+    final overlaid = merged.map(_overlayCanonicalPaymentOnItem).toList();
     setState(() {
-      _items = merged;
+      _items = overlaid;
       _syncStatus = _TripHistorySyncStatus.idle;
       _lastRemoteSucceeded = true;
       _summaryNeutralWhileSyncing = false;
       _authoritativeSummary = nextSummary;
     });
+    unawaited(_refreshCanonicalPaymentForItems(overlaid, generation));
 
     // Drop superseded offline-STOP pending projections so the next cold
     // start cannot re-flash "Lokaal opgeslagen — niet bevestigd".
@@ -1006,56 +1033,94 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     return status == 'cancelled' || status == 'canceled';
   }
 
-  String _normalizePaymentStatus(_TripHistoryItem item) {
-    String? from(dynamic v) {
-      final text = v?.toString().trim().toLowerCase();
-      if (text == null || text.isEmpty || text == 'null') return null;
-      return text.replaceAll('-', '_').replaceAll(' ', '_');
-    }
-
-    final detail = item.bookingDetails;
-    final raw = item.rawSource;
-    final candidates = <String?>[
-      from(raw['payment_status']),
-      from(raw['paymentStatus']),
-      from(raw['payment'] is Map ? (raw['payment'] as Map)['status'] : null),
-      from(detail['payment_status']),
-      from(detail['paymentStatus']),
-      from(
-        detail['payment'] is Map ? (detail['payment'] as Map)['status'] : null,
+  _TripHistoryItem _overlayCanonicalPaymentOnItem(_TripHistoryItem item) {
+    final bookingId = _canonicalBookingIdFromItem(item);
+    if (bookingId.isEmpty) return item;
+    final booking =
+        _paymentByBookingId[bookingId] ?? widget.bookingDetailsById[bookingId];
+    if (booking == null || booking.isEmpty) return item;
+    final fields = extractCanonicalPaymentFields(booking);
+    if (fields.isEmpty) return item;
+    return item.copyWith(
+      rawSource: overlayCanonicalPaymentFields(item.rawSource, fields),
+      bookingDetails: overlayCanonicalPaymentFields(
+        item.bookingDetails,
+        fields,
       ),
-    ];
-    final normalized = candidates.firstWhere(
-      (e) => e != null && e.isNotEmpty,
-      orElse: () => null,
     );
-    if (normalized == null) return 'unknown';
-    if (normalized == 'paid' ||
-        normalized == 'settled' ||
-        normalized == 'confirmed' ||
-        normalized == 'completed' ||
-        normalized == 'succeeded' ||
-        normalized == 'success') {
-      return 'paid';
+  }
+
+  Future<void> _refreshCanonicalPaymentForItems(
+    List<_TripHistoryItem> items,
+    int generation,
+  ) async {
+    final ids = <String>[];
+    for (final item in items) {
+      final bookingId = _canonicalBookingIdFromItem(item);
+      if (bookingId.isEmpty) continue;
+      if (_paymentByBookingId.containsKey(bookingId)) continue;
+      if (resolveCanonicalRideIsPaid(
+        historyRaw: item.rawSource,
+        historyDetails: item.bookingDetails,
+        bookingRecord:
+            widget.bookingDetailsById[bookingId] ??
+            _paymentByBookingId[bookingId],
+      )) {
+        continue;
+      }
+      ids.add(bookingId);
+      if (ids.length >= 12) break;
     }
-    if (normalized == 'unpaid' ||
-        normalized == 'not_paid' ||
-        normalized == 'open' ||
-        normalized == 'pending' ||
-        normalized == 'authorized' ||
-        normalized == 'authorised' ||
-        normalized == 'processing') {
-      return 'unpaid';
+    var changed = false;
+    for (final bookingId in ids) {
+      if (!mounted || generation != _fetchGeneration) return;
+      try {
+        final uri = _withActiveBookingScope(
+          kBookingBaseUrl,
+          '/bookings/${Uri.encodeComponent(bookingId)}',
+        );
+        final res = await http
+            .get(uri, headers: widget.headers)
+            .timeout(const Duration(seconds: 8));
+        if (res.statusCode < 200 || res.statusCode >= 300) continue;
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is! Map) continue;
+        final fields = extractCanonicalPaymentFields(
+          Map<String, dynamic>.from(decoded),
+        );
+        if (fields.isEmpty) continue;
+        _paymentByBookingId[bookingId] = fields;
+        changed = true;
+      } catch (_) {
+        continue;
+      }
     }
-    if (normalized == 'cancelled' || normalized == 'canceled') {
-      return 'cancelled';
+    if (!changed || !mounted || generation != _fetchGeneration) return;
+    setState(() {
+      _items = _items
+          .map(_overlayCanonicalPaymentOnItem)
+          .toList(growable: false);
+    });
+  }
+
+  String _normalizePaymentStatus(_TripHistoryItem item) {
+    final bookingId = _canonicalBookingIdFromItem(item);
+    final booking = bookingId.isEmpty
+        ? null
+        : (_paymentByBookingId[bookingId] ??
+              widget.bookingDetailsById[bookingId]);
+    switch (resolveCanonicalRidePaidDisplay(
+      historyRaw: item.rawSource,
+      historyDetails: item.bookingDetails,
+      bookingRecord: booking,
+    )) {
+      case CanonicalRidePaidDisplay.paid:
+        return 'paid';
+      case CanonicalRidePaidDisplay.unpaid:
+        return 'unpaid';
+      case CanonicalRidePaidDisplay.unknown:
+        return 'unknown';
     }
-    if (normalized == 'failed' ||
-        normalized == 'error' ||
-        normalized == 'declined') {
-      return 'failed';
-    }
-    return 'unknown';
   }
 
   String _formatEur(double value) {
@@ -1838,7 +1903,8 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                     kpiInt = (v) => v.toString();
                     kpiEur = _formatEur;
                   }
-                  final waitingForFirstAuthoritative = !_localReadCompleted ||
+                  final waitingForFirstAuthoritative =
+                      !_localReadCompleted ||
                       (_syncStatus == _TripHistorySyncStatus.syncing &&
                           items.isEmpty &&
                           !_lastRemoteSucceeded);
@@ -1903,13 +1969,17 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                       ).withOpacity(0.55),
                       textColor: textMuted,
                       text: _tr(
-                        nl: 'Nieuwste ritten kunnen niet worden '
+                        nl:
+                            'Nieuwste ritten kunnen niet worden '
                             'opgehaald. Lokale ritten blijven zichtbaar.',
-                        en: 'Could not fetch the latest rides. '
+                        en:
+                            'Could not fetch the latest rides. '
                             'Local rides remain visible.',
-                        fr: 'Impossible de récupérer les dernières '
+                        fr:
+                            'Impossible de récupérer les dernières '
                             'courses. Les courses locales restent visibles.',
-                        es: 'No se pudieron obtener los viajes más '
+                        es:
+                            'No se pudieron obtener los viajes más '
                             'recientes. Los viajes locales siguen visibles.',
                       ),
                       trailing: null,
@@ -2218,10 +2288,7 @@ Widget _tripHistorySyncBanner({
             ),
           ),
         ),
-        if (trailing != null) ...[
-          const SizedBox(width: 8),
-          trailing,
-        ],
+        if (trailing != null) ...[const SizedBox(width: 8), trailing],
       ],
     ),
   );

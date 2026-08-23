@@ -121,8 +121,7 @@ void logStreetInvoicePaymentPresentation({
   required String renderedLabel,
 }) {
   final statusKey = diagnostics.semanticStatusKey;
-  final dedupeKey =
-      '$surface|${_langKey(lang)}|$statusKey|$renderedLabel';
+  final dedupeKey = '$surface|${_langKey(lang)}|$statusKey|$renderedLabel';
   if (!_streetInvoicePresentationLogSeen.add(dedupeKey)) return;
   if (_streetInvoicePresentationLogSeen.length > 64) {
     _streetInvoicePresentationLogSeen.clear();
@@ -276,10 +275,10 @@ String streetInvoicePaymentStatusLabel(
     case StreetInvoiceInvoicePaymentStatus.notLinkedToBillit:
       return _tl(
         lang,
-        nl: 'Nog niet gekoppeld aan Billit',
-        en: 'Not linked to Billit yet',
-        fr: 'Pas encore lié à Billit',
-        es: 'Aún no vinculado a Billit',
+        nl: 'Koppel handmatig in Billit (auto-aanmaak staat uit)',
+        en: 'Link manually in Billit (auto-create is off)',
+        fr: 'Lier manuellement dans Billit (création auto désactivée)',
+        es: 'Vincular manualmente en Billit (creación automática desactivada)',
       );
     case StreetInvoiceInvoicePaymentStatus.outstanding:
       return _tl(
@@ -936,6 +935,7 @@ class StreetBusinessInvoiceForm extends StatefulWidget {
   final AppLanguage language;
   final bool isPaidBooking;
   final StreetBusinessInvoiceBuyerInput initial;
+
   /// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: credit-first conversion.
   final bool convertFromConsumerSale;
 
@@ -1300,7 +1300,8 @@ class _StreetBusinessInvoiceFormState extends State<StreetBusinessInvoiceForm> {
                           fr: 'Numéro d\'entreprise',
                           es: 'Número de registro de empresa',
                         ),
-                        invalid: validation?.companyRegistrationInvalid ?? false,
+                        invalid:
+                            validation?.companyRegistrationInvalid ?? false,
                       ),
                       field(
                         _email,

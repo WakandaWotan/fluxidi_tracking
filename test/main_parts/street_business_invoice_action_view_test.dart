@@ -502,7 +502,8 @@ void main() {
         delay: (_) async {},
         pollInterval: const Duration(days: 1),
         pollTimeout: const Duration(days: 1),
-        postInvoice: (_) async => const StreetInvoicePostResult(statusCode: 500),
+        postInvoice: (_) async =>
+            const StreetInvoicePostResult(statusCode: 500),
         fetchDocuments: () async => const StreetInvoiceDocsResult(
           statusCode: 200,
           okEnvelope: true,
@@ -550,7 +551,7 @@ void main() {
       );
       expect(
         streetInvoicePaymentStatusLabel(AppLanguage.nl, p.invoicePaymentStatus),
-        'Nog niet gekoppeld aan Billit',
+        'Koppel handmatig in Billit (auto-aanmaak staat uit)',
       );
       expect(
         streetInvoicePaymentStatusLabel(
@@ -816,14 +817,17 @@ void main() {
   });
 
   group('PDF-PAYMENT-SYNC-1D canonical ride-paid wiring (card)', () {
-    StreetBusinessInvoiceController lagController({required bool isPaidBooking}) {
+    StreetBusinessInvoiceController lagController({
+      required bool isPaidBooking,
+    }) {
       return StreetBusinessInvoiceController(
         bookingId: 'street_1',
         isPaidBooking: isPaidBooking,
         delay: (_) async {},
         pollInterval: const Duration(days: 1),
         pollTimeout: const Duration(days: 1),
-        postInvoice: (_) async => const StreetInvoicePostResult(statusCode: 500),
+        postInvoice: (_) async =>
+            const StreetInvoicePostResult(statusCode: 500),
         fetchDocuments: () async => const StreetInvoiceDocsResult(
           statusCode: 200,
           okEnvelope: true,
@@ -862,13 +866,16 @@ void main() {
         );
 
         await _pumpView(tester, controller: c, language: AppLanguage.nl);
-        expect(find.text('Nog niet gekoppeld aan Billit'), findsOneWidget);
+        expect(
+          find.text('Koppel handmatig in Billit (auto-aanmaak staat uit)'),
+          findsOneWidget,
+        );
         expect(find.text('Factuur openstaand'), findsNothing);
         expect(find.text('Betalingssynchronisatie bezig'), findsNothing);
 
         await _pumpView(tester, controller: c, language: AppLanguage.en);
         expect(
-          find.text('Not linked to Billit yet'),
+          find.text('Link manually in Billit (auto-create is off)'),
           findsOneWidget,
         );
         expect(find.text('Invoice outstanding'), findsNothing);

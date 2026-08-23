@@ -27,6 +27,12 @@ const Key kLimousineCustomerRequestDetailKey = ValueKey<String>(
   'limousine_customer_request_detail',
 );
 
+Key limousineCustomerRequestCardKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_customer_request_card_$quoteRequestId');
+
+Key limousineCustomerRequestHideKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_customer_request_hide_$quoteRequestId');
+
 class LimousineCustomerRequestHistoryException implements Exception {
   const LimousineCustomerRequestHistoryException();
 }
@@ -333,6 +339,18 @@ class LimousineCustomerRequestHistoryRepository {
 
   Future<void> clearAll() async {
     await _vault.delete();
+  }
+
+  Future<bool> removeByQuoteRequestId(String quoteRequestId) async {
+    final id = quoteRequestId.trim();
+    if (id.isEmpty) return false;
+    final items = await _readAll();
+    final next = items
+        .where((item) => item.quoteRequestId != id)
+        .toList(growable: false);
+    if (next.length == items.length) return false;
+    await _writeAll(next);
+    return true;
   }
 
   Future<List<LimousineCustomerRequestRecord>> _readAll() async {

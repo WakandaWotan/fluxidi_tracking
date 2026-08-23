@@ -4,10 +4,10 @@ import 'limousine_state_composition.dart';
 
 /// Customer-entry CTA (NL/EN/FR/ES). German falls back to English.
 const LocalizedText kLimousineBookLabel = LocalizedText(
-  nl: 'Boek een limousine',
-  en: 'Book a limousine',
-  fr: 'Réserver une limousine',
-  es: 'Reservar una limusina',
+  nl: 'Limousine',
+  en: 'Limousine',
+  fr: 'Limousine',
+  es: 'Limusina',
 );
 
 /// Public-profile / business-settings service chip.

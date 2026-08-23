@@ -394,6 +394,48 @@ const LocalizedText kLimousineCustomerRequestsHint = LocalizedText(
   es: 'Estas son solicitudes de presupuesto, no reservas.',
 );
 
+const LocalizedText kLimousineCustomerViewedBadge = LocalizedText(
+  nl: 'Bekeken door bedrijf',
+  en: 'Viewed by company',
+  fr: 'Consultée par l’entreprise',
+  es: 'Vista por la empresa',
+);
+
+const LocalizedText kLimousineCustomerHideFromOverview = LocalizedText(
+  nl: 'Verwijderen uit overzicht',
+  en: 'Remove from overview',
+  fr: 'Retirer de l’aperçu',
+  es: 'Quitar del resumen',
+);
+
+const LocalizedText kLimousineCustomerHideAfterBooking = LocalizedText(
+  nl: 'Verbergen',
+  en: 'Hide',
+  fr: 'Masquer',
+  es: 'Ocultar',
+);
+
+const LocalizedText kLimousineCustomerHideConfirmTitle = LocalizedText(
+  nl: 'Aanvraag verwijderen uit overzicht?',
+  en: 'Remove request from overview?',
+  fr: 'Retirer la demande de l’aperçu ?',
+  es: '¿Quitar la solicitud del resumen?',
+);
+
+const LocalizedText kLimousineCustomerCancel = LocalizedText(
+  nl: 'Annuleren',
+  en: 'Cancel',
+  fr: 'Annuler',
+  es: 'Cancelar',
+);
+
+const LocalizedText kLimousineCustomerHideConfirmBody = LocalizedText(
+  nl: 'De aanvraag verdwijnt alleen uit jouw lokale overzicht. Offerte, boeking, factuur en betaling blijven bewaard.',
+  en: 'This request is removed only from your local overview. Quotation, booking, invoice and payment stay stored.',
+  fr: 'Cette demande disparaît uniquement de votre aperçu local. Le devis, la réservation, la facture et le paiement restent conservés.',
+  es: 'Esta solicitud solo desaparece de tu vista local. El presupuesto, la reserva, la factura y el pago se conservan.',
+);
+
 const LocalizedText kLimousineCustomerAccepted = LocalizedText(
   nl: 'Offerte geaccepteerd',
   en: 'Quotation accepted',
@@ -628,6 +670,42 @@ String limousineCustomerStateLabel(
   final label = kLimousineCustomerStateLabels[token];
   if (label == null) return kLimousineQuoteUnknownState.of(language);
   return label.of(language);
+}
+
+String limousineCustomerCardStateLabel(
+  String state,
+  AppLanguage language, {
+  String companyName = '',
+  LimousineQuoteRequest? request,
+}) {
+  final token = limousineCustomerLifecycleState(state, request: request);
+  if (token == LimousineQuoteStateId.viewedByCompany) {
+    return kLimousineCustomerViewedBadge.of(language);
+  }
+  return limousineCustomerStateLabel(
+    token,
+    language,
+    companyName: companyName,
+    request: request,
+  );
+}
+
+bool limousineCustomerRequestHasBooking(
+  String state, {
+  LimousineQuoteRequest? request,
+}) {
+  final token = limousineCustomerLifecycleState(state, request: request);
+  return token == LimousineQuoteStateId.accepted ||
+      token == LimousineQuoteStateId.bookingCreated;
+}
+
+LocalizedText limousineCustomerHideActionLabel({
+  required String state,
+  LimousineQuoteRequest? request,
+}) {
+  return limousineCustomerRequestHasBooking(state, request: request)
+      ? kLimousineCustomerHideAfterBooking
+      : kLimousineCustomerHideFromOverview;
 }
 
 String limousineCustomerPresentationLabel(

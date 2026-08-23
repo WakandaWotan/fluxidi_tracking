@@ -410,15 +410,15 @@ void main() {
 
   group('limousine localization labels', () {
     test('book-a-limousine labels are present for NL/EN/FR/ES', () {
-      expect(kLimousineBookLabel.nl, 'Boek een limousine');
-      expect(kLimousineBookLabel.en, 'Book a limousine');
-      expect(kLimousineBookLabel.fr, 'Réserver une limousine');
-      expect(kLimousineBookLabel.es, 'Reservar una limusina');
-      expect(limousineBookLabelFor(AppLanguage.nl), 'Boek een limousine');
-      expect(limousineBookLabelFor(AppLanguage.en), 'Book a limousine');
-      expect(limousineBookLabelFor(AppLanguage.fr), 'Réserver une limousine');
-      expect(limousineBookLabelFor(AppLanguage.es), 'Reservar una limusina');
-      expect(LimousineCustomerEntryContract.bookLabel.en, 'Book a limousine');
+      expect(kLimousineBookLabel.nl, 'Limousine');
+      expect(kLimousineBookLabel.en, 'Limousine');
+      expect(kLimousineBookLabel.fr, 'Limousine');
+      expect(kLimousineBookLabel.es, 'Limusina');
+      expect(limousineBookLabelFor(AppLanguage.nl), 'Limousine');
+      expect(limousineBookLabelFor(AppLanguage.en), 'Limousine');
+      expect(limousineBookLabelFor(AppLanguage.fr), 'Limousine');
+      expect(limousineBookLabelFor(AppLanguage.es), 'Limusina');
+      expect(LimousineCustomerEntryContract.bookLabel.en, 'Limousine');
     });
 
     test('business settings and partner profile resolve the catalog label', () {

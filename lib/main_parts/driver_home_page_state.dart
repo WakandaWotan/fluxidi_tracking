@@ -3080,6 +3080,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  ({Color border, Color text}) _rideCardSchedulePillColors({
+    required bool isLightEmerald,
+    required bool isMidnightBlue,
+  }) {
+    if (isLightEmerald) {
+      return (
+        border: _lightEmeraldBorderColor(0.50),
+        text: _lightEmeraldTextPrimary(),
+      );
+    }
+    if (isMidnightBlue) {
+      return (
+        border: _midnightBlueBorderColor(0.50),
+        text: _midnightBlueTextPrimary(),
+      );
+    }
+    return (border: const Color(0x55FFD36A), text: const Color(0xFFFFD98A));
+  }
+
   ButtonStyle _lightEmeraldGhostButtonStyle() {
     return OutlinedButton.styleFrom(
       foregroundColor: _lightEmeraldTextPrimary(),
@@ -36287,12 +36306,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           _pill(
             icon: Icons.schedule,
             text: dt,
-            borderColor: isMidnightBlue
-                ? _midnightBlueBorderColor(0.50)
-                : const Color(0x55FFD36A),
-            textColor: isMidnightBlue
-                ? _midnightBlueTextPrimary()
-                : const Color(0xFFFFD98A),
+            borderColor: _rideCardSchedulePillColors(
+              isLightEmerald: isLightEmerald,
+              isMidnightBlue: isMidnightBlue,
+            ).border,
+            textColor: _rideCardSchedulePillColors(
+              isLightEmerald: isLightEmerald,
+              isMidnightBlue: isMidnightBlue,
+            ).text,
             compact: true,
           ),
           const SizedBox(height: 10),
@@ -36569,6 +36590,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMidnightBlue ? _midnightBlueFilledActionButtonStyle() : null);
     final cardOutlineStyle = isCustomHuisstijl
         ? _customHuisstijlGhostButtonStyle()
+        : isLightEmerald
+        ? _lightEmeraldGhostButtonStyle()
         : isMiddayGold
         ? _middayGoldOutlinedActionButtonStyle()
         : (isMidnightBlue ? _midnightBlueOutlinedActionButtonStyle() : null);
@@ -36659,12 +36682,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 _pill(
                   icon: Icons.schedule,
                   text: dt,
-                  borderColor: isMidnightBlue
-                      ? _midnightBlueBorderColor(0.50)
-                      : const Color(0x55FFD36A),
-                  textColor: isMidnightBlue
-                      ? _midnightBlueTextPrimary()
-                      : const Color(0xFFFFD98A),
+                  borderColor: _rideCardSchedulePillColors(
+                    isLightEmerald: isLightEmerald,
+                    isMidnightBlue: isMidnightBlue,
+                  ).border,
+                  textColor: _rideCardSchedulePillColors(
+                    isLightEmerald: isLightEmerald,
+                    isMidnightBlue: isMidnightBlue,
+                  ).text,
                   compact: true,
                 ),
                 const SizedBox(height: 10),
@@ -36785,12 +36810,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                           _driverDisplayPriceForBooking(b)!,
                           b.currency ?? 'EUR',
                         ),
-                        borderColor: isMidnightBlue
-                            ? _midnightBlueBorderColor(0.50)
-                            : const Color(0x55FFD36A),
-                        textColor: isMidnightBlue
-                            ? _midnightBlueTextPrimary()
-                            : const Color(0xFFFFD98A),
+                        borderColor: _rideCardSchedulePillColors(
+                          isLightEmerald: isLightEmerald,
+                          isMidnightBlue: isMidnightBlue,
+                        ).border,
+                        textColor: _rideCardSchedulePillColors(
+                          isLightEmerald: isLightEmerald,
+                          isMidnightBlue: isMidnightBlue,
+                        ).text,
                         compact: true,
                       ),
                     const Spacer(),
@@ -36978,12 +37005,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                         _pill(
                           icon: Icons.schedule,
                           text: dt,
-                          borderColor: isMidnightBlue
-                              ? _midnightBlueBorderColor(0.50)
-                              : const Color(0x55FFD36A),
-                          textColor: isMidnightBlue
-                              ? _midnightBlueTextPrimary()
-                              : const Color(0xFFFFD98A),
+                          borderColor: _rideCardSchedulePillColors(
+                            isLightEmerald: isLightEmerald,
+                            isMidnightBlue: isMidnightBlue,
+                          ).border,
+                          textColor: _rideCardSchedulePillColors(
+                            isLightEmerald: isLightEmerald,
+                            isMidnightBlue: isMidnightBlue,
+                          ).text,
                         ),
                         const SizedBox(height: 8),
                         SizedBox(

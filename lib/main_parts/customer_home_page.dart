@@ -1231,7 +1231,9 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           type: BottomNavigationBarType.fixed,
           backgroundColor: Colors.transparent,
           selectedItemColor: _premiumGold,
-          unselectedItemColor: _premiumMuted.withOpacity(0.82),
+          unselectedItemColor: _isNightGold
+              ? _premiumMuted.withOpacity(0.82)
+              : _themePalette.textMuted,
           showUnselectedLabels: true,
           selectedFontSize: 11,
           unselectedFontSize: 11,

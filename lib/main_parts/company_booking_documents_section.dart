@@ -206,6 +206,7 @@ class _BookingDocumentMetadata {
   final String sourceBookingId;
   final String sourceLegId;
   final String sourceLegType;
+
   /// CONSUMER-BILLIT-DOCUMENT-UI-1 / CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1
   /// Fluxidi sale kind (`consumer_sale` vs `business_invoice`).
   final String fluxidiSaleKind;
@@ -524,7 +525,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   /// lags (count=1 / empty list field bug). Never mutates [_documents].
   List<_BookingDocumentMetadata> get _documentsForDisplay {
     final base = _filteredDocuments;
-    final snap = _StreetInvoiceLocalIndex.instance.snapshotFor(widget.bookingId);
+    final snap = _StreetInvoiceLocalIndex.instance.snapshotFor(
+      widget.bookingId,
+    );
     if (snap == null) return base;
     if (!shouldInjectLocalIssuedInvoiceDocument(
       localDocumentId: snap.documentId,
@@ -1945,9 +1948,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final doc in visible) _buildDocumentRow(tokens, doc),
-      ],
+      children: [for (final doc in visible) _buildDocumentRow(tokens, doc)],
     );
   }
 
@@ -1966,8 +1967,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       createdByRole: doc.createdByRole,
       peppolApplicable: doc.peppolApplicable,
     );
-    final registeredInBillit =
-        (doc.billitExport?.orderId ?? '').trim().isNotEmpty;
+    final registeredInBillit = (doc.billitExport?.orderId ?? '')
+        .trim()
+        .isNotEmpty;
     final consumerStatus = doc.isConsumerSale
         ? (registeredInBillit
               ? _tr(
@@ -2209,10 +2211,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             es: 'Aún no registrado en Billit',
           )
         : _tr(
-            nl: 'Nog niet gekoppeld aan Billit',
-            en: 'Not linked to Billit yet',
-            fr: 'Pas encore lié à Billit',
-            es: 'Aún no vinculado a Billit',
+            nl: 'Koppel handmatig in Billit (auto-aanmaak staat uit)',
+            en: 'Link manually in Billit (auto-create is off)',
+            fr: 'Lier manuellement dans Billit (création auto désactivée)',
+            es: 'Vincular manualmente en Billit (creación automática desactivada)',
           );
     final subtext = isConsumer
         ? _tr(
