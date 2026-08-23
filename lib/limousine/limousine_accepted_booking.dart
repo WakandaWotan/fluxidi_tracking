@@ -55,6 +55,12 @@ const Key kLimousineAcceptedBookingPaymentRetryKey = ValueKey<String>(
 const Key kLimousineAcceptedBookingCheckoutUnavailableKey = ValueKey<String>(
   'limousine_accepted_booking_checkout_unavailable',
 );
+const Key kLimousineAcceptedBookingResumeCheckoutKey = ValueKey<String>(
+  'limousine_accepted_booking_resume_checkout',
+);
+const Key kLimousineAcceptedBookingCheckoutPendingKey = ValueKey<String>(
+  'limousine_accepted_booking_checkout_pending',
+);
 const Key kLimousineAcceptedBookingBillingSectionKey = ValueKey<String>(
   'limousine_accepted_booking_billing',
 );
@@ -150,6 +156,7 @@ const Set<String> kLimousineAcceptedBookForbiddenAuthorityKeys = <String>{
 enum LimousineAcceptedBookingPhase {
   review,
   submitting,
+  checkoutPending,
   success,
   failed,
   ambiguous,

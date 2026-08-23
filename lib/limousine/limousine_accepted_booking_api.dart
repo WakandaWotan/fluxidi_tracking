@@ -323,6 +323,10 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   List<String> get logSinkForTests => List<String>.unmodifiable(_logSink);
   bool get submitting => phase == LimousineAcceptedBookingPhase.submitting;
   bool get succeeded => phase == LimousineAcceptedBookingPhase.success;
+  bool get checkoutPending =>
+      phase == LimousineAcceptedBookingPhase.checkoutPending;
+  bool get canResumeCheckout =>
+      checkoutPending && result != null && paymentSelection?.isMollieCheckout == true;
 
   /// Resolved picker state, or null while no capability is known.
   ///
@@ -380,6 +384,7 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   bool get canConfirmBooking =>
       !submitting &&
       !succeeded &&
+      !checkoutPending &&
       confirmationAcknowledged &&
       !loadingPaymentCapability &&
       hasPaymentSelection &&
@@ -447,6 +452,13 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
     final selectable = selectablePaymentMethodIds;
     final current = selectedPaymentMethodId;
     if (current != null && selectable.contains(current)) return;
+    final hasOnline = selectable.any(
+      (id) => BookingPaymentSelection.fromMethodId(id).isMollieCheckout,
+    );
+    if (hasOnline) {
+      selectedPaymentMethodId = selectable.length == 1 ? selectable.single : null;
+      return;
+    }
     if (selectable.contains(PaymentMethodIds.inVehicleCard)) {
       selectedPaymentMethodId = PaymentMethodIds.inVehicleCard;
       return;
@@ -456,7 +468,7 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
 
   /// Records an explicit choice. Ignores methods the partner does not accept.
   void selectPaymentMethod(String methodId) {
-    if (submitting || succeeded) return;
+    if (submitting || succeeded || checkoutPending) return;
     final id = normalizePaymentMethodId(methodId);
     if (!selectablePaymentMethodIds.contains(id)) return;
     selectedPaymentMethodId = id;
@@ -482,7 +494,8 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
       unawaited(resumeRepository?.discard());
     }
     handoffCleared = quoteController?.handoff == null;
-    if (phase != LimousineAcceptedBookingPhase.success) {
+    if (phase != LimousineAcceptedBookingPhase.success &&
+        phase != LimousineAcceptedBookingPhase.checkoutPending) {
       error = LimousineAcceptedBookingError.missingCustomerScope;
       phase = LimousineAcceptedBookingPhase.failed;
     }
@@ -513,7 +526,8 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   }
 
   Future<bool> confirmBooking() async {
-    if (submitting || succeeded) return false;
+    if (canResumeCheckout) return resumeCheckout();
+    if (submitting || succeeded || checkoutPending) return false;
     if (!confirmationAcknowledged) return false;
     if (_sessionCleared) {
       error = LimousineAcceptedBookingError.missingCustomerScope;
@@ -587,7 +601,6 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
       final booked = await _gateway.book(payload);
       if (generation != _bookGeneration) return false;
       result = booked;
-      phase = LimousineAcceptedBookingPhase.success;
       quoteController?.clearAcceptedHandoff();
       if (quoteController == null) {
         await resumeRepository?.discard();
@@ -600,7 +613,15 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
         requestPayload: payload,
         customer: loaded,
       );
-      await _startOnlineCheckoutIfNeeded(payment, booked);
+      if (payment.isMollieCheckout) {
+        final launched = await _startOnlineCheckoutIfNeeded(payment, booked);
+        if (!launched) {
+          phase = LimousineAcceptedBookingPhase.checkoutPending;
+          notifyListeners();
+          return false;
+        }
+      }
+      phase = LimousineAcceptedBookingPhase.success;
       notifyListeners();
       return true;
     } on LimousineAcceptedBookException catch (caught) {
@@ -624,15 +645,36 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
     }
   }
 
+  /// Reopens the stored checkout without creating another booking.
+  Future<bool> resumeCheckout() async {
+    final booked = result;
+    final payment = paymentSelection;
+    if (booked == null || payment == null || !payment.isMollieCheckout) {
+      return false;
+    }
+    phase = LimousineAcceptedBookingPhase.submitting;
+    error = null;
+    notifyListeners();
+    final launched = await _startOnlineCheckoutIfNeeded(payment, booked);
+    if (!launched) {
+      phase = LimousineAcceptedBookingPhase.checkoutPending;
+      notifyListeners();
+      return false;
+    }
+    phase = LimousineAcceptedBookingPhase.success;
+    notifyListeners();
+    return true;
+  }
+
   /// Hands an online booking to the app-wide payment return flow, exactly as
   /// the taxi and airport surfaces do: the worker created the payment, the
   /// coordinator owns `/pay/status`, and the bookings list owns resuming it.
-  Future<void> _startOnlineCheckoutIfNeeded(
+  Future<bool> _startOnlineCheckoutIfNeeded(
     BookingPaymentSelection payment,
     LimousineAcceptedBookResult booked,
   ) async {
     checkoutStartFailed = false;
-    if (!payment.isMollieCheckout) return;
+    if (!payment.isMollieCheckout) return true;
     final paymentBookingId = bookingPaymentBookingId(booked.raw);
     final checkoutUrl = bookingCheckoutUrl(booked.raw);
     if (paymentBookingId.isNotEmpty) {
@@ -646,7 +688,7 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
     if (checkoutUrl.isEmpty) {
       checkoutStartFailed = true;
       _safeLog('checkout_url_missing');
-      return;
+      return false;
     }
     if (paymentBookingId.isNotEmpty) {
       markFluxidiPendingPaymentChecking(paymentBookingId: paymentBookingId);
@@ -654,5 +696,6 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
     final opened = await _checkoutOpener(checkoutUrl);
     checkoutStartFailed = !opened;
     _safeLog(opened ? 'checkout_opened' : 'checkout_open_failed');
+    return opened;
   }
 }

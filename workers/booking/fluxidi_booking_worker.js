@@ -103,6 +103,13 @@ import {
   resolveLimousineQuotationCommercialSource as _resolveLimousineQuotationCommercialSource,
 } from "./modules/limousine_quotation_snapshot.mjs";
 import {
+  evaluateFrozenLimousineCancellation as _evaluateFrozenLimousineCancellation,
+  freezeLimousineAcceptedRideFacts as _freezeLimousineAcceptedRideFacts,
+  limousineFrozenCancellationFieldsFromDecision as _limousineFrozenCancellationFieldsFromDecision,
+  paidAmountCentsFromRecord as _paidAmountCentsFromRecord,
+  readFrozenLimousineCancellationTerms as _readFrozenLimousineCancellationTerms,
+} from "./modules/limousine_accepted_ride_facts.mjs";
+import {
   applyPrimaryCompanyEmailChange,
   collectPrimaryCompanyRecoveryEmails,
   COMPANY_EMAIL_CHALLENGE_PURPOSE_PENDING,
@@ -1380,14 +1387,27 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
     vat_treatment: vatTreatment,
   };
 
-  const snapshot = _buildLimousineAcceptedSnapshot({
-    total,
-    quoteReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
-    acceptedAtIso: unsealed.accepted_at || new Date().toISOString(),
-    scheduledPickupIso: String(snapRequest?.scheduled_pickup_iso || record.request?.scheduled_pickup_iso || ""),
-    companyId: sellerScope.company_id || scope?.company_id || "",
+  const rideFacts = _freezeLimousineAcceptedRideFacts({
+    requestSnapshot: snapRequest,
+    request: record.request,
+    offerTerms: commercial.mode === "snapshot"
+      ? commercial.snapshot?.offer_snapshot?.terms
+      : quote.terms,
+    quote,
+    totals: snapTotals || { total_incl_vat_cents: totalCents },
     termsRevision: binding.terms_revision,
   });
+  const snapshot = {
+    ..._buildLimousineAcceptedSnapshot({
+      total,
+      quoteReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
+      acceptedAtIso: unsealed.accepted_at || new Date().toISOString(),
+      scheduledPickupIso: String(snapRequest?.scheduled_pickup_iso || record.request?.scheduled_pickup_iso || ""),
+      companyId: sellerScope.company_id || scope?.company_id || "",
+      termsRevision: binding.terms_revision,
+    }),
+    ...rideFacts,
+  };
   const quotationTrace = commercial.mode === "snapshot"
     ? {
         quotation_revision: commercial.snapshot.quote_revision,
@@ -1428,6 +1448,7 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
       },
       pricingSource: "limousine_manual_quote",
       ruleReference: `${binding.quote_request_id}:r${binding.quote_revision}`,
+      rideFacts,
     },
   };
 }
@@ -49324,6 +49345,7 @@ export default {
             _isCustomerCancellationStatus(normalizedRequestedStatus);
           const adminAuthorized = trusted.auth_mode === "admin_token";
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
+          let limousineCancelPersistFields = {};
           if (actorRole === "customer" && (shouldEvaluateCustomerCancelPolicy || !adminAuthorized)) {
             if (trusted.customer_session) {
               // Ownership already enforced above for customer_session path.
@@ -49383,6 +49405,8 @@ export default {
                   409,
                 );
               }
+              limousineCancelPersistFields =
+                _limousineFrozenCancellationFieldsFromDecision(policyDecision);
               if (cancellationPolicyProfile?.block_when_driver_en_route === true) {
                 const enRouteDecision = await _evaluateDriverEnRouteCancellationBlock(
                   env,
@@ -49454,6 +49478,7 @@ export default {
               actor_role: statusActorRole,
               raw_status: rawRequestedStatus,
               source_endpoint: "/bookings/:id/status",
+              persist_fields: limousineCancelPersistFields,
             },
           );
           return json(
@@ -50538,6 +50563,7 @@ export default {
                   (trusted.auth_mode === "admin_token" ? "admin" : "system");
         const adminAuthorized = trusted.auth_mode === "admin_token";
         const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
+        let limousineCancelPersistFields = {};
         if (!adminAuthorized) {
           if (actorRole === "customer") {
             if (trusted.customer_session) {
@@ -50599,6 +50625,8 @@ export default {
                   409,
                 );
               }
+              limousineCancelPersistFields =
+                _limousineFrozenCancellationFieldsFromDecision(policyDecision);
               if (cancellationPolicyProfile?.block_when_driver_en_route === true) {
                 const enRouteDecision = await _evaluateDriverEnRouteCancellationBlock(
                   env,
@@ -50665,6 +50693,7 @@ export default {
           {
             actor_role: statusActorRole,
             source_endpoint: "/track/booking/status",
+            persist_fields: limousineCancelPersistFields,
           },
         );
         return json(
@@ -56505,6 +56534,44 @@ function _evaluateCustomerCancellationPolicy(rec, now = new Date(), policyProfil
       pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
       parsed_pickup_ms: null,
       now_ms: now instanceof Date ? now.getTime() : null,
+    };
+  }
+  const frozenLimousineTerms = _readFrozenLimousineCancellationTerms(rec);
+  if (frozenLimousineTerms) {
+    const pickupMs = pickupIso ? _parseCustomerCancellationPickupMs(pickupIso) : Number.NaN;
+    if (!pickupIso || !Number.isFinite(pickupMs)) {
+      return {
+        allowed: false,
+        reason: "cancellation_requires_review",
+        bucket,
+        bucket_source: bucketSource,
+        payment_class: paymentClass,
+        cutoff_minutes: Math.max(0, Number(frozenLimousineTerms.cancellation_deadline_hours) || 0) * 60,
+        pickup_iso: pickupIso || null,
+        minutes_until_pickup: null,
+        pickup_source: pickupDetails.pickup_source || "none",
+        pickup_candidates_present: pickupDetails.pickup_candidates_present || [],
+        parsed_pickup_ms: Number.isFinite(pickupMs) ? pickupMs : null,
+        now_ms: now instanceof Date ? now.getTime() : null,
+        limousine_terms_source: frozenLimousineTerms.cancellation_terms_source,
+      };
+    }
+    return {
+      ..._evaluateFrozenLimousineCancellation({
+        terms: frozenLimousineTerms,
+        pickupIso,
+        now,
+        paymentClass,
+        paidAmountCents: _paidAmountCentsFromRecord(
+          rec,
+          frozenLimousineTerms.cancellation_canonical_gross_cents,
+        ),
+        pickupSource: pickupDetails.pickup_source || "none",
+        pickupCandidatesPresent: pickupDetails.pickup_candidates_present || [],
+        parsedPickupMs: pickupMs,
+      }),
+      bucket,
+      bucket_source: bucketSource,
     };
   }
   const cutoffMinutes = bucket === "airport"
@@ -66085,10 +66152,13 @@ async function handleBooking(payload, env, request, options = {}) {
       0,
       1,
     );
-    const pax = _isLimousineServiceRequest(payload)
+    const limousineAcceptanceReferenceForPax = safeStr(
+      payload?.limousine_acceptance_reference ?? payload?.limousineAcceptanceReference,
+    );
+    let pax = (_isLimousineServiceRequest(payload) || limousineAcceptanceReferenceForPax)
       ? clampInt(payload?.pax, 1, 16)
       : clampInt(payload?.pax, 1, 3);
-    const bags = Math.max(0, clampInt(payload?.bags, 0, 99));
+    let bags = Math.max(0, clampInt(payload?.bags, 0, 99));
     const tier = normalizeTier(payload?.tier || "comfort");
     const service = normalizeService(payload?.service || "passenger");
     const stops = normalizeStops(payload);
@@ -66288,10 +66358,16 @@ async function handleBooking(payload, env, request, options = {}) {
     const bookingPaymentProvider = requiresPayment ? "mollie" : "manual";
     const paymentFields = paymentFieldsFromPayload(payload);
     let bookingPaymentFields = paymentFields;
+    const requestedPublicPaymentMethod = _requestedPublicPaymentMethodFromPayload(payload);
+    const requestedMollieMethod = safeStr(
+      payload?.mollie_method ?? payload?.mollieMethod,
+      40,
+    ).toLowerCase();
     if (business_detected && invoice_requested && !requiresPayment) {
       bookingPaymentFields = normalizedPaymentFields({
         status: "unpaid",
         provider: "manual",
+        paymentMethod: requestedPublicPaymentMethod,
       });
     }
     const bookingPaymentStatusToken = safeStr(
@@ -66323,6 +66399,18 @@ async function handleBooking(payload, env, request, options = {}) {
       invoiceIntent: invoice_intent,
       invoice_state,
       invoiceState: invoice_state,
+      ...(requestedPublicPaymentMethod
+        ? {
+            payment_method: requestedPublicPaymentMethod,
+            paymentMethod: requestedPublicPaymentMethod,
+          }
+        : {}),
+      ...(requestedMollieMethod
+        ? {
+            mollie_method: requestedMollieMethod,
+            mollieMethod: requestedMollieMethod,
+          }
+        : {}),
     };
     if (invoice_intent === "business_invoice" && bookingPaymentStatusToken !== "paid") {
       const invoiceLifecycleBookingHint = safeStr(
@@ -66366,6 +66454,7 @@ async function handleBooking(payload, env, request, options = {}) {
     let _limousineAccepted = null;
     let _limousineRouteCache = null;
     let _limousineManualQuoteRecord = null;
+    let _limousineFrozenRideFacts = null;
     const _limousineAcceptanceReference = safeStr(
       payload?.limousine_acceptance_reference ?? payload?.limousineAcceptanceReference,
     );
@@ -66415,6 +66504,13 @@ async function handleBooking(payload, env, request, options = {}) {
         if (!manual.ok) return manual.response;
         _limousineAccepted = manual.accepted;
         _limousineManualQuoteRecord = manual.record;
+        _limousineFrozenRideFacts = manual.accepted?.rideFacts || null;
+        if (_limousineFrozenRideFacts?.pax != null) {
+          pax = clampInt(_limousineFrozenRideFacts.pax, 1, 16);
+        }
+        if (_limousineFrozenRideFacts?.bags != null) {
+          bags = Math.max(0, clampInt(_limousineFrozenRideFacts.bags, 0, 99));
+        }
         const sellerTenant = sanitizeTenantString(manual.record?.tenant_id, 80);
         const sellerCompany = sanitizeTenantString(manual.record?.company_id, 80);
         if (sellerTenant && sellerCompany) {
@@ -68826,6 +68922,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       wait_min,
       pax,
       bags,
+      ...(_limousineFrozenRideFacts?.cancellation_terms_source
+        ? {
+            cancellation_deadline_hours: _limousineFrozenRideFacts.cancellation_deadline_hours,
+            cancellation_penalty_percent: _limousineFrozenRideFacts.cancellation_penalty_percent,
+            no_show_penalty_percent: _limousineFrozenRideFacts.no_show_penalty_percent,
+            cancellation_canonical_gross_cents:
+              _limousineFrozenRideFacts.cancellation_canonical_gross_cents,
+            cancellation_terms_source: _limousineFrozenRideFacts.cancellation_terms_source,
+            terms_revision: _limousineFrozenRideFacts.terms_revision,
+          }
+        : {}),
       tier,
       service,
       service_type: _limousineAccepted
@@ -68949,6 +69056,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
       serviceType: booking.serviceType,
       service_bucket: booking.service_bucket,
       serviceBucket: booking.serviceBucket,
+      ...(_limousineFrozenRideFacts?.cancellation_terms_source
+        ? {
+            cancellation_deadline_hours: _limousineFrozenRideFacts.cancellation_deadline_hours,
+            cancellation_penalty_percent: _limousineFrozenRideFacts.cancellation_penalty_percent,
+            no_show_penalty_percent: _limousineFrozenRideFacts.no_show_penalty_percent,
+            cancellation_canonical_gross_cents:
+              _limousineFrozenRideFacts.cancellation_canonical_gross_cents,
+            cancellation_terms_source: _limousineFrozenRideFacts.cancellation_terms_source,
+            terms_revision: _limousineFrozenRideFacts.terms_revision,
+          }
+        : {}),
       ...(booking.airport_direction
         ? {
             airport_direction: booking.airport_direction,
@@ -92977,6 +93095,16 @@ async function updateBookingStatusAuthoritative(
       console.log(
         `[CALENDAR][CLEANUP][STATUS_UPDATE][ERROR] booking=${_bookingIntentMask(bookingId)} reason=${safeStr(calendarErr?.message || calendarErr, 120) || "unknown"}`,
       );
+    }
+  }
+  const persistFields =
+    options?.persist_fields && typeof options.persist_fields === "object"
+      ? options.persist_fields
+      : null;
+  if (persistFields && Object.keys(persistFields).length) {
+    Object.assign(rec, persistFields);
+    if (rec.booking && typeof rec.booking === "object") {
+      Object.assign(rec.booking, persistFields);
     }
   }
   await env.BOOKING_KV.put(key, JSON.stringify(rec));

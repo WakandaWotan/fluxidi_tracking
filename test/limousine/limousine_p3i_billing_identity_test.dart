@@ -132,23 +132,24 @@ const LimousineAcceptedBookingCustomer _customer =
     );
 
 class _BookGateway implements LimousineAcceptedBookingGateway {
-  _BookGateway();
+  _BookGateway({this.raw = const <String, dynamic>{
+    'ok': true,
+    'booking_id': 'B-100',
+    'public_reference': 'FLX-100',
+  }});
 
   int calls = 0;
   Map<String, dynamic>? lastPayload;
+  final Map<String, dynamic> raw;
 
   @override
   Future<LimousineAcceptedBookResult> book(Map<String, dynamic> payload) async {
     calls += 1;
     lastPayload = payload;
-    return const LimousineAcceptedBookResult(
-      bookingId: 'B-100',
-      publicReference: 'FLX-100',
-      raw: <String, dynamic>{
-        'ok': true,
-        'booking_id': 'B-100',
-        'public_reference': 'FLX-100',
-      },
+    return LimousineAcceptedBookResult(
+      bookingId: (raw['booking_id'] ?? '').toString(),
+      publicReference: (raw['public_reference'] ?? '').toString(),
+      raw: raw,
     );
   }
 }
@@ -167,6 +168,7 @@ LimousineAcceptedBookingController _controller({
     customerOverride: _customer,
     customerLoader: () async => _customer,
     initialPaymentCapability: capability,
+    checkoutOpener: (url) async => true,
     isApplePaymentPlatform: false,
     persister:
         ({
@@ -448,7 +450,15 @@ void main() {
     });
 
     test('B2) private + online sends no billing fragment', () async {
-      final gateway = _BookGateway();
+      final gateway = _BookGateway(
+        raw: const <String, dynamic>{
+          'ok': true,
+          'booking_id': 'B-100',
+          'public_reference': 'FLX-100',
+          'payment_booking_id': 'PB-100',
+          'checkout_url': 'https://www.mollie.com/checkout/select-method/abc',
+        },
+      );
       final controller = _controller(
         gateway: gateway,
         capability: _onlineBancontact,
@@ -499,7 +509,15 @@ void main() {
     });
 
     test('B4) business + online keeps payment and billing together', () async {
-      final gateway = _BookGateway();
+      final gateway = _BookGateway(
+        raw: const <String, dynamic>{
+          'ok': true,
+          'booking_id': 'B-100',
+          'public_reference': 'FLX-100',
+          'payment_booking_id': 'PB-100',
+          'checkout_url': 'https://www.mollie.com/checkout/select-method/abc',
+        },
+      );
       final controller = _controller(
         gateway: gateway,
         capability: _onlineBancontact,

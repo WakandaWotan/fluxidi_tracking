@@ -20,6 +20,14 @@ import 'package:fluxidi_tracking/payment_return.dart';
 
 const String _acceptRef = 'limacc1.dGVzdGl2MTIz.dGVzdGNpcGhlcnRleHQxMjM';
 
+const Map<String, dynamic> _mollieCheckoutRaw = <String, dynamic>{
+  'ok': true,
+  'booking_id': 'B-100',
+  'public_reference': 'FLX-100',
+  'payment_booking_id': 'PB-100',
+  'checkout_url': 'https://www.mollie.com/checkout/select-method/abc',
+};
+
 /// A partner that only collects in the car.
 const BookingPaymentCapability _manualOnly = BookingPaymentCapability(
   paymentOwnerMode: 'manual_only',
@@ -413,7 +421,7 @@ void main() {
     test(
       'B3) an explicit online choice maps to the canonical Mollie fields',
       () async {
-        final gateway = _BookGateway();
+        final gateway = _BookGateway(raw: _mollieCheckoutRaw);
         final controller = _controller(
           gateway: gateway,
           capability: _onlineBancontact,
@@ -536,7 +544,11 @@ void main() {
           (_manualOnly, PaymentMethodIds.inVehicleCard),
           (_onlineBancontact, PaymentMethodIds.bancontact),
         ]) {
-          final gateway = _BookGateway();
+          final gateway = _BookGateway(
+            raw: entry.$2 == PaymentMethodIds.bancontact
+                ? _mollieCheckoutRaw
+                : null,
+          );
           final controller = _controller(
             gateway: gateway,
             capability: entry.$1,
@@ -631,8 +643,11 @@ void main() {
         );
         controller.selectPaymentMethod(PaymentMethodIds.bancontact);
         controller.setConfirmationAcknowledged(true);
-        expect(await controller.confirmBooking(), isTrue);
+        expect(await controller.confirmBooking(), isFalse);
         expect(controller.checkoutStartFailed, isTrue);
+        expect(controller.succeeded, isFalse);
+        expect(controller.checkoutPending, isTrue);
+        expect(controller.canResumeCheckout, isTrue);
         expect(gateway.lastPayload!['payment_mode'], 'mollie');
         controller.dispose();
       },

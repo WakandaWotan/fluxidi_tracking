@@ -133,6 +133,9 @@ class _LimousineAcceptedBookingPageState
                 else if (controller.phase ==
                     LimousineAcceptedBookingPhase.success)
                   _success(controller, palette)
+                else if (controller.phase ==
+                    LimousineAcceptedBookingPhase.checkoutPending)
+                  _checkoutPending(controller, palette)
                 else ...[
                   _review(controller.reviewFor(_lang), palette),
                   _paymentSection(controller, palette),
@@ -535,6 +538,47 @@ class _LimousineAcceptedBookingPageState
                   style: TextStyle(color: palette.textMuted),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _checkoutPending(
+    LimousineAcceptedBookingController controller,
+    CustomerThemePalette palette,
+  ) {
+    final reference =
+        controller.result?.publicReference ??
+        controller.result?.bookingId ??
+        '';
+    return Card(
+      key: kLimousineAcceptedBookingCheckoutPendingKey,
+      color: palette.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_t(kLimousineAcceptedBookingReference)}: $reference',
+            ),
+            Padding(
+              key: kLimousineAcceptedBookingCheckoutUnavailableKey,
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _t(kLimousineAcceptedBookingCheckoutUnavailable),
+                style: TextStyle(color: palette.textMuted),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              key: kLimousineAcceptedBookingResumeCheckoutKey,
+              onPressed: controller.canResumeCheckout
+                  ? () => controller.resumeCheckout()
+                  : null,
+              child: Text(_t(kLimousineAcceptedBookingResumeCheckout)),
+            ),
           ],
         ),
       ),

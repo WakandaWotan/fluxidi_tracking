@@ -165,16 +165,24 @@ const LocalizedText
 kLimousineAcceptedBookingCheckoutUnavailable = LocalizedText(
   nl:
       'De boeking staat vast, maar de betaalpagina kon niet worden geopend. '
-      'Rond de betaling af bij "Mijn boekingen".',
+      'Tik op "Betaling hervatten" of rond de betaling af bij "Mijn boekingen".',
   en:
-      'The booking is confirmed, but the payment page could not be opened. '
-      'Finish the payment from "My bookings".',
+      'The booking is saved, but the payment page could not be opened. '
+      'Tap "Resume payment" or finish it from "My bookings".',
   fr:
-      'La réservation est confirmée, mais la page de paiement n’a pas pu '
-      's’ouvrir. Finalisez le paiement dans « Mes réservations ».',
+      'La réservation est enregistrée, mais la page de paiement n’a pas pu '
+      's’ouvrir. Appuyez sur « Reprendre le paiement » ou finalisez-le dans '
+      '« Mes réservations ».',
   es:
-      'La reserva está confirmada, pero no se pudo abrir la página de pago. '
-      'Finaliza el pago en «Mis reservas».',
+      'La reserva está guardada, pero no se pudo abrir la página de pago. '
+      'Pulsa «Reanudar pago» o termínalo en «Mis reservas».',
+);
+
+const LocalizedText kLimousineAcceptedBookingResumeCheckout = LocalizedText(
+  nl: 'Betaling hervatten',
+  en: 'Resume payment',
+  fr: 'Reprendre le paiement',
+  es: 'Reanudar pago',
 );
 
 const Map<LimousineAcceptedBookingError, LocalizedText>
