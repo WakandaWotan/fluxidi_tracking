@@ -339,6 +339,19 @@ test("worker still clamps taxi pax 1..3 and limousine 1..16", () => {
   assert.ok(attachQuote > 0, "accepted totals must become the shared Mollie client quote");
   assert.ok(firstMollie > attachQuote, "client quote must be attached before Mollie create");
   assert.match(WORKER_SRC, /host === "ppro\.com" \|\| host\.endsWith\("\.ppro\.com"\)/);
+  const onlineBranch = WORKER_SRC.indexOf(
+    "branch=non_calendar_or_sync_suppressed_business_unpaid persisted=false",
+  );
+  const onlineFrozen = WORKER_SRC.indexOf(
+    "cancellation_canonical_gross_cents:",
+    onlineBranch,
+  );
+  const onlineAccepted = WORKER_SRC.indexOf(
+    "limousine_accepted_price: _limousineAccepted.snapshot",
+    onlineBranch,
+  );
+  assert.ok(onlineBranch > 0 && onlineFrozen > onlineBranch, "online persist must freeze cancel terms");
+  assert.ok(onlineAccepted > onlineBranch, "online persist must keep accepted snapshot");
 });
 
 test("accepted 8/2 without service tokens stays 8/2 and freezes 24/25/100", async () => {

@@ -68515,6 +68515,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         created_at: nowIso,
         updatedAt: nowIso,
         updated_at: nowIso,
+        ...(_limousineFrozenRideFacts?.cancellation_terms_source
+          ? {
+              cancellation_deadline_hours: _limousineFrozenRideFacts.cancellation_deadline_hours,
+              cancellation_penalty_percent: _limousineFrozenRideFacts.cancellation_penalty_percent,
+              no_show_penalty_percent: _limousineFrozenRideFacts.no_show_penalty_percent,
+              cancellation_canonical_gross_cents:
+                _limousineFrozenRideFacts.cancellation_canonical_gross_cents,
+              cancellation_terms_source: _limousineFrozenRideFacts.cancellation_terms_source,
+              terms_revision: _limousineFrozenRideFacts.terms_revision,
+            }
+          : {}),
         booking: {
           bookingId: canonicalBookingId,
           booking_id: canonicalBookingId,
@@ -68575,6 +68586,17 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           tier,
           pax,
           bags,
+          ...(_limousineFrozenRideFacts?.cancellation_terms_source
+            ? {
+                cancellation_deadline_hours: _limousineFrozenRideFacts.cancellation_deadline_hours,
+                cancellation_penalty_percent: _limousineFrozenRideFacts.cancellation_penalty_percent,
+                no_show_penalty_percent: _limousineFrozenRideFacts.no_show_penalty_percent,
+                cancellation_canonical_gross_cents:
+                  _limousineFrozenRideFacts.cancellation_canonical_gross_cents,
+                cancellation_terms_source: _limousineFrozenRideFacts.cancellation_terms_source,
+                terms_revision: _limousineFrozenRideFacts.terms_revision,
+              }
+            : {}),
           wait_min,
           stops,
           business_detected,
@@ -68649,6 +68671,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           pricing_return: returnPricing,
           distance_km,
           duration_min: duration_route_min,
+          ...(_limousineAccepted
+            ? {
+                limousine_accepted_price: _limousineAccepted.snapshot,
+                service_type: _LIMOUSINE_SERVICE_TYPE,
+                serviceType: _LIMOUSINE_SERVICE_TYPE,
+                service_category: _LIMOUSINE_SERVICE_TYPE,
+              }
+            : {}),
         },
         tracking_last: null,
         trip: null,
