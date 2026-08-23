@@ -12,6 +12,9 @@ import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_operational_handoff.dart';
 import 'limousine_quote_inbox_presentation.dart';
+import 'limousine_external_quote.dart';
+import 'limousine_external_quote_labels.dart';
+import 'limousine_external_quote_page.dart';
 import 'limousine_quote_respond_form.dart';
 import 'limousine_service_capability.dart';
 
@@ -221,6 +224,19 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _openExternalQuote() async {
+    final gateway = asLimousineExternalQuoteGateway(_controller.gateway);
+    if (gateway == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => LimousineExternalQuoteCreatePage(gateway: gateway),
+      ),
+    );
+    if (mounted) {
+      await _refresh();
+    }
   }
 
   Future<void> _openEditor(LimousineQuoteRequest record) async {
@@ -518,6 +534,13 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                       side: BorderSide(color: palette.accent),
                       minimumSize: const Size(48, 44),
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    key: kLimousineExternalQuoteCreateActionKey,
+                    onPressed: _openExternalQuote,
+                    icon: const Icon(Icons.person_add_alt_1_outlined),
+                    label: Text(_t(kLimousineExternalQuoteCreateAction)),
                   ),
                 ],
               ),

@@ -8,7 +8,38 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
+import 'limousine_external_quote.dart';
 import 'limousine_quote_inbox.dart';
+
+abstract class LimousineExternalQuoteGateway {
+  Future<LimousineExternalQuoteCreateResult> createExternal({
+    required LimousineExternalContactSummary contact,
+    required LimousineExternalJourneyDraft request,
+    required Map<String, dynamic> quote,
+    String? tenantId,
+    String? companyId,
+  });
+
+  Future<LimousineExternalInvitationResult> invitation({
+    required String quoteRequestId,
+    required String action,
+    String? tenantId,
+    String? companyId,
+  });
+
+  Future<LimousineExternalContactSummary> contact({
+    required String quoteRequestId,
+    String? tenantId,
+    String? companyId,
+  });
+}
+
+LimousineExternalQuoteGateway? asLimousineExternalQuoteGateway(Object? gateway) {
+  if (gateway is LimousineExternalQuoteGateway) {
+    return gateway;
+  }
+  return null;
+}
 
 abstract class LimousineQuoteInboxGateway {
   Future<LimousineQuoteInboxPageData> list({
@@ -44,7 +75,8 @@ abstract class LimousineQuoteInboxGateway {
   });
 }
 
-class HttpLimousineQuoteInboxGateway implements LimousineQuoteInboxGateway {
+class HttpLimousineQuoteInboxGateway
+    implements LimousineQuoteInboxGateway, LimousineExternalQuoteGateway {
   HttpLimousineQuoteInboxGateway({http.Client? client}) : _client = client;
 
   final http.Client? _client;
@@ -289,6 +321,154 @@ class HttpLimousineQuoteInboxGateway implements LimousineQuoteInboxGateway {
         code: 'quotation_unavailable',
         statusCode: res.statusCode,
       );
+    } on LimousineQuoteInboxException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.network,
+        code: 'network',
+      );
+    }
+  }
+
+  @override
+  Future<LimousineExternalQuoteCreateResult> createExternal({
+    required LimousineExternalContactSummary contact,
+    required LimousineExternalJourneyDraft request,
+    required Map<String, dynamic> quote,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    final scope = adminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final body = <String, dynamic>{
+      ...scope,
+      'contact': contact.toWorkerContact(),
+      'request': request.toWorkerRequest(),
+      'quote': quote,
+    };
+    final endpoint = adminTenantCompanyScopedUri(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/limousine/quote-requests/create-external',
+      ),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders(json: true);
+    try {
+      final res = await _post(endpoint, auth.headers, jsonEncode(body));
+      final map = _decodeMap(res);
+      _throwIfFailed(res.statusCode, map);
+      final record = map['quote_request'];
+      if (record is! Map) {
+        throw const LimousineQuoteInboxException(
+          kind: LimousineQuoteInboxErrorKind.invalid,
+          code: 'invalid_response',
+        );
+      }
+      return LimousineExternalQuoteCreateResult(
+        record: LimousineQuoteRequest.fromJson(record),
+        invitationUrl: (map['invitation_url'] ?? map['invitationUrl'] ?? '')
+            .toString()
+            .trim(),
+        contact: LimousineExternalContactSummary.fromJson(map['contact']),
+        idempotent: map['idempotent'] == true,
+      );
+    } on LimousineQuoteInboxException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.network,
+        code: 'network',
+      );
+    }
+  }
+
+  @override
+  Future<LimousineExternalInvitationResult> invitation({
+    required String quoteRequestId,
+    required String action,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    final id = quoteRequestId.trim();
+    if (id.isEmpty) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.notFound,
+        code: 'not_found',
+      );
+    }
+    final scope = adminTenantCompanyScope(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final body = <String, dynamic>{
+      ...scope,
+      'action': action.trim().toLowerCase(),
+    };
+    final endpoint = adminTenantCompanyScopedUri(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/limousine/quote-requests/$id/invitation',
+      ),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders(json: true);
+    try {
+      final res = await _post(endpoint, auth.headers, jsonEncode(body));
+      final map = _decodeMap(res);
+      _throwIfFailed(res.statusCode, map);
+      final record = map['quote_request'];
+      if (record is! Map) {
+        throw const LimousineQuoteInboxException(
+          kind: LimousineQuoteInboxErrorKind.invalid,
+          code: 'invalid_response',
+        );
+      }
+      return LimousineExternalInvitationResult(
+        record: LimousineQuoteRequest.fromJson(record),
+        invitationUrl: (map['invitation_url'] ?? map['invitationUrl'] ?? '')
+            .toString()
+            .trim(),
+      );
+    } on LimousineQuoteInboxException {
+      rethrow;
+    } catch (_) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.network,
+        code: 'network',
+      );
+    }
+  }
+
+  @override
+  Future<LimousineExternalContactSummary> contact({
+    required String quoteRequestId,
+    String? tenantId,
+    String? companyId,
+  }) async {
+    final id = quoteRequestId.trim();
+    if (id.isEmpty) {
+      throw const LimousineQuoteInboxException(
+        kind: LimousineQuoteInboxErrorKind.notFound,
+        code: 'not_found',
+      );
+    }
+    final endpoint = adminTenantCompanyScopedUri(
+      Uri.parse(
+        '${appConfig.bookingBaseUrl}/admin/limousine/quote-requests/$id/contact',
+      ),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    try {
+      final res = await _get(endpoint, auth.headers);
+      final map = _decodeMap(res);
+      _throwIfFailed(res.statusCode, map);
+      return LimousineExternalContactSummary.fromJson(map['contact']);
     } on LimousineQuoteInboxException {
       rethrow;
     } catch (_) {

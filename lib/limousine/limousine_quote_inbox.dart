@@ -196,6 +196,71 @@ abstract final class LimousineQuoteStateId {
       (raw ?? '').trim().toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_');
 }
 
+abstract final class LimousineExternalDeliveryState {
+  static const String linkCreated = 'link_created';
+  static const String invitationShared = 'invitation_shared';
+  static const String customerOpened = 'customer_opened';
+  static const String quotationAccepted = 'quotation_accepted';
+  static const String bookingCreated = 'booking_created';
+
+  static const List<String> timeline = <String>[
+    linkCreated,
+    invitationShared,
+    customerOpened,
+    quotationAccepted,
+    bookingCreated,
+  ];
+
+  static String normalize(String? raw) {
+    final token = (raw ?? '').trim().toLowerCase().replaceAll(
+      RegExp(r'[\s-]+'),
+      '_',
+    );
+    return timeline.contains(token) ? token : '';
+  }
+}
+
+class LimousineExternalDelivery {
+  const LimousineExternalDelivery({
+    this.invitationState = '',
+    this.linkCreatedAt = '',
+    this.sharedAt = '',
+    this.openedAt = '',
+    this.acceptedAt = '',
+    this.bookingCreatedAt = '',
+  });
+
+  final String invitationState;
+  final String linkCreatedAt;
+  final String sharedAt;
+  final String openedAt;
+  final String acceptedAt;
+  final String bookingCreatedAt;
+
+  bool get isExternal => invitationState.isNotEmpty || linkCreatedAt.isNotEmpty;
+
+  factory LimousineExternalDelivery.fromJson(Object? raw) {
+    if (raw is! Map) return const LimousineExternalDelivery();
+    final map = _asMap(raw);
+    return LimousineExternalDelivery(
+      invitationState: LimousineExternalDeliveryState.normalize(
+        _text(map['invitation_state'] ?? map['invitationState'], max: 40),
+      ),
+      linkCreatedAt: _text(
+        map['link_created_at'] ?? map['linkCreatedAt'],
+        max: 40,
+      ),
+      sharedAt: _text(map['shared_at'] ?? map['sharedAt'], max: 40),
+      openedAt: _text(map['opened_at'] ?? map['openedAt'], max: 40),
+      acceptedAt: _text(map['accepted_at'] ?? map['acceptedAt'], max: 40),
+      bookingCreatedAt: _text(
+        map['booking_created_at'] ?? map['bookingCreatedAt'],
+        max: 40,
+      ),
+    );
+  }
+}
+
 enum LimousineQuoteInboxFilter {
   all,
   requested,
@@ -701,6 +766,8 @@ class LimousineQuoteRequest {
     this.quotationCurrency = '',
     this.acceptedAt = '',
     this.publicPartnerId = '',
+    this.originChannel = '',
+    this.externalDelivery = const LimousineExternalDelivery(),
   });
 
   final String quoteRequestId;
@@ -746,6 +813,8 @@ class LimousineQuoteRequest {
   final String quotationCurrency;
   final String acceptedAt;
   final String publicPartnerId;
+  final String originChannel;
+  final LimousineExternalDelivery externalDelivery;
 
   bool get hasQuotationPdf =>
       quotationAvailable && quotationRevision != null && quotationRevision! > 0;
@@ -916,6 +985,13 @@ class LimousineQuoteRequest {
             map['partnerId'],
         max: 120,
       ),
+      originChannel: _text(
+        map['origin_channel'] ?? map['originChannel'],
+        max: 40,
+      ),
+      externalDelivery: LimousineExternalDelivery.fromJson(
+        map['external_delivery'] ?? map['externalDelivery'],
+      ),
     );
   }
 
@@ -1004,6 +1080,12 @@ class LimousineQuoteRequest {
       publicPartnerId: incoming.publicPartnerId.isNotEmpty
           ? incoming.publicPartnerId
           : publicPartnerId,
+      originChannel: incoming.originChannel.isNotEmpty
+          ? incoming.originChannel
+          : originChannel,
+      externalDelivery: incoming.externalDelivery.isExternal
+          ? incoming.externalDelivery
+          : externalDelivery,
     );
   }
 }

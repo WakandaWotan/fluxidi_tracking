@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../business_theme_palette.dart';
 import '../business_theme_store.dart';
+import 'limousine_external_quote.dart';
+import 'limousine_external_quote_labels.dart';
+import 'limousine_external_quote_page.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
@@ -39,6 +44,7 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
   bool _viewedOnce = false;
   bool _viewSettled = false;
   bool _quoteSent = false;
+  LimousineExternalContactSummary? _contact;
 
   AppLanguage get _lang => appLanguageNotifier.value;
 
@@ -65,6 +71,7 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
         _controller.detail = record;
         _loading = false;
       });
+      await _loadExternal(record);
       await _ensureViewed(record);
     } on LimousineQuoteInboxException catch (error) {
       if (!mounted || gen != _generation) return;
@@ -72,6 +79,57 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
         _controller.error = error;
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _loadExternal(LimousineQuoteRequest record) async {
+    final gateway = asLimousineExternalQuoteGateway(_gateway);
+    if (gateway == null || !limousineQuoteIsExternal(record)) {
+      return;
+    }
+    try {
+      final contact = await gateway.contact(
+        quoteRequestId: record.quoteRequestId,
+      );
+      if (!mounted) return;
+      setState(() => _contact = contact);
+    } catch (_) {}
+  }
+
+  Future<void> _copyExternalLink(LimousineQuoteRequest record) async {
+    final external = asLimousineExternalQuoteGateway(_gateway);
+    if (external == null) return;
+    try {
+      final result = await external.invitation(
+        quoteRequestId: record.quoteRequestId,
+        action: 'copy',
+      );
+      await Clipboard.setData(ClipboardData(text: result.invitationUrl));
+      if (!mounted) return;
+      setState(() {
+        _controller.detail = result.record;
+        _banner = kLimousineExternalLinkCopied.of(_lang);
+      });
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted) return;
+      setState(() => _banner = limousineQuoteErrorLabel(error, _lang));
+    }
+  }
+
+  Future<void> _shareExternalLink(LimousineQuoteRequest record) async {
+    final external = asLimousineExternalQuoteGateway(_gateway);
+    if (external == null) return;
+    try {
+      final result = await external.invitation(
+        quoteRequestId: record.quoteRequestId,
+        action: 'share',
+      );
+      await Share.share(result.invitationUrl);
+      if (!mounted) return;
+      setState(() => _controller.detail = result.record);
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted) return;
+      setState(() => _banner = limousineQuoteErrorLabel(error, _lang));
     }
   }
 
@@ -264,6 +322,27 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
             if (record.isUnread) _chip(palette, _t(kLimousineQuoteUnread)),
           ],
         ),
+        if (limousineQuoteIsExternal(record)) ...[
+          const SizedBox(height: 16),
+          if (_contact != null)
+            LimousineExternalContactSummaryCard(contact: _contact!),
+          const SizedBox(height: 12),
+          LimousineExternalDeliveryTimeline(delivery: record.externalDelivery),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            key: kLimousineExternalCopyLinkKey,
+            onPressed: () => _copyExternalLink(record),
+            icon: const Icon(Icons.copy),
+            label: Text(_t(kLimousineExternalCopyLink)),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: kLimousineExternalShareLinkKey,
+            onPressed: () => _shareExternalLink(record),
+            icon: const Icon(Icons.share),
+            label: Text(_t(kLimousineExternalShareLink)),
+          ),
+        ],
         const SizedBox(height: 16),
         _journeyCard(palette, record),
         const SizedBox(height: 12),
