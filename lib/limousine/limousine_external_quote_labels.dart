@@ -197,6 +197,41 @@ const LocalizedText kLimousineExternalOptionalExtras = LocalizedText(
   es: 'Extras opcionales',
 );
 
+const LocalizedText kLimousineOwnCustomerStandardOffer = LocalizedText(
+  nl: 'Standaardaanbod',
+  en: 'Standard offer',
+  fr: 'Offre standard',
+  es: 'Oferta estándar',
+);
+
+const LocalizedText kLimousineOwnCustomerPriceOnRequest = LocalizedText(
+  nl: 'Prijs op aanvraag',
+  en: 'Price on request',
+  fr: 'Prix sur demande',
+  es: 'Precio bajo petición',
+);
+
+const LocalizedText kLimousineOwnCustomerAddressUnverified = LocalizedText(
+  nl: 'Handmatig adres · niet geverifieerd',
+  en: 'Manual address · unverified',
+  fr: 'Adresse manuelle · non vérifiée',
+  es: 'Dirección manual · no verificada',
+);
+
+const LocalizedText kLimousineOwnCustomerMoveStopUp = LocalizedText(
+  nl: 'Stop omhoog',
+  en: 'Move stop up',
+  fr: 'Monter l’arrêt',
+  es: 'Subir parada',
+);
+
+const LocalizedText kLimousineOwnCustomerMoveStopDown = LocalizedText(
+  nl: 'Stop omlaag',
+  en: 'Move stop down',
+  fr: 'Descendre l’arrêt',
+  es: 'Bajar parada',
+);
+
 const LocalizedText kLimousineExternalVehicleCapacity = LocalizedText(
   nl: 'Passagierscapaciteit',
   en: 'Passenger capacity',

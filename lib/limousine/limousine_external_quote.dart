@@ -121,6 +121,25 @@ Key limousineExternalVehicleCardKey(String vehicleId) {
   return ValueKey<String>('limousine_external_vehicle_card_$vehicleId');
 }
 
+const Key kLimousineExternalOfferLabelKey = ValueKey<String>(
+  'limousine_external_offer_label',
+);
+const Key kLimousineExternalAddStopKey = ValueKey<String>(
+  'limousine_external_add_stop',
+);
+
+Key limousineExternalStopRemoveKey(int index) {
+  return ValueKey<String>('limousine_external_stop_remove_$index');
+}
+
+Key limousineExternalStopMoveUpKey(int index) {
+  return ValueKey<String>('limousine_external_stop_up_$index');
+}
+
+Key limousineExternalStopMoveDownKey(int index) {
+  return ValueKey<String>('limousine_external_stop_down_$index');
+}
+
 const int kLimousineOwnCustomerPaxMin = 1;
 const int kLimousineOwnCustomerPaxMax = 16;
 const int kLimousineOwnCustomerBagsMin = 0;

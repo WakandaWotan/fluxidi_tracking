@@ -7,9 +7,14 @@ import '../app_strings.dart';
 import '../business_theme_palette.dart';
 import '../business_theme_store.dart';
 import '../company/company_fleet_operational.dart';
+import 'limousine_address_field.dart';
+import 'limousine_address_lookup.dart';
 import 'limousine_business_setup.dart';
+import 'limousine_customer_quote_labels.dart';
 import 'limousine_external_quote.dart';
 import 'limousine_external_quote_labels.dart';
+import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_p2d4c1c_journey.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
@@ -26,6 +31,7 @@ class LimousineExternalQuoteCreatePage extends StatefulWidget {
     this.share,
     this.copy,
     this.quoteDraft,
+    this.placeLookup,
   });
 
   final LimousineExternalQuoteGateway gateway;
@@ -34,6 +40,7 @@ class LimousineExternalQuoteCreatePage extends StatefulWidget {
   final Future<void> Function(String url)? share;
   final Future<void> Function(String url)? copy;
   final LimousineCompanyQuoteDraft? quoteDraft;
+  final LimousinePlaceLookup? placeLookup;
 
   @override
   State<LimousineExternalQuoteCreatePage> createState() =>
@@ -46,9 +53,6 @@ class _LimousineExternalQuoteCreatePageState
   final _email = TextEditingController();
   final _mobile = TextEditingController();
   final _company = TextEditingController();
-  final _from = TextEditingController();
-  final _to = TextEditingController();
-  final _stops = TextEditingController();
   final _pax = TextEditingController(text: '2');
   final _bags = TextEditingController(text: '0');
   final _occasion = TextEditingController();
@@ -65,6 +69,13 @@ class _LimousineExternalQuoteCreatePageState
   LimousineCompanyQuoteDraft? _previewDraft;
   LimousineExternalQuoteCreateResult? _created;
   List<Map<String, dynamic>> _offers = const <Map<String, dynamic>>[];
+  late final LimousinePlaceLookup _placeLookup;
+  late final bool _ownsLookup;
+  late final LimousineAddressFieldController _pickup;
+  late final LimousineAddressFieldController _destination;
+  final List<LimousineAddressFieldController> _stopFields =
+      <LimousineAddressFieldController>[];
+  int _stopSeq = 0;
 
   AppLanguage get _lang => appLanguageNotifier.value;
   String _t(LocalizedText text) => text.of(_lang);
@@ -101,6 +112,20 @@ class _LimousineExternalQuoteCreatePageState
   @override
   void initState() {
     super.initState();
+    _ownsLookup = widget.placeLookup == null;
+    _placeLookup = widget.placeLookup ?? LimousinePlaceLookup();
+    _pickup = LimousineAddressFieldController(
+      lookup: _placeLookup,
+      fieldId: 'own_pickup',
+      language: _lang.name,
+    );
+    _destination = LimousineAddressFieldController(
+      lookup: _placeLookup,
+      fieldId: 'own_destination',
+      language: _lang.name,
+    );
+    _pickup.addListener(_onAddressChanged);
+    _destination.addListener(_onAddressChanged);
     _offers = widget.offers.isNotEmpty
         ? widget.offers
         : limousineQuoteRequestsConfirmedOffers.value;
@@ -117,9 +142,20 @@ class _LimousineExternalQuoteCreatePageState
     _email.dispose();
     _mobile.dispose();
     _company.dispose();
-    _from.dispose();
-    _to.dispose();
-    _stops.dispose();
+    _pickup
+      ..removeListener(_onAddressChanged)
+      ..dispose();
+    _destination
+      ..removeListener(_onAddressChanged)
+      ..dispose();
+    for (final stop in _stopFields) {
+      stop
+        ..removeListener(_onAddressChanged)
+        ..dispose();
+    }
+    if (_ownsLookup) {
+      _placeLookup.dispose();
+    }
     _pax.dispose();
     _bags.dispose();
     _occasion.dispose();
@@ -181,12 +217,11 @@ class _LimousineExternalQuoteCreatePageState
       offerId: _offerId,
       vehicleId: _vehicleId,
       serviceClassId: _serviceClassId,
-      from: _from.text.trim(),
-      to: _to.text.trim(),
-      stops: _stops.text
-          .split(RegExp(r'[\n,]'))
-          .map((item) => item.trim())
-          .where((item) => item.isNotEmpty)
+      from: _pickup.value.routeText,
+      to: _destination.value.routeText,
+      stops: _stopFields
+          .map((stop) => stop.value.routeText)
+          .where((stop) => stop.isNotEmpty)
           .toList(growable: false),
       scheduledPickupIso: _when.toUtc().toIso8601String(),
       roundtrip: _roundtrip,
@@ -203,7 +238,26 @@ class _LimousineExternalQuoteCreatePageState
     );
   }
 
+  void _finalizeAddresses() {
+    _pickup.language = _lang.name;
+    _destination.language = _lang.name;
+    if (!_pickup.value.isRouteReady) {
+      _pickup.confirmManualFallback();
+    }
+    if (!_destination.value.isRouteReady) {
+      _destination.confirmManualFallback();
+    }
+    for (final stop in _stopFields) {
+      stop.language = _lang.name;
+      if (stop.textController.text.trim().isEmpty) continue;
+      if (!stop.value.isRouteReady) {
+        stop.confirmManualFallback();
+      }
+    }
+  }
+
   String? _formError() {
+    _finalizeAddresses();
     final contact = validateOwnCustomerContactForm(
       name: _name.text,
       email: _email.text,
@@ -211,8 +265,8 @@ class _LimousineExternalQuoteCreatePageState
     );
     if (!contact.ok) return _t(kLimousineExternalContactRequired);
     final journey = validateOwnCustomerJourneyForm(
-      from: _from.text,
-      to: _to.text,
+      from: _pickup.textController.text,
+      to: _destination.textController.text,
       offerId: _offerId,
       vehicleId: _vehicleId,
       pax: int.tryParse(_pax.text.trim()),
@@ -227,6 +281,15 @@ class _LimousineExternalQuoteCreatePageState
     if (journey.code == 'pax') return _t(kLimousineExternalPaxRange);
     if (journey.code == 'bags') return _t(kLimousineExternalBagsRange);
     if (!journey.ok) return _t(kLimousineExternalJourneyRequired);
+    if (!_pickup.value.isRouteReady || !_destination.value.isRouteReady) {
+      return _t(kLimousineExternalJourneyRequired);
+    }
+    for (final stop in _stopFields) {
+      if (stop.textController.text.trim().isEmpty) continue;
+      if (!stop.value.isRouteReady) {
+        return _t(kLimousineExternalJourneyRequired);
+      }
+    }
     return null;
   }
 
@@ -420,45 +483,54 @@ class _LimousineExternalQuoteCreatePageState
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<BusinessThemeVariant>(
-      valueListenable: businessThemeNotifier,
-      builder: (context, variant, _) {
-        final palette = paletteForBusinessTheme(variant);
-        return Scaffold(
-          key: kLimousineExternalQuotePageKey,
-          backgroundColor: palette.background,
-          appBar: AppBar(
-            backgroundColor: palette.background,
-            foregroundColor: palette.textPrimary,
-            title: Text(_t(kLimousineExternalQuoteCreateAction)),
-          ),
-          body: SafeArea(
-            key: kLimousineExternalQuoteSafeAreaKey,
-            top: false,
-            minimum: const EdgeInsets.only(bottom: 12),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    _t(kLimousineExternalQuoteCreateSubtitle),
-                    style: TextStyle(color: palette.textSecondary, height: 1.35),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_error!, style: TextStyle(color: palette.danger)),
-                  ],
-                  if (_created != null)
-                    ..._createdChildren(palette)
-                  else if (_previewDraft != null)
-                    ..._previewChildren(palette, _previewDraft!)
-                  else
-                    ..._formChildren(palette),
-                ],
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) {
+        _syncAddressLanguages();
+        return ValueListenableBuilder<BusinessThemeVariant>(
+          valueListenable: businessThemeNotifier,
+          builder: (context, variant, _) {
+            final palette = paletteForBusinessTheme(variant);
+            return Scaffold(
+              key: kLimousineExternalQuotePageKey,
+              backgroundColor: palette.background,
+              appBar: AppBar(
+                backgroundColor: palette.background,
+                foregroundColor: palette.textPrimary,
+                title: Text(_t(kLimousineExternalQuoteCreateAction)),
               ),
-            ),
-          ),
+              body: SafeArea(
+                key: kLimousineExternalQuoteSafeAreaKey,
+                top: false,
+                minimum: const EdgeInsets.only(bottom: 12),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _t(kLimousineExternalQuoteCreateSubtitle),
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(_error!, style: TextStyle(color: palette.danger)),
+                      ],
+                      if (_created != null)
+                        ..._createdChildren(palette)
+                      else if (_previewDraft != null)
+                        ..._previewChildren(palette, _previewDraft!)
+                      else
+                        ..._formChildren(palette),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -693,19 +765,39 @@ class _LimousineExternalQuoteCreatePageState
         _t(kLimousineQuoteJourneyCard),
         key: kLimousineExternalJourneySectionKey,
       ),
-      _field(
+      _addressField(
         palette,
-        _from,
-        kLimousineQuotePickup,
-        kLimousineExternalPickupKey,
+        controller: _pickup,
+        label: kLimousineQuotePickup,
+        inputKey: kLimousineExternalPickupKey,
+        showCurrentLocation: true,
       ),
-      _field(
+      _addressField(
         palette,
-        _to,
-        kLimousineQuoteDestination,
-        kLimousineExternalDestinationKey,
+        controller: _destination,
+        label: kLimousineQuoteDestination,
+        inputKey: kLimousineExternalDestinationKey,
       ),
-      _field(palette, _stops, kLimousineQuoteStops, kLimousineExternalStopsKey),
+      KeyedSubtree(
+        key: kLimousineExternalStopsKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < _stopFields.length; i++) _stopRow(palette, i),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: kLimousineExternalAddStopKey,
+                onPressed: _stopFields.length >= 8
+                    ? null
+                    : () => setState(_addStop),
+                icon: const Icon(Icons.add),
+                label: Text(_t(kLimousineCustomerAddStop)),
+              ),
+            ),
+          ],
+        ),
+      ),
       _plainControl(
         ListTile(
           key: kLimousineExternalWhenKey,
@@ -775,28 +867,7 @@ class _LimousineExternalQuoteCreatePageState
         kLimousineQuoteImportantInfo,
         kLimousineExternalOccasionKey,
       ),
-      if (_quoteOffers.isNotEmpty)
-        _outlinedControl(
-          DropdownButtonFormField<String>(
-            key: kLimousineExternalOfferKey,
-            isExpanded: true,
-            value:
-                _quoteOffers.any(
-                  (offer) => (offer['offer_id'] ?? '').toString() == _offerId,
-                )
-                ? _offerId
-                : null,
-            decoration: _decoration(palette, kLimousineQuoteOffer),
-            items: [
-              for (final offer in _quoteOffers)
-                DropdownMenuItem(
-                  value: (offer['offer_id'] ?? '').toString(),
-                  child: Text((offer['offer_id'] ?? '').toString()),
-                ),
-            ],
-            onChanged: (value) => setState(() => _applyOffer(value ?? '')),
-          ),
-        ),
+      if (_quoteOffers.isNotEmpty) _offerSelector(palette),
       if (_offerExtras.isNotEmpty) ...[
         Padding(
           padding: const EdgeInsets.only(top: _plainGap),
@@ -948,11 +1019,204 @@ class _LimousineExternalQuoteCreatePageState
     );
   }
 
-  Widget _sectionTitle(
-    BusinessThemePalette palette,
-    String title, {
-    Key? key,
+  void _syncAddressLanguages() {
+    final code = _lang.name;
+    _pickup.language = code;
+    _destination.language = code;
+    for (final stop in _stopFields) {
+      stop.language = code;
+    }
+  }
+
+  void _onAddressChanged() {
+    _syncAddressLanguages();
+    if (mounted) setState(() {});
+  }
+
+  void _addStop() {
+    if (_stopFields.length >= 8) return;
+    final field = LimousineAddressFieldController(
+      lookup: _placeLookup,
+      fieldId: 'own_stop_${_stopSeq++}',
+      language: _lang.name,
+    );
+    field.addListener(_onAddressChanged);
+    _stopFields.add(field);
+  }
+
+  void _removeStop(int index) {
+    if (index < 0 || index >= _stopFields.length) return;
+    final field = _stopFields.removeAt(index);
+    field
+      ..removeListener(_onAddressChanged)
+      ..dispose();
+  }
+
+  void _moveStop(int index, int delta) {
+    final next = index + delta;
+    if (index < 0 || next < 0 || index >= _stopFields.length) return;
+    if (next >= _stopFields.length) return;
+    final field = _stopFields.removeAt(index);
+    _stopFields.insert(next, field);
+  }
+
+  Widget _offerSelector(BusinessThemePalette palette) {
+    final offers = _quoteOffers;
+    final labels = limousineOfferCatalogDisplayLabels(offers, _lang);
+    if (offers.length == 1) {
+      final offerId = (offers.first['offer_id'] ?? '').toString();
+      if (_offerId != offerId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() => _applyOffer(offerId));
+        });
+      }
+      return _outlinedControl(
+        Container(
+          key: kLimousineExternalOfferKey,
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.accent, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(kLimousineQuoteOffer),
+                style: TextStyle(color: palette.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                labels.first,
+                key: kLimousineExternalOfferLabelKey,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return _outlinedControl(
+      DropdownButtonFormField<String>(
+        key: kLimousineExternalOfferKey,
+        isExpanded: true,
+        value:
+            offers.any(
+              (offer) => (offer['offer_id'] ?? '').toString() == _offerId,
+            )
+            ? _offerId
+            : null,
+        decoration: _decoration(palette, kLimousineQuoteOffer),
+        items: [
+          for (var i = 0; i < offers.length; i++)
+            DropdownMenuItem(
+              value: (offers[i]['offer_id'] ?? '').toString(),
+              child: Text(labels[i], overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        onChanged: (value) => setState(() => _applyOffer(value ?? '')),
+      ),
+    );
+  }
+
+  Widget _addressField(
+    BusinessThemePalette palette, {
+    required LimousineAddressFieldController controller,
+    required LocalizedText label,
+    required Key inputKey,
+    bool showCurrentLocation = false,
   }) {
+    return _outlinedControl(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LimousineAddressField(
+            controller: controller,
+            label: _t(label),
+            tokens: LimousineUxTokens.fromBusiness(palette),
+            language: _lang,
+            showCurrentLocation: showCurrentLocation,
+            inputKey: inputKey,
+            decoration: _decoration(palette, label),
+          ),
+          if (controller.value.acceptance ==
+              LimousineAddressAcceptance.manualFallback)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _t(kLimousineOwnCustomerAddressUnverified),
+                style: TextStyle(color: palette.textMuted, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stopRow(BusinessThemePalette palette, int index) {
+    final field = _stopFields[index];
+    return KeyedSubtree(
+      key: ValueKey<String>('limousine_external_stop_row_${field.fieldId}'),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: _addressField(
+              palette,
+              controller: field,
+              label: LocalizedText(
+                nl: '${kLimousineQuoteStops.nl} ${index + 1}',
+                en: '${kLimousineQuoteStops.en} ${index + 1}',
+                fr: '${kLimousineQuoteStops.fr} ${index + 1}',
+                es: '${kLimousineQuoteStops.es} ${index + 1}',
+              ),
+              inputKey: ValueKey<String>('limousine_external_stop_$index'),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 28),
+            child: Column(
+              children: [
+                IconButton(
+                  key: limousineExternalStopMoveUpKey(index),
+                  tooltip: _t(kLimousineOwnCustomerMoveStopUp),
+                  onPressed: index == 0
+                      ? null
+                      : () => setState(() => _moveStop(index, -1)),
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
+                IconButton(
+                  key: limousineExternalStopMoveDownKey(index),
+                  tooltip: _t(kLimousineOwnCustomerMoveStopDown),
+                  onPressed: index == _stopFields.length - 1
+                      ? null
+                      : () => setState(() => _moveStop(index, 1)),
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                ),
+                IconButton(
+                  key: limousineExternalStopRemoveKey(index),
+                  tooltip: _t(kLimousineRemoveStop),
+                  onPressed: () => setState(() => _removeStop(index)),
+                  icon: Icon(
+                    Icons.remove_circle_outline,
+                    color: palette.danger,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(BusinessThemePalette palette, String title, {Key? key}) {
     return Padding(
       padding: const EdgeInsets.only(top: _sectionGap),
       child: KeyedSubtree(

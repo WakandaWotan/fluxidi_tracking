@@ -4,6 +4,7 @@
 import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_customer_quote_labels.dart';
+import 'limousine_external_quote_labels.dart';
 import 'limousine_offers.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
@@ -132,10 +133,7 @@ bool limousineLooksLikeRawDartDateTime(String text) {
   return _rawDartDateTime.hasMatch(text);
 }
 
-String formatLimousineOwnCustomerDateTime(
-  DateTime when,
-  AppLanguage language,
-) {
+String formatLimousineOwnCustomerDateTime(DateTime when, AppLanguage language) {
   final local = when.toLocal();
   final hh = local.hour.toString().padLeft(2, '0');
   final mm = local.minute.toString().padLeft(2, '0');
@@ -597,18 +595,134 @@ String limousineQuoteOfferDisplay(
 ) {
   final snap = record.pricingSnapshot;
   final titleRaw = snap['title'] ?? snap['public_title'] ?? snap['publicTitle'];
+  var title = '';
   if (titleRaw is Map) {
-    final localized = localizedLimousineText(
+    title = localizedLimousineText(
       titleRaw.map((key, value) => MapEntry(key.toString(), '$value')),
       languageCode: language.name,
     );
-    if (localized.isNotEmpty) return localized;
+  } else {
+    title = (titleRaw ?? '').toString().trim();
   }
   final name = (snap['name'] ?? snap['offer_title'] ?? '').toString().trim();
-  if (name.isNotEmpty && !limousineLooksLikeRawVehicleOrOfferId(name)) {
-    return name;
+  final presentation = limousineOfferToken(
+    snap['price_presentation'] ?? record.pricingMode,
+  );
+  return limousineOfferSafeDisplayLabel(
+    language: language,
+    title: title,
+    name: name,
+    pricePresentation: presentation,
+  );
+}
+
+String limousineRejectRawOfferToken(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return '';
+  if (limousineLooksLikeRawVehicleOrOfferId(text)) return '';
+  if (RegExp(r'test_preview', caseSensitive: false).hasMatch(text)) {
+    return '';
   }
-  return '';
+  return text;
+}
+
+String limousineOfferSafeDisplayLabel({
+  required AppLanguage language,
+  String title = '',
+  String name = '',
+  String pricePresentation = '',
+}) {
+  final safeTitle = limousineRejectRawOfferToken(title);
+  if (safeTitle.isNotEmpty) return safeTitle;
+  final safeName = limousineRejectRawOfferToken(name);
+  if (safeName.isNotEmpty) return safeName;
+  if (pricePresentation == LimousinePricePresentation.quoteRequired) {
+    return kLimousineOwnCustomerPriceOnRequest.of(language);
+  }
+  final mode = kLimousinePresentationLabels[pricePresentation]?.of(language);
+  if (mode != null && mode.trim().isNotEmpty) return mode.trim();
+  return kLimousineOwnCustomerStandardOffer.of(language);
+}
+
+String limousineLocalizedOfferField(Object? raw, AppLanguage language) {
+  if (raw is Map) {
+    return localizedLimousineText(
+      raw.map((key, value) => MapEntry(key.toString(), '$value')),
+      languageCode: language.name,
+    );
+  }
+  return (raw ?? '').toString().trim();
+}
+
+String limousineOfferCatalogDisplayLabel(
+  Map<String, dynamic> offer,
+  AppLanguage language,
+) {
+  return limousineOfferSafeDisplayLabel(
+    language: language,
+    title: limousineLocalizedOfferField(
+      offer['title'] ?? offer['public_title'] ?? offer['publicTitle'],
+      language,
+    ),
+    name: (offer['name'] ?? offer['offer_title'] ?? '').toString(),
+    pricePresentation: limousineOfferToken(offer['price_presentation']),
+  );
+}
+
+String limousineOfferCatalogDisambiguator(
+  Map<String, dynamic> offer,
+  AppLanguage language,
+  int index,
+) {
+  final vehicle = offer['vehicle'];
+  if (vehicle is Map) {
+    final name = limousineRejectRawOfferToken(
+      (vehicle['public_name'] ??
+              vehicle['vehicle_name'] ??
+              vehicle['name'] ??
+              '')
+          .toString(),
+    );
+    if (name.isNotEmpty) return name;
+  }
+  final classLabel = limousineRejectRawOfferToken(
+    limousineServiceClassLabel(
+      (offer['service_class_id'] ?? '').toString(),
+      language,
+    ),
+  );
+  if (classLabel.isNotEmpty) return classLabel;
+  return '${kLimousineOwnCustomerStandardOffer.of(language)} ${index + 1}';
+}
+
+List<String> limousineOfferCatalogDisplayLabels(
+  List<Map<String, dynamic>> offers,
+  AppLanguage language,
+) {
+  final labels = <String>[
+    for (final offer in offers)
+      limousineOfferCatalogDisplayLabel(offer, language),
+  ];
+  final counts = <String, int>{};
+  for (final label in labels) {
+    counts[label] = (counts[label] ?? 0) + 1;
+  }
+  final distinguished = <String>[
+    for (var i = 0; i < offers.length; i++)
+      (counts[labels[i]] ?? 0) > 1
+          ? '${labels[i]} · ${limousineOfferCatalogDisambiguator(offers[i], language, i)}'
+          : labels[i],
+  ];
+  final again = <String, int>{};
+  for (final label in distinguished) {
+    again[label] = (again[label] ?? 0) + 1;
+  }
+  return <String>[
+    for (var i = 0; i < distinguished.length; i++)
+      (again[distinguished[i]] ?? 0) > 1
+          ? '${distinguished[i]} · ${i + 1}'
+          : distinguished[i],
+  ];
 }
 
 String limousineQuoteFieldErrorLabel(String key, AppLanguage language) {

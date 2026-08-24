@@ -338,6 +338,8 @@ class LimousineAddressField extends StatelessWidget {
     required this.tokens,
     required this.language,
     this.showCurrentLocation = false,
+    this.inputKey,
+    this.decoration,
   });
 
   final LimousineAddressFieldController controller;
@@ -345,11 +347,14 @@ class LimousineAddressField extends StatelessWidget {
   final LimousineUxTokens tokens;
   final AppLanguage language;
   final bool showCurrentLocation;
+  final Key? inputKey;
+  final InputDecoration? decoration;
 
   String _t(LocalizedText text) => text.of(language);
 
   @override
   Widget build(BuildContext context) {
+    controller.language = language.name;
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
@@ -370,22 +375,26 @@ class LimousineAddressField extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextField(
-                key: limousineAddressInputKey(controller.fieldId),
+                key: inputKey ?? limousineAddressInputKey(controller.fieldId),
                 controller: controller.textController,
                 style: TextStyle(color: tokens.onSurface),
                 scrollPadding: const EdgeInsets.only(bottom: 220),
                 keyboardType: TextInputType.streetAddress,
                 textInputAction: TextInputAction.next,
                 onChanged: controller.onTextChanged,
-                decoration: InputDecoration(
-                  labelText: label,
-                  hintText: _t(kLimousineAddressHint),
-                  hintStyle: TextStyle(color: tokens.muted),
-                  filled: true,
-                  fillColor: tokens.fieldFill,
-                  suffixIcon: _suffix(controller),
-                  suffixIconConstraints: _suffixConstraints(controller),
-                ),
+                decoration:
+                    (decoration ??
+                            InputDecoration(
+                              labelText: label,
+                              hintText: _t(kLimousineAddressHint),
+                              hintStyle: TextStyle(color: tokens.muted),
+                              filled: true,
+                              fillColor: tokens.fieldFill,
+                            ))
+                        .copyWith(
+                          suffixIcon: _suffix(controller),
+                          suffixIconConstraints: _suffixConstraints(controller),
+                        ),
               ),
               if (ready)
                 Padding(
