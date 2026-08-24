@@ -13,6 +13,7 @@ import 'limousine_external_quote_labels.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_api.dart';
 import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_presentation.dart';
 import 'limousine_quote_requests_nav.dart';
 import 'limousine_quote_respond_form.dart';
 
@@ -431,24 +432,32 @@ class _LimousineExternalQuoteCreatePageState
             foregroundColor: palette.textPrimary,
             title: Text(_t(kLimousineExternalQuoteCreateAction)),
           ),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            children: [
-              Text(
-                _t(kLimousineExternalQuoteCreateSubtitle),
-                style: TextStyle(color: palette.textSecondary, height: 1.35),
+          body: SafeArea(
+            key: kLimousineExternalQuoteSafeAreaKey,
+            top: false,
+            minimum: const EdgeInsets.only(bottom: 12),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    _t(kLimousineExternalQuoteCreateSubtitle),
+                    style: TextStyle(color: palette.textSecondary, height: 1.35),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_error!, style: TextStyle(color: palette.danger)),
+                  ],
+                  if (_created != null)
+                    ..._createdChildren(palette)
+                  else if (_previewDraft != null)
+                    ..._previewChildren(palette, _previewDraft!)
+                  else
+                    ..._formChildren(palette),
+                ],
               ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: palette.danger)),
-              ],
-              if (_created != null)
-                ..._createdChildren(palette)
-              else if (_previewDraft != null)
-                ..._previewChildren(palette, _previewDraft!)
-              else
-                ..._formChildren(palette),
-            ],
+            ),
           ),
         );
       },
@@ -532,9 +541,9 @@ class _LimousineExternalQuoteCreatePageState
               '${_t(kLimousineQuoteDestination)}: ${journey.to}',
               if (journey.stops.isNotEmpty)
                 '${_t(kLimousineQuoteStops)}: ${journey.stops.join(', ')}',
-              '${_t(kLimousineQuoteWhen)}: ${_when.toLocal()}',
+              '${_t(kLimousineQuoteWhen)}: ${formatLimousineOwnCustomerDateTime(_when, _lang)}',
               if (journey.roundtrip)
-                '${_t(kLimousineExternalReturnToggle)}: ${(_returnWhen ?? _when.add(const Duration(hours: 4))).toLocal()}',
+                '${_t(kLimousineExternalReturnToggle)}: ${formatLimousineOwnCustomerDateTime(_returnWhen ?? _when.add(const Duration(hours: 4)), _lang)}',
               '${_t(kLimousineQuotePassengers)}: ${journey.pax}',
               '${_t(kLimousineQuoteLuggage)}: ${journey.bags}',
               if (vehicle != null)
@@ -625,15 +634,16 @@ class _LimousineExternalQuoteCreatePageState
     );
   }
 
+  static const double _sectionGap = 22;
+  static const double _outlinedGap = 24;
+  static const double _plainGap = 16;
+
   List<Widget> _formChildren(BusinessThemePalette palette) {
     return [
-      const SizedBox(height: 16),
-      Text(
+      _sectionTitle(
+        palette,
         _t(kLimousineExternalContactSection),
-        style: TextStyle(
-          color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
-        ),
+        key: kLimousineExternalContactSectionKey,
       ),
       _field(
         palette,
@@ -661,30 +671,27 @@ class _LimousineExternalQuoteCreatePageState
         kLimousineExternalContactCompany,
         kLimousineExternalContactCompanyKey,
       ),
-      DropdownButtonFormField<String>(
-        key: kLimousineExternalContactLocaleKey,
-        isExpanded: true,
-        value: _locale,
-        decoration: InputDecoration(
-          labelText: _t(kLimousineExternalContactLocale),
-        ),
-        items: const [
-          DropdownMenuItem(value: 'nl', child: Text('NL')),
-          DropdownMenuItem(value: 'en', child: Text('EN')),
-          DropdownMenuItem(value: 'fr', child: Text('FR')),
-          DropdownMenuItem(value: 'es', child: Text('ES')),
-        ],
-        onChanged: (value) => setState(
-          () => _locale = normalizeLimousineQuoteLocale(value ?? 'nl'),
+      _outlinedControl(
+        DropdownButtonFormField<String>(
+          key: kLimousineExternalContactLocaleKey,
+          isExpanded: true,
+          value: _locale,
+          decoration: _decoration(palette, kLimousineExternalContactLocale),
+          items: const [
+            DropdownMenuItem(value: 'nl', child: Text('NL')),
+            DropdownMenuItem(value: 'en', child: Text('EN')),
+            DropdownMenuItem(value: 'fr', child: Text('FR')),
+            DropdownMenuItem(value: 'es', child: Text('ES')),
+          ],
+          onChanged: (value) => setState(
+            () => _locale = normalizeLimousineQuoteLocale(value ?? 'nl'),
+          ),
         ),
       ),
-      const SizedBox(height: 16),
-      Text(
+      _sectionTitle(
+        palette,
         _t(kLimousineQuoteJourneyCard),
-        style: TextStyle(
-          color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
-        ),
+        key: kLimousineExternalJourneySectionKey,
       ),
       _field(
         palette,
@@ -699,47 +706,54 @@ class _LimousineExternalQuoteCreatePageState
         kLimousineExternalDestinationKey,
       ),
       _field(palette, _stops, kLimousineQuoteStops, kLimousineExternalStopsKey),
-      ListTile(
-        key: kLimousineExternalWhenKey,
-        contentPadding: EdgeInsets.zero,
-        title: Text(
-          _t(kLimousineQuoteWhen),
-          style: TextStyle(color: palette.textPrimary),
-        ),
-        subtitle: Text(
-          _when.toLocal().toString(),
-          style: TextStyle(color: palette.textSecondary),
-        ),
-        onTap: () => _pickWhen(returning: false),
-      ),
-      SwitchListTile(
-        key: kLimousineExternalReturnKey,
-        contentPadding: EdgeInsets.zero,
-        title: Text(
-          _t(kLimousineExternalReturnToggle),
-          style: TextStyle(color: palette.textPrimary),
-        ),
-        value: _roundtrip,
-        onChanged: (value) => setState(() {
-          _roundtrip = value;
-          _returnWhen ??= _when.add(const Duration(hours: 4));
-        }),
-      ),
-      if (_roundtrip)
+      _plainControl(
         ListTile(
-          key: kLimousineExternalReturnWhenKey,
+          key: kLimousineExternalWhenKey,
           contentPadding: EdgeInsets.zero,
           title: Text(
-            _t(kLimousineExternalReturnWhen),
+            _t(kLimousineQuoteWhen),
             style: TextStyle(color: palette.textPrimary),
           ),
           subtitle: Text(
-            (_returnWhen ?? _when.add(const Duration(hours: 4)))
-                .toLocal()
-                .toString(),
+            formatLimousineOwnCustomerDateTime(_when, _lang),
             style: TextStyle(color: palette.textSecondary),
           ),
-          onTap: () => _pickWhen(returning: true),
+          onTap: () => _pickWhen(returning: false),
+        ),
+      ),
+      _plainControl(
+        SwitchListTile(
+          key: kLimousineExternalReturnKey,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            _t(kLimousineExternalReturnToggle),
+            style: TextStyle(color: palette.textPrimary),
+          ),
+          value: _roundtrip,
+          onChanged: (value) => setState(() {
+            _roundtrip = value;
+            _returnWhen ??= _when.add(const Duration(hours: 4));
+          }),
+        ),
+      ),
+      if (_roundtrip)
+        _plainControl(
+          ListTile(
+            key: kLimousineExternalReturnWhenKey,
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              _t(kLimousineExternalReturnWhen),
+              style: TextStyle(color: palette.textPrimary),
+            ),
+            subtitle: Text(
+              formatLimousineOwnCustomerDateTime(
+                _returnWhen ?? _when.add(const Duration(hours: 4)),
+                _lang,
+              ),
+              style: TextStyle(color: palette.textSecondary),
+            ),
+            onTap: () => _pickWhen(returning: true),
+          ),
         ),
       _field(
         palette,
@@ -762,62 +776,66 @@ class _LimousineExternalQuoteCreatePageState
         kLimousineExternalOccasionKey,
       ),
       if (_quoteOffers.isNotEmpty)
-        DropdownButtonFormField<String>(
-          key: kLimousineExternalOfferKey,
-          isExpanded: true,
-          value:
-              _quoteOffers.any(
-                (offer) => (offer['offer_id'] ?? '').toString() == _offerId,
-              )
-              ? _offerId
-              : null,
-          decoration: InputDecoration(labelText: _t(kLimousineQuoteOffer)),
-          items: [
-            for (final offer in _quoteOffers)
-              DropdownMenuItem(
-                value: (offer['offer_id'] ?? '').toString(),
-                child: Text((offer['offer_id'] ?? '').toString()),
-              ),
-          ],
-          onChanged: (value) => setState(() => _applyOffer(value ?? '')),
-        ),
-      if (_offerExtras.isNotEmpty) ...[
-        const SizedBox(height: 8),
-        Text(
-          _t(kLimousineExternalOptionalExtras),
-          style: TextStyle(
-            color: palette.textPrimary,
-            fontWeight: FontWeight.w700,
+        _outlinedControl(
+          DropdownButtonFormField<String>(
+            key: kLimousineExternalOfferKey,
+            isExpanded: true,
+            value:
+                _quoteOffers.any(
+                  (offer) => (offer['offer_id'] ?? '').toString() == _offerId,
+                )
+                ? _offerId
+                : null,
+            decoration: _decoration(palette, kLimousineQuoteOffer),
+            items: [
+              for (final offer in _quoteOffers)
+                DropdownMenuItem(
+                  value: (offer['offer_id'] ?? '').toString(),
+                  child: Text((offer['offer_id'] ?? '').toString()),
+                ),
+            ],
+            onChanged: (value) => setState(() => _applyOffer(value ?? '')),
           ),
         ),
-        Wrap(
-          key: kLimousineExternalExtrasKey,
-          spacing: 8,
-          children: [
-            for (final extra in _offerExtras)
-              FilterChip(
-                label: Text(extra['label']!),
-                selected: _extraIds.contains(extra['id']),
-                onSelected: (selected) => setState(() {
-                  if (selected) {
-                    _extraIds.add(extra['id']!);
-                  } else {
-                    _extraIds.remove(extra['id']);
-                  }
-                }),
-              ),
-          ],
+      if (_offerExtras.isNotEmpty) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: _plainGap),
+          child: Text(
+            _t(kLimousineExternalOptionalExtras),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Wrap(
+            key: kLimousineExternalExtrasKey,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final extra in _offerExtras)
+                FilterChip(
+                  label: Text(extra['label']!),
+                  selected: _extraIds.contains(extra['id']),
+                  onSelected: (selected) => setState(() {
+                    if (selected) {
+                      _extraIds.add(extra['id']!);
+                    } else {
+                      _extraIds.remove(extra['id']);
+                    }
+                  }),
+                ),
+            ],
+          ),
         ),
       ],
-      const SizedBox(height: 12),
-      Text(
+      _sectionTitle(
+        palette,
         _t(kLimousineQuoteVehicle),
-        style: TextStyle(
-          color: palette.textPrimary,
-          fontWeight: FontWeight.w800,
-        ),
+        key: kLimousineExternalVehicleSectionKey,
       ),
-      const SizedBox(height: 8),
       Column(
         key: kLimousineExternalVehicleKey,
         children: [
@@ -825,11 +843,13 @@ class _LimousineExternalQuoteCreatePageState
             _vehicleCard(palette, vehicle),
         ],
       ),
-      const SizedBox(height: 16),
-      FilledButton(
-        key: kLimousineExternalSubmitKey,
-        onPressed: _submitting ? null : _continueToQuote,
-        child: Text(_t(kLimousineExternalContinueQuote)),
+      Padding(
+        padding: const EdgeInsets.only(top: _sectionGap, bottom: 8),
+        child: FilledButton(
+          key: kLimousineExternalSubmitKey,
+          onPressed: _submitting ? null : _continueToQuote,
+          child: Text(_t(kLimousineExternalContinueQuote)),
+        ),
       ),
     ];
   }
@@ -840,10 +860,14 @@ class _LimousineExternalQuoteCreatePageState
     final classLabel = vehicle.serviceClassId.isEmpty
         ? ''
         : limousineServiceClassLabel(vehicle.serviceClassId, _lang);
+    final selectedFill = Color.alphaBlend(
+      palette.accent.withOpacity(palette.isDark ? 0.16 : 0.10),
+      palette.surface,
+    );
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(top: 12),
       child: Material(
-        color: selected ? palette.surfaceAlt : palette.surface,
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -853,12 +877,16 @@ class _LimousineExternalQuoteCreatePageState
               _serviceClassId = vehicle.serviceClassId;
             }
           }),
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            key: limousineExternalVehicleCardKey(vehicle.id),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
+              color: selected ? selectedFill : palette.surface,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: selected ? palette.accent : palette.border,
+                width: selected ? 2 : 1,
               ),
             ),
             child: Row(
@@ -905,10 +933,71 @@ class _LimousineExternalQuoteCreatePageState
                     ],
                   ),
                 ),
+                if (selected)
+                  Icon(
+                    Icons.check_circle,
+                    key: kLimousineExternalVehicleSelectedIconKey,
+                    color: palette.accent,
+                    size: 22,
+                  ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(
+    BusinessThemePalette palette,
+    String title, {
+    Key? key,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(top: _sectionGap),
+      child: KeyedSubtree(
+        key: key,
+        child: Text(
+          title,
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _outlinedControl(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.only(top: _outlinedGap),
+      child: child,
+    );
+  }
+
+  Widget _plainControl(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.only(top: _plainGap),
+      child: child,
+    );
+  }
+
+  InputDecoration _decoration(
+    BusinessThemePalette palette,
+    LocalizedText label,
+  ) {
+    return InputDecoration(
+      label: Text(
+        _t(label),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: palette.textMuted),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: palette.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: palette.accent),
       ),
     );
   }
@@ -920,23 +1009,13 @@ class _LimousineExternalQuoteCreatePageState
     Key key, {
     TextInputType? keyboard,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: TextField(
+    return _outlinedControl(
+      TextField(
         key: key,
         controller: controller,
         keyboardType: keyboard,
         style: TextStyle(color: palette.textPrimary),
-        decoration: InputDecoration(
-          labelText: _t(label),
-          labelStyle: TextStyle(color: palette.textMuted),
-          enabledBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: palette.border),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: palette.accent),
-          ),
-        ),
+        decoration: _decoration(palette, label),
       ),
     );
   }

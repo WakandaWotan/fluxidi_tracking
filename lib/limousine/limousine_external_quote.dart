@@ -101,6 +101,25 @@ const Key kLimousineExternalPreviewVatKey = ValueKey<String>(
 const Key kLimousineExternalPreviewTotalKey = ValueKey<String>(
   'limousine_external_preview_total',
 );
+const Key kLimousineExternalContactSectionKey = ValueKey<String>(
+  'limousine_external_contact_section',
+);
+const Key kLimousineExternalJourneySectionKey = ValueKey<String>(
+  'limousine_external_journey_section',
+);
+const Key kLimousineExternalVehicleSectionKey = ValueKey<String>(
+  'limousine_external_vehicle_section',
+);
+const Key kLimousineExternalQuoteSafeAreaKey = ValueKey<String>(
+  'limousine_external_quote_safe_area',
+);
+const Key kLimousineExternalVehicleSelectedIconKey = ValueKey<String>(
+  'limousine_external_vehicle_selected_icon',
+);
+
+Key limousineExternalVehicleCardKey(String vehicleId) {
+  return ValueKey<String>('limousine_external_vehicle_card_$vehicleId');
+}
 
 const int kLimousineOwnCustomerPaxMin = 1;
 const int kLimousineOwnCustomerPaxMax = 16;

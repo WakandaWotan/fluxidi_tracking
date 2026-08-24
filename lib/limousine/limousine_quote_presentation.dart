@@ -124,6 +124,31 @@ String formatLimousineUserDateTime(String iso, AppLanguage language) {
   return '${_formatLocalDate(local, language)} · $hh:$mm';
 }
 
+final RegExp _rawDartDateTime = RegExp(
+  r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?',
+);
+
+bool limousineLooksLikeRawDartDateTime(String text) {
+  return _rawDartDateTime.hasMatch(text);
+}
+
+String formatLimousineOwnCustomerDateTime(
+  DateTime when,
+  AppLanguage language,
+) {
+  final local = when.toLocal();
+  final hh = local.hour.toString().padLeft(2, '0');
+  final mm = local.minute.toString().padLeft(2, '0');
+  return '${_formatOwnCustomerDate(local, language)} · $hh:$mm';
+}
+
+String _formatOwnCustomerDate(DateTime local, AppLanguage language) {
+  if (language == AppLanguage.es) {
+    return '${local.day} de ${_monthName(local, language)} de ${local.year}';
+  }
+  return _formatLocalDate(local, language);
+}
+
 String limousineQuoteDisplayOrEmpty(String iso, AppLanguage language) {
   final formatted = formatLimousineUserDateTime(iso, language);
   if (formatted.isNotEmpty) return formatted;
@@ -131,7 +156,7 @@ String limousineQuoteDisplayOrEmpty(String iso, AppLanguage language) {
   return iso.trim();
 }
 
-String _formatLocalDate(DateTime local, AppLanguage language) {
+String _monthName(DateTime local, AppLanguage language) {
   final months = switch (language) {
     AppLanguage.fr => const [
       'janvier',
@@ -190,7 +215,11 @@ String _formatLocalDate(DateTime local, AppLanguage language) {
       'december',
     ],
   };
-  return '${local.day} ${months[local.month - 1]} ${local.year}';
+  return months[local.month - 1];
+}
+
+String _formatLocalDate(DateTime local, AppLanguage language) {
+  return '${local.day} ${_monthName(local, language)} ${local.year}';
 }
 
 String limousineQuoteEnteredAmountLabel(String raw, AppLanguage language) {

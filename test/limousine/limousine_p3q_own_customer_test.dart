@@ -13,8 +13,10 @@ import 'package:fluxidi_tracking/limousine/limousine_external_quote_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_api.dart';
+import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_inbox_presentation.dart';
+import 'package:fluxidi_tracking/limousine/limousine_quote_presentation.dart';
 import 'package:fluxidi_tracking/limousine/limousine_taxi_qr_isolation.dart';
 
 VehicleProfile _vehicle({
@@ -228,13 +230,78 @@ const LimousineCompanyQuoteDraft _draft = LimousineCompanyQuoteDraft(
   overtimeCentsPerHour: 9000,
 );
 
-Widget _app(Widget child, {Size size = const Size(390, 844)}) {
+Widget _app(
+  Widget child, {
+  Size size = const Size(390, 844),
+  EdgeInsets padding = EdgeInsets.zero,
+}) {
   return MaterialApp(
     home: MediaQuery(
-      data: MediaQueryData(size: size),
+      data: MediaQueryData(
+        size: size,
+        padding: padding,
+        viewPadding: padding,
+      ),
       child: child,
     ),
   );
+}
+
+Widget _ownCustomerForm({
+  Size size = const Size(390, 1800),
+  EdgeInsets padding = EdgeInsets.zero,
+  List<VehicleProfile>? vehicles,
+}) {
+  return _app(
+    LimousineExternalQuoteCreatePage(
+      gateway: _FakeGateway(),
+      offers: <Map<String, dynamic>>[_quoteOffer()],
+      vehicles:
+          vehicles ??
+          <VehicleProfile>[
+            _vehicle(id: 'veh_limo', name: 'Party Limo', category: 'limousine'),
+            _vehicle(
+              id: 'veh_limo_2',
+              name: 'Wedding Limo',
+              category: 'limousine',
+            ),
+          ],
+      quoteDraft: _draft,
+    ),
+    size: size,
+    padding: padding,
+  );
+}
+
+Future<void> _pumpForm(
+  WidgetTester tester, {
+  Size size = const Size(390, 1800),
+  EdgeInsets padding = EdgeInsets.zero,
+  List<VehicleProfile>? vehicles,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    _ownCustomerForm(size: size, padding: padding, vehicles: vehicles),
+  );
+  await tester.pump();
+}
+
+Future<void> _reveal(WidgetTester tester, Key key) async {
+  final finder = find.byKey(key);
+  await tester.scrollUntilVisible(
+    finder,
+    280,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pump();
+}
+
+Future<void> _revealAndTap(WidgetTester tester, Key key) async {
+  await _reveal(tester, key);
+  await tester.tap(find.byKey(key));
+  await tester.pump();
 }
 
 Future<void> _fillRequiredJourney(WidgetTester tester) async {
@@ -449,9 +516,7 @@ void main() {
     expect(find.byKey(kLimousineExternalExtrasKey), findsOneWidget);
     expect(find.text('Party Limo'), findsWidgets);
     expect(find.text('Street Taxi'), findsNothing);
-    await tester.ensureVisible(find.byKey(kLimousineExternalSubmitKey));
-    await tester.tap(find.byKey(kLimousineExternalSubmitKey));
-    await tester.pump();
+    await _revealAndTap(tester, kLimousineExternalSubmitKey);
     expect(
       find.text(kLimousineExternalContactRequired.of(AppLanguage.nl)),
       findsOneWidget,
@@ -471,17 +536,14 @@ void main() {
       'Graslei',
     );
     await tester.enterText(find.byKey(kLimousineExternalPaxKey), '17');
-    await tester.ensureVisible(find.byKey(kLimousineExternalSubmitKey));
-    await tester.tap(find.byKey(kLimousineExternalSubmitKey));
-    await tester.pump();
+    await _revealAndTap(tester, kLimousineExternalSubmitKey);
     expect(
       find.text(kLimousineExternalPaxRange.of(AppLanguage.nl)),
       findsOneWidget,
     );
     await tester.enterText(find.byKey(kLimousineExternalPaxKey), '8');
     await tester.enterText(find.byKey(kLimousineExternalBagsKey), '100');
-    await tester.tap(find.byKey(kLimousineExternalSubmitKey));
-    await tester.pump();
+    await _revealAndTap(tester, kLimousineExternalSubmitKey);
     expect(
       find.text(kLimousineExternalBagsRange.of(AppLanguage.nl)),
       findsOneWidget,
@@ -512,8 +574,7 @@ void main() {
       ),
     );
     await _fillRequiredJourney(tester);
-    await tester.ensureVisible(find.byKey(kLimousineExternalSubmitKey));
-    await tester.tap(find.byKey(kLimousineExternalSubmitKey));
+    await _revealAndTap(tester, kLimousineExternalSubmitKey);
     await tester.pumpAndSettle();
     expect(gateway.createCalls, 0);
     expect(find.byKey(kLimousineExternalPreviewKey), findsOneWidget);
@@ -632,5 +693,206 @@ void main() {
       expect(tester.takeException(), isNull);
     }
     addTearDown(tester.view.reset);
+  });
+
+  test('own-customer date/time is localized without raw DateTime text', () {
+    final when = DateTime(2026, 8, 27, 8, 51);
+    expect(
+      formatLimousineOwnCustomerDateTime(when, AppLanguage.nl),
+      '27 augustus 2026 · 08:51',
+    );
+    expect(
+      formatLimousineOwnCustomerDateTime(when, AppLanguage.en),
+      '27 August 2026 · 08:51',
+    );
+    expect(
+      formatLimousineOwnCustomerDateTime(when, AppLanguage.fr),
+      '27 août 2026 · 08:51',
+    );
+    expect(
+      formatLimousineOwnCustomerDateTime(when, AppLanguage.es),
+      '27 de agosto de 2026 · 08:51',
+    );
+    expect(
+      limousineLooksLikeRawDartDateTime('2026-08-27 08:51:32.025250'),
+      isTrue,
+    );
+    expect(
+      limousineLooksLikeRawDartDateTime('27 augustus 2026 · 08:51'),
+      isFalse,
+    );
+  });
+
+  testWidgets('form fields keep a visual gap and do not overflow', (
+    tester,
+  ) async {
+    const sizes = <Size>[
+      Size(360, 1800),
+      Size(390, 1800),
+      Size(430, 1800),
+      Size(800, 1800),
+    ];
+    for (final language in <AppLanguage>[
+      AppLanguage.nl,
+      AppLanguage.en,
+      AppLanguage.fr,
+      AppLanguage.es,
+    ]) {
+      appLanguageNotifier.value = language;
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      for (final size in sizes) {
+        await _pumpForm(tester, size: size);
+        expect(tester.takeException(), isNull);
+        final company = tester.getRect(
+          find.byKey(kLimousineExternalContactCompanyKey),
+        );
+        final locale = tester.getRect(
+          find.byKey(kLimousineExternalContactLocaleKey),
+        );
+        final occasion = tester.getRect(
+          find.byKey(kLimousineExternalOccasionKey),
+        );
+        final offer = tester.getRect(find.byKey(kLimousineExternalOfferKey));
+        final contact = tester.getRect(
+          find.byKey(kLimousineExternalContactSectionKey),
+        );
+        final journey = tester.getRect(
+          find.byKey(kLimousineExternalJourneySectionKey),
+        );
+        final vehicle = tester.getRect(
+          find.byKey(kLimousineExternalVehicleSectionKey),
+        );
+        expect(locale.top, greaterThanOrEqualTo(company.bottom + 12));
+        expect(offer.top, greaterThanOrEqualTo(occasion.bottom + 12));
+        expect(journey.top, greaterThanOrEqualTo(locale.bottom + 20));
+        expect(vehicle.top, greaterThanOrEqualTo(offer.bottom + 20));
+        expect(contact.top, greaterThan(0));
+        expect(
+          find.byKey(kLimousineExternalSubmitKey, skipOffstage: false),
+          findsOneWidget,
+        );
+      }
+    }
+  });
+
+  testWidgets('phone widths keep long Spanish and French labels', (
+    tester,
+  ) async {
+    const sizes = <Size>[
+      Size(360, 800),
+      Size(390, 844),
+      Size(430, 932),
+      Size(800, 1280),
+    ];
+    final cases = <AppLanguage, Map<Key, String>>{
+      AppLanguage.es: <Key, String>{
+        kLimousineExternalContactCompanyKey:
+            kLimousineExternalContactCompany.es,
+        kLimousineExternalContactLocaleKey: kLimousineExternalContactLocale.es,
+        kLimousineExternalOccasionKey: kLimousineQuoteImportantInfo.es,
+        kLimousineExternalOfferKey: kLimousineQuoteOffer.es,
+      },
+      AppLanguage.fr: <Key, String>{
+        kLimousineExternalContactCompanyKey:
+            kLimousineExternalContactCompany.fr,
+        kLimousineExternalContactLocaleKey: kLimousineExternalContactLocale.fr,
+        kLimousineExternalOccasionKey: kLimousineQuoteImportantInfo.fr,
+        kLimousineExternalOfferKey: kLimousineQuoteOffer.fr,
+      },
+    };
+    for (final entry in cases.entries) {
+      appLanguageNotifier.value = entry.key;
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      for (final size in sizes) {
+        await _pumpForm(tester, size: size);
+        for (final labeled in entry.value.entries) {
+          await _reveal(tester, labeled.key);
+          expect(find.text(labeled.value), findsWidgets);
+        }
+        await _reveal(tester, kLimousineExternalSubmitKey);
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
+  testWidgets('pickup date uses localized display instead of DateTime text', (
+    tester,
+  ) async {
+    for (final language in <AppLanguage>[
+      AppLanguage.nl,
+      AppLanguage.en,
+      AppLanguage.fr,
+      AppLanguage.es,
+    ]) {
+      appLanguageNotifier.value = language;
+      await _pumpForm(tester, size: const Size(390, 1800));
+      final tile = tester.widget<ListTile>(
+        find.byKey(kLimousineExternalWhenKey),
+      );
+      final shown = (tile.subtitle as Text).data ?? '';
+      expect(shown, isNotEmpty);
+      expect(limousineLooksLikeRawDartDateTime(shown), isFalse);
+      expect(shown, contains(' · '));
+      if (language == AppLanguage.es) {
+        expect(RegExp(r'^\d{1,2} de .+ de \d{4} · \d{2}:\d{2}$').hasMatch(shown), isTrue);
+      } else {
+        expect(RegExp(r'^\d{1,2} .+ \d{4} · \d{2}:\d{2}$').hasMatch(shown), isTrue);
+      }
+    }
+  });
+
+  testWidgets('selected vehicle has accent chrome and a check', (tester) async {
+    businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+    final palette = paletteForBusinessTheme(
+      BusinessThemeVariant.brandSignatureGold,
+    );
+    await _pumpForm(tester, size: const Size(430, 1800));
+    await tester.ensureVisible(
+      find.byKey(limousineExternalVehicleCardKey('veh_limo')),
+    );
+    final selected = tester.widget<AnimatedContainer>(
+      find.byKey(limousineExternalVehicleCardKey('veh_limo')),
+    );
+    final decoration = selected.decoration! as BoxDecoration;
+    expect((decoration.border as Border).top.color, palette.accent);
+    expect((decoration.border as Border).top.width, 2);
+    expect(find.byKey(kLimousineExternalVehicleSelectedIconKey), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(limousineExternalVehicleCardKey('veh_limo_2')),
+    );
+    await tester.tap(find.byKey(limousineExternalVehicleCardKey('veh_limo_2')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(limousineExternalVehicleCardKey('veh_limo_2')),
+        matching: find.byKey(kLimousineExternalVehicleSelectedIconKey),
+      ),
+      findsOneWidget,
+    );
+    final next = tester.widget<AnimatedContainer>(
+      find.byKey(limousineExternalVehicleCardKey('veh_limo_2')),
+    );
+    expect(((next.decoration! as BoxDecoration).border as Border).top.width, 2);
+    expect(find.text('Party Limo'), findsOneWidget);
+    expect(find.text('Wedding Limo'), findsOneWidget);
+  });
+
+  testWidgets('Offerte opstellen stays above the system navigation inset', (
+    tester,
+  ) async {
+    const size = Size(390, 844);
+    const navInset = 48.0;
+    businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+    await _pumpForm(
+      tester,
+      size: size,
+      padding: const EdgeInsets.only(bottom: navInset),
+    );
+    expect(find.byKey(kLimousineExternalQuoteSafeAreaKey), findsOneWidget);
+    await _reveal(tester, kLimousineExternalSubmitKey);
+    final button = tester.getRect(find.byKey(kLimousineExternalSubmitKey));
+    expect(button.bottom, lessThanOrEqualTo(size.height - navInset));
+    expect(button.bottom, lessThan(size.height));
+    expect(tester.takeException(), isNull);
   });
 }
