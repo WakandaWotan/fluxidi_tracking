@@ -2,10 +2,17 @@ import '../app_strings.dart';
 import 'limousine_quote_inbox.dart';
 
 const LocalizedText kLimousineExternalQuoteCreateAction = LocalizedText(
-  nl: 'Nieuwe offerte voor eigen klant',
-  en: 'New quotation for own customer',
-  fr: 'Nouveau devis pour un client propre',
-  es: 'Nuevo presupuesto para cliente propio',
+  nl: 'Offerte voor eigen klant',
+  en: 'Quote for own customer',
+  fr: 'Devis pour votre propre client',
+  es: 'Presupuesto para cliente propio',
+);
+
+const LocalizedText kLimousineOwnCustomerOrigin = LocalizedText(
+  nl: 'Eigen klant',
+  en: 'Own customer',
+  fr: 'Client propre',
+  es: 'Cliente propio',
 );
 
 const LocalizedText kLimousineExternalQuoteCreateSubtitle = LocalizedText(
@@ -78,6 +85,125 @@ const LocalizedText kLimousineExternalShareLink = LocalizedText(
   es: 'Compartir',
 );
 
+const LocalizedText kLimousineExternalReturnWhen = LocalizedText(
+  nl: 'Retourdatum en -tijd',
+  en: 'Return date and time',
+  fr: 'Date et heure du retour',
+  es: 'Fecha y hora de vuelta',
+);
+
+const LocalizedText kLimousineExternalReturnToggle = LocalizedText(
+  nl: 'Retourrit',
+  en: 'Return trip',
+  fr: 'Retour',
+  es: 'Viaje de vuelta',
+);
+
+const LocalizedText kLimousineExternalPreviewTitle = LocalizedText(
+  nl: 'Controleer de offerte',
+  en: 'Review the quotation',
+  fr: 'Vérifiez le devis',
+  es: 'Revise el presupuesto',
+);
+
+const LocalizedText kLimousineExternalPreviewSend = LocalizedText(
+  nl: 'Offerte versturen',
+  en: 'Send quotation',
+  fr: 'Envoyer le devis',
+  es: 'Enviar presupuesto',
+);
+
+const LocalizedText kLimousineExternalPreviewEdit = LocalizedText(
+  nl: 'Bewerken',
+  en: 'Edit',
+  fr: 'Modifier',
+  es: 'Editar',
+);
+
+const LocalizedText kLimousineExternalPreviewDiscard = LocalizedText(
+  nl: 'Sluiten zonder versturen',
+  en: 'Close without sending',
+  fr: 'Fermer sans envoyer',
+  es: 'Cerrar sin enviar',
+);
+
+const LocalizedText kLimousineExternalContinueQuote = LocalizedText(
+  nl: 'Offerte opstellen',
+  en: 'Prepare quotation',
+  fr: 'Préparer le devis',
+  es: 'Preparar presupuesto',
+);
+
+const LocalizedText kLimousineExternalPaxRange = LocalizedText(
+  nl: 'Passagiers moeten tussen 1 en 16 liggen.',
+  en: 'Passengers must be between 1 and 16.',
+  fr: 'Le nombre de passagers doit être entre 1 et 16.',
+  es: 'Los pasajeros deben estar entre 1 y 16.',
+);
+
+const LocalizedText kLimousineExternalBagsRange = LocalizedText(
+  nl: 'Bagage moet tussen 0 en 99 liggen.',
+  en: 'Bags must be between 0 and 99.',
+  fr: 'Les bagages doivent être entre 0 et 99.',
+  es: 'El equipaje debe estar entre 0 y 99.',
+);
+
+const LocalizedText kLimousineExternalJourneyRequired = LocalizedText(
+  nl: 'Vul ophaaladres, bestemming, voertuig en ritgegevens in.',
+  en: 'Enter pickup, destination, vehicle and journey details.',
+  fr: 'Saisissez le départ, la destination, le véhicule et le trajet.',
+  es: 'Introduzca origen, destino, vehículo y datos del viaje.',
+);
+
+const LocalizedText kLimousineExternalPreviewCustomer = LocalizedText(
+  nl: 'Klant',
+  en: 'Customer',
+  fr: 'Client',
+  es: 'Cliente',
+);
+
+const LocalizedText kLimousineExternalPreviewJourney = LocalizedText(
+  nl: 'Rit',
+  en: 'Journey',
+  fr: 'Trajet',
+  es: 'Viaje',
+);
+
+const LocalizedText kLimousineExternalPreviewMoney = LocalizedText(
+  nl: 'Prijs',
+  en: 'Price',
+  fr: 'Prix',
+  es: 'Precio',
+);
+
+const LocalizedText kLimousineExternalPreviewTerms = LocalizedText(
+  nl: 'Voorwaarden',
+  en: 'Terms',
+  fr: 'Conditions',
+  es: 'Condiciones',
+);
+
+const LocalizedText kLimousineExternalDeliveryMethod = LocalizedText(
+  nl: 'Bezorging',
+  en: 'Delivery',
+  fr: 'Livraison',
+  es: 'Entrega',
+);
+
+const LocalizedText kLimousineExternalOptionalExtras = LocalizedText(
+  nl: 'Optionele extra’s',
+  en: 'Optional extras',
+  fr: 'Extras facultatifs',
+  es: 'Extras opcionales',
+);
+
+const LocalizedText kLimousineExternalVehicleCapacity = LocalizedText(
+  nl: 'Passagierscapaciteit',
+  en: 'Passenger capacity',
+  fr: 'Capacité passagers',
+  es: 'Capacidad de pasajeros',
+);
+
 const LocalizedText kLimousineExternalLinkCopied = LocalizedText(
   nl: 'Beveiligde link gekopieerd.',
   en: 'Secure link copied.',
@@ -108,10 +234,10 @@ const Map<String, LocalizedText> kLimousineExternalDeliveryLabels =
         es: 'Enlace creado',
       ),
       LimousineExternalDeliveryState.invitationShared: LocalizedText(
-        nl: 'Uitnodiging gedeeld',
-        en: 'Invitation shared',
-        fr: 'Invitation partagée',
-        es: 'Invitación compartida',
+        nl: 'Link gedeeld',
+        en: 'Link shared',
+        fr: 'Lien partagé',
+        es: 'Enlace compartido',
       ),
       LimousineExternalDeliveryState.customerOpened: LocalizedText(
         nl: 'Bekeken',
@@ -120,10 +246,10 @@ const Map<String, LocalizedText> kLimousineExternalDeliveryLabels =
         es: 'Visto',
       ),
       LimousineExternalDeliveryState.quotationAccepted: LocalizedText(
-        nl: 'Offerte geaccepteerd',
-        en: 'Quotation accepted',
-        fr: 'Devis accepté',
-        es: 'Presupuesto aceptado',
+        nl: 'Geaccepteerd',
+        en: 'Accepted',
+        fr: 'Accepté',
+        es: 'Aceptado',
       ),
       LimousineExternalDeliveryState.bookingCreated: LocalizedText(
         nl: 'Boeking aangemaakt',

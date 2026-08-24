@@ -54,10 +54,14 @@ class _LimousineExternalQuoteCreatePageState
   String _locale = 'nl';
   bool _roundtrip = false;
   DateTime _when = DateTime.now().add(const Duration(days: 3));
+  DateTime? _returnWhen;
   String _offerId = '';
   String _vehicleId = '';
+  String _serviceClassId = '';
+  final Set<String> _extraIds = <String>{};
   bool _submitting = false;
   String? _error;
+  LimousineCompanyQuoteDraft? _previewDraft;
   LimousineExternalQuoteCreateResult? _created;
   List<Map<String, dynamic>> _offers = const <Map<String, dynamic>>[];
 
@@ -71,6 +75,27 @@ class _LimousineExternalQuoteCreatePageState
             ? widget.vehicles
             : companyOperationalVehicles(),
       );
+
+  Map<String, dynamic>? get _selectedOffer {
+    for (final offer in _quoteOffers) {
+      if ((offer['offer_id'] ?? '').toString() == _offerId) return offer;
+    }
+    return null;
+  }
+
+  List<Map<String, String>> get _offerExtras {
+    final raw = _selectedOffer?['paid_extras'];
+    if (raw is! List) return const <Map<String, String>>[];
+    final out = <Map<String, String>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final id = (item['extra_id'] ?? item['item_id'] ?? '').toString().trim();
+      if (id.isEmpty) continue;
+      final label = (item['label'] ?? item['name'] ?? id).toString().trim();
+      out.add(<String, String>{'id': id, 'label': label.isEmpty ? id : label});
+    }
+    return out;
+  }
 
   @override
   void initState() {
@@ -115,19 +140,29 @@ class _LimousineExternalQuoteCreatePageState
   }
 
   void _selectDefaults() {
-    final quoteOffers = _offers.where(limousineQuoteOnRequestIsEnabled).toList();
+    final quoteOffers = _offers
+        .where(limousineQuoteOnRequestIsEnabled)
+        .toList();
     if (quoteOffers.isNotEmpty) {
-      _offerId = (quoteOffers.first['offer_id'] ?? '').toString();
-      _vehicleId = (quoteOffers.first['vehicle_id'] ?? '').toString();
+      _applyOffer((quoteOffers.first['offer_id'] ?? '').toString());
     }
-    final limos = limousineSetupLimousineVehicles(
-      widget.vehicles.isNotEmpty
-          ? widget.vehicles
-          : companyOperationalVehicles(),
-    );
+    final limos = _limousineVehicles;
     if (_vehicleId.isEmpty && limos.isNotEmpty) {
       _vehicleId = limos.first.id;
+      if (limos.first.serviceClassId.isNotEmpty) {
+        _serviceClassId = limos.first.serviceClassId;
+      }
     }
+  }
+
+  void _applyOffer(String offerId) {
+    _offerId = offerId;
+    final offer = _selectedOffer;
+    if (offer == null) return;
+    final vehicleId = (offer['vehicle_id'] ?? '').toString();
+    if (vehicleId.isNotEmpty) _vehicleId = vehicleId;
+    final serviceClass = (offer['service_class_id'] ?? '').toString();
+    if (serviceClass.isNotEmpty) _serviceClassId = serviceClass;
   }
 
   LimousineExternalContactSummary _contact() {
@@ -135,7 +170,7 @@ class _LimousineExternalQuoteCreatePageState
       displayName: _name.text.trim(),
       mail: _email.text.trim(),
       mobile: _mobile.text.trim(),
-      locale: _locale,
+      locale: normalizeLimousineQuoteLocale(_locale),
       companyLabel: _company.text.trim(),
     );
   }
@@ -144,6 +179,7 @@ class _LimousineExternalQuoteCreatePageState
     return LimousineExternalJourneyDraft(
       offerId: _offerId,
       vehicleId: _vehicleId,
+      serviceClassId: _serviceClassId,
       from: _from.text.trim(),
       to: _to.text.trim(),
       stops: _stops.text
@@ -153,30 +189,58 @@ class _LimousineExternalQuoteCreatePageState
           .toList(growable: false),
       scheduledPickupIso: _when.toUtc().toIso8601String(),
       roundtrip: _roundtrip,
+      returnPickupIso: _roundtrip
+          ? (_returnWhen ?? _when.add(const Duration(hours: 4)))
+                .toUtc()
+                .toIso8601String()
+          : '',
       pax: int.tryParse(_pax.text.trim()),
       bags: int.tryParse(_bags.text.trim()),
       occasion: _occasion.text.trim(),
+      selectedExtraIds: _extraIds.toList(growable: false),
       locale: _locale,
     );
   }
 
-  bool _contactValid() {
-    final contact = _contact();
-    return contact.displayName.isNotEmpty &&
-        (contact.mail.isNotEmpty || contact.mobile.isNotEmpty);
+  String? _formError() {
+    final contact = validateOwnCustomerContactForm(
+      name: _name.text,
+      email: _email.text,
+      mobile: _mobile.text,
+    );
+    if (!contact.ok) return _t(kLimousineExternalContactRequired);
+    final journey = validateOwnCustomerJourneyForm(
+      from: _from.text,
+      to: _to.text,
+      offerId: _offerId,
+      vehicleId: _vehicleId,
+      pax: int.tryParse(_pax.text.trim()),
+      bags: int.tryParse(_bags.text.trim()),
+      roundtrip: _roundtrip,
+      returnPickupIso: _roundtrip
+          ? (_returnWhen ?? _when.add(const Duration(hours: 4)))
+                .toUtc()
+                .toIso8601String()
+          : '',
+    );
+    if (journey.code == 'pax') return _t(kLimousineExternalPaxRange);
+    if (journey.code == 'bags') return _t(kLimousineExternalBagsRange);
+    if (!journey.ok) return _t(kLimousineExternalJourneyRequired);
+    return null;
   }
 
   Future<void> _continueToQuote() async {
-    if (!_contactValid() ||
-        _from.text.trim().isEmpty ||
-        _to.text.trim().isEmpty ||
-        _offerId.isEmpty) {
-      setState(() => _error = _t(kLimousineExternalContactRequired));
+    final error = _formError();
+    if (error != null) {
+      setState(() => _error = error);
       return;
     }
     final provided = widget.quoteDraft;
     if (provided != null) {
-      await _submit(provided);
+      setState(() {
+        _error = null;
+        _previewDraft = provided;
+      });
       return;
     }
     final draft = await Navigator.of(context).push<LimousineCompanyQuoteDraft>(
@@ -192,11 +256,44 @@ class _LimousineExternalQuoteCreatePageState
       ),
     );
     if (draft == null || !mounted) return;
-    await _submit(draft);
+    setState(() {
+      _error = null;
+      _previewDraft = draft;
+    });
+  }
+
+  Future<void> _editPreview() async {
+    final current = _previewDraft;
+    final draft = await Navigator.of(context).push<LimousineCompanyQuoteDraft>(
+      MaterialPageRoute(
+        builder: (_) => LimousineQuoteEditorPage(
+          record: LimousineQuoteRequest.fromJson(<String, dynamic>{
+            'quote_request_id': 'limq_external_draft',
+            'state': 'requested',
+            'revision': 1,
+            'locale': _locale,
+            if (current != null && (current.totalInclVatCents ?? 0) > 0)
+              'quote': <String, dynamic>{
+                'total_incl_vat_cents': current.totalInclVatCents,
+                'currency': current.currency.isEmpty ? 'EUR' : current.currency,
+                'vat_treatment': current.vatTreatment,
+                'expires_at': current.expiresAt,
+              },
+          }),
+        ),
+      ),
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _previewDraft = draft);
   }
 
   Future<void> _submit(LimousineCompanyQuoteDraft draft) async {
     if (_submitting) return;
+    final error = _formError();
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
@@ -216,7 +313,10 @@ class _LimousineExternalQuoteCreatePageState
         quote: quote,
       );
       if (!mounted) return;
-      setState(() => _created = created);
+      setState(() {
+        _created = created;
+        _previewDraft = null;
+      });
     } on LimousineQuoteInboxException catch (error) {
       if (!mounted) return;
       setState(() => _error = limousineQuoteErrorLabel(error, _lang));
@@ -250,11 +350,13 @@ class _LimousineExternalQuoteCreatePageState
       await Clipboard.setData(ClipboardData(text: url));
     }
     if (!mounted) return;
-    setState(() => _created = LimousineExternalQuoteCreateResult(
-      record: result.record,
-      invitationUrl: url,
-      contact: created.contact,
-    ));
+    setState(
+      () => _created = LimousineExternalQuoteCreateResult(
+        record: result.record,
+        invitationUrl: url,
+        contact: created.contact,
+      ),
+    );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(_t(kLimousineExternalLinkCopied))));
@@ -274,11 +376,45 @@ class _LimousineExternalQuoteCreatePageState
       await Share.share(url);
     }
     if (!mounted) return;
-    setState(() => _created = LimousineExternalQuoteCreateResult(
-      record: result.record,
-      invitationUrl: url,
-      contact: created.contact,
-    ));
+    setState(
+      () => _created = LimousineExternalQuoteCreateResult(
+        record: result.record,
+        invitationUrl: url,
+        contact: created.contact,
+      ),
+    );
+  }
+
+  Future<void> _pickWhen({required bool returning}) async {
+    final current = returning
+        ? (_returnWhen ?? _when.add(const Duration(hours: 4)))
+        : _when;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(current),
+    );
+    if (!mounted) return;
+    final next = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time?.hour ?? current.hour,
+      time?.minute ?? current.minute,
+    );
+    setState(() {
+      if (returning) {
+        _returnWhen = next;
+      } else {
+        _when = next;
+      }
+    });
   }
 
   @override
@@ -306,140 +442,12 @@ class _LimousineExternalQuoteCreatePageState
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: palette.danger)),
               ],
-              if (_created != null) ...[
-                const SizedBox(height: 16),
-                LimousineExternalContactSummaryCard(contact: _created!.contact),
-                const SizedBox(height: 12),
-                LimousineExternalDeliveryTimeline(
-                  delivery: _created!.record.externalDelivery,
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  key: kLimousineExternalCopyLinkKey,
-                  onPressed: _copyLink,
-                  icon: const Icon(Icons.copy),
-                  label: Text(_t(kLimousineExternalCopyLink)),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  key: kLimousineExternalShareLinkKey,
-                  onPressed: _shareLink,
-                  icon: const Icon(Icons.share),
-                  label: Text(_t(kLimousineExternalShareLink)),
-                ),
-              ] else ...[
-                const SizedBox(height: 16),
-                Text(
-                  _t(kLimousineExternalContactSection),
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                _field(palette, _name, kLimousineExternalContactName, kLimousineExternalContactNameKey),
-                _field(palette, _email, kLimousineExternalContactEmail, kLimousineExternalContactEmailKey),
-                _field(palette, _mobile, kLimousineExternalContactMobile, kLimousineExternalContactMobileKey),
-                _field(palette, _company, kLimousineExternalContactCompany, kLimousineExternalContactCompanyKey),
-                DropdownButtonFormField<String>(
-                  key: kLimousineExternalContactLocaleKey,
-                  value: _locale,
-                  decoration: InputDecoration(labelText: _t(kLimousineExternalContactLocale)),
-                  items: const [
-                    DropdownMenuItem(value: 'nl', child: Text('NL')),
-                    DropdownMenuItem(value: 'en', child: Text('EN')),
-                    DropdownMenuItem(value: 'fr', child: Text('FR')),
-                    DropdownMenuItem(value: 'es', child: Text('ES')),
-                  ],
-                  onChanged: (value) => setState(() => _locale = value ?? 'nl'),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  _t(kLimousineQuoteJourneyCard),
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                _field(palette, _from, kLimousineQuotePickup, kLimousineExternalPickupKey),
-                _field(palette, _to, kLimousineQuoteDestination, kLimousineExternalDestinationKey),
-                FilledButton(
-                  key: kLimousineExternalSubmitKey,
-                  onPressed: _submitting ? null : _continueToQuote,
-                  child: Text(_t(kLimousineQuoteEditorTitle)),
-                ),
-                _field(palette, _stops, kLimousineQuoteStops, kLimousineExternalStopsKey),
-                ListTile(
-                  key: kLimousineExternalWhenKey,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_t(kLimousineQuoteWhen)),
-                  subtitle: Text(_when.toLocal().toString()),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      initialDate: _when,
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (date == null || !mounted) return;
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.fromDateTime(_when),
-                    );
-                    if (!mounted) return;
-                    setState(() {
-                      _when = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time?.hour ?? _when.hour,
-                        time?.minute ?? _when.minute,
-                      );
-                    });
-                  },
-                ),
-                SwitchListTile(
-                  key: kLimousineExternalReturnKey,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_t(kLimousineQuoteJourneyCard)),
-                  value: _roundtrip,
-                  onChanged: (value) => setState(() => _roundtrip = value),
-                ),
-                _field(palette, _pax, kLimousineQuotePassengers, kLimousineExternalPaxKey),
-                _field(palette, _bags, kLimousineQuoteLuggage, kLimousineExternalBagsKey),
-                _field(palette, _occasion, kLimousineQuoteImportantInfo, kLimousineExternalOccasionKey),
-                if (_quoteOffers.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    key: kLimousineExternalOfferKey,
-                    value: _quoteOffers.any((offer) => (offer['offer_id'] ?? '').toString() == _offerId)
-                        ? _offerId
-                        : null,
-                    decoration: InputDecoration(labelText: _t(kLimousineQuoteOffer)),
-                    items: [
-                      for (final offer in _quoteOffers)
-                        DropdownMenuItem(
-                          value: (offer['offer_id'] ?? '').toString(),
-                          child: Text((offer['offer_id'] ?? '').toString()),
-                        ),
-                    ],
-                    onChanged: (value) => setState(() => _offerId = value ?? ''),
-                  ),
-                if (_limousineVehicles.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    key: kLimousineExternalVehicleKey,
-                    value: _limousineVehicles.any((vehicle) => vehicle.id == _vehicleId)
-                        ? _vehicleId
-                        : null,
-                    decoration: InputDecoration(labelText: _t(kLimousineQuoteVehicle)),
-                    items: [
-                      for (final vehicle in _limousineVehicles)
-                        DropdownMenuItem(
-                          value: vehicle.id,
-                          child: Text(vehicle.vehicleName.isEmpty ? vehicle.id : vehicle.vehicleName),
-                        ),
-                    ],
-                    onChanged: (value) => setState(() => _vehicleId = value ?? ''),
-                  ),
-              ],
+              if (_created != null)
+                ..._createdChildren(palette)
+              else if (_previewDraft != null)
+                ..._previewChildren(palette, _previewDraft!)
+              else
+                ..._formChildren(palette),
             ],
           ),
         );
@@ -447,18 +455,515 @@ class _LimousineExternalQuoteCreatePageState
     );
   }
 
+  List<Widget> _createdChildren(BusinessThemePalette palette) {
+    return [
+      const SizedBox(height: 16),
+      LimousineExternalContactSummaryCard(contact: _created!.contact),
+      const SizedBox(height: 12),
+      LimousineExternalDeliveryTimeline(
+        delivery: _created!.record.externalDelivery,
+      ),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        key: kLimousineExternalCopyLinkKey,
+        onPressed: _copyLink,
+        icon: const Icon(Icons.copy),
+        label: Text(_t(kLimousineExternalCopyLink)),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        key: kLimousineExternalShareLinkKey,
+        onPressed: _shareLink,
+        icon: const Icon(Icons.share),
+        label: Text(_t(kLimousineExternalShareLink)),
+      ),
+    ];
+  }
+
+  List<Widget> _previewChildren(
+    BusinessThemePalette palette,
+    LimousineCompanyQuoteDraft draft,
+  ) {
+    final contact = _contact();
+    final journey = _journey();
+    final money = previewOwnCustomerQuoteMoney(
+      enteredCents: draft.totalInclVatCents ?? 0,
+      vatTreatment: draft.vatTreatment,
+      vatRate: draft.vatRate ?? 0.06,
+    );
+    final vehicle = _limousineVehicles.cast<VehicleProfile?>().firstWhere(
+      (item) => item?.id == _vehicleId,
+      orElse: () => null,
+    );
+    final delivery = [
+      if (contact.mail.isNotEmpty) contact.mail,
+      if (contact.mobile.isNotEmpty) contact.mobile,
+    ].join(' · ');
+    return [
+      const SizedBox(height: 16),
+      Container(
+        key: kLimousineExternalPreviewKey,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _t(kLimousineExternalPreviewTitle),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _previewBlock(palette, _t(kLimousineExternalPreviewCustomer), [
+              contact.displayName,
+              if (contact.companyLabel.isNotEmpty) contact.companyLabel,
+              '${_t(kLimousineExternalDeliveryMethod)}: $delivery',
+              '${_t(kLimousineExternalContactLocale)}: ${contact.locale}',
+            ]),
+            _previewBlock(palette, _t(kLimousineExternalPreviewJourney), [
+              '${_t(kLimousineQuotePickup)}: ${journey.from}',
+              '${_t(kLimousineQuoteDestination)}: ${journey.to}',
+              if (journey.stops.isNotEmpty)
+                '${_t(kLimousineQuoteStops)}: ${journey.stops.join(', ')}',
+              '${_t(kLimousineQuoteWhen)}: ${_when.toLocal()}',
+              if (journey.roundtrip)
+                '${_t(kLimousineExternalReturnToggle)}: ${(_returnWhen ?? _when.add(const Duration(hours: 4))).toLocal()}',
+              '${_t(kLimousineQuotePassengers)}: ${journey.pax}',
+              '${_t(kLimousineQuoteLuggage)}: ${journey.bags}',
+              if (vehicle != null)
+                '${_t(kLimousineQuoteVehicle)}: ${vehicle.vehicleName.isEmpty ? vehicle.id : vehicle.vehicleName}',
+            ]),
+            _previewBlock(
+              palette,
+              _t(kLimousineExternalPreviewMoney),
+              [
+                '${_t(kLimousineQuoteNetAmount)}: ${formatLimousineMoney(money.netCents, draft.currency)}',
+                '${_t(kLimousineQuoteVatAmount)} ${ownCustomerVatPercentLabel(money.vatRate)}: ${formatLimousineMoney(money.vatCents, draft.currency)}',
+                '${_t(kLimousineQuoteGrossAmount)}: ${formatLimousineMoney(money.grossCents, draft.currency)}',
+              ],
+              key: kLimousineExternalPreviewMoneyKey,
+            ),
+            KeyedSubtree(
+              key: kLimousineExternalPreviewVatKey,
+              child: const SizedBox.shrink(),
+            ),
+            KeyedSubtree(
+              key: kLimousineExternalPreviewTotalKey,
+              child: Text(
+                formatLimousineMoney(money.grossCents, draft.currency),
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            _previewBlock(palette, _t(kLimousineExternalPreviewTerms), [
+              '${_t(kLimousineQuoteCancelDeadline)}: ${draft.cancellationDeadlineHours ?? 0}h',
+              '${_t(kLimousineQuoteCancelPenalty)}: ${draft.cancellationPenaltyPercent ?? 0}%',
+              '${_t(kLimousineQuoteNoShow)}: ${draft.noShowPenaltyPercent ?? 0}%',
+              '${_t(kLimousineQuoteWaitingIncluded)}: ${draft.waitingTimeIncludedMinutes ?? 0}',
+              '${_t(kLimousineQuoteOvertime)}: ${draft.overtimeCentsPerHour ?? 0}',
+              '${_t(kLimousineQuoteInboxValidUntil)} ${draft.expiresAt}',
+            ]),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      FilledButton(
+        key: kLimousineExternalPreviewSendKey,
+        onPressed: _submitting ? null : () => _submit(draft),
+        child: Text(_t(kLimousineExternalPreviewSend)),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton(
+        key: kLimousineExternalPreviewEditKey,
+        onPressed: _editPreview,
+        child: Text(_t(kLimousineExternalPreviewEdit)),
+      ),
+      TextButton(
+        key: kLimousineExternalPreviewDiscardKey,
+        onPressed: () => setState(() => _previewDraft = null),
+        child: Text(_t(kLimousineExternalPreviewDiscard)),
+      ),
+    ];
+  }
+
+  Widget _previewBlock(
+    BusinessThemePalette palette,
+    String title,
+    List<String> lines, {
+    Key? key,
+  }) {
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(line, style: TextStyle(color: palette.textSecondary)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _formChildren(BusinessThemePalette palette) {
+    return [
+      const SizedBox(height: 16),
+      Text(
+        _t(kLimousineExternalContactSection),
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      _field(
+        palette,
+        _name,
+        kLimousineExternalContactName,
+        kLimousineExternalContactNameKey,
+      ),
+      _field(
+        palette,
+        _email,
+        kLimousineExternalContactEmail,
+        kLimousineExternalContactEmailKey,
+        keyboard: TextInputType.emailAddress,
+      ),
+      _field(
+        palette,
+        _mobile,
+        kLimousineExternalContactMobile,
+        kLimousineExternalContactMobileKey,
+        keyboard: TextInputType.phone,
+      ),
+      _field(
+        palette,
+        _company,
+        kLimousineExternalContactCompany,
+        kLimousineExternalContactCompanyKey,
+      ),
+      DropdownButtonFormField<String>(
+        key: kLimousineExternalContactLocaleKey,
+        isExpanded: true,
+        value: _locale,
+        decoration: InputDecoration(
+          labelText: _t(kLimousineExternalContactLocale),
+        ),
+        items: const [
+          DropdownMenuItem(value: 'nl', child: Text('NL')),
+          DropdownMenuItem(value: 'en', child: Text('EN')),
+          DropdownMenuItem(value: 'fr', child: Text('FR')),
+          DropdownMenuItem(value: 'es', child: Text('ES')),
+        ],
+        onChanged: (value) => setState(
+          () => _locale = normalizeLimousineQuoteLocale(value ?? 'nl'),
+        ),
+      ),
+      const SizedBox(height: 16),
+      Text(
+        _t(kLimousineQuoteJourneyCard),
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      _field(
+        palette,
+        _from,
+        kLimousineQuotePickup,
+        kLimousineExternalPickupKey,
+      ),
+      _field(
+        palette,
+        _to,
+        kLimousineQuoteDestination,
+        kLimousineExternalDestinationKey,
+      ),
+      _field(palette, _stops, kLimousineQuoteStops, kLimousineExternalStopsKey),
+      ListTile(
+        key: kLimousineExternalWhenKey,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          _t(kLimousineQuoteWhen),
+          style: TextStyle(color: palette.textPrimary),
+        ),
+        subtitle: Text(
+          _when.toLocal().toString(),
+          style: TextStyle(color: palette.textSecondary),
+        ),
+        onTap: () => _pickWhen(returning: false),
+      ),
+      SwitchListTile(
+        key: kLimousineExternalReturnKey,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          _t(kLimousineExternalReturnToggle),
+          style: TextStyle(color: palette.textPrimary),
+        ),
+        value: _roundtrip,
+        onChanged: (value) => setState(() {
+          _roundtrip = value;
+          _returnWhen ??= _when.add(const Duration(hours: 4));
+        }),
+      ),
+      if (_roundtrip)
+        ListTile(
+          key: kLimousineExternalReturnWhenKey,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            _t(kLimousineExternalReturnWhen),
+            style: TextStyle(color: palette.textPrimary),
+          ),
+          subtitle: Text(
+            (_returnWhen ?? _when.add(const Duration(hours: 4)))
+                .toLocal()
+                .toString(),
+            style: TextStyle(color: palette.textSecondary),
+          ),
+          onTap: () => _pickWhen(returning: true),
+        ),
+      _field(
+        palette,
+        _pax,
+        kLimousineQuotePassengers,
+        kLimousineExternalPaxKey,
+        keyboard: TextInputType.number,
+      ),
+      _field(
+        palette,
+        _bags,
+        kLimousineQuoteLuggage,
+        kLimousineExternalBagsKey,
+        keyboard: TextInputType.number,
+      ),
+      _field(
+        palette,
+        _occasion,
+        kLimousineQuoteImportantInfo,
+        kLimousineExternalOccasionKey,
+      ),
+      if (_quoteOffers.isNotEmpty)
+        DropdownButtonFormField<String>(
+          key: kLimousineExternalOfferKey,
+          isExpanded: true,
+          value:
+              _quoteOffers.any(
+                (offer) => (offer['offer_id'] ?? '').toString() == _offerId,
+              )
+              ? _offerId
+              : null,
+          decoration: InputDecoration(labelText: _t(kLimousineQuoteOffer)),
+          items: [
+            for (final offer in _quoteOffers)
+              DropdownMenuItem(
+                value: (offer['offer_id'] ?? '').toString(),
+                child: Text((offer['offer_id'] ?? '').toString()),
+              ),
+          ],
+          onChanged: (value) => setState(() => _applyOffer(value ?? '')),
+        ),
+      if (_offerExtras.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(
+          _t(kLimousineExternalOptionalExtras),
+          style: TextStyle(
+            color: palette.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Wrap(
+          key: kLimousineExternalExtrasKey,
+          spacing: 8,
+          children: [
+            for (final extra in _offerExtras)
+              FilterChip(
+                label: Text(extra['label']!),
+                selected: _extraIds.contains(extra['id']),
+                onSelected: (selected) => setState(() {
+                  if (selected) {
+                    _extraIds.add(extra['id']!);
+                  } else {
+                    _extraIds.remove(extra['id']);
+                  }
+                }),
+              ),
+          ],
+        ),
+      ],
+      const SizedBox(height: 12),
+      Text(
+        _t(kLimousineQuoteVehicle),
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Column(
+        key: kLimousineExternalVehicleKey,
+        children: [
+          for (final vehicle in _limousineVehicles)
+            _vehicleCard(palette, vehicle),
+        ],
+      ),
+      const SizedBox(height: 16),
+      FilledButton(
+        key: kLimousineExternalSubmitKey,
+        onPressed: _submitting ? null : _continueToQuote,
+        child: Text(_t(kLimousineExternalContinueQuote)),
+      ),
+    ];
+  }
+
+  Widget _vehicleCard(BusinessThemePalette palette, VehicleProfile vehicle) {
+    final selected = vehicle.id == _vehicleId;
+    final photo = (vehicle.publicPhotoUrl ?? '').trim();
+    final classLabel = vehicle.serviceClassId.isEmpty
+        ? ''
+        : limousineServiceClassLabel(vehicle.serviceClassId, _lang);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected ? palette.surfaceAlt : palette.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => setState(() {
+            _vehicleId = vehicle.id;
+            if (vehicle.serviceClassId.isNotEmpty) {
+              _serviceClassId = vehicle.serviceClassId;
+            }
+          }),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? palette.accent : palette.border,
+              ),
+            ),
+            child: Row(
+              children: [
+                if (photo.startsWith('https://'))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        photo,
+                        width: 64,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        vehicle.vehicleName.isEmpty
+                            ? vehicle.id
+                            : vehicle.vehicleName,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (classLabel.isNotEmpty)
+                        Text(
+                          classLabel,
+                          style: TextStyle(color: palette.textSecondary),
+                        ),
+                      Text(
+                        '${_t(kLimousineExternalVehicleCapacity)}: ${vehicle.passengerCapacity}',
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _field(
     BusinessThemePalette palette,
     TextEditingController controller,
     LocalizedText label,
-    Key key,
-  ) {
+    Key key, {
+    TextInputType? keyboard,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: TextField(
         key: key,
         controller: controller,
-        decoration: InputDecoration(labelText: _t(label)),
+        keyboardType: keyboard,
+        style: TextStyle(color: palette.textPrimary),
+        decoration: InputDecoration(
+          labelText: _t(label),
+          labelStyle: TextStyle(color: palette.textMuted),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: palette.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: palette.accent),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class LimousineOwnCustomerOriginBadge extends StatelessWidget {
+  const LimousineOwnCustomerOriginBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final lang = appLanguageNotifier.value;
+    final palette = paletteForBusinessTheme(businessThemeNotifier.value);
+    return Container(
+      key: kLimousineExternalOriginBadgeKey,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: palette.border),
+      ),
+      child: Text(
+        kLimousineOwnCustomerOrigin.of(lang),
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
       ),
     );
   }
@@ -498,10 +1003,7 @@ class LimousineExternalContactSummaryCard extends StatelessWidget {
 }
 
 class LimousineExternalDeliveryTimeline extends StatelessWidget {
-  const LimousineExternalDeliveryTimeline({
-    super.key,
-    required this.delivery,
-  });
+  const LimousineExternalDeliveryTimeline({super.key, required this.delivery});
 
   final LimousineExternalDelivery delivery;
 
@@ -526,7 +1028,11 @@ class LimousineExternalDeliveryTimeline extends StatelessWidget {
         children: [
           Text(kLimousineExternalTimelineTitle.of(lang)),
           const SizedBox(height: 8),
-          for (var i = 0; i < LimousineExternalDeliveryState.timeline.length; i++)
+          for (
+            var i = 0;
+            i < LimousineExternalDeliveryState.timeline.length;
+            i++
+          )
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(

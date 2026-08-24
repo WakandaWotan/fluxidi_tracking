@@ -43,9 +43,7 @@ const Key kLimousineExternalWhenKey = ValueKey<String>(
 const Key kLimousineExternalReturnKey = ValueKey<String>(
   'limousine_external_return',
 );
-const Key kLimousineExternalPaxKey = ValueKey<String>(
-  'limousine_external_pax',
-);
+const Key kLimousineExternalPaxKey = ValueKey<String>('limousine_external_pax');
 const Key kLimousineExternalBagsKey = ValueKey<String>(
   'limousine_external_bags',
 );
@@ -73,6 +71,195 @@ const Key kLimousineExternalContactSummaryKey = ValueKey<String>(
 const Key kLimousineExternalSubmitKey = ValueKey<String>(
   'limousine_external_submit',
 );
+const Key kLimousineExternalPreviewKey = ValueKey<String>(
+  'limousine_external_preview',
+);
+const Key kLimousineExternalPreviewSendKey = ValueKey<String>(
+  'limousine_external_preview_send',
+);
+const Key kLimousineExternalPreviewEditKey = ValueKey<String>(
+  'limousine_external_preview_edit',
+);
+const Key kLimousineExternalPreviewDiscardKey = ValueKey<String>(
+  'limousine_external_preview_discard',
+);
+const Key kLimousineExternalOriginBadgeKey = ValueKey<String>(
+  'limousine_external_origin_badge',
+);
+const Key kLimousineExternalReturnWhenKey = ValueKey<String>(
+  'limousine_external_return_when',
+);
+const Key kLimousineExternalExtrasKey = ValueKey<String>(
+  'limousine_external_extras',
+);
+const Key kLimousineExternalPreviewMoneyKey = ValueKey<String>(
+  'limousine_external_preview_money',
+);
+const Key kLimousineExternalPreviewVatKey = ValueKey<String>(
+  'limousine_external_preview_vat',
+);
+const Key kLimousineExternalPreviewTotalKey = ValueKey<String>(
+  'limousine_external_preview_total',
+);
+
+const int kLimousineOwnCustomerPaxMin = 1;
+const int kLimousineOwnCustomerPaxMax = 16;
+const int kLimousineOwnCustomerBagsMin = 0;
+const int kLimousineOwnCustomerBagsMax = 99;
+
+bool looksLikeOwnCustomerMail(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return false;
+  final at = text.indexOf('@');
+  if (at <= 0 || at != text.lastIndexOf('@')) return false;
+  final host = text.substring(at + 1);
+  return host.contains('.') && !text.contains(' ');
+}
+
+bool looksLikeOwnCustomerMobile(String raw) {
+  final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+  return digits.length >= 8 && digits.length <= 15;
+}
+
+bool limousineOwnCustomerPaxOk(int? pax) {
+  return pax != null &&
+      pax >= kLimousineOwnCustomerPaxMin &&
+      pax <= kLimousineOwnCustomerPaxMax;
+}
+
+bool limousineOwnCustomerBagsOk(int? bags) {
+  return bags != null &&
+      bags >= kLimousineOwnCustomerBagsMin &&
+      bags <= kLimousineOwnCustomerBagsMax;
+}
+
+class LimousineOwnCustomerFormIssue {
+  const LimousineOwnCustomerFormIssue({required this.ok, this.code = ''});
+
+  final bool ok;
+  final String code;
+}
+
+LimousineOwnCustomerFormIssue validateOwnCustomerContactForm({
+  required String name,
+  required String email,
+  required String mobile,
+}) {
+  if (name.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'name');
+  }
+  final mail = email.trim();
+  final phone = mobile.trim();
+  if (mail.isEmpty && phone.isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'contact');
+  }
+  if (mail.isNotEmpty && !looksLikeOwnCustomerMail(mail)) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'mail');
+  }
+  if (phone.isNotEmpty && !looksLikeOwnCustomerMobile(phone)) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'mobile');
+  }
+  return const LimousineOwnCustomerFormIssue(ok: true);
+}
+
+LimousineOwnCustomerFormIssue validateOwnCustomerJourneyForm({
+  required String from,
+  required String to,
+  required String offerId,
+  required String vehicleId,
+  required int? pax,
+  required int? bags,
+  required bool roundtrip,
+  String returnPickupIso = '',
+}) {
+  if (from.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'from');
+  }
+  if (to.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'to');
+  }
+  if (offerId.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'offer');
+  }
+  if (vehicleId.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'vehicle');
+  }
+  if (!limousineOwnCustomerPaxOk(pax)) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'pax');
+  }
+  if (!limousineOwnCustomerBagsOk(bags)) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'bags');
+  }
+  if (roundtrip && returnPickupIso.trim().isEmpty) {
+    return const LimousineOwnCustomerFormIssue(ok: false, code: 'return');
+  }
+  return const LimousineOwnCustomerFormIssue(ok: true);
+}
+
+String ownCustomerVatPercentLabel(num rate) {
+  final pct = rate <= 1 ? rate * 100 : rate;
+  if (pct == pct.roundToDouble()) return '${pct.toStringAsFixed(0)}%';
+  return '$pct%';
+}
+
+class LimousineOwnCustomerPreviewMoney {
+  const LimousineOwnCustomerPreviewMoney({
+    required this.enteredCents,
+    required this.netCents,
+    required this.vatCents,
+    required this.grossCents,
+    required this.vatRate,
+    required this.vatTreatment,
+  });
+
+  final int enteredCents;
+  final int netCents;
+  final int vatCents;
+  final int grossCents;
+  final num vatRate;
+  final String vatTreatment;
+}
+
+/// Display-only preview. The Worker freezes the canonical split on send.
+LimousineOwnCustomerPreviewMoney previewOwnCustomerQuoteMoney({
+  required int enteredCents,
+  required String vatTreatment,
+  required num vatRate,
+}) {
+  final rate = vatRate <= 1 ? vatRate : vatRate / 100;
+  final treatment = vatTreatment.trim().toLowerCase();
+  if (treatment == 'none' || rate <= 0) {
+    return LimousineOwnCustomerPreviewMoney(
+      enteredCents: enteredCents,
+      netCents: enteredCents,
+      vatCents: 0,
+      grossCents: enteredCents,
+      vatRate: 0,
+      vatTreatment: treatment.isEmpty ? 'none' : treatment,
+    );
+  }
+  if (treatment == 'incl') {
+    final net = (enteredCents / (1 + rate)).round();
+    final vat = enteredCents - net;
+    return LimousineOwnCustomerPreviewMoney(
+      enteredCents: enteredCents,
+      netCents: net,
+      vatCents: vat,
+      grossCents: enteredCents,
+      vatRate: rate,
+      vatTreatment: treatment,
+    );
+  }
+  final vat = ((enteredCents / 100.0) * rate * 100).round();
+  return LimousineOwnCustomerPreviewMoney(
+    enteredCents: enteredCents,
+    netCents: enteredCents,
+    vatCents: vat,
+    grossCents: enteredCents + vat,
+    vatRate: rate,
+    vatTreatment: 'excl',
+  );
+}
 
 class LimousineExternalContactSummary {
   const LimousineExternalContactSummary({
@@ -89,7 +276,8 @@ class LimousineExternalContactSummary {
   final String locale;
   final String companyLabel;
 
-  bool get hasContact => displayName.isNotEmpty || mail.isNotEmpty || mobile.isNotEmpty;
+  bool get hasContact =>
+      displayName.isNotEmpty || mail.isNotEmpty || mobile.isNotEmpty;
 
   Map<String, dynamic> toWorkerContact() {
     return <String, dynamic>{
@@ -112,10 +300,7 @@ class LimousineExternalContactSummary {
       mail: _text(map['mail'] ?? map['email'], 160),
       mobile: _text(map['mobile'] ?? map['phone'], 32),
       locale: normalizeLimousineQuoteLocale('${map['locale'] ?? 'nl'}'),
-      companyLabel: _text(
-        map['company_label'] ?? map['company_name'],
-        80,
-      ),
+      companyLabel: _text(map['company_label'] ?? map['company_name'], 80),
     );
   }
 }
@@ -148,6 +333,7 @@ class LimousineExternalJourneyDraft {
   const LimousineExternalJourneyDraft({
     this.offerId = '',
     this.vehicleId = '',
+    this.serviceClassId = '',
     this.journeyType = 'point_to_point',
     this.from = '',
     this.to = '',
@@ -164,6 +350,7 @@ class LimousineExternalJourneyDraft {
 
   final String offerId;
   final String vehicleId;
+  final String serviceClassId;
   final String journeyType;
   final String from;
   final String to;
@@ -181,6 +368,8 @@ class LimousineExternalJourneyDraft {
     return <String, dynamic>{
       'offer_id': offerId.trim(),
       if (vehicleId.trim().isNotEmpty) 'vehicle_id': vehicleId.trim(),
+      if (serviceClassId.trim().isNotEmpty)
+        'service_class_id': serviceClassId.trim(),
       'journey_type': journeyType.trim(),
       'from': from.trim(),
       'to': to.trim(),
@@ -213,4 +402,3 @@ String _text(Object? raw, int max) {
   if (value.isEmpty) return '';
   return value.length <= max ? value : value.substring(0, max);
 }
-

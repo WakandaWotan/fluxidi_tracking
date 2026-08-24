@@ -1085,11 +1085,20 @@ async function _loadLimousineExternalInviteForRecord(env, record) {
 
 async function _companyInboxViewWithExternal(env, record, extras = {}) {
   const invite = await _loadLimousineExternalInviteForRecord(env, record);
-  return _withLimousineExternalDeliveryView(
+  const view = _withLimousineExternalDeliveryView(
     _buildLimousineCompanyInboxView(record, extras),
     invite,
     record,
   );
+  if (!record?.external_contact_id) return view;
+  const contact = await _loadLimousineExternalJson(
+    env,
+    _limousineExternalContactKey(record.external_contact_id),
+  );
+  const summary = _projectLimousineCompanyContactSummary(contact);
+  const label = sanitizeTenantString(summary?.display_name, 80);
+  if (!label) return view;
+  return { ...view, contact_display_name: label };
 }
 
 async function _resolveLimousineExternalSession(request, env, { nowIso = null } = {}) {

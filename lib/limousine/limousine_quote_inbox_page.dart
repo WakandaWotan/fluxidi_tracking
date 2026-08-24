@@ -807,8 +807,23 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                         ),
                       ),
                     ),
+                    if (limousineQuoteIsExternal(item))
+                      const LimousineOwnCustomerOriginBadge(),
                   ],
                 ),
+                if (item.contactDisplayName.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      item.contactDisplayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 if (item.quote?.expiresAt.isNotEmpty == true)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -836,7 +851,8 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                             width: 72,
                             height: 52,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox.shrink(),
                           ),
                         ),
                       ),
@@ -946,10 +962,7 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       '${kLimousineOperationalFromPriceAudit.of(_lang)} ${limousineMoneyCents(limousineSnapshotFromPriceCents(item.pricingSnapshot))}',
-                      style: TextStyle(
-                        color: palette.textMuted,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: palette.textMuted, fontSize: 12),
                     ),
                   ),
                 if (amount != null)

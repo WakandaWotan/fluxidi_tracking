@@ -4,6 +4,8 @@
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import 'limousine_external_quote.dart';
+import 'limousine_external_quote_labels.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_quote_presentation.dart';
@@ -120,6 +122,9 @@ bool limousineQuoteInboxMatchesQuery(
     record.occasion,
     record.pricingMode,
     record.vehicleId,
+    record.contactDisplayName,
+    if (limousineQuoteIsExternal(record))
+      kLimousineOwnCustomerOrigin.of(language),
   ];
   return haystack.any((value) => value.toLowerCase().contains(query));
 }

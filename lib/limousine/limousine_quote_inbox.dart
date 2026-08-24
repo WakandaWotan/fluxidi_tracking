@@ -767,6 +767,7 @@ class LimousineQuoteRequest {
     this.acceptedAt = '',
     this.publicPartnerId = '',
     this.originChannel = '',
+    this.contactDisplayName = '',
     this.externalDelivery = const LimousineExternalDelivery(),
   });
 
@@ -814,6 +815,7 @@ class LimousineQuoteRequest {
   final String acceptedAt;
   final String publicPartnerId;
   final String originChannel;
+  final String contactDisplayName;
   final LimousineExternalDelivery externalDelivery;
 
   bool get hasQuotationPdf =>
@@ -989,6 +991,10 @@ class LimousineQuoteRequest {
         map['origin_channel'] ?? map['originChannel'],
         max: 40,
       ),
+      contactDisplayName: _text(
+        map['contact_display_name'] ?? map['contactDisplayName'],
+        max: 80,
+      ),
       externalDelivery: LimousineExternalDelivery.fromJson(
         map['external_delivery'] ?? map['externalDelivery'],
       ),
@@ -1083,6 +1089,9 @@ class LimousineQuoteRequest {
       originChannel: incoming.originChannel.isNotEmpty
           ? incoming.originChannel
           : originChannel,
+      contactDisplayName: incoming.contactDisplayName.isNotEmpty
+          ? incoming.contactDisplayName
+          : contactDisplayName,
       externalDelivery: incoming.externalDelivery.isExternal
           ? incoming.externalDelivery
           : externalDelivery,
