@@ -90,7 +90,9 @@ class _FakeGateway
     String? companyId,
   }) async {
     return LimousineQuoteInboxPageData(
-      items: record == null ? const <LimousineQuoteRequest>[] : <LimousineQuoteRequest>[record!],
+      items: record == null
+          ? const <LimousineQuoteRequest>[]
+          : <LimousineQuoteRequest>[record!],
     );
   }
 
@@ -182,7 +184,10 @@ class _FakeGateway
 
 Widget _app(Widget child, {Size size = const Size(390, 844)}) {
   return MaterialApp(
-    home: MediaQuery(data: MediaQueryData(size: size), child: child),
+    home: MediaQuery(
+      data: MediaQueryData(size: size),
+      child: child,
+    ),
   );
 }
 
@@ -196,25 +201,21 @@ void main() {
     final record = LimousineQuoteRequest.fromJson(_item());
     expect(record.originChannel, kLimousineExternalOriginChannel);
     expect(record.externalDelivery.invitationState, 'link_created');
-    expect(
-      limousineQuoteProjectionLeaksForbidden(_item()),
-      isTrue,
-    );
+    expect(limousineQuoteProjectionLeaksForbidden(_item()), isTrue);
     expect(record.quoteRequestId, 'limq_ext');
   });
 
   test('taxi QR stays in taxi context and is hidden for limousine-only', () {
     final taxi = _vehicle(id: 'veh_taxi', name: 'Taxi');
-    final limo = _vehicle(
-      id: 'veh_limo',
-      name: 'Limo',
-      category: 'limousine',
-    );
+    final limo = _vehicle(id: 'veh_limo', name: 'Limo', category: 'limousine');
     expect(companyShouldShowTaxiBookingQr(vehicles: [taxi]), isTrue);
     expect(companyShouldShowTaxiBookingQr(vehicles: [taxi, limo]), isTrue);
     expect(companyShouldShowTaxiBookingQr(vehicles: [limo]), isFalse);
     expect(
-      companyShouldShowTaxiBookingQr(vehicles: [taxi, limo], limousineContext: true),
+      companyShouldShowTaxiBookingQr(
+        vehicles: [taxi, limo],
+        limousineContext: true,
+      ),
       isFalse,
     );
     expect(
@@ -224,7 +225,7 @@ void main() {
   });
 
   test('labels stay in one language and use Bekeken', () {
-    expect(kLimousineExternalQuoteCreateAction.nl, 'Nieuwe offerte voor eigen klant');
+    expect(kLimousineExternalQuoteCreateAction.nl, 'Offerte voor eigen klant');
     expect(kLimousineExternalBekeken.nl, 'Bekeken');
     expect(kLimousineExternalBekeken.nl.contains('Gelezen'), isFalse);
     expect(
@@ -239,8 +240,10 @@ void main() {
     expect(kLimousineExternalQuoteCreateAction.es.isNotEmpty, isTrue);
   });
 
-  testWidgets('inbox shows Nieuwe offerte voor eigen klant', (tester) async {
-    final gateway = _FakeGateway(record: LimousineQuoteRequest.fromJson(_item()));
+  testWidgets('inbox shows Offerte voor eigen klant', (tester) async {
+    final gateway = _FakeGateway(
+      record: LimousineQuoteRequest.fromJson(_item()),
+    );
     await tester.pumpWidget(
       _app(LimousineQuoteInboxPage(gateway: gateway, entitled: true)),
     );
@@ -288,11 +291,22 @@ void main() {
       find.byKey(kLimousineExternalContactEmailKey),
       'ada@example.test',
     );
-    await tester.enterText(find.byKey(kLimousineExternalPickupKey), 'Korenmarkt 1, Gent');
-    await tester.enterText(find.byKey(kLimousineExternalDestinationKey), 'Graslei, Gent');
+    await tester.enterText(
+      find.byKey(kLimousineExternalPickupKey),
+      'Korenmarkt 1, Gent',
+    );
+    await tester.enterText(
+      find.byKey(kLimousineExternalDestinationKey),
+      'Graslei, Gent',
+    );
+    await tester.ensureVisible(find.byKey(kLimousineExternalSubmitKey));
     await tester.tap(find.byKey(kLimousineExternalSubmitKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kLimousineQuoteEditorPageKey), findsNothing);
+    expect(find.byKey(kLimousineExternalPreviewKey), findsOneWidget);
+    await tester.ensureVisible(find.byKey(kLimousineExternalPreviewSendKey));
+    await tester.tap(find.byKey(kLimousineExternalPreviewSendKey));
+    await tester.pumpAndSettle();
     expect(find.byKey(kLimousineExternalCopyLinkKey), findsOneWidget);
     expect(find.byKey(kLimousineExternalShareLinkKey), findsOneWidget);
     expect(find.byKey(kLimousineExternalTimelineKey), findsOneWidget);
