@@ -329,10 +329,15 @@ LimousineAcceptedBookingReview buildLimousineAcceptedBookingReview({
     returnPickupIso: draft.returnPickupIso,
     pax: request?.pax ?? draft.pax,
     bags: request?.bags ?? draft.bags,
-    acceptedExtras: quote?.separatelyPricedExtras ?? const [],
-    includedServices: quote?.includedServices ?? const [],
-    mobilisationDisclosure:
-        quote?.mobilisationDisclosure ?? const <String, String>{},
+    acceptedExtras: quote?.separatelyPricedExtras.isNotEmpty == true
+        ? quote!.separatelyPricedExtras
+        : _acceptedNoteItemList(quote?.terms?['paid_extras']),
+    includedServices: quote?.includedServices.isNotEmpty == true
+        ? quote!.includedServices
+        : _acceptedNoteItemList(quote?.terms?['included_services']),
+    mobilisationDisclosure: quote?.mobilisationDisclosure.isNotEmpty == true
+        ? quote!.mobilisationDisclosure
+        : _acceptedNoteMap(quote?.terms?['mobilisation_disclosure']),
     totalInclVatCents:
         request?.quotationTotalInclVatCents ?? handoff.totalInclVatCents,
     totalExVatCents:
@@ -346,6 +351,24 @@ LimousineAcceptedBookingReview buildLimousineAcceptedBookingReview({
     termsRevision: handoff.termsRevision,
     terms: quote?.terms ?? const <String, dynamic>{},
   );
+}
+
+List<Map<String, dynamic>> _acceptedNoteItemList(Object? raw) {
+  if (raw is! List) return const <Map<String, dynamic>>[];
+  return raw
+      .whereType<Map>()
+      .map((item) => item.map((key, value) => MapEntry(key.toString(), value)))
+      .toList(growable: false);
+}
+
+Map<String, String> _acceptedNoteMap(Object? raw) {
+  if (raw is Map<String, String>) return raw;
+  if (raw is! Map) return const <String, String>{};
+  return <String, String>{
+    for (final entry in raw.entries)
+      if (entry.value.toString().trim().isNotEmpty)
+        entry.key.toString(): entry.value.toString(),
+  };
 }
 
 String firstLimousinePublicPartnerId(Iterable<String?> values) {

@@ -15,7 +15,6 @@ import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_offers.dart';
-import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
 import 'limousine_quote_presentation.dart';
 
@@ -421,8 +420,25 @@ class _LimousineAcceptedBookingPageState
       );
     }
 
-    String localizedMap(Map<String, String> value) =>
-        localizedLimousineText(value, languageCode: _lang.name);
+    Map<String, String> noteMap(Object? raw) {
+      if (raw is Map<String, String>) return raw;
+      if (raw is! Map) return const <String, String>{};
+      return <String, String>{
+        for (final entry in raw.entries)
+          if (entry.value.toString().trim().isNotEmpty)
+            entry.key.toString(): entry.value.toString(),
+      };
+    }
+
+    List<Map<String, dynamic>> noteItemList(Object? raw) {
+      if (raw is! List) return const <Map<String, dynamic>>[];
+      return raw
+          .whereType<Map>()
+          .map(
+            (item) => item.map((key, value) => MapEntry(key.toString(), value)),
+          )
+          .toList(growable: false);
+    }
 
     return Card(
       key: kLimousineAcceptedBookingReviewKey,
@@ -454,15 +470,25 @@ class _LimousineAcceptedBookingPageState
               Text('${_t(kLimousineCustomerPax)}: ${review.pax}'),
             if (review.bags != null)
               Text('${_t(kLimousineCustomerBags)}: ${review.bags}'),
-            if (review.includedServices.isNotEmpty)
-              Text(_t(kLimousineCustomerIncludedServices)),
-            if (review.acceptedExtras.isNotEmpty)
-              Text(_t(kLimousineCustomerPaidExtras)),
-            if (localizedMap(review.mobilisationDisclosure).isNotEmpty)
-              row(
-                kLimousineCustomerMobilisation,
-                localizedMap(review.mobilisationDisclosure),
+            for (final note in limousineQuoteCommercialNoteLines(
+              language: _lang,
+              includedServices: review.includedServices.isNotEmpty
+                  ? review.includedServices
+                  : noteItemList(review.terms['included_services']),
+              paidExtras: review.acceptedExtras.isNotEmpty
+                  ? review.acceptedExtras
+                  : noteItemList(review.terms['paid_extras']),
+              mobilisationDisclosure: review.mobilisationDisclosure.isNotEmpty
+                  ? review.mobilisationDisclosure
+                  : noteMap(review.terms['mobilisation_disclosure']),
+              customerObligations: noteMap(
+                review.terms['customer_obligations'],
               ),
+              importantInformation: noteMap(
+                review.terms['important_information'],
+              ),
+            ))
+              row(note.label, note.value),
             const SizedBox(height: 8),
             ...() {
               final money = LimousineCanonicalMoney(
@@ -560,9 +586,7 @@ class _LimousineAcceptedBookingPageState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '${_t(kLimousineAcceptedBookingReference)}: $reference',
-            ),
+            Text('${_t(kLimousineAcceptedBookingReference)}: $reference'),
             Padding(
               key: kLimousineAcceptedBookingCheckoutUnavailableKey,
               padding: const EdgeInsets.only(top: 8),

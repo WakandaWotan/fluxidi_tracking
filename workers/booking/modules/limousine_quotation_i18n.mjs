@@ -385,9 +385,19 @@ export function selectLocalizedQuotationText(value, locale, max = 4000) {
   }
   const src = asObject(value);
   const loc = normalizeLimousineQuotationLocale(locale);
-  const text = String(src[loc] || "").trim();
-  if (!text) return "";
-  return text.length > max ? text.slice(0, max) : text;
+  const order = [loc, "nl", "en", "fr", "es"];
+  const seen = new Set();
+  for (const key of order) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const text = String(src[key] || "").trim();
+    if (text) return text.length > max ? text.slice(0, max) : text;
+  }
+  for (const raw of Object.values(src)) {
+    const text = String(raw || "").trim();
+    if (text) return text.length > max ? text.slice(0, max) : text;
+  }
+  return "";
 }
 
 export function formatLimousineQuotationDateTime(iso, locale) {

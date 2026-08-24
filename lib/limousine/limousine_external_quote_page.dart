@@ -337,12 +337,7 @@ class _LimousineExternalQuoteCreatePageState
             'revision': 1,
             'locale': _locale,
             if (current != null && (current.totalInclVatCents ?? 0) > 0)
-              'quote': <String, dynamic>{
-                'total_incl_vat_cents': current.totalInclVatCents,
-                'currency': current.currency.isEmpty ? 'EUR' : current.currency,
-                'vat_treatment': current.vatTreatment,
-                'expires_at': current.expiresAt,
-              },
+              'quote': limousineCompanyQuoteDraftEditorSeed(current),
           }),
         ),
       ),
@@ -653,6 +648,13 @@ class _LimousineExternalQuoteCreatePageState
               '${_t(kLimousineQuoteOvertime)}: ${draft.overtimeCentsPerHour ?? 0}',
               '${_t(kLimousineQuoteInboxValidUntil)} ${draft.expiresAt}',
             ]),
+            for (final note in limousineQuoteCommercialNotesFromDraft(
+              draft,
+              language: _lang,
+            ))
+              _previewBlock(palette, note.label.of(_lang), [
+                note.value,
+              ], key: _previewNoteKey(note.label)),
           ],
         ),
       ),
@@ -674,6 +676,22 @@ class _LimousineExternalQuoteCreatePageState
         child: Text(_t(kLimousineExternalPreviewDiscard)),
       ),
     ];
+  }
+
+  Key? _previewNoteKey(LocalizedText label) {
+    if (label == kLimousineQuoteIncludedServices) {
+      return kLimousineExternalPreviewIncludedKey;
+    }
+    if (label == kLimousineQuoteMobilisation) {
+      return kLimousineExternalPreviewMobilisationKey;
+    }
+    if (label == kLimousineQuoteCustomerObligations) {
+      return kLimousineExternalPreviewObligationsKey;
+    }
+    if (label == kLimousineQuoteImportantInfo) {
+      return kLimousineExternalPreviewImportantKey;
+    }
+    return null;
   }
 
   Widget _previewBlock(

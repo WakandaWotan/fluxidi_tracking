@@ -57,6 +57,24 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
     );
     _expiresDate =
         existing ?? limousineDefaultQuoteValidUntilDate(widget.clock());
+    final quote = widget.record.quote;
+    if (quote != null) {
+      final notes = limousineQuoteCommercialNotesFromQuotedPrice(
+        quote,
+        language: _lang,
+      );
+      for (final note in notes) {
+        if (note.label == kLimousineQuoteIncludedServices) {
+          _included.text = note.value;
+        } else if (note.label == kLimousineQuoteMobilisation) {
+          _mobilisation.text = note.value;
+        } else if (note.label == kLimousineQuoteCustomerObligations) {
+          _obligations.text = note.value;
+        } else if (note.label == kLimousineQuoteImportantInfo) {
+          _important.text = note.value;
+        }
+      }
+    }
   }
 
   @override
@@ -76,14 +94,6 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
   }
 
   LimousineCompanyQuoteDraft _rawDraft() {
-    final services = <Map<String, dynamic>>[];
-    final included = _included.text.trim();
-    if (included.isNotEmpty) {
-      services.add(<String, dynamic>{
-        'item_id': 'included_1',
-        'label': <String, String>{'nl': included, 'en': included},
-      });
-    }
     return LimousineCompanyQuoteDraft(
       totalInclVatCents: limousineMajorUnitsToCents(_total.text),
       currency: kLimousineDefaultQuoteCurrency,
@@ -101,16 +111,12 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
       ),
       noShowPenaltyPercent: int.tryParse(_noShow.text.trim()),
       overtimeCentsPerHour: limousineMajorUnitsToCents(_overtime.text),
-      includedServices: services,
-      mobilisationDisclosure: _mobilisation.text.trim().isEmpty
-          ? const <String, String>{}
-          : <String, String>{'nl': _mobilisation.text.trim()},
-      customerObligations: _obligations.text.trim().isEmpty
-          ? const <String, String>{}
-          : <String, String>{'nl': _obligations.text.trim()},
-      importantInformation: _important.text.trim().isEmpty
-          ? const <String, String>{}
-          : <String, String>{'nl': _important.text.trim()},
+      includedServices: limousineQuoteIncludedServicesFromFreeText(
+        _included.text,
+      ),
+      mobilisationDisclosure: limousineUntranslatedNoteMap(_mobilisation.text),
+      customerObligations: limousineUntranslatedNoteMap(_obligations.text),
+      importantInformation: limousineUntranslatedNoteMap(_important.text),
     );
   }
 
@@ -288,24 +294,28 @@ class _LimousineQuoteEditorPageState extends State<LimousineQuoteEditorPage> {
                       palette,
                       _t(kLimousineQuoteIncludedServices),
                       _included,
+                      key: kLimousineQuoteIncludedFieldKey,
                       maxLines: 2,
                     ),
                     _field(
                       palette,
                       _t(kLimousineQuoteMobilisation),
                       _mobilisation,
+                      key: kLimousineQuoteMobilisationFieldKey,
                       maxLines: 2,
                     ),
                     _field(
                       palette,
                       _t(kLimousineQuoteCustomerObligations),
                       _obligations,
+                      key: kLimousineQuoteObligationsFieldKey,
                       maxLines: 2,
                     ),
                     _field(
                       palette,
                       _t(kLimousineQuoteImportantInfo),
                       _important,
+                      key: kLimousineQuoteImportantFieldKey,
                       maxLines: 2,
                     ),
                     const SizedBox(height: 16),

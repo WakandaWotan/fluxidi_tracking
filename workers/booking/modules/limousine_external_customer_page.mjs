@@ -30,6 +30,10 @@ const COPY = Object.freeze({
     noShow: "No-showboete (%)",
     waiting: "Inbegrepen wachttijd (minuten)",
     overtime: "Overuren",
+    included: "Inbegrepen diensten",
+    mobilisation: "Mobilisatie",
+    obligations: "Klantverplichtingen",
+    important: "Belangrijke informatie",
     pdf: "Offerte als PDF openen",
     accept: "Offerte accepteren",
     accepted: "Offerte geaccepteerd",
@@ -71,6 +75,10 @@ const COPY = Object.freeze({
     noShow: "No-show penalty (%)",
     waiting: "Included waiting time (minutes)",
     overtime: "Overtime",
+    included: "Included services",
+    mobilisation: "Mobilisation",
+    obligations: "Customer obligations",
+    important: "Important information",
     pdf: "Open quotation PDF",
     accept: "Accept quotation",
     accepted: "Quotation accepted",
@@ -112,6 +120,10 @@ const COPY = Object.freeze({
     noShow: "Pénalité no-show (%)",
     waiting: "Temps d’attente inclus (minutes)",
     overtime: "Heures supplémentaires",
+    included: "Services inclus",
+    mobilisation: "Mobilisation",
+    obligations: "Obligations du client",
+    important: "Informations importantes",
     pdf: "Ouvrir le PDF du devis",
     accept: "Accepter le devis",
     accepted: "Devis accepté",
@@ -153,6 +165,10 @@ const COPY = Object.freeze({
     noShow: "Penalización no-show (%)",
     waiting: "Espera incluida (minutos)",
     overtime: "Horas extra",
+    included: "Servicios incluidos",
+    mobilisation: "Movilización",
+    obligations: "Obligaciones del cliente",
+    important: "Información importante",
     pdf: "Abrir PDF del presupuesto",
     accept: "Aceptar presupuesto",
     accepted: "Presupuesto aceptado",
@@ -173,6 +189,44 @@ const COPY = Object.freeze({
 export function limousineExternalPageCopy(locale) {
   const lang = normalizeLimousineQuotationLocale(locale);
   return COPY[lang] || COPY.en;
+}
+
+function pickExternalNoteText(map, locale) {
+  if (map == null) return "";
+  if (typeof map === "string" || typeof map === "number") return String(map).trim();
+  if (typeof map !== "object") return "";
+  const loc = normalizeLimousineQuotationLocale(locale);
+  return String(map[loc] || map.nl || map.en || map.fr || map.es || "").trim();
+}
+
+function includedServicesText(items, locale) {
+  if (!Array.isArray(items)) return "";
+  return items
+    .map((item) => pickExternalNoteText(item && item.label, locale))
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function limousineExternalQuoteNoteSections(quote = {}, locale = "nl") {
+  const t = limousineExternalPageCopy(locale);
+  const src = quote && typeof quote === "object" ? quote : {};
+  const terms = src.terms && typeof src.terms === "object" ? src.terms : {};
+  return [
+    [
+      t.included,
+      includedServicesText(src.included_services, locale) ||
+        includedServicesText(terms.included_services, locale),
+    ],
+    [
+      t.mobilisation,
+      pickExternalNoteText(src.mobilisation_disclosure, locale) ||
+        pickExternalNoteText(terms.mobilisation_disclosure, locale),
+    ],
+    [t.obligations, pickExternalNoteText(terms.customer_obligations, locale)],
+    [t.important, pickExternalNoteText(terms.important_information, locale)],
+  ]
+    .filter(([, value]) => value)
+    .map(([title, value]) => ({ title, value }));
 }
 
 export function renderLimousineExternalQuotationPage({
@@ -244,6 +298,20 @@ export function renderLimousineExternalQuotationPage({
       if (!text(value)) return "";
       return '<div class="row"><span class="muted">' + label + '</span><strong>' + value + '</strong></div>';
     }
+    function localizedText(map) {
+      if (map == null) return "";
+      if (typeof map === "string" || typeof map === "number") return text(map);
+      if (typeof map !== "object") return "";
+      return text(map["${lang}"] || map.nl || map.en || map.fr || map.es);
+    }
+    function includedText(items) {
+      if (!Array.isArray(items)) return "";
+      return items.map((item) => localizedText(item && item.label)).filter(Boolean).join(" · ");
+    }
+    function noteSection(title, value) {
+      if (!text(value)) return "";
+      return '<section><h2>' + title + '</h2><p>' + value + '</p></section>';
+    }
     function renderQuote(data) {
       const q = data.quote_request || {};
       const quote = q.quote || {};
@@ -276,7 +344,11 @@ export function renderLimousineExternalQuotationPage({
           row(T.vatRate, pct(quote.vat_rate)) +
           (quote.public_text && (quote.public_text.${lang} || quote.public_text.nl || quote.public_text.en)
             ? '<p>' + (quote.public_text.${lang} || quote.public_text.nl || quote.public_text.en) + '</p>' : '') +
-        '</section>',
+        '</section>' +
+        noteSection(T.included, includedText(quote.included_services) || includedText(terms.included_services)) +
+        noteSection(T.mobilisation, localizedText(quote.mobilisation_disclosure) || localizedText(terms.mobilisation_disclosure)) +
+        noteSection(T.obligations, localizedText(terms.customer_obligations)) +
+        noteSection(T.important, localizedText(terms.important_information)),
         '<section><h2>' + T.terms + '</h2>' +
           row(T.deadline, terms.cancellation_deadline_hours) +
           row(T.cancelPct, terms.cancellation_penalty_percent) +

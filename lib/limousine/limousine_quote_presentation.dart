@@ -767,3 +767,182 @@ String limousineCustomerQuoteFromCompanyLabel(
 }
 
 bool limousineOptionalTermIsSet(int? value) => value != null && value > 0;
+
+const List<String> kLimousineQuoteNoteLocales = <String>[
+  'nl',
+  'en',
+  'fr',
+  'es',
+];
+
+Map<String, String> limousineUntranslatedNoteMap(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return const <String, String>{};
+  return <String, String>{
+    for (final lang in kLimousineQuoteNoteLocales) lang: text,
+  };
+}
+
+Map<String, String> _limousineNoteMap(Object? raw) {
+  if (raw is Map<String, String>) return raw;
+  if (raw is! Map) return const <String, String>{};
+  return <String, String>{
+    for (final entry in raw.entries)
+      if (entry.value.toString().trim().isNotEmpty)
+        entry.key.toString(): entry.value.toString(),
+  };
+}
+
+List<Map<String, dynamic>> _limousineNoteItemList(Object? raw) {
+  if (raw is! List) return const <Map<String, dynamic>>[];
+  return raw
+      .whereType<Map>()
+      .map((item) {
+        return item.map((key, value) => MapEntry(key.toString(), value));
+      })
+      .toList(growable: false);
+}
+
+String limousineQuoteLabeledItemsText(
+  List<Map<String, dynamic>> items, {
+  required AppLanguage language,
+}) {
+  final labels = <String>[];
+  for (final item in items) {
+    final raw = item['label'] ?? item['name'] ?? item['public_text'];
+    var text = '';
+    if (raw is Map) {
+      text = localizedLimousineText(
+        raw.map((key, value) => MapEntry(key.toString(), '$value')),
+        languageCode: language.name,
+      );
+    } else {
+      text = (raw ?? '').toString().trim();
+    }
+    if (text.isNotEmpty) labels.add(text);
+  }
+  return labels.join('\n');
+}
+
+List<Map<String, dynamic>> limousineQuoteIncludedServicesFromFreeText(
+  String raw,
+) {
+  final text = raw.trim();
+  if (text.isEmpty) return const <Map<String, dynamic>>[];
+  return <Map<String, dynamic>>[
+    <String, dynamic>{
+      'item_id': 'included_1',
+      'label': limousineUntranslatedNoteMap(text),
+    },
+  ];
+}
+
+class LimousineQuoteNoteLine {
+  const LimousineQuoteNoteLine({required this.label, required this.value});
+
+  final LocalizedText label;
+  final String value;
+}
+
+List<LimousineQuoteNoteLine> limousineQuoteCommercialNoteLines({
+  required AppLanguage language,
+  List<Map<String, dynamic>> includedServices = const <Map<String, dynamic>>[],
+  List<Map<String, dynamic>> paidExtras = const <Map<String, dynamic>>[],
+  Map<String, String> mobilisationDisclosure = const <String, String>{},
+  Map<String, String> customerObligations = const <String, String>{},
+  Map<String, String> importantInformation = const <String, String>{},
+}) {
+  final lines = <LimousineQuoteNoteLine>[];
+  void add(LocalizedText label, String value) {
+    final text = value.trim();
+    if (text.isEmpty) return;
+    lines.add(LimousineQuoteNoteLine(label: label, value: text));
+  }
+
+  add(
+    kLimousineQuoteIncludedServices,
+    limousineQuoteLabeledItemsText(includedServices, language: language),
+  );
+  add(
+    kLimousineQuoteMobilisation,
+    localizedLimousineText(mobilisationDisclosure, languageCode: language.name),
+  );
+  add(
+    kLimousineQuoteCustomerObligations,
+    localizedLimousineText(customerObligations, languageCode: language.name),
+  );
+  add(
+    kLimousineQuoteImportantInfo,
+    localizedLimousineText(importantInformation, languageCode: language.name),
+  );
+  add(
+    kLimousineQuotePaidExtras,
+    limousineQuoteLabeledItemsText(paidExtras, language: language),
+  );
+  return lines;
+}
+
+List<LimousineQuoteNoteLine> limousineQuoteCommercialNotesFromDraft(
+  LimousineCompanyQuoteDraft draft, {
+  required AppLanguage language,
+}) {
+  return limousineQuoteCommercialNoteLines(
+    language: language,
+    includedServices: draft.includedServices,
+    paidExtras: draft.paidExtras,
+    mobilisationDisclosure: draft.mobilisationDisclosure,
+    customerObligations: draft.customerObligations,
+    importantInformation: draft.importantInformation,
+  );
+}
+
+List<LimousineQuoteNoteLine> limousineQuoteCommercialNotesFromQuotedPrice(
+  LimousineQuotedPrice quote, {
+  required AppLanguage language,
+}) {
+  final terms = quote.terms ?? const <String, dynamic>{};
+  return limousineQuoteCommercialNoteLines(
+    language: language,
+    includedServices: quote.includedServices.isNotEmpty
+        ? quote.includedServices
+        : _limousineNoteItemList(terms['included_services']),
+    paidExtras: quote.separatelyPricedExtras.isNotEmpty
+        ? quote.separatelyPricedExtras
+        : _limousineNoteItemList(terms['paid_extras']),
+    mobilisationDisclosure: quote.mobilisationDisclosure.isNotEmpty
+        ? quote.mobilisationDisclosure
+        : _limousineNoteMap(terms['mobilisation_disclosure']),
+    customerObligations: _limousineNoteMap(terms['customer_obligations']),
+    importantInformation: _limousineNoteMap(terms['important_information']),
+  );
+}
+
+Map<String, dynamic> limousineCompanyQuoteDraftEditorSeed(
+  LimousineCompanyQuoteDraft draft,
+) {
+  return <String, dynamic>{
+    if ((draft.totalInclVatCents ?? 0) > 0)
+      'total_incl_vat_cents': draft.totalInclVatCents,
+    'currency': draft.currency.isEmpty
+        ? kLimousineDefaultQuoteCurrency
+        : draft.currency,
+    if (draft.vatTreatment.trim().isNotEmpty)
+      'vat_treatment': draft.vatTreatment,
+    if (draft.expiresAt.trim().isNotEmpty) 'expires_at': draft.expiresAt,
+    if (draft.includedServices.isNotEmpty)
+      'included_services': draft.includedServices,
+    if (draft.mobilisationDisclosure.isNotEmpty)
+      'mobilisation_disclosure': draft.mobilisationDisclosure,
+    'terms': <String, dynamic>{
+      if (draft.includedServices.isNotEmpty)
+        'included_services': draft.includedServices,
+      if (draft.paidExtras.isNotEmpty) 'paid_extras': draft.paidExtras,
+      if (draft.mobilisationDisclosure.isNotEmpty)
+        'mobilisation_disclosure': draft.mobilisationDisclosure,
+      if (draft.customerObligations.isNotEmpty)
+        'customer_obligations': draft.customerObligations,
+      if (draft.importantInformation.isNotEmpty)
+        'important_information': draft.importantInformation,
+    },
+  };
+}

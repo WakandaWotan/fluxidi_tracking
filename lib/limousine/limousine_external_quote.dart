@@ -101,6 +101,18 @@ const Key kLimousineExternalPreviewVatKey = ValueKey<String>(
 const Key kLimousineExternalPreviewTotalKey = ValueKey<String>(
   'limousine_external_preview_total',
 );
+const Key kLimousineExternalPreviewIncludedKey = ValueKey<String>(
+  'limousine_external_preview_included',
+);
+const Key kLimousineExternalPreviewMobilisationKey = ValueKey<String>(
+  'limousine_external_preview_mobilisation',
+);
+const Key kLimousineExternalPreviewObligationsKey = ValueKey<String>(
+  'limousine_external_preview_obligations',
+);
+const Key kLimousineExternalPreviewImportantKey = ValueKey<String>(
+  'limousine_external_preview_important',
+);
 const Key kLimousineExternalContactSectionKey = ValueKey<String>(
   'limousine_external_contact_section',
 );

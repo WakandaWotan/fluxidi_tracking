@@ -493,37 +493,22 @@ class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
           ),
         );
       }
-      final note = localizedLimousineText(
+      final commercial = limousineQuoteCommercialNotesFromQuotedPrice(
+        quote,
+        language: _lang,
+      );
+      final publicNote = localizedLimousineText(
         quote.publicText,
         languageCode: _lang.name,
       );
-      if (note.isNotEmpty) {
-        rows.add(_kv(palette, _t(kLimousineQuoteImportantInfo), note));
-      }
-      final mobilisation = localizedLimousineText(
-        quote.mobilisationDisclosure,
-        languageCode: _lang.name,
+      final hasImportant = commercial.any(
+        (note) => note.label == kLimousineQuoteImportantInfo,
       );
-      if (mobilisation.isNotEmpty) {
-        rows.add(_kv(palette, _t(kLimousineQuoteMobilisation), mobilisation));
+      if (publicNote.isNotEmpty && !hasImportant) {
+        rows.add(_kv(palette, _t(kLimousineQuoteImportantInfo), publicNote));
       }
-      if (quote.includedServices.isNotEmpty) {
-        rows.add(
-          _kv(
-            palette,
-            _t(kLimousineQuoteIncludedServices),
-            '${quote.includedServices.length}',
-          ),
-        );
-      }
-      if (quote.separatelyPricedExtras.isNotEmpty) {
-        rows.add(
-          _kv(
-            palette,
-            _t(kLimousineQuotePaidExtras),
-            '${quote.separatelyPricedExtras.length}',
-          ),
-        );
+      for (final note in commercial) {
+        rows.add(_kv(palette, note.label.of(_lang), note.value));
       }
       final terms = quote.terms;
       if (terms != null) {

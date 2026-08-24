@@ -89,6 +89,18 @@ const Key kLimousineQuoteCompanyVatRateKey = ValueKey<String>(
 const Key kLimousineQuoteCurrencyValueKey = ValueKey<String>(
   'limousine_quote_currency_value',
 );
+const Key kLimousineQuoteIncludedFieldKey = ValueKey<String>(
+  'limousine_quote_included_field',
+);
+const Key kLimousineQuoteMobilisationFieldKey = ValueKey<String>(
+  'limousine_quote_mobilisation_field',
+);
+const Key kLimousineQuoteObligationsFieldKey = ValueKey<String>(
+  'limousine_quote_obligations_field',
+);
+const Key kLimousineQuoteImportantFieldKey = ValueKey<String>(
+  'limousine_quote_important_field',
+);
 const Key kLimousineQuoteDeclineDialogKey = ValueKey<String>(
   'limousine_quote_decline_dialog',
 );
