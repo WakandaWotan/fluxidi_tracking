@@ -19,7 +19,7 @@ const VEHICLE_NAME_SEPARATOR = " \u2013 "; // en dash
 
 /// Reads the immutable accepted-price snapshot the Worker sealed onto a
 /// canonical limousine booking. Returns null for taxi/airport records.
-function limousineAcceptedSnapshot(rec) {
+export function limousineAcceptedSnapshot(rec) {
   if (!rec || typeof rec !== "object") return null;
   const candidates = [
     rec.quote?.limousine_accepted_price,

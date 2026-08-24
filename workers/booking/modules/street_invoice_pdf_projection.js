@@ -36,6 +36,8 @@ import {
   readFrozenInvoiceLogoEmbed,
 } from "./invoice_company_logo_fetch.js";
 import { invoiceLogoDataUriNeedsPdfFlatten } from "./invoice_logo_pdf_flatten.js";
+import { limousineAcceptedSnapshot } from "./invoice_service_line.mjs";
+import { LIMOUSINE_SERVICE_TYPE } from "./limousine_unified_intent.mjs";
 
 // v2: include route fingerprint so stale PDFs with raw coordinates / missing
 // frozen addresses refresh without rewriting Document Core snapshots.
@@ -1105,6 +1107,17 @@ export function buildStreetInvoicePdfProjection({
       : seller.logoRef || seller.logoUrl,
   });
 
+  const limousineSnapshot = (() => {
+    const lap = limousineAcceptedSnapshot(rec);
+    if (!lap) return null;
+    return (
+      rec?.quote?.limousine_accepted_price ||
+      rec?.limousine_accepted_price ||
+      rec?.booking?.limousine_accepted_price ||
+      lap
+    );
+  })();
+
   return {
     ok: true,
     invoiceNumber: resolvedInvoiceNumber,
@@ -1145,13 +1158,21 @@ export function buildStreetInvoicePdfProjection({
       stops: ride.stops,
       tier: ride.tier,
       service: ride.service,
+      ...(limousineSnapshot
+        ? {
+            serviceType: LIMOUSINE_SERVICE_TYPE,
+            service_type: LIMOUSINE_SERVICE_TYPE,
+            limousine_accepted_price: limousineSnapshot,
+            limousineAcceptedPrice: limousineSnapshot,
+          }
+        : {}),
       // Keep null when unknown — renderer must not invent 0/0 or "—".
       pax: ride.pax,
       bags: ride.bags,
       paxKnown: ride.paxKnown === true,
       bagsKnown: ride.bagsKnown === true,
-      omitTier: !ride.tier,
-      omitService: !ride.service,
+      omitTier: !!limousineSnapshot || !ride.tier,
+      omitService: !!limousineSnapshot || !ride.service,
       omitPaxBags: ride.paxKnown !== true && ride.bagsKnown !== true,
       timezone: ride.timezone || companyTimezone,
       rideStatus: ride.rideStatus,

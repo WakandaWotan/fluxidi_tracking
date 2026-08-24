@@ -712,6 +712,7 @@ import {
   mergePaymentMethodIds,
   resolveResumeFinalizePaymentMethodMerge,
 } from "./modules/payment_method_truth.js";
+import { applyCanonicalPaymentFieldsToTrackingTrip } from "./modules/tracking_trip_payment_apply.mjs";
 import {
   buildSellerSnapshotFromBusinessProfile,
   validateSellerIdentityForInvoiceIssuance,
@@ -72853,45 +72854,29 @@ async function _trackingSyncApplyPaymentToScopedTripKey({
   const normalizedStatus = normalizeCompliancePaymentStatus(
     rec?.payment_status ?? rec?.paymentStatus,
   );
-  if (normalizedStatus) {
-    trip.payment_status = normalizedStatus;
-    trip.paymentStatus = normalizedStatus;
-  }
   const paidAt = safeStr(rec?.paid_at ?? rec?.paidAt, 64);
-  if (paidAt) {
-    trip.paid_at = paidAt;
-    trip.paidAt = paidAt;
-  }
   const method = safeStr(rec?.payment_method ?? rec?.paymentMethod, 32).toLowerCase();
-  if (method) {
-    trip.payment_method = method;
-    trip.paymentMethod = method;
-  }
   const provider = safeStr(rec?.payment_provider ?? rec?.paymentProvider, 32).toLowerCase();
-  if (provider) {
-    trip.payment_provider = provider;
-    trip.paymentProvider = provider;
-  }
   const paymentSource = safeStr(
     rec?.payment_source ?? rec?.paymentSource,
     32,
   ).toLowerCase();
-  if (paymentSource) {
-    trip.payment_source = paymentSource;
-    trip.paymentSource = paymentSource;
-  }
   const currency = safeStr(
     rec?.currency ?? rec?.booking?.currency ?? trip?.currency ?? "EUR",
     8,
   ).toUpperCase();
-  if (currency) {
-    trip.currency = currency;
-  }
   const amountRaw = rec?.payment_amount ?? rec?.paymentAmount;
   const amountNum = Number(amountRaw);
-  if (Number.isFinite(amountNum)) {
-    trip.payment_amount = amountNum;
-    trip.paymentAmount = amountNum;
+  applyCanonicalPaymentFieldsToTrackingTrip(trip, {
+    payment_status: normalizedStatus,
+    paid_at: paidAt,
+    payment_method: method,
+    payment_provider: provider,
+    payment_source: paymentSource,
+    payment_amount: Number.isFinite(amountNum) ? amountNum : null,
+  });
+  if (currency) {
+    trip.currency = currency;
   }
   trip.tenant_id = recordScope.tenant_id;
   trip.tenantId = recordScope.tenant_id;

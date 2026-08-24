@@ -31,6 +31,8 @@ import {
   fingerprintSellerLogoRef,
 } from "./street_invoice_pdf_projection.js";
 import { bytesToInvoiceLogoDataUri } from "./invoice_company_logo_fetch.js";
+import { invoiceServiceLineLabel } from "./invoice_service_line.mjs";
+import { DEFAULT_INVOICE_SERVICE_LINE_LABEL } from "./invoice_route_address.js";
 
 const SCOPE = { tenant_id: "t1", company_id: "c1" };
 
@@ -783,3 +785,105 @@ test("LATE-INVOICE P0) flat=1 / nosmask=1 alone still refresh for opaque_rgb_log
   assert.equal(decision.refresh, false);
 });
 
+function pdfHeadingFromInvoiceInput(input) {
+  const label = invoiceServiceLineLabel({
+    limousine_accepted_price:
+      input.limousine_accepted_price || input.limousineAcceptedPrice || {
+        service_type: input.serviceType || input.service_type,
+      },
+  });
+  if (label === DEFAULT_INVOICE_SERVICE_LINE_LABEL) {
+    return input.omitTier || !input.tier
+      ? "Taxidienst"
+      : `Taxidienst (${input.tier})`;
+  }
+  return label;
+}
+
+test("L1) limousine cash invoice PDF uses Limousinevervoer, not Taxidienst", () => {
+  const built = buildStreetInvoicePdfProjection({
+    scope: SCOPE,
+    bookingId: "2026-09-004",
+    bookingRecord: {
+      ...bookingRec({
+        payment_status: "paid",
+        payment_method: "cash",
+        service: "passenger",
+        tier: "comfort",
+      }),
+      booking_id: "2026-09-004",
+      service_type: "limousine",
+      serviceType: "limousine",
+      quote: {
+        limousine_accepted_price: {
+          service_category: "limousine",
+          vehicle_public_name: "Party Limo",
+        },
+      },
+    },
+    issuedDocument: issuedDoc({
+      bookingId: "2026-09-004",
+      documentNumber: "INV-2026-000073",
+      total: 1060,
+      vat: 60,
+      ex: 1000,
+    }),
+    invoiceNumber: "INV-2026-000073",
+    documentId: "doc-1",
+  });
+  assert.equal(built.ok, true);
+  assert.equal(built.invoiceInput.serviceType, "limousine");
+  assert.equal(built.invoiceInput.service_type, "limousine");
+  assert.equal(built.invoiceInput.omitTier, true);
+  assert.equal(
+    built.invoiceInput.limousine_accepted_price.vehicle_public_name,
+    "Party Limo",
+  );
+  assert.equal(
+    pdfHeadingFromInvoiceInput(built.invoiceInput),
+    "Limousinevervoer \u2013 Party Limo",
+  );
+  assert.ok(!pdfHeadingFromInvoiceInput(built.invoiceInput).includes("Taxidienst"));
+});
+
+test("L2) taxi PDF heading stays Taxidienst (tier)", () => {
+  const built = buildStreetInvoicePdfProjection({
+    scope: SCOPE,
+    bookingId: "street_1",
+    bookingRecord: bookingRec({
+      payment_status: "paid",
+      service: "private",
+      tier: "comfort",
+    }),
+    issuedDocument: issuedDoc(),
+    invoiceNumber: "INV-2026-000034",
+    documentId: "doc-1",
+  });
+  assert.equal(built.ok, true);
+  assert.equal(built.invoiceInput.serviceType, undefined);
+  assert.equal(built.invoiceInput.limousine_accepted_price, undefined);
+  assert.equal(built.invoiceInput.omitTier, false);
+  assert.equal(pdfHeadingFromInvoiceInput(built.invoiceInput), "Taxidienst (comfort)");
+});
+
+test("L3) airport PDF heading stays Taxidienst (tier)", () => {
+  const built = buildStreetInvoicePdfProjection({
+    scope: SCOPE,
+    bookingId: "airport_1",
+    bookingRecord: {
+      ...bookingRec({
+        payment_status: "paid",
+        service: "airport",
+        tier: "comfort",
+      }),
+      booking_id: "airport_1",
+    },
+    issuedDocument: issuedDoc({ bookingId: "airport_1" }),
+    invoiceNumber: "INV-2026-000034",
+    documentId: "doc-1",
+  });
+  assert.equal(built.ok, true);
+  assert.equal(built.invoiceInput.serviceType, undefined);
+  assert.equal(built.invoiceInput.limousine_accepted_price, undefined);
+  assert.equal(pdfHeadingFromInvoiceInput(built.invoiceInput), "Taxidienst (comfort)");
+});

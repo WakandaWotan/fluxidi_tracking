@@ -88,14 +88,16 @@ class _TripHistoryItem {
   /// leg_type / is_operational_leg present in booking_details).
   bool get isOperationalLeg {
     final flag =
-        bookingDetails['is_operational_leg'] ?? bookingDetails['isOperationalLeg'];
+        bookingDetails['is_operational_leg'] ??
+        bookingDetails['isOperationalLeg'];
     if (flag == true) return true;
     if (flag is String) {
       final s = flag.toLowerCase();
       if (s == 'true' || s == '1') return true;
     }
-    final legId =
-        (bookingDetails['leg_id'] ?? bookingDetails['legId'] ?? '').toString().trim();
+    final legId = (bookingDetails['leg_id'] ?? bookingDetails['legId'] ?? '')
+        .toString()
+        .trim();
     final legType =
         (bookingDetails['leg_type'] ?? bookingDetails['legType'] ?? '')
             .toString()
@@ -165,6 +167,18 @@ class _TripHistoryItem {
     copyRootDetail('paymentProvider', 'paymentProvider');
     copyRootDetail('payment_id', 'payment_id');
     copyRootDetail('paymentId', 'paymentId');
+    if (mapLooksCanonicallyPaid(json)) {
+      final paidFields = extractCanonicalPaymentFields(json);
+      if (paidFields.isNotEmpty) {
+        final merged = overlayCanonicalPaymentFields(
+          bookingDetails,
+          paidFields,
+        );
+        bookingDetails
+          ..clear()
+          ..addAll(merged);
+      }
+    }
     final tripIdRaw = (json['trip_id'] ?? '').toString().trim();
     String? resolveReference(List<String> paths) {
       return _resolveScalarLabel(json, paths);

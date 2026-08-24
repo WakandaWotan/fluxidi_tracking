@@ -213,3 +213,50 @@ test("handler: offline reconcile repairs zero trip using booking price", async (
   const stored = JSON.parse(await kv.get(TRIP_KEY));
   assert.equal(stored.total_eur, 27.5);
 });
+
+test("handler: limousine planned stop without pickup coords reuses session origin", async () => {
+  const sessionId = "s_planned_origin_1";
+  const kv = makeKV({
+    [`tenant:T1:company:C1:booking:${BOOKING_ID}:session`]: JSON.stringify({
+      session_id: sessionId,
+      tenant_id: "T1",
+      company_id: "C1",
+    }),
+    [`tenant:T1:company:C1:session:${sessionId}`]: JSON.stringify({
+      session_id: sessionId,
+      tenant_id: "T1",
+      company_id: "C1",
+      status: "active",
+      origin: { label: "start", lat: 50.8467, lon: 4.3525 },
+    }),
+  });
+  const booking = bookingApi({ fare: 1060 });
+  const compliance = complianceWorker();
+  const ctx = makeCtx();
+  const res = await worker.fetch(
+    recordPlannedStopReq({
+      ...SCOPE,
+      booking_id: BOOKING_ID,
+      driver_id: "D1",
+      vehicle_id: "V1",
+      origin: { label: "Grote Markt 1" },
+      destination: { label: "Zaventem", lat: 50.901, lon: 4.484 },
+      booking_details: { service_type: "limousine" },
+    }),
+    envFor({ kv, booking, compliance }),
+    ctx,
+  );
+  await ctx.flush();
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(await kv.get(TRIP_KEY));
+  assert.equal(stored.origin.label, "Grote Markt 1");
+  assert.equal(stored.origin.lat, 50.8467);
+  assert.equal(stored.origin.lon, 4.3525);
+  assert.equal(stored.total_eur, 1060);
+  assert.equal(stored.destination.lat, 50.901);
+  const stopEvent = compliance.calls.find((c) => c.event_type === "ride_stop");
+  assert.ok(stopEvent);
+  assert.equal(stopEvent.locations.pickup.lat, 50.8467);
+  assert.equal(stopEvent.locations.pickup.lng, 4.3525);
+  assert.equal(stopEvent.fare.total_amount, 1060);
+});

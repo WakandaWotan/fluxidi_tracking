@@ -121,6 +121,7 @@ function seedTrackingTrip({ tenantId, companyId, tripId, bookingId }) {
       company_id: companyId,
       payment_status: "unpaid",
       paymentStatus: "unpaid",
+      booking_details: { payment_status: "unpaid" },
       kind: "direct",
       status: "stopped",
     },
@@ -262,6 +263,8 @@ test("3) canonical server response for the same street ride is Paid after cash",
       "tracking trip must inherit Paid via tracking_trip_id",
     );
     assert.equal(storedTrip.payment_method, "cash");
+    assert.equal(storedTrip.booking_details.payment_status, "paid");
+    assert.equal(storedTrip.booking_details.payment_method, "cash");
 
     const getRes = await worker.fetch(
       getBookingRequest({

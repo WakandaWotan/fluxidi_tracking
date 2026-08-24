@@ -13,6 +13,8 @@
 // - MAPBOX_TOKEN (secret)  <-- add this!
 // - KV binding named: FLUXIDI_TRACKING
 //
+import { resolvePlannedStopOrigin } from "./modules/planned_stop_origin.mjs";
+
 // -------------------------------
 // Helpers
 // -------------------------------
@@ -1209,6 +1211,23 @@ async function _applyPendingBookingPaymentToTripBestEffort(env, scope, trip) {
       }
       const currency = safeStr(marker?.currency, 8).toUpperCase();
       if (currency) trip.currency = currency;
+      const details =
+        trip.booking_details &&
+        typeof trip.booking_details === "object" &&
+        !Array.isArray(trip.booking_details)
+          ? trip.booking_details
+          : {};
+      details.payment_status = "paid";
+      details.paymentStatus = "paid";
+      if (paidAt) {
+        details.paid_at = paidAt;
+        details.paidAt = paidAt;
+      }
+      if (Number.isFinite(amountCents)) {
+        details.payment_amount = Math.round(amountCents) / 100;
+        details.paymentAmount = Math.round(amountCents) / 100;
+      }
+      trip.booking_details = details;
     }
     if (markerKey) {
       await kvDel(env.FLUXIDI_TRACKING, markerKey);
@@ -6632,6 +6651,24 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     scope,
     parent_booking_id || booking_id,
   );
+  let sessionForOrigin = null;
+  try {
+    const resolvedSession =
+      (await resolveSessionByBookingForScope(env, scope, booking_id)) ||
+      (parent_booking_id && parent_booking_id !== booking_id
+        ? await resolveSessionByBookingForScope(env, scope, parent_booking_id)
+        : null);
+    sessionForOrigin = resolvedSession?.session || null;
+  } catch (_) {
+    sessionForOrigin = null;
+  }
+  const resolvedOrigin = resolvePlannedStopOrigin({
+    payloadOrigin: originData,
+    existingTripOrigin: existingTrip?.origin,
+    sessionOrigin: sessionForOrigin?.origin,
+    sessionPickup: sessionForOrigin?.pickup,
+  });
+
   const plannedFare = resolvePlannedStopTotalEur({
     bookingRecord: bookingRecordForFare,
     bookingDetails: booking_details,
@@ -6673,7 +6710,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     tenant_id,
     driver_id,
     vehicle_id,
-    origin: originData,
+    origin: resolvedOrigin || originData,
     destination,
     booking_details,
     status: "stopped",
@@ -8234,6 +8271,20 @@ async function handleTripPayment(req, url, env, origin, ctx) {
   if (leg_id || leg_type || row_key) {
     nextBookingDetails.is_operational_leg = true;
     nextBookingDetails.isOperationalLeg = true;
+  }
+  nextBookingDetails.payment_status = payment_status;
+  nextBookingDetails.paymentStatus = payment_status;
+  nextBookingDetails.payment_source = payment_source;
+  nextBookingDetails.paymentSource = payment_source;
+  nextBookingDetails.paid_at = paid_at;
+  nextBookingDetails.paidAt = paid_at;
+  if (payment_method) {
+    nextBookingDetails.payment_method = payment_method;
+    nextBookingDetails.paymentMethod = payment_method;
+  }
+  if (amount !== null) {
+    nextBookingDetails.payment_amount = amount;
+    nextBookingDetails.paymentAmount = amount;
   }
   const normalizedBookingDetails = normalizeBookingDetails(nextBookingDetails);
   if (normalizedBookingDetails) {

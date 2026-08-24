@@ -1,7 +1,7 @@
 // One paid/unpaid resolver for chauffeur receipt, Historiek, and booking views.
-// Canonical source is booking `payment_status` when present. History/local
-// projections cannot outrank a booking paid signal. Local paid may be retained
-// only against a stale pending/open history row when booking is absent.
+// Booking paid wins. A paid trip/history row is retained against a stale unpaid
+// booking overlay (same monotonic rule as Ritbon). Terminal non-paid booking
+// states such as refunded still win.
 
 enum CanonicalRidePaidDisplay { paid, unpaid, unknown }
 
@@ -142,9 +142,8 @@ Object? firstCanonicalPaymentStatus(Map<String, dynamic>? map) {
   return null;
 }
 
-/// Booking record wins. History/local cannot outrank booking paid.
-/// A local/history paid signal is retained against stale pending history
-/// when no booking overlay is present.
+/// Booking paid wins. History/trip paid is retained against a stale unpaid
+/// booking overlay. Terminal non-paid booking states still win.
 CanonicalRidePaidDisplay resolveCanonicalRidePaidDisplay({
   Map<String, dynamic>? historyRaw,
   Map<String, dynamic>? historyDetails,
@@ -157,15 +156,16 @@ CanonicalRidePaidDisplay resolveCanonicalRidePaidDisplay({
   if (isCanonicalTerminalNonPaidStatusValue(bookingStatus)) {
     return CanonicalRidePaidDisplay.unpaid;
   }
-  if (isCanonicalUnpaidStatusValue(bookingStatus) &&
-      bookingRecord != null &&
-      bookingRecord.isNotEmpty) {
-    return CanonicalRidePaidDisplay.unpaid;
-  }
 
   if (mapLooksCanonicallyPaid(historyDetails) ||
       mapLooksCanonicallyPaid(historyRaw)) {
     return CanonicalRidePaidDisplay.paid;
+  }
+
+  if (isCanonicalUnpaidStatusValue(bookingStatus) &&
+      bookingRecord != null &&
+      bookingRecord.isNotEmpty) {
+    return CanonicalRidePaidDisplay.unpaid;
   }
 
   final historyStatus =
@@ -194,6 +194,7 @@ bool resolveCanonicalRideIsPaid({
 }
 
 /// Flatten payment fields from a booking GET body onto a history row.
+/// A paid target is never overwritten by a stale unpaid overlay.
 Map<String, dynamic> overlayCanonicalPaymentFields(
   Map<String, dynamic> target,
   Map<String, dynamic> bookingFields,
@@ -205,13 +206,23 @@ Map<String, dynamic> overlayCanonicalPaymentFields(
     next[key] = value;
   }
 
-  copy('payment_status');
-  copy('paymentStatus');
-  copy('paid_at');
-  copy('paidAt');
-  copy('paid');
-  copy('is_paid');
-  copy('isPaid');
+  final incomingStatus = firstCanonicalPaymentStatus(bookingFields);
+  final incomingTerminal = isCanonicalTerminalNonPaidStatusValue(
+    incomingStatus,
+  );
+  final shouldCopyStatus =
+      mapLooksCanonicallyPaid(bookingFields) ||
+      incomingTerminal ||
+      !mapLooksCanonicallyPaid(next);
+  if (shouldCopyStatus) {
+    copy('payment_status');
+    copy('paymentStatus');
+    copy('paid_at');
+    copy('paidAt');
+    copy('paid');
+    copy('is_paid');
+    copy('isPaid');
+  }
   copy('payment_method');
   copy('paymentMethod');
   copy('payment_source');

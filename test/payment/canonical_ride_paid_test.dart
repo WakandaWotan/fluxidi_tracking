@@ -74,7 +74,7 @@ void main() {
       );
     });
 
-    test('local paid is retained only when booking overlay is absent', () {
+    test('stale unpaid overlay cannot downgrade a paid trip', () {
       expect(
         resolveCanonicalRideIsPaid(
           historyRaw: <String, dynamic>{'payment_status': 'paid'},
@@ -84,9 +84,39 @@ void main() {
       expect(
         resolveCanonicalRideIsPaid(
           historyRaw: <String, dynamic>{'payment_status': 'paid'},
+          historyDetails: <String, dynamic>{'payment_status': 'unpaid'},
           bookingRecord: <String, dynamic>{'payment_status': 'unpaid'},
         ),
-        isFalse,
+        isTrue,
+      );
+      final retained = overlayCanonicalPaymentFields(
+        <String, dynamic>{'payment_status': 'paid', 'payment_method': 'cash'},
+        <String, dynamic>{'payment_status': 'unpaid'},
+      );
+      expect(retained['payment_status'], 'paid');
+      expect(
+        resolveCanonicalRidePaidDisplay(
+          historyRaw: retained,
+          bookingRecord: <String, dynamic>{'payment_status': 'unpaid'},
+        ),
+        CanonicalRidePaidDisplay.paid,
+      );
+    });
+
+    test('cash in car paid trip remains Historiek Betaald', () {
+      final historyRaw = <String, dynamic>{
+        'payment_status': 'paid',
+        'payment_method': 'cash',
+        'payment_source': 'in_car',
+        'booking_details': <String, dynamic>{'payment_status': 'unpaid'},
+      };
+      expect(
+        resolveCanonicalRideIsPaid(
+          historyRaw: historyRaw,
+          historyDetails: <String, dynamic>{'payment_status': 'unpaid'},
+          bookingRecord: <String, dynamic>{'payment_status': 'paid'},
+        ),
+        isTrue,
       );
     });
 
