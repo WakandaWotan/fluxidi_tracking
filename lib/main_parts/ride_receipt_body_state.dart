@@ -6737,32 +6737,37 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
             icon: const Icon(Icons.visibility_outlined),
             label: Text(_receiptText('viewPdf')),
           ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => _shareReceiptPdf(context),
-            icon: const Icon(Icons.share_outlined),
-            label: Text(_receiptText('sharePdf')),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => _shareReceiptPdfViaWhatsApp(context),
-            icon: const Icon(Icons.chat_outlined),
-            label: Text(_receiptText('whatsappPdf')),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: hasEmail
-                ? () => _shareReceiptPdfViaEmail(context)
-                : null,
-            icon: const Icon(Icons.email_outlined),
-            label: Text(_receiptText('emailPdf')),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => _printReceiptPdf(context),
-            icon: const Icon(Icons.print_outlined),
-            label: Text(_receiptText('printReceipt')),
-          ),
+          ...kReceiptOutlinedPdfActions.expand((spec) {
+            final VoidCallback? onPressed;
+            switch (spec.id) {
+              case 'sharePdf':
+                onPressed = () => _shareReceiptPdf(context);
+                break;
+              case 'whatsappPdf':
+                onPressed = () => _shareReceiptPdfViaWhatsApp(context);
+                break;
+              case 'emailPdf':
+                onPressed = hasEmail
+                    ? () => _shareReceiptPdfViaEmail(context)
+                    : null;
+                break;
+              case 'printReceipt':
+                onPressed = () => _printReceiptPdf(context);
+                break;
+              default:
+                onPressed = null;
+            }
+            return <Widget>[
+              const SizedBox(height: 8),
+              ReceiptOutlinedActionButton(
+                key: ValueKey<String>('receipt_outlined_action_${spec.id}'),
+                colors: ReceiptOutlinedActionColors.fromDriverTheme(_palette),
+                icon: spec.icon,
+                label: _receiptText(spec.labelKey),
+                onPressed: onPressed,
+              ),
+            ];
+          }),
         ],
       ),
     );
