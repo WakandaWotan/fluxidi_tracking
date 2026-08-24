@@ -5456,6 +5456,30 @@ function _chironOfficialRequiredFieldsForStatus(officialStatus) {
   return [];
 }
 
+function _chironOfficialDepartureSatisfiesSequence(syncState) {
+  const state = cleanText(syncState, 32).toLowerCase();
+  return (
+    state === "synced" ||
+    state === CHIRON_DEPARTURE_CONFIRMED_EXTERNAL
+  );
+}
+
+function _chironNeverPostedBlockedRecoveryEligible(previousStatus) {
+  if (!previousStatus || typeof previousStatus !== "object" || Array.isArray(previousStatus)) {
+    return false;
+  }
+  const state = cleanText(previousStatus.sync_state, 32).toLowerCase();
+  if (state !== "blocked") return false;
+  if (cleanText(previousStatus.failure_kind, 32).toLowerCase() !== "retryable") {
+    return false;
+  }
+  if (Number(previousStatus.attempt_count || 0) !== 0) return false;
+  const external = previousStatus.external_status_code;
+  if (external !== null && external !== undefined && external !== "") return false;
+  if (cleanText(previousStatus.outbound_fingerprint, 64)) return false;
+  return true;
+}
+
 function validateChironOfficialPayloadDraft(payload, context = {}) {
   const officialStatus = cleanText(context.officialStatus, 32) || null;
   const category = cleanText(context.category, 64) || "not_chiron_ride_status";
@@ -5520,9 +5544,17 @@ function validateChironOfficialPayloadDraft(payload, context = {}) {
     if (!isValidChironDistance(payload?.afstand)) ensureMissing("afstand");
   }
 
-  if (officialStatus === "aankomst" && context.batchRitStatuses && context.ritnummer) {
-    const seen = context.batchRitStatuses.get(context.ritnummer);
-    if (!seen || (!seen.has("vertrek") && !seen.has("reservatie"))) {
+  if (officialStatus === "aankomst" && context.ritnummer) {
+    const seen =
+      context.batchRitStatuses instanceof Map
+        ? context.batchRitStatuses.get(context.ritnummer)
+        : null;
+    const batchHasPrior =
+      !!seen && (seen.has("vertrek") || seen.has("reservatie"));
+    const officialHasPrior = _chironOfficialDepartureSatisfiesSequence(
+      context.officialVertrekSyncState,
+    );
+    if (!batchHasPrior && !officialHasPrior) {
       warnings.push("missing_prior_vertrek_or_reservatie_in_batch");
     }
   }
@@ -5640,6 +5672,7 @@ function buildChironOfficialDraftEnvelope(event, blueprint, scope, context = {})
     batchRitStatuses: context.batchRitStatuses || null,
     verificationErrors,
     verificationWarnings,
+    officialVertrekSyncState: context.officialVertrekSyncState || null,
   });
 
   return {
@@ -6106,6 +6139,7 @@ function buildChironExportPayload(event, eventKey, options = {}) {
         batchRitStatuses: options.batchRitStatuses || null,
         scopedHydrationCache: options.scopedHydrationCache || null,
         trustedRideHydration: options.trustedRideHydration || null,
+        officialVertrekSyncState: options.officialVertrekSyncState || null,
       },
     );
   }
@@ -6978,6 +7012,18 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now(),
     // Ambiguous or unknown-cause prior failure → block automatic retry.
     return { decision: "not_retryable" };
   }
+  // Never-POSTed blocked official aankomst may recover only when the current
+  // rebuild is already proven acceptable. Stored blocked+retryable alone is
+  // not enough — that would retry extra_start / payload-not-ready forever.
+  if (state === "blocked") {
+    if (
+      options?.currentRebuildAcceptable === true &&
+      _chironNeverPostedBlockedRecoveryEligible(previousStatus)
+    ) {
+      return { decision: "allow", recovered_blocked: true };
+    }
+    return { decision: "not_retryable" };
+  }
   // Unknown states are treated as blocking (fail-closed).
   return { decision: "not_retryable" };
 }
@@ -7774,14 +7820,19 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
   const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(
     found.contextEntries || [],
   );
-  const exportPayload = buildChironExportPayload(event, eventKey, {
-    includeRaw: parsed.includeRaw,
-    includeOfficialDraft: true,
-    includeChironApiPayload: parsed.dryRun,
-    batchRitStatuses,
-    scopedHydrationCache,
-    trustedRideHydration,
-  });
+  const exportPayload = await _chironBuildExportPayloadWithOfficialSequenceTruth(
+    env,
+    event,
+    eventKey,
+    {
+      includeRaw: parsed.includeRaw,
+      includeOfficialDraft: true,
+      includeChironApiPayload: parsed.dryRun,
+      batchRitStatuses,
+      scopedHydrationCache,
+      trustedRideHydration,
+    },
+  );
 
   const officialDraft = exportPayload?.chiron_official_draft;
   const expectedOfficialStatus = _chironExpectedOfficialStatusForMessageType(parsed.messageType);
@@ -7881,7 +7932,9 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
   // touching attempt_count for idempotency. Ensures Chiron never receives
   // a second departure/arrival message for the same ritnummer via this
   // admin path.
-  const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+  const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, Date.now(), {
+    currentRebuildAcceptable: officialValidationAcceptable === true,
+  });
   if (guard.decision === "already_synced") {
     return jsonResponse(
       {
@@ -8611,6 +8664,7 @@ async function handleChironExportTest(request, env, origin) {
     // otherwise not-retryable). Skip and record the reason.
     const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, Date.now(), {
       outboundFingerprint,
+      currentRebuildAcceptable: true,
     });
     if (guard.decision !== "allow") {
       exportAttempts.push({
@@ -11747,14 +11801,70 @@ async function _chironBuildOfficialDraftForSingleEvent(
   const batchRitStatuses = _chironBuildBatchRitStatusIndex(entries);
   const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(entries);
 
-  const exportPayload = buildChironExportPayload(event, eventKey, {
-    includeRaw: false,
-    includeOfficialDraft: true,
-    batchRitStatuses,
-    scopedHydrationCache,
-    trustedRideHydration,
-  });
+  const exportPayload = await _chironBuildExportPayloadWithOfficialSequenceTruth(
+    env,
+    event,
+    eventKey,
+    {
+      includeRaw: false,
+      includeOfficialDraft: true,
+      batchRitStatuses,
+      scopedHydrationCache,
+      trustedRideHydration,
+    },
+  );
   return { scope, exportPayload };
+}
+
+async function _chironLoadOfficialVertrekSyncState(env, scope, officialPayload) {
+  const departureIdempotencyKey = _chironPairedDepartureIdempotencyKeyForArrivalDraft(
+    scope,
+    officialPayload,
+  );
+  if (!departureIdempotencyKey) return null;
+  const tenantSegment = safeSegment(scope?.tenant_id, "");
+  const companySegment = safeSegment(scope?.company_id, "");
+  if (!tenantSegment || !companySegment) return null;
+  const statusKey = buildChironExportStatusKey(
+    tenantSegment,
+    companySegment,
+    departureIdempotencyKey,
+  );
+  const doc = await _chironReadExportStatus(env, statusKey);
+  return cleanText(doc?.sync_state, 32) || null;
+}
+
+async function _chironBuildExportPayloadWithOfficialSequenceTruth(
+  env,
+  event,
+  eventKey,
+  options = {},
+) {
+  const buildOnce = (officialVertrekSyncState) =>
+    buildChironExportPayload(event, eventKey, {
+      ...options,
+      officialVertrekSyncState,
+    });
+
+  let exportPayload = buildOnce(options.officialVertrekSyncState || null);
+  const draft = exportPayload?.chiron_official_draft;
+  if (
+    draft?.status === "aankomst" &&
+    draft?.validation?.sequence_safe === false
+  ) {
+    const officialVertrekSyncState = await _chironLoadOfficialVertrekSyncState(
+      env,
+      {
+        tenant_id: cleanText(event?.tenant_id, 128),
+        company_id: cleanText(event?.company_id, 128),
+      },
+      draft.payload,
+    );
+    if (_chironOfficialDepartureSatisfiesSequence(officialVertrekSyncState)) {
+      exportPayload = buildOnce(officialVertrekSyncState);
+    }
+  }
+  return exportPayload;
 }
 
 // Compute the paired departure's official idempotency key from an arrival's
@@ -12088,6 +12198,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
 
     const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs, {
       outboundFingerprint,
+      currentRebuildAcceptable: officialValidationAcceptable === true,
     });
     if (guard.decision !== "allow") {
       // RELEASE-P0-AUTO-CHIRON-2026-07-31: when the duplicate guard reports the
@@ -12922,6 +13033,10 @@ export const __testInternals = {
   CHIRON_TAXIRIT_URL_BY_ENVIRONMENT,
   // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1
   _chironBuildOfficialDraftForSingleEvent,
+  validateChironOfficialPayloadDraft,
+  _chironOfficialDepartureSatisfiesSequence,
+  _chironNeverPostedBlockedRecoveryEligible,
+  _chironLoadOfficialVertrekSyncState,
   _chironResolveOfficialAfstandKm,
   _chironNormalizeValidDistanceKm,
   _chironHaversineDistanceKm,
