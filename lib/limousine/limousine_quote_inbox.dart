@@ -150,6 +150,15 @@ Key limousineQuoteInboxKpiKey(String code) =>
 Key limousineQuoteInboxActionKey(String quoteRequestId, String action) =>
     ValueKey<String>('limousine_inbox_action_${quoteRequestId}_$action');
 
+Key limousineQuoteInboxCardPickupKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_inbox_pickup_$quoteRequestId');
+
+Key limousineQuoteInboxCardDestinationKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_inbox_destination_$quoteRequestId');
+
+Key limousineQuoteInboxCardAmountKey(String quoteRequestId) =>
+    ValueKey<String>('limousine_inbox_amount_$quoteRequestId');
+
 abstract final class LimousineQuoteStateId {
   static const String requested = 'requested';
   static const String viewedByCompany = 'viewed_by_company';

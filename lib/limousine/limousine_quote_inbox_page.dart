@@ -478,6 +478,9 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                 children: [
                   Align(
                     alignment: Alignment.centerLeft,
+                    // Keep Testomgeving until Worker listingMode and
+                    // LIMOUSINE_TEST_COMPANY_ALLOWLIST leave test_preview.
+                    // Do not derive this chip from dart-defines.
                     child: Chip(
                       key: kLimousineQuoteInboxTestBadgeKey,
                       visualDensity: VisualDensity.compact,
@@ -590,7 +593,7 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
               for (final code in codes)
                 SizedBox(
                   width: width,
-                  child: _kpiCard(palette, code, kpis.of(code)),
+                  child: _kpiCard(palette, code, kpis.of(code), tablet: tablet),
                 ),
             ],
           );
@@ -602,15 +605,16 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
   Widget _kpiCard(
     BusinessThemePalette palette,
     LimousineQuoteInboxKpiCode code,
-    int value,
-  ) {
+    int value, {
+    required bool tablet,
+  }) {
     final label = _t(limousineQuoteInboxKpiLabel(code));
     return Semantics(
       label: '$label $value',
       child: Container(
         key: limousineQuoteInboxKpiKey(code.name),
-        constraints: const BoxConstraints(minHeight: 88),
-        padding: const EdgeInsets.all(14),
+        constraints: BoxConstraints(minHeight: tablet ? 88 : 68),
+        padding: EdgeInsets.all(tablet ? 14 : 10),
         decoration: BoxDecoration(
           color: palette.surface,
           borderRadius: BorderRadius.circular(14),
@@ -619,27 +623,33 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(_kpiIcon(code), color: palette.accent, size: 20),
-            const SizedBox(height: 8),
+            Icon(_kpiIcon(code), color: palette.accent, size: tablet ? 20 : 18),
+            SizedBox(height: tablet ? 8 : 6),
             Text(
               '$value',
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w900,
-                fontSize: 26,
+                fontSize: tablet ? 26 : 22,
               ),
             ),
             Text(
               label,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.clip,
               style: TextStyle(
                 color: palette.textPrimary,
                 fontWeight: FontWeight.w700,
+                fontSize: tablet ? 14 : 13,
+                height: 1.2,
               ),
             ),
-            Text(
-              _t(limousineQuoteInboxKpiHint(code)),
-              style: TextStyle(color: palette.textMuted, fontSize: 12),
-            ),
+            if (tablet)
+              Text(
+                _t(limousineQuoteInboxKpiHint(code)),
+                style: TextStyle(color: palette.textMuted, fontSize: 12),
+              ),
           ],
         ),
       ),
@@ -760,13 +770,26 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
     final actions = limousineQuoteInboxCardActions(item);
     final status = limousineQuoteInboxStatusLabel(item, _lang);
     final amount = limousineQuoteInboxAuthoritativeAmount(item, _lang);
-    final route = limousineQuoteInboxRouteSummary(item);
+    final pickup = limousineQuoteInboxPickupText(item);
+    final destination = limousineQuoteInboxDestinationText(item);
+    final cardReference = limousineQuoteInboxCardReference(item);
     final extras = item.fulfilment?.customerNote.trim() ?? '';
     final classLabel = item.serviceClassId.isEmpty
         ? ''
         : limousineServiceClassLabel(item.serviceClassId, _lang);
+    final title = limousineQuoteInboxCardHeading(item, _lang);
+    final vehicleLine =
+        item.publicVehicleName.isNotEmpty && item.publicVehicleName != title
+        ? item.publicVehicleName
+        : '';
+    final dateLine = item.scheduledPickupIso.isEmpty
+        ? ''
+        : limousineQuoteDisplayOrEmpty(item.scheduledPickupIso, _lang);
+    final showDuration = limousineQuoteInboxShowsRequestedDuration(
+      item.fulfilment?.requestedDurationMinutes,
+    );
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(bottom: tablet ? 12 : 10),
       child: Material(
         color: palette.surface,
         borderRadius: BorderRadius.circular(16),
@@ -776,7 +799,7 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
           onTap: () => _openDetail(item),
           child: Container(
             constraints: const BoxConstraints(minHeight: 48),
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(tablet ? 16 : 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: palette.border),
@@ -802,28 +825,28 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                           style: TextStyle(
                             color: _statusColor(palette, item),
                             fontWeight: FontWeight.w800,
-                            fontSize: 12.5,
+                            fontSize: tablet ? 12.5 : 12,
                           ),
                         ),
                       ),
                     ),
                     if (limousineQuoteIsExternal(item))
-                      const LimousineOwnCustomerOriginBadge(),
+                      LimousineOwnCustomerOriginBadge(compact: !tablet),
                   ],
                 ),
-                if (item.contactDisplayName.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      item.contactDisplayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontWeight: FontWeight.w700,
-                      ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: tablet ? 17 : 16,
                     ),
                   ),
+                ),
                 if (item.quote?.expiresAt.isNotEmpty == true)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -837,114 +860,105 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                       ),
                     ),
                   ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (item.publicVehiclePhotoUrl.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 10),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            item.publicVehiclePhotoUrl,
-                            width: 72,
-                            height: 52,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
+                if (item.publicVehiclePhotoUrl.isNotEmpty ||
+                    vehicleLine.isNotEmpty ||
+                    dateLine.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (item.publicVehiclePhotoUrl.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                item.publicVehiclePhotoUrl,
+                                width: tablet ? 72 : 56,
+                                height: tablet ? 52 : 40,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (vehicleLine.isNotEmpty)
+                                Text(
+                                  vehicleLine,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              if (dateLine.isNotEmpty)
+                                Text(
+                                  dateLine,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                      ),
-                    Expanded(
-                      child: Text(
-                        item.publicVehicleName.isNotEmpty
-                            ? item.publicVehicleName
-                            : limousineQuoteInboxCardTitle(item, _lang),
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 17,
-                        ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-                Text(
-                  limousineQuoteInboxPublicReference(item),
-                  style: TextStyle(color: palette.textMuted, fontSize: 12),
-                ),
-                if (item.scheduledPickupIso.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    limousineQuoteDisplayOrEmpty(
-                      item.scheduledPickupIso,
-                      _lang,
-                    ),
-                    style: TextStyle(color: palette.textSecondary),
                   ),
-                ],
-                if (route.isNotEmpty)
-                  Text(route, style: TextStyle(color: palette.textSecondary)),
+                if (cardReference.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      cardReference,
+                      style: TextStyle(color: palette.textMuted, fontSize: 12),
+                    ),
+                  ),
+                if (pickup.isNotEmpty || destination.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: _structuredRoute(
+                      palette,
+                      item.quoteRequestId,
+                      pickup: pickup,
+                      destination: destination,
+                    ),
+                  ),
+                const SizedBox(height: 8),
                 Wrap(
-                  spacing: 10,
-                  runSpacing: 4,
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
                     if (item.pax != null)
-                      Text(
+                      _metaChip(
+                        palette,
                         '${item.pax} ${_t(kLimousineQuoteInboxPassengersMeta)}',
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
                       ),
                     if (item.bags != null)
-                      Text(
+                      _metaChip(
+                        palette,
                         '${item.bags} ${_t(kLimousineQuoteInboxLuggageMeta)}',
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
                       ),
-                    if (classLabel.isNotEmpty)
-                      Text(
-                        classLabel,
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    if (item.publicVehicleName.isNotEmpty)
-                      Text(
-                        item.publicVehicleName,
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
+                    if (classLabel.isNotEmpty) _metaChip(palette, classLabel),
                     if (item.occasion.isNotEmpty)
-                      Text(
-                        item.occasion,
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
+                      _metaChip(palette, item.occasion),
                     if (item.pricingMode.isNotEmpty)
-                      Text(
+                      _metaChip(
+                        palette,
                         limousinePricingModeLabel(item.pricingMode, _lang),
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
                       ),
-                    if (item.fulfilment?.requestedDurationMinutes != null)
-                      Text(
+                    if (showDuration)
+                      _metaChip(
+                        palette,
                         '${item.fulfilment!.requestedDurationMinutes}m',
-                        style: TextStyle(
-                          color: palette.textMuted,
-                          fontSize: 12,
-                        ),
                       ),
                   ],
                 ),
@@ -953,6 +967,8 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       extras,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: palette.textSecondary),
                     ),
                   ),
@@ -967,25 +983,40 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
                   ),
                 if (amount != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: palette.surfaceAlt,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: palette.border),
-                      ),
-                      child: Text(
-                        amount,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
+                    padding: const EdgeInsets.only(top: 10),
+                    child: tablet
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: palette.surfaceAlt,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: palette.border),
+                            ),
+                            child: Text(
+                              amount,
+                              key: limousineQuoteInboxCardAmountKey(
+                                item.quoteRequestId,
+                              ),
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          )
+                        : Text(
+                            amount,
+                            key: limousineQuoteInboxCardAmountKey(
+                              item.quoteRequestId,
+                            ),
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                            ),
+                          ),
                   ),
                 if (LimousineQuoteStateId.normalize(item.state) ==
                     LimousineQuoteStateId.accepted)
@@ -1024,6 +1055,73 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _structuredRoute(
+    BusinessThemePalette palette,
+    String quoteRequestId, {
+    required String pickup,
+    required String destination,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (pickup.isNotEmpty)
+          Text(
+            pickup,
+            key: limousineQuoteInboxCardPickupKey(quoteRequestId),
+            maxLines: 3,
+            softWrap: true,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              height: 1.25,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        if (pickup.isNotEmpty && destination.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Icon(
+              Icons.arrow_downward,
+              size: 14,
+              color: palette.textMuted,
+            ),
+          ),
+        if (destination.isNotEmpty)
+          Text(
+            destination,
+            key: limousineQuoteInboxCardDestinationKey(quoteRequestId),
+            maxLines: 3,
+            softWrap: true,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              height: 1.25,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _metaChip(BusinessThemePalette palette, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: palette.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

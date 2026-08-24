@@ -201,6 +201,18 @@ String limousineQuoteInboxCardTitle(
   return kLimousineQuoteInboxRequestFallback.of(language);
 }
 
+String limousineQuoteInboxCardHeading(
+  LimousineQuoteRequest record,
+  AppLanguage language,
+) {
+  final contact = record.contactDisplayName.trim();
+  if (contact.isNotEmpty) return contact;
+  if (record.publicVehicleName.isNotEmpty) return record.publicVehicleName;
+  final journey = kLimousineJourneyTypeLabels[record.journeyType]?.of(language);
+  if (journey != null && journey.isNotEmpty) return journey;
+  return kLimousineQuoteInboxRequestFallback.of(language);
+}
+
 String limousineQuoteInboxRouteSummary(LimousineQuoteRequest record) {
   final fulfilment = record.fulfilment;
   if (fulfilment == null || !fulfilment.hasJourney) return '';
@@ -211,8 +223,36 @@ String limousineQuoteInboxRouteSummary(LimousineQuoteRequest record) {
   return parts.join(' · ');
 }
 
+String limousineQuoteInboxPickupText(LimousineQuoteRequest record) {
+  return record.fulfilment?.from.trim() ?? '';
+}
+
+String limousineQuoteInboxDestinationText(LimousineQuoteRequest record) {
+  return record.fulfilment?.to.trim() ?? '';
+}
+
+bool limousineQuoteInboxLooksInternalId(String text) {
+  final token = text.trim();
+  if (token.isEmpty) return false;
+  if (limousineLooksLikeRawVehicleOrOfferId(token)) return true;
+  return RegExp(
+    r'^(limq_|qr_)[a-z0-9_]+$',
+    caseSensitive: false,
+  ).hasMatch(token);
+}
+
 String limousineQuoteInboxPublicReference(LimousineQuoteRequest record) {
   return record.quoteRequestId;
+}
+
+String limousineQuoteInboxCardReference(LimousineQuoteRequest record) {
+  final id = record.quoteRequestId.trim();
+  if (limousineQuoteInboxLooksInternalId(id)) return '';
+  return id;
+}
+
+bool limousineQuoteInboxShowsRequestedDuration(int? minutes) {
+  return minutes != null && minutes > 0;
 }
 
 String? limousineQuoteInboxAuthoritativeAmount(

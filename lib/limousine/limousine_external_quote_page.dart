@@ -1304,7 +1304,9 @@ class _LimousineExternalQuoteCreatePageState
 }
 
 class LimousineOwnCustomerOriginBadge extends StatelessWidget {
-  const LimousineOwnCustomerOriginBadge({super.key});
+  const LimousineOwnCustomerOriginBadge({super.key, this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1312,18 +1314,23 @@ class LimousineOwnCustomerOriginBadge extends StatelessWidget {
     final palette = paletteForBusinessTheme(businessThemeNotifier.value);
     return Container(
       key: kLimousineExternalOriginBadgeKey,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 6 : 8,
+        vertical: compact ? 2 : 4,
+      ),
       decoration: BoxDecoration(
         color: palette.surfaceAlt,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(compact ? 6 : 8),
         border: Border.all(color: palette.border),
       ),
       child: Text(
         kLimousineOwnCustomerOrigin.of(lang),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: palette.textPrimary,
           fontWeight: FontWeight.w700,
-          fontSize: 12,
+          fontSize: compact ? 10 : 12,
         ),
       ),
     );

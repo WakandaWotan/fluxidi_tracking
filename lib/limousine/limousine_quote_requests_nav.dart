@@ -145,6 +145,8 @@ class LimousineBookingsQuoteRequestsSwitch extends StatelessWidget {
             final badge = unreadCount != null && unreadCount! > 0
                 ? unreadCount
                 : null;
+            final width = MediaQuery.sizeOf(context).width;
+            final phone = width < 700;
             return Material(
               key: kLimousineBookingsQuoteSwitchKey,
               color: palette.surface,
@@ -160,24 +162,28 @@ class LimousineBookingsQuoteRequestsSwitch extends StatelessWidget {
                   child: Row(
                     children: [
                       Expanded(
+                        flex: 10,
                         child: _tab(
                           key: kLimousineBookingsSectionTabKey,
                           label: kLimousineBookingsSectionLabel.of(lang),
                           selected:
                               section == LimousineBookingsSection.bookings,
                           palette: palette,
+                          phone: phone,
                           onTap: () =>
                               onChanged(LimousineBookingsSection.bookings),
                         ),
                       ),
                       const SizedBox(width: 4),
                       Expanded(
+                        flex: phone ? 14 : 10,
                         child: _tab(
                           key: kLimousineQuoteRequestsSectionTabKey,
                           label: kLimousineQuoteRequestsSectionLabel.of(lang),
                           selected:
                               section == LimousineBookingsSection.quoteRequests,
                           palette: palette,
+                          phone: phone,
                           badge: badge,
                           onTap: () =>
                               onChanged(LimousineBookingsSection.quoteRequests),
@@ -200,6 +206,7 @@ class LimousineBookingsQuoteRequestsSwitch extends StatelessWidget {
     required bool selected,
     required BusinessThemePalette palette,
     required VoidCallback onTap,
+    required bool phone,
     int? badge,
   }) {
     return Material(
@@ -210,47 +217,78 @@ class LimousineBookingsQuoteRequestsSwitch extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(9),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: selected ? palette.accent : palette.textSecondary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-              if (badge != null) ...[
-                const SizedBox(width: 6),
-                Container(
-                  key: kLimousineQuoteRequestsTabBadgeKey,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: palette.accent,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    '$badge',
-                    style: TextStyle(
-                      color: palette.textOnAccent,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 10,
-                    ),
-                  ),
-                ),
-              ],
-            ],
+          padding: EdgeInsets.symmetric(
+            horizontal: phone ? 4 : 8,
+            vertical: phone ? 6 : 8,
           ),
+          child: phone
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.clip,
+                      softWrap: true,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: selected
+                            ? palette.accent
+                            : palette.textSecondary,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11.5,
+                        height: 1.15,
+                      ),
+                    ),
+                    if (badge != null) ...[
+                      const SizedBox(height: 4),
+                      _unreadBadge(palette, badge),
+                    ],
+                  ],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: selected
+                              ? palette.accent
+                              : palette.textSecondary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    if (badge != null) ...[
+                      const SizedBox(width: 6),
+                      _unreadBadge(palette, badge),
+                    ],
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _unreadBadge(BusinessThemePalette palette, int badge) {
+    return Container(
+      key: kLimousineQuoteRequestsTabBadgeKey,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: palette.accent,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$badge',
+        style: TextStyle(
+          color: palette.textOnAccent,
+          fontWeight: FontWeight.w800,
+          fontSize: 10,
         ),
       ),
     );
