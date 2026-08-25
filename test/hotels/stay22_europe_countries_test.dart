@@ -67,7 +67,7 @@ void main() {
     );
     expect(portugal?.isoCode, 'PT');
     expect(portugal?.englishName, 'Portugal');
-    expect(portugal?.hasSeededTaxonomy, isFalse);
+    expect(portugal?.hasSeededTaxonomy, isTrue);
   });
 
   test('localized names resolve to ISO and never slice two letters', () {

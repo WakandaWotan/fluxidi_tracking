@@ -24,6 +24,7 @@ import 'google_places_refresh.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
+import 'hotel_places_pagination.dart';
 import 'ratehawk_hotelpage.dart';
 import 'ratehawk_hotelpage_panel.dart';
 import 'ratehawk_prebook.dart';
@@ -117,7 +118,9 @@ class HotelsPageState extends State<HotelsPage> {
   String _selectedType = _allKey;
   bool _showSavedOnly = false;
   Timer? _googlePlacesRefreshDebounce;
+  Timer? _page2ActivationTimer;
   final GooglePlacesRefreshGate _googlePlacesGate = GooglePlacesRefreshGate();
+  final HotelPlacesPage2Controller _page2 = HotelPlacesPage2Controller();
   String _lastDestinationForPlaces = '';
   late final RatehawkSearchController _ratehawkSearch;
   bool _stay22LaunchInFlight = false;
@@ -188,6 +191,12 @@ class HotelsPageState extends State<HotelsPage> {
   bool get _selectedCountryHasSeededTaxonomy =>
       _selectedCountryIdentity?.hasSeededTaxonomy == true;
 
+  bool get _showRegionSelector =>
+      _selectedCountryIdentity?.showRegionSelector == true;
+
+  bool get _showCitySelector =>
+      _selectedCountryIdentity?.showCitySelector == true;
+
   void _onRatehawkSearchChanged() {
     if (!mounted) return;
     setState(() {});
@@ -224,37 +233,24 @@ class HotelsPageState extends State<HotelsPage> {
   }
 
   // Google Places: official place discovery via worker — not booking inventory.
-  HotelStayQuery _buildGooglePlacesQuery() {
+  HotelStayQuery _buildGooglePlacesQuery({String? pageCursor}) {
     final searchText = _searchController.text.trim();
     final destination = _ratehawkSearch.criteria.destination.trim();
-    String? city;
-    String? region;
-    if (_selectedCountryHasSeededTaxonomy &&
-        _selectedSettlementKey != _allKey) {
-      for (final option in _settlementOptions) {
-        if (option.value == _selectedSettlementKey) {
-          city = option.label.trim();
-          break;
-        }
-      }
-    }
-    if (_selectedCountryHasSeededTaxonomy && _selectedRegionKey != _allKey) {
-      for (final option in _regionOptions) {
-        if (option.value == _selectedRegionKey) {
-          region = option.label.trim();
-          break;
-        }
-      }
-    }
-    final identity = _selectedCountryIdentity;
+    final resolved = stay22ResolveDestinationQuery(
+      countryCode: _selectedCountryCode,
+      regionKey: _selectedRegionKey == _allKey ? '' : _selectedRegionKey,
+      cityKey: _selectedSettlementKey == _allKey ? '' : _selectedSettlementKey,
+      freeText: destination,
+    );
     return HotelStayQuery(
       source: 'google-places',
-      city: city,
-      country: identity?.englishName ?? 'Belgium',
-      countryCode: identity?.isoCode ?? 'BE',
-      destination: destination.isEmpty ? null : destination,
-      region: region,
+      city: resolved.city,
+      country: resolved.countryEnglish,
+      countryCode: resolved.countryCode,
+      destination: resolved.destination,
+      region: resolved.region,
       searchText: searchText.isEmpty ? null : searchText,
+      pageCursor: pageCursor,
     );
   }
 
@@ -264,25 +260,121 @@ class HotelsPageState extends State<HotelsPage> {
     final key = googlePlacesQueryKey(query);
     if (!_googlePlacesGate.shouldStart(key)) return;
     final generation = _googlePlacesGate.start(key);
+    _page2.reset();
     try {
-      final stays = await _hotelDataSource.fetchStays(query: query);
+      final HotelStaySearchPage page;
+      final source = _hotelDataSource;
+      if (source is HotelPagedDataSource) {
+        page = await source.fetchStayPage(query: query);
+      } else {
+        page = HotelStaySearchPage(
+          stays: await source.fetchStays(query: query),
+        );
+      }
       if (!mounted) return;
       if (!_googlePlacesGate.shouldApply(generation)) return;
-      setState(() => _allStays = stays);
+      setState(() {
+        _allStays = dedupeHotelStaysByPlaceId(
+          page.stays,
+          idOf: (stay) => stay.id,
+        );
+        if (kGooglePlacesManualNextPageEnabled) {
+          _page2.applyFirstPage(
+            pagination: page.pagination,
+            queryGeneration: generation,
+          );
+        }
+      });
       _googlePlacesGate.complete(generation: generation, key: key);
+      _schedulePage2Activation();
     } catch (_) {
       if (!mounted) return;
       _googlePlacesGate.fail(generation);
+      _page2.reset();
     }
   }
 
   void _scheduleGooglePlacesRefresh() {
     if (widget.stays != null) return;
     _googlePlacesRefreshDebounce?.cancel();
+    _page2ActivationTimer?.cancel();
     _googlePlacesGate.invalidate();
+    _page2.reset();
     _googlePlacesRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
       unawaited(_fetchGooglePlacesStays());
     });
+  }
+
+  void _schedulePage2Activation() {
+    _page2ActivationTimer?.cancel();
+    final availableAt = _page2.snapshot.availableAt;
+    if (_page2.snapshot.phase != HotelPlacesPage2Phase.waitingActivation ||
+        availableAt == null) {
+      return;
+    }
+    final wait = availableAt.difference(DateTime.now().toUtc());
+    _page2ActivationTimer = Timer(
+      wait.isNegative ? Duration.zero : wait,
+      () {
+        if (!mounted) return;
+        if (_page2.activateIfReady()) {
+          setState(() {});
+        }
+      },
+    );
+  }
+
+  Future<void> _requestMoreFeaturedStays() async {
+    if (!kGooglePlacesManualNextPageEnabled) return;
+    if (widget.stays != null) return;
+    final generation = _googlePlacesGate.generation;
+    if (!_page2.beginRequest(queryGeneration: generation)) return;
+    setState(() {});
+    final cursor = _page2.snapshot.cursor;
+    if (cursor == null || cursor.isEmpty) return;
+    try {
+      final source = _hotelDataSource;
+      if (source is! HotelPagedDataSource) {
+        _page2.completeFailure(queryGeneration: generation);
+        if (mounted) setState(() {});
+        return;
+      }
+      final page = await source.fetchStayPage(
+        query: _buildGooglePlacesQuery(pageCursor: cursor),
+      );
+      if (!mounted) return;
+      if (!_page2.shouldApply(queryGeneration: generation) ||
+          !_googlePlacesGate.shouldApply(generation)) {
+        return;
+      }
+      if (page.status == HotelStaySearchStatus.cursorNotReady) {
+        _page2.completeRetryable(
+          queryGeneration: generation,
+          retryAfter: Duration(milliseconds: page.retryAfterMs ?? 1500),
+        );
+        setState(() {});
+        return;
+      }
+      if (page.status != HotelStaySearchStatus.ok) {
+        _page2.completeFailure(queryGeneration: generation);
+        setState(() {});
+        return;
+      }
+      final merged = dedupeHotelStaysByPlaceId(
+        <HotelStay>[..._allStays, ...page.stays],
+        idOf: (stay) => stay.id,
+      );
+      setState(() {
+        _allStays = merged;
+        _page2.completeSuccess(queryGeneration: generation);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      if (_page2.shouldApply(queryGeneration: generation)) {
+        _page2.completeFailure(queryGeneration: generation);
+        setState(() {});
+      }
+    }
   }
 
   void _onThemeChanged() {
@@ -294,6 +386,7 @@ class HotelsPageState extends State<HotelsPage> {
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
     _googlePlacesRefreshDebounce?.cancel();
+    _page2ActivationTimer?.cancel();
     _ratehawkSearch
       ..removeListener(_onRatehawkSearchChanged)
       ..dispose();
@@ -327,19 +420,21 @@ class HotelsPageState extends State<HotelsPage> {
   }
 
   List<HotelGeoOption> get _settlementOptions {
-    if (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey) {
+    if (_selectedCountryCode == _allKey || !_showCitySelector) {
       return const <HotelGeoOption>[];
     }
-    return hotelGeoSettlementOptions(
+    return stay22CityPickerOptions(
       countryCode: _selectedCountryCode,
-      regionKey: _selectedRegionKey,
       languageCode: _languageCode,
+      regionKey: _selectedRegionKey == _allKey ? '' : _selectedRegionKey,
     );
   }
 
   List<HotelGeoOption> get _regionOptions {
-    if (_selectedCountryCode == _allKey) return const <HotelGeoOption>[];
-    return hotelGeoRegionOptions(
+    if (_selectedCountryCode == _allKey || !_showRegionSelector) {
+      return const <HotelGeoOption>[];
+    }
+    return stay22RegionPickerOptions(
       countryCode: _selectedCountryCode,
       languageCode: _languageCode,
     );
@@ -358,21 +453,18 @@ class HotelsPageState extends State<HotelsPage> {
         (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey)
         ? const <String>{}
         : normalizedDiscoveryTextSet(
-            hotelGeoRegionMatchValues(
+            stay22CatalogueRegionMatchValues(
               countryCode: _selectedCountryCode,
               regionKey: _selectedRegionKey,
             ),
           );
     final settlementMatchValues =
-        (_selectedCountryCode == _allKey ||
-            _selectedRegionKey == _allKey ||
-            _selectedSettlementKey == _allKey)
+        (_selectedCountryCode == _allKey || _selectedSettlementKey == _allKey)
         ? const <String>{}
         : normalizedDiscoveryTextSet(
-            hotelGeoSettlementMatchValues(
+            stay22CatalogueCityMatchValues(
               countryCode: _selectedCountryCode,
-              regionKey: _selectedRegionKey,
-              settlementKey: _selectedSettlementKey,
+              cityKey: _selectedSettlementKey,
             ),
           );
     return sourceStays
@@ -946,18 +1038,15 @@ class HotelsPageState extends State<HotelsPage> {
   String _stay22GeneralAddress({String? query}) {
     final preferred = (query ?? '').trim();
     final destination = _ratehawkSearch.criteria.destination.trim();
-    return composeStay22Address(
+    final resolved = stay22ResolveDestinationQuery(
+      countryCode: _selectedCountryCode,
+      regionKey: _selectedRegionKey == _allKey ? '' : _selectedRegionKey,
+      cityKey: _selectedSettlementKey == _allKey ? '' : _selectedSettlementKey,
       freeText: preferred.isNotEmpty
           ? preferred
           : (destination.isNotEmpty ? destination : _searchController.text),
-      city: _selectedSettlementKey == _allKey
-          ? ''
-          : _geoOptionLabel(_settlementOptions, _selectedSettlementKey),
-      region: _selectedRegionKey == _allKey
-          ? ''
-          : _geoOptionLabel(_regionOptions, _selectedRegionKey),
-      country: _stay22SelectedCountryAddressName(),
     );
+    return stay22EffectiveStay22Address(resolved: resolved);
   }
 
   String _stay22FeaturedAddress(HotelStay stay, {String? query}) {
@@ -1552,8 +1641,8 @@ class HotelsPageState extends State<HotelsPage> {
                     languageCode: _languageCode,
                     palette: _themePalette,
                     showSubmitButton: _ratehawkSearchSubmitEnabled,
-                    destinationGuidance: _selectedCountryHasSeededTaxonomy
-                        ? null
+                    destinationGuidance: _showCitySelector
+                        ? stay22MajorCitiesFieldGuidance(_languageCode)
                         : stay22CityRegionGuidance(_languageCode),
                   ),
                   const SizedBox(height: 8),
@@ -1567,6 +1656,7 @@ class HotelsPageState extends State<HotelsPage> {
                     resultCount,
                     showingDiscoveryRegions: showingDiscoveryRegions,
                   ),
+                  if (!showingDiscoveryRegions) _buildMoreFeaturedStaysAction(),
                   if (showingDiscoveryRegions && displayCards.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     _buildDiscoveryRegionsSectionHeader(),
@@ -1710,15 +1800,70 @@ class HotelsPageState extends State<HotelsPage> {
   @visibleForTesting
   void selectCountryForTest(String countryCode) {
     setState(() {
-      _selectedCountryCode = countryCode.trim().isEmpty
+      final next = stay22ApplyCountrySelection(
+        Stay22LocationSelection(
+          countryCode: _selectedCountryCode,
+          regionKey: _selectedRegionKey,
+          cityKey: _selectedSettlementKey,
+          freeText: _ratehawkSearch.criteria.destination,
+        ),
+        countryCode.trim().isEmpty ? _allKey : countryCode,
+      );
+      _selectedCountryCode = next.countryCode.isEmpty
           ? _allKey
-          : countryCode.trim().toUpperCase();
+          : next.countryCode;
       _selectedRegionKey = _allKey;
       _selectedSettlementKey = _allKey;
     });
     _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
+
+  @visibleForTesting
+  void selectRegionForTest(String regionKey) {
+    setState(() {
+      final next = stay22ApplyRegionSelection(
+        Stay22LocationSelection(
+          countryCode: _selectedCountryCode,
+          regionKey: _selectedRegionKey,
+          cityKey: _selectedSettlementKey,
+        ),
+        regionKey == _allKey ? '' : regionKey,
+      );
+      _selectedRegionKey = next.regionKey.isEmpty ? _allKey : next.regionKey;
+      _selectedSettlementKey = next.cityKey.isEmpty ? _allKey : next.cityKey;
+    });
+    _syncRatehawkDestinationHint();
+    _scheduleGooglePlacesRefresh();
+  }
+
+  @visibleForTesting
+  void selectCityForTest(String cityKey) {
+    setState(() {
+      final next = stay22ApplyCitySelection(
+        Stay22LocationSelection(
+          countryCode: _selectedCountryCode,
+          regionKey: _selectedRegionKey,
+          cityKey: _selectedSettlementKey,
+        ),
+        cityKey == _allKey ? '' : cityKey,
+      );
+      _selectedSettlementKey = next.cityKey.isEmpty ? _allKey : next.cityKey;
+      if (next.regionKey.isNotEmpty) {
+        _selectedRegionKey = next.regionKey;
+      }
+    });
+    _syncRatehawkDestinationHint();
+    _scheduleGooglePlacesRefresh();
+  }
+
+  @visibleForTesting
+  Future<void> requestMoreFeaturedStaysForTest() {
+    return _requestMoreFeaturedStays();
+  }
+
+  @visibleForTesting
+  HotelPlacesPage2Snapshot get page2SnapshotForTest => _page2.snapshot;
 
   Future<void> _openCountryPicker() async {
     final options = <HotelGeoOption>[
@@ -1741,7 +1886,7 @@ class HotelsPageState extends State<HotelsPage> {
   }
 
   Future<void> _openRegionPicker() async {
-    if (_selectedCountryCode == _allKey || !_selectedCountryHasSeededTaxonomy) {
+    if (_selectedCountryCode == _allKey || !_showRegionSelector) {
       return;
     }
     if (_regionOptions.isEmpty) return;
@@ -1756,17 +1901,23 @@ class HotelsPageState extends State<HotelsPage> {
     );
     if (selected == null) return;
     setState(() {
-      _selectedRegionKey = selected;
-      _selectedSettlementKey = _allKey;
+      final next = stay22ApplyRegionSelection(
+        Stay22LocationSelection(
+          countryCode: _selectedCountryCode,
+          regionKey: _selectedRegionKey,
+          cityKey: _selectedSettlementKey,
+        ),
+        selected == _allKey ? '' : selected,
+      );
+      _selectedRegionKey = next.regionKey.isEmpty ? _allKey : next.regionKey;
+      _selectedSettlementKey = next.cityKey.isEmpty ? _allKey : next.cityKey;
     });
     _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
 
   Future<void> _openSettlementPicker() async {
-    if (_selectedCountryCode == _allKey ||
-        _selectedRegionKey == _allKey ||
-        !_selectedCountryHasSeededTaxonomy) {
+    if (_selectedCountryCode == _allKey || !_showCitySelector) {
       return;
     }
     if (_settlementOptions.isEmpty) return;
@@ -1775,12 +1926,27 @@ class HotelsPageState extends State<HotelsPage> {
       ..._settlementOptions,
     ];
     final selected = await _openFilterPicker(
-      title: _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
+      title: stay22MajorCitiesPickerTitle(_languageCode),
       options: options,
       currentValue: _selectedSettlementKey,
     );
     if (selected == null) return;
-    setState(() => _selectedSettlementKey = selected);
+    setState(() {
+      final next = stay22ApplyCitySelection(
+        Stay22LocationSelection(
+          countryCode: _selectedCountryCode,
+          regionKey: _selectedRegionKey,
+          cityKey: _selectedSettlementKey,
+        ),
+        selected == _allKey ? '' : selected,
+      );
+      _selectedSettlementKey = next.cityKey.isEmpty ? _allKey : next.cityKey;
+      if (next.regionKey.isNotEmpty) {
+        _selectedRegionKey = next.regionKey;
+      } else if (selected == _allKey) {
+        // Keep the current region when "all cities" is chosen.
+      }
+    });
     _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
@@ -1828,57 +1994,28 @@ class HotelsPageState extends State<HotelsPage> {
       ),
       builder: (context) {
         final maxHeight = MediaQuery.sizeOf(context).height * 0.72;
+        final searchable = options.length > 8;
         return SafeArea(
           child: SizedBox(
             height: maxHeight,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: _textPrimary,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: options.length,
-                      separatorBuilder: (_, __) => Divider(
-                        color: _border.withOpacity(_isDarkTheme ? 0.3 : 0.95),
-                        height: 1,
-                      ),
-                      itemBuilder: (context, index) {
-                        final option = options[index];
-                        final isSelected = option.value == currentValue;
-                        return ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 2,
-                            vertical: 2,
-                          ),
-                          title: Text(
-                            option.label,
-                            style: TextStyle(
-                              color: isSelected ? _gold : _textPrimary,
-                              fontWeight: isSelected
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                          trailing: isSelected
-                              ? Icon(Icons.check_rounded, color: _gold)
-                              : null,
-                          onTap: () => Navigator.of(context).pop(option.value),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+              child: _HotelFilterPickerSheet(
+                title: title,
+                options: options,
+                currentValue: currentValue,
+                searchable: searchable,
+                textPrimary: _textPrimary,
+                softText: _softText,
+                gold: _gold,
+                border: _border,
+                isDarkTheme: _isDarkTheme,
+                searchHint: _t(
+                  nl: 'Zoeken',
+                  en: 'Search',
+                  fr: 'Rechercher',
+                  es: 'Buscar',
+                ),
               ),
             ),
           ),
@@ -1936,7 +2073,7 @@ class HotelsPageState extends State<HotelsPage> {
                     await _openCountryPicker();
                   },
                 ),
-                if (_selectedCountryHasSeededTaxonomy) ...[
+                if (_showRegionSelector) ...[
                   ListTile(
                     dense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 2),
@@ -1959,6 +2096,8 @@ class HotelsPageState extends State<HotelsPage> {
                             await _openRegionPicker();
                           },
                   ),
+                ],
+                if (_showCitySelector) ...[
                   ListTile(
                     dense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 2),
@@ -1974,9 +2113,7 @@ class HotelsPageState extends State<HotelsPage> {
                       _selectedCityLabel,
                       style: TextStyle(color: _softText.withOpacity(0.9)),
                     ),
-                    onTap:
-                        (_selectedCountryCode == _allKey ||
-                            _selectedRegionKey == _allKey)
+                    onTap: _selectedCountryCode == _allKey
                         ? null
                         : () async {
                             Navigator.of(sheetContext).pop();
@@ -2167,10 +2304,6 @@ class HotelsPageState extends State<HotelsPage> {
 
   Widget _buildCompactFilterChips() {
     final hasCountrySelection = _selectedCountryCode != _allKey;
-    final hasRegionSelection =
-        hasCountrySelection &&
-        _selectedCountryHasSeededTaxonomy &&
-        _selectedRegionKey != _allKey;
     return LayoutBuilder(
       builder: (context, constraints) {
         final landChip = _buildFilterChip(
@@ -2181,12 +2314,14 @@ class HotelsPageState extends State<HotelsPage> {
         final cityChip = _buildFilterChip(
           label: _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
           value: _selectedCityLabel,
-          onTap: hasRegionSelection ? _openSettlementPicker : null,
+          onTap: hasCountrySelection && _showCitySelector
+              ? _openSettlementPicker
+              : null,
         );
         final regionChip = _buildFilterChip(
           label: _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
           value: _selectedRegionLabel,
-          onTap: hasCountrySelection && _selectedCountryHasSeededTaxonomy
+          onTap: hasCountrySelection && _showRegionSelector
               ? _openRegionPicker
               : null,
         );
@@ -2197,7 +2332,7 @@ class HotelsPageState extends State<HotelsPage> {
           emphasize: _selectedType != _allKey,
         );
 
-        if (!_selectedCountryHasSeededTaxonomy && hasCountrySelection) {
+        if (!_showCitySelector && !_showRegionSelector && hasCountrySelection) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2238,8 +2373,10 @@ class HotelsPageState extends State<HotelsPage> {
               const SizedBox(height: 6),
               Row(
                 children: [
-                  Expanded(child: regionChip),
-                  const SizedBox(width: 6),
+                  if (_showRegionSelector) ...[
+                    Expanded(child: regionChip),
+                    const SizedBox(width: 6),
+                  ],
                   Expanded(child: typeChip),
                 ],
               ),
@@ -2252,8 +2389,10 @@ class HotelsPageState extends State<HotelsPage> {
             Expanded(child: landChip),
             const SizedBox(width: 6),
             Expanded(child: cityChip),
-            const SizedBox(width: 6),
-            Expanded(child: regionChip),
+            if (_showRegionSelector) ...[
+              const SizedBox(width: 6),
+              Expanded(child: regionChip),
+            ],
             const SizedBox(width: 6),
             Expanded(child: typeChip),
           ],
@@ -2386,7 +2525,7 @@ class HotelsPageState extends State<HotelsPage> {
                   ),
                   value: _selectedRegionKey,
                   options: regionOptions,
-                  enabled: hasCountrySelection,
+                  enabled: hasCountrySelection && _showRegionSelector,
                   onChanged: (value) {
                     setState(() {
                       _selectedRegionKey = value ?? _allKey;
@@ -2402,9 +2541,24 @@ class HotelsPageState extends State<HotelsPage> {
             label: _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
             value: _selectedSettlementKey,
             options: settlementOptions,
-            enabled: hasRegionSelection,
-            onChanged: (value) =>
-                setState(() => _selectedSettlementKey = value ?? _allKey),
+            enabled: hasCountrySelection && _showCitySelector,
+            onChanged: (value) {
+              setState(() {
+                final next = stay22ApplyCitySelection(
+                  Stay22LocationSelection(
+                    countryCode: _selectedCountryCode,
+                    regionKey: _selectedRegionKey,
+                    cityKey: _selectedSettlementKey,
+                  ),
+                  (value ?? _allKey) == _allKey ? '' : value!,
+                );
+                _selectedSettlementKey =
+                    next.cityKey.isEmpty ? _allKey : next.cityKey;
+                if (next.regionKey.isNotEmpty) {
+                  _selectedRegionKey = next.regionKey;
+                }
+              });
+            },
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -2604,6 +2758,39 @@ class HotelsPageState extends State<HotelsPage> {
           ],
         ],
       ],
+    );
+  }
+
+  Widget _buildMoreFeaturedStaysAction() {
+    if (!kGooglePlacesManualNextPageEnabled) {
+      return const SizedBox.shrink();
+    }
+    final snap = _page2.snapshot;
+    if (!snap.showAction) return const SizedBox.shrink();
+    final enabled =
+        snap.canRequest || snap.isRetryable;
+    final label = snap.phase == HotelPlacesPage2Phase.waitingActivation
+        ? stay22MoreFeaturedStaysWaitingLabel(_languageCode)
+        : snap.phase == HotelPlacesPage2Phase.loading
+        ? stay22MoreFeaturedStaysLoadingLabel(_languageCode)
+        : snap.isRetryable
+        ? stay22MoreFeaturedStaysRetryLabel(_languageCode)
+        : stay22MoreFeaturedStaysLabel(_languageCode);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: label,
+        child: SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            key: const Key('google_places_more_featured_stays'),
+            onPressed: enabled ? () => unawaited(_requestMoreFeaturedStays()) : null,
+            child: Text(label),
+          ),
+        ),
+      ),
     );
   }
 
@@ -3491,6 +3678,119 @@ class HotelsPageState extends State<HotelsPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HotelFilterPickerSheet extends StatefulWidget {
+  const _HotelFilterPickerSheet({
+    required this.title,
+    required this.options,
+    required this.currentValue,
+    required this.searchable,
+    required this.textPrimary,
+    required this.softText,
+    required this.gold,
+    required this.border,
+    required this.isDarkTheme,
+    required this.searchHint,
+  });
+
+  final String title;
+  final List<HotelGeoOption> options;
+  final String currentValue;
+  final bool searchable;
+  final Color textPrimary;
+  final Color softText;
+  final Color gold;
+  final Color border;
+  final bool isDarkTheme;
+  final String searchHint;
+
+  @override
+  State<_HotelFilterPickerSheet> createState() =>
+      _HotelFilterPickerSheetState();
+}
+
+class _HotelFilterPickerSheetState extends State<_HotelFilterPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _query.trim().isEmpty
+        ? widget.options
+        : widget.options.where((option) {
+            final needle = stay22NormalizeCountryLabel(_query);
+            if (needle.isEmpty) return true;
+            return option.searchValues.any(
+              (value) => stay22NormalizeCountryLabel(value).contains(needle),
+            );
+          }).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.title,
+          style: TextStyle(
+            color: widget.textPrimary,
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+          ),
+        ),
+        if (widget.searchable) ...[
+          const SizedBox(height: 10),
+          TextField(
+            style: TextStyle(color: widget.textPrimary),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: widget.searchHint,
+              hintStyle: TextStyle(color: widget.softText),
+            ),
+            onChanged: (value) => setState(() => _query = value),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Expanded(
+          child: ListView.separated(
+            itemCount: filtered.length,
+            separatorBuilder: (_, __) => Divider(
+              color: widget.border.withOpacity(widget.isDarkTheme ? 0.3 : 0.95),
+              height: 1,
+            ),
+            itemBuilder: (context, index) {
+              final option = filtered[index];
+              final isSelected = option.value == widget.currentValue;
+              return ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 2,
+                  vertical: 2,
+                ),
+                title: Text(
+                  option.label,
+                  style: TextStyle(
+                    color: isSelected ? widget.gold : widget.textPrimary,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+                subtitle: (option.groupLabel ?? '').trim().isEmpty
+                    ? null
+                    : Text(
+                        option.groupLabel!,
+                        style: TextStyle(
+                          color: widget.softText,
+                          fontSize: 11.2,
+                        ),
+                      ),
+                trailing: isSelected
+                    ? Icon(Icons.check_rounded, color: widget.gold)
+                    : null,
+                onTap: () => Navigator.of(context).pop(option.value),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

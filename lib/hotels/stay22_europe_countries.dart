@@ -1,5 +1,7 @@
 import 'hotel_geo_taxonomy.dart';
 
+part 'stay22_europe_destinations.dart';
+
 /// Priority Stay22 markets. These are shortcuts, not an allowlist.
 const List<String> kStay22PriorityCountryCodes = <String>[
   'BE',
@@ -35,9 +37,9 @@ const Set<String> kStay22EuroAreaCountryCodes = <String>{
 };
 
 /// Localized European countries available in the hotel country picker.
-/// Extra countries have no native featured inventory; they only improve Stay22
-/// destination resolution.
-const List<HotelGeoCountry> kStay22EuropeanCountries = <HotelGeoCountry>[
+/// Destination cities live in [kStay22EuropeDestinationSeeds] and are attached
+/// through [kStay22EuropeanCountries].
+const List<HotelGeoCountry> kStay22EuropeanCountryIdentities = <HotelGeoCountry>[
   HotelGeoCountry(
     code: 'AL',
     labels: HotelGeoLabel(
@@ -368,6 +370,10 @@ const List<HotelGeoCountry> kStay22EuropeanCountries = <HotelGeoCountry>[
   ),
 ];
 
+/// Unified extra-country catalogue: existing ISO labels plus curated major cities.
+List<HotelGeoCountry> get kStay22EuropeanCountries =>
+    stay22EuropeanCountriesWithDestinations();
+
 HotelGeoCountry? stay22EuropeanCountryByCode(String countryCode) {
   final normalized = countryCode.trim().toUpperCase();
   if (normalized.isEmpty) return null;
@@ -391,12 +397,18 @@ class Stay22CountryIdentity {
     required this.englishName,
     required this.localizedLabel,
     required this.hasSeededTaxonomy,
+    this.hideRegionSelector = false,
   });
 
   final String isoCode;
   final String englishName;
   final String localizedLabel;
   final bool hasSeededTaxonomy;
+  final bool hideRegionSelector;
+
+  bool get showRegionSelector =>
+      hasSeededTaxonomy && !hideRegionSelector;
+  bool get showCitySelector => hasSeededTaxonomy;
 }
 
 String stay22NormalizeCountryLabel(String raw) {
@@ -446,14 +458,14 @@ Stay22CountryIdentity? stay22CountryIdentityFor({
   required String countryCode,
   required String languageCode,
 }) {
-  final country = stay22EuropeanCountryByCode(countryCode);
+  final country = stay22CatalogueCountryByCode(countryCode);
   if (country == null) return null;
-  final taxonomy = hotelGeoCountryByCode(country.code);
   return Stay22CountryIdentity(
     isoCode: country.code.toUpperCase(),
     englishName: country.labels.en,
     localizedLabel: country.labels.of(languageCode),
-    hasSeededTaxonomy: taxonomy != null && taxonomy.regions.isNotEmpty,
+    hasSeededTaxonomy: stay22CountryHasMajorCities(country),
+    hideRegionSelector: country.hideRegionSelector,
   );
 }
 

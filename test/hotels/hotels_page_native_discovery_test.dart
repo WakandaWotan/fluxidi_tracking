@@ -259,7 +259,7 @@ void main() {
     expect(find.text('Stay BE'), findsNothing);
   });
 
-  testWidgets('seeded countries keep selectors and unseeded use free text', (
+  testWidgets('catalogue countries keep selectors including Portugal', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1800));
@@ -281,10 +281,8 @@ void main() {
 
     _selectCountry(tester, 'PT');
     await tester.pump();
-    expect(find.textContaining('Regio:'), findsNothing);
-    expect(find.textContaining('Stad:'), findsNothing);
-    expect(find.text(stay22CityRegionGuidance('nl')), findsWidgets);
-    expect(find.text(stay22UnseededGeoControlHint('nl')), findsWidgets);
+    expect(find.textContaining('Regio:'), findsOneWidget);
+    expect(find.textContaining('Stad:'), findsOneWidget);
     expect(find.text('Alle regio\'s'), findsNothing);
   });
 
@@ -353,19 +351,19 @@ void main() {
     await tester.tap(find.textContaining('Land:'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('Oostenrijk'),
+      find.text('Monaco'),
       240,
       scrollable: find.byType(Scrollable).last,
     );
-    await tester.tap(find.text('Oostenrijk'));
+    await tester.tap(find.text('Monaco'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Regio:'), findsNothing);
     expect(find.text('Alle regio\'s'), findsNothing);
-    expect(find.text(stay22CityRegionGuidance('nl')), findsWidgets);
+    expect(find.textContaining('Stad:'), findsOneWidget);
   });
 
   testWidgets(
-    'filter sheet hides empty region selectors for unseeded countries',
+    'filter sheet shows catalogue region and city selectors for Portugal',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 1800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -378,10 +376,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.byIcon(Icons.tune_rounded));
       await tester.pumpAndSettle();
-      expect(find.text('Regio'), findsNothing);
-      expect(find.text('Stad'), findsNothing);
-      expect(find.text('Alle regio\'s'), findsNothing);
-      expect(find.text(stay22UnseededGeoControlHint('nl')), findsWidgets);
+      expect(find.text('Regio'), findsOneWidget);
+      expect(find.text('Stad'), findsOneWidget);
       expect(find.text('Type'), findsOneWidget);
     },
   );

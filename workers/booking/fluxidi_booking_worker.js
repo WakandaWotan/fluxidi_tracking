@@ -129,6 +129,7 @@ import {
   buildGooglePlacesTextQuery,
   mapGooglePlacesAddressParts,
 } from "./modules/google_places_country.mjs";
+import { resolveGooglePlacesHotelsSearch } from "./modules/google_places_hotels_page.mjs";
 import {
   isEligibleLimousineProvider as _isEligibleLimousineProvider,
   isLimousineServiceToken,
@@ -42669,14 +42670,21 @@ export default {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const query = _normalizePublicHotelsSearchQuery(url);
-        return json(
-          await _buildPublicHotelsSearchPayload({
-            query,
-            env,
-            requestUrl: url.toString(),
-            request,
-          }),
-        );
+        const payload = await _buildPublicHotelsSearchPayload({
+          query,
+          env,
+          requestUrl: url.toString(),
+          request,
+        });
+        const source = String(query?.source || "");
+        const honorStatus =
+          source === "google-places" || source === "places";
+        const status = honorStatus
+          ? Number(payload?.http_status || 200)
+          : 200;
+        const body = { ...(payload || {}) };
+        delete body.http_status;
+        return json(body, Number.isFinite(status) ? status : 200);
       }
 
       if (url.pathname === "/public/hotels/ratehawk/hotelpage") {
@@ -52253,6 +52261,7 @@ function _normalizePublicHotelsSearchQuery(url) {
     url?.searchParams?.get("country_code") ?? url?.searchParams?.get("countryCode") ?? "",
   ).trim();
   const destinationRaw = String(url?.searchParams?.get("destination") ?? "").trim();
+  const cursorRaw = String(url?.searchParams?.get("cursor") ?? "").trim();
 
   return {
     city: cityRaw.slice(0, 120),
@@ -52260,6 +52269,7 @@ function _normalizePublicHotelsSearchQuery(url) {
     country_code: countryCodeRaw.slice(0, 8),
     countryCode: countryCodeRaw.slice(0, 8),
     destination: destinationRaw.slice(0, 160),
+    cursor: cursorRaw.slice(0, 96),
     region: regionRaw.slice(0, 120),
     searchText: searchTextRaw.slice(0, 200),
     latitude,
@@ -53116,17 +53126,50 @@ async function _buildGooglePlacesHotelsPayload({
     "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.photos,places.primaryType,places.types";
 
   try {
-    // P1B: Legacy Text Search only. Nearby Search and pagination stay unused.
-    // STAY22-EUROPE-P1C extension point: optional explicit user-triggered
-    // max-one-extra-page via next_page_token. Do not prefetch.
-    let places = await _googlePlacesSearchText({ query, apiKey, fieldMask });
-    places = _googlePlacesDedupePlaces(places).slice(0, 20);
+    const resolved = await resolveGooglePlacesHotelsSearch({
+      query,
+      env,
+    });
+    if (resolved?.ok === false) {
+      return {
+        ok: false,
+        error: resolved.error || "invalid_cursor",
+        source: "google-places",
+        provider: "google-places",
+        count: 0,
+        stays: [],
+        warnings: nextWarnings,
+        pagination: resolved.pagination,
+        retry_after_ms: resolved.retry_after_ms,
+        available_at: resolved.available_at,
+        http_status: resolved.http_status || 400,
+      };
+    }
+
+    const mappedPlaces = (Array.isArray(resolved?.places) ? resolved.places : [])
+      .map((place) => _legacyGooglePlacesMapResultToV1Like(place) || place)
+      .filter(Boolean);
+    const places = _googlePlacesDedupePlaces(mappedPlaces).slice(0, 20);
+    const mappingQuery = {
+      ...query,
+      countryCode: resolved?.preserved_country_code || query?.countryCode,
+      country_code: resolved?.preserved_country_code || query?.country_code,
+    };
 
     const stays = [];
     for (const place of places) {
-      const mapped = _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl });
+      const mapped = _mapGooglePlaceToPublicHotelStay(place, {
+        query: mappingQuery,
+        requestUrl,
+      });
       if (!mapped) continue;
       stays.push(_mapPublicHotelStayToResponse(mapped));
+    }
+
+    if (Array.isArray(resolved?.warnings)) {
+      for (const warning of resolved.warnings) {
+        if (warning && !nextWarnings.includes(warning)) nextWarnings.push(warning);
+      }
     }
 
     return {
@@ -53136,6 +53179,8 @@ async function _buildGooglePlacesHotelsPayload({
       count: stays.length,
       stays,
       warnings: nextWarnings,
+      pagination: resolved?.pagination,
+      http_status: resolved?.http_status || 200,
     };
   } catch (_) {
     if (!nextWarnings.includes("google_places_fetch_failed")) {

@@ -8962,6 +8962,74 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   String? residency,
   String? currency,
   String? marketKey,
+  String? cursor,
+}) async {
+  final result = await fetchPublicHotelSearchResult(
+    city: city,
+    country: country,
+    countryCode: countryCode,
+    destination: destination,
+    region: region,
+    searchText: searchText,
+    lat: lat,
+    lng: lng,
+    radiusKm: radiusKm,
+    source: source,
+    checkin: checkin,
+    checkout: checkout,
+    rooms: rooms,
+    adults: adults,
+    childAges: childAges,
+    language: language,
+    residency: residency,
+    currency: currency,
+    marketKey: marketKey,
+    cursor: cursor,
+  );
+  if (result.statusCode < 200 || result.statusCode >= 300) return null;
+  if (result.body == null || result.body!['ok'] != true) return null;
+  return result.body;
+}
+
+class PublicHotelSearchResult {
+  const PublicHotelSearchResult({
+    required this.statusCode,
+    this.body,
+    this.retryable = false,
+    this.rejected = false,
+    this.retryAfterMs,
+    this.error,
+  });
+
+  final int statusCode;
+  final Map<String, dynamic>? body;
+  final bool retryable;
+  final bool rejected;
+  final int? retryAfterMs;
+  final String? error;
+}
+
+Future<PublicHotelSearchResult> fetchPublicHotelSearchResult({
+  String? city,
+  String? country,
+  String? countryCode,
+  String? destination,
+  String? region,
+  String? searchText,
+  double? lat,
+  double? lng,
+  double? radiusKm,
+  String source = 'approved-local',
+  String? checkin,
+  String? checkout,
+  int? rooms,
+  int? adults,
+  List<int> childAges = const <int>[],
+  String? language,
+  String? residency,
+  String? currency,
+  String? marketKey,
+  String? cursor,
 }) async {
   final qp = <String, String>{
     'source': source.trim().isEmpty ? 'approved-local' : source.trim(),
@@ -9013,6 +9081,8 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
     qp['children'] = childAges.length.toString();
     qp['child_ages'] = childAges.join(',');
   }
+  final normalizedCursor = (cursor ?? '').trim();
+  if (normalizedCursor.isNotEmpty) qp['cursor'] = normalizedCursor;
   final endpoint = Uri.parse(
     '${appConfig.bookingBaseUrl}/public/hotels/search',
   ).replace(queryParameters: qp);
@@ -9023,13 +9093,49 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
           headers: const <String, String>{'Accept': 'application/json'},
         )
         .timeout(const Duration(seconds: 12));
-    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    Map<String, dynamic>? map;
     final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-    if (decoded is! Map) return null;
-    final map = Map<String, dynamic>.from(decoded);
-    return map['ok'] == true ? map : null;
+    if (decoded is Map) {
+      map = Map<String, dynamic>.from(decoded);
+    }
+    final error = (map?['error'] ?? '').toString().trim();
+    final retryAfter = map?['retry_after_ms'];
+    final retryAfterMs = retryAfter is num
+        ? retryAfter.round()
+        : int.tryParse((retryAfter ?? '').toString());
+    if (res.statusCode == 425 || error == 'cursor_not_ready') {
+      return PublicHotelSearchResult(
+        statusCode: res.statusCode,
+        body: map,
+        retryable: true,
+        retryAfterMs: retryAfterMs,
+        error: error.isEmpty ? 'cursor_not_ready' : error,
+      );
+    }
+    if (res.statusCode == 409 ||
+        error == 'consumed_cursor' ||
+        error == 'expired_cursor' ||
+        error == 'conflicting_cursor_query' ||
+        error == 'unknown_cursor' ||
+        error == 'malformed_cursor' ||
+        error == 'invalid_cursor_page') {
+      return PublicHotelSearchResult(
+        statusCode: res.statusCode,
+        body: map,
+        rejected: true,
+        error: error.isEmpty ? 'invalid_cursor' : error,
+      );
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      return PublicHotelSearchResult(
+        statusCode: res.statusCode,
+        body: map,
+        error: error.isEmpty ? 'http_${res.statusCode}' : error,
+      );
+    }
+    return PublicHotelSearchResult(statusCode: res.statusCode, body: map);
   } catch (_) {
-    return null;
+    return const PublicHotelSearchResult(statusCode: 0, error: 'network');
   }
 }
 

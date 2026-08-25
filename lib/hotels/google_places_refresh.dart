@@ -79,5 +79,5 @@ String hotelStayLocationLabel(HotelStay stay, String languageCode) {
   );
 }
 
-/// Extension point for a later explicit, user-triggered extra page.
-const bool kGooglePlacesManualNextPageEnabled = false;
+/// Explicit, user-triggered extra Google Places page. Never auto-paginates.
+const bool kGooglePlacesManualNextPageEnabled = true;

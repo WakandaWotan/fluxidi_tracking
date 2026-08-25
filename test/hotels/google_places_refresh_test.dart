@@ -68,14 +68,15 @@ void main() {
     );
   });
 
-  test('featured wording uses actual counts below 20 and a cap at 20', () {
+  test('featured wording uses the actual unique card count', () {
     expect(stay22FeaturedCountLabel(7, 'nl'), '7 uitgelichte verblijven');
-    expect(stay22FeaturedCountLabel(20, 'nl'), 'Tot 20 uitgelichte verblijven');
+    expect(stay22FeaturedCountLabel(20, 'nl'), '20 uitgelichte verblijven');
     expect(
       stay22FeaturedFilterLabel(20, 'nl'),
-      'Tot 20 uitgelichte verblijven in deze selectie',
+      '20 uitgelichte verblijven in deze selectie',
     );
-    expect(kGooglePlacesManualNextPageEnabled, isFalse);
+    expect(stay22FeaturedCountLabel(40, 'es'), '40 alojamientos destacados');
+    expect(kGooglePlacesManualNextPageEnabled, isTrue);
   });
 
   test('localized P1B strings are complete in nl fr en es', () {
@@ -86,6 +87,9 @@ void main() {
       expect(stay22UnseededGeoControlHint(language), isNotEmpty);
       expect(stay22BroadInspirationLabel(language), isNotEmpty);
       expect(stay22FeaturedExplanation(language), contains('Stay22'));
+      expect(stay22MoreFeaturedStaysLabel(language), isNotEmpty);
+      expect(stay22MajorCitiesPickerTitle(language), isNotEmpty);
+      expect(stay22MajorCitiesFieldGuidance(language), isNotEmpty);
     }
     expect(stay22CityRegionGuidance('nl'), contains('Lissabon'));
     expect(stay22EmptyFeaturedBody('nl'), contains('Stay22'));

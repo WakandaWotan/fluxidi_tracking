@@ -342,15 +342,6 @@ String stay22LiveSearchSubtitle(String languageCode) {
 }
 
 String stay22FeaturedCountLabel(int count, String languageCode) {
-  if (count >= 20) {
-    return _label(
-      languageCode,
-      nl: 'Tot 20 uitgelichte verblijven',
-      en: 'Up to 20 featured stays',
-      fr: 'Jusqu’à 20 hébergements en vedette',
-      es: 'Hasta 20 alojamientos destacados',
-    );
-  }
   return _label(
     languageCode,
     nl: '$count uitgelichte verblijven',
@@ -361,21 +352,72 @@ String stay22FeaturedCountLabel(int count, String languageCode) {
 }
 
 String stay22FeaturedFilterLabel(int count, String languageCode) {
-  if (count >= 20) {
-    return _label(
-      languageCode,
-      nl: 'Tot 20 uitgelichte verblijven in deze selectie',
-      en: 'Up to 20 featured stays in this selection',
-      fr: 'Jusqu’à 20 hébergements en vedette dans cette sélection',
-      es: 'Hasta 20 alojamientos destacados en esta selección',
-    );
-  }
   return _label(
     languageCode,
     nl: '$count uitgelichte verblijven in deze selectie',
     en: '$count featured stays in this selection',
     fr: '$count hébergements en vedette dans cette sélection',
     es: '$count alojamientos destacados en esta selección',
+  );
+}
+
+String stay22MoreFeaturedStaysLabel(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Meer uitgelichte verblijven',
+    en: 'More featured stays',
+    fr: 'Plus d’hébergements sélectionnés',
+    es: 'Más alojamientos destacados',
+  );
+}
+
+String stay22MoreFeaturedStaysWaitingLabel(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Nog even wachten om meer uitgelichte verblijven te laden',
+    en: 'Please wait a moment to load more featured stays',
+    fr: 'Patientez un instant pour charger plus d’hébergements sélectionnés',
+    es: 'Espera un momento para cargar más alojamientos destacados',
+  );
+}
+
+String stay22MoreFeaturedStaysLoadingLabel(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Meer uitgelichte verblijven laden…',
+    en: 'Loading more featured stays…',
+    fr: 'Chargement d’autres hébergements sélectionnés…',
+    es: 'Cargando más alojamientos destacados…',
+  );
+}
+
+String stay22MoreFeaturedStaysRetryLabel(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Opnieuw proberen',
+    en: 'Try again',
+    fr: 'Réessayer',
+    es: 'Reintentar',
+  );
+}
+
+String stay22MajorCitiesPickerTitle(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Grote steden',
+    en: 'Major cities',
+    fr: 'Grandes villes',
+    es: 'Grandes ciudades',
+  );
+}
+
+String stay22MajorCitiesFieldGuidance(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Kies een grote stad of typ een stad of regio. Dit is geen volledige stedenlijst.',
+    en: 'Choose a major city or type a city or region. This is not a complete city list.',
+    fr: 'Choisissez une grande ville ou saisissez une ville ou une région. Ce n’est pas une liste complète.',
+    es: 'Elige una gran ciudad o escribe una ciudad o región. No es una lista completa.',
   );
 }
 
