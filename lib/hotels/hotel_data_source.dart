@@ -16,6 +16,8 @@ class HotelStayQuery {
   const HotelStayQuery({
     this.city,
     this.country,
+    this.countryCode,
+    this.destination,
     this.region,
     this.searchText,
     this.lat,
@@ -31,6 +33,8 @@ class HotelStayQuery {
 
   final String? city;
   final String? country;
+  final String? countryCode;
+  final String? destination;
   final String? region;
   final String? searchText;
   final double? lat;
@@ -72,6 +76,8 @@ class RemoteHotelDataSource implements HotelDataSource {
       final payload = await fetchPublicHotelSearch(
         city: query.city,
         country: query.country,
+        countryCode: query.countryCode,
+        destination: query.destination,
         region: query.region,
         searchText: query.searchText,
         lat: query.lat,

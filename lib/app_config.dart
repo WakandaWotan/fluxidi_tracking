@@ -8945,6 +8945,8 @@ Future<Map<String, dynamic>?> fetchPublicCustomerSessionBootstrap({
 Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   String? city,
   String? country,
+  String? countryCode,
+  String? destination,
   String? region,
   String? searchText,
   double? lat,
@@ -8972,10 +8974,14 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
       normalizedSource == 'emerging-travel';
   final normalizedCity = (city ?? '').trim();
   final normalizedCountry = (country ?? '').trim();
+  final normalizedCountryCode = (countryCode ?? '').trim().toUpperCase();
+  final normalizedDestination = (destination ?? '').trim();
   final normalizedRegion = (region ?? '').trim();
   final normalizedSearchText = (searchText ?? '').trim();
   if (normalizedCity.isNotEmpty) qp['city'] = normalizedCity;
   if (normalizedCountry.isNotEmpty) qp['country'] = normalizedCountry;
+  if (normalizedCountryCode.isNotEmpty) qp['country_code'] = normalizedCountryCode;
+  if (normalizedDestination.isNotEmpty) qp['destination'] = normalizedDestination;
   if (normalizedRegion.isNotEmpty) qp['region'] = normalizedRegion;
   if (normalizedSearchText.isNotEmpty) qp['q'] = normalizedSearchText;
   if (!isRatehawkSource) {

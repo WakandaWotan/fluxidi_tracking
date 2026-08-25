@@ -301,6 +301,11 @@ void main() {
         stay22SearchIssueLabel(Stay22SearchIssue.adultsBelowOne, language),
         stay22SearchIssueLabel(Stay22SearchIssue.negativeChildren, language),
         stay22FeaturedBrowseTitle(language),
+        stay22EmptyFeaturedTitle(language),
+        stay22EmptyFeaturedBody(language),
+        stay22CityRegionGuidance(language),
+        stay22UnseededGeoControlHint(language),
+        stay22BroadInspirationLabel(language),
       ];
       for (final label in labels) {
         expect(label.trim(), isNotEmpty);

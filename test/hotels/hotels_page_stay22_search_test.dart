@@ -52,6 +52,7 @@ Widget _page({
   HotelsExternalUrlLauncher? launcher,
   RatehawkSearchCriteria? criteria,
   List<HotelStay>? stays,
+  bool? ratehawkSearchSubmitEnabled,
 }) {
   return MaterialApp(
     home: MediaQuery(
@@ -62,6 +63,7 @@ Widget _page({
         ratehawkHotelpageClient: RecordingRatehawkHotelpageClient(),
         initialRatehawkCriteria: criteria,
         externalUrlLauncher: launcher,
+        ratehawkSearchSubmitEnabled: ratehawkSearchSubmitEnabled,
       ),
     ),
   );
@@ -102,7 +104,8 @@ void main() {
     expect(find.textContaining('verblijven gevonden'), findsNothing);
     expect(find.textContaining('Stay22-partners'), findsWidgets);
     expect(find.text('Live verblijven zoeken'), findsWidgets);
-    expect(find.text('Kamers zoeken'), findsOneWidget);
+    expect(find.byKey(const Key('stay22_live_search_cta')), findsOneWidget);
+    expect(find.text('Kamers zoeken'), findsNothing);
     expect(client.calls, isEmpty);
   });
 
@@ -385,6 +388,7 @@ void main() {
       _page(
         client: client,
         criteria: _validCriteria(),
+        ratehawkSearchSubmitEnabled: true,
         launcher: (uri) async {
           launched.add(uri);
           return true;

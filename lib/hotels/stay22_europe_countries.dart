@@ -385,6 +385,145 @@ String? stay22EnglishCountryName(String countryCode) {
   return country?.labels.en;
 }
 
+class Stay22CountryIdentity {
+  const Stay22CountryIdentity({
+    required this.isoCode,
+    required this.englishName,
+    required this.localizedLabel,
+    required this.hasSeededTaxonomy,
+  });
+
+  final String isoCode;
+  final String englishName;
+  final String localizedLabel;
+  final bool hasSeededTaxonomy;
+}
+
+String stay22NormalizeCountryLabel(String raw) {
+  return raw
+      .trim()
+      .toLowerCase()
+      .replaceAll('é', 'e')
+      .replaceAll('è', 'e')
+      .replaceAll('ê', 'e')
+      .replaceAll('ë', 'e')
+      .replaceAll('á', 'a')
+      .replaceAll('à', 'a')
+      .replaceAll('â', 'a')
+      .replaceAll('ä', 'a')
+      .replaceAll('í', 'i')
+      .replaceAll('ì', 'i')
+      .replaceAll('î', 'i')
+      .replaceAll('ï', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ò', 'o')
+      .replaceAll('ô', 'o')
+      .replaceAll('ö', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ù', 'u')
+      .replaceAll('û', 'u')
+      .replaceAll('ü', 'u')
+      .replaceAll('ñ', 'n')
+      .replaceAll('ç', 'c')
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim();
+}
+
+Iterable<HotelGeoCountry> stay22AllKnownCountries() sync* {
+  final seen = <String>{};
+  for (final country in <HotelGeoCountry>[
+    ...kHotelGeoTaxonomy,
+    ...kStay22EuropeanCountries,
+  ]) {
+    final code = country.code.trim().toUpperCase();
+    if (code.isEmpty || seen.contains(code)) continue;
+    seen.add(code);
+    yield country;
+  }
+}
+
+Stay22CountryIdentity? stay22CountryIdentityFor({
+  required String countryCode,
+  required String languageCode,
+}) {
+  final country = stay22EuropeanCountryByCode(countryCode);
+  if (country == null) return null;
+  final taxonomy = hotelGeoCountryByCode(country.code);
+  return Stay22CountryIdentity(
+    isoCode: country.code.toUpperCase(),
+    englishName: country.labels.en,
+    localizedLabel: country.labels.of(languageCode),
+    hasSeededTaxonomy: taxonomy != null && taxonomy.regions.isNotEmpty,
+  );
+}
+
+bool stay22CountryHasSeededTaxonomy(String countryCode) {
+  return stay22CountryIdentityFor(
+        countryCode: countryCode,
+        languageCode: 'en',
+      )?.hasSeededTaxonomy ==
+      true;
+}
+
+String? stay22ResolveIsoCountryCode(String? raw) {
+  final text = (raw ?? '').trim();
+  if (text.isEmpty) return null;
+  final upper = text.toUpperCase().replaceAll(RegExp(r'[^A-Z]'), '');
+  if (upper.length == 2 && stay22EuropeanCountryByCode(upper) != null) {
+    return upper;
+  }
+  final normalized = stay22NormalizeCountryLabel(text);
+  if (normalized.isEmpty) return null;
+  for (final country in stay22AllKnownCountries()) {
+    if (stay22NormalizeCountryLabel(country.code) == normalized) {
+      return country.code.toUpperCase();
+    }
+    if (country.labels.allValuesNormalized().contains(normalized) ||
+        stay22NormalizeCountryLabel(country.labels.en) == normalized ||
+        stay22NormalizeCountryLabel(country.labels.nl) == normalized ||
+        stay22NormalizeCountryLabel(country.labels.fr) == normalized ||
+        stay22NormalizeCountryLabel(country.labels.es) == normalized) {
+      return country.code.toUpperCase();
+    }
+  }
+  if (normalized == 'uk' ||
+      normalized == 'great britain' ||
+      normalized == 'britain') {
+    return 'GB';
+  }
+  return null;
+}
+
+Set<String> stay22CountryFilterValues(String countryCode) {
+  final iso = stay22ResolveIsoCountryCode(countryCode) ?? countryCode.trim();
+  if (iso.isEmpty) return const <String>{};
+  final values = <String>{iso.toLowerCase()};
+  final country = stay22EuropeanCountryByCode(iso);
+  if (country != null) {
+    values.addAll(country.labels.allValuesNormalized());
+    values.add(stay22NormalizeCountryLabel(country.labels.en));
+  }
+  values.addAll(hotelGeoCountryMatchValues(iso));
+  return values;
+}
+
+bool stay22StayMatchesCountry({
+  required String stayCountry,
+  required String selectedCountryCode,
+}) {
+  if (selectedCountryCode.trim().isEmpty ||
+      selectedCountryCode.trim().toLowerCase() == 'all') {
+    return true;
+  }
+  final selectedIso =
+      stay22ResolveIsoCountryCode(selectedCountryCode) ??
+      selectedCountryCode.trim().toUpperCase();
+  final stayIso = stay22ResolveIsoCountryCode(stayCountry);
+  if (stayIso != null && stayIso == selectedIso) return true;
+  final matchValues = stay22CountryFilterValues(selectedIso);
+  return matchValues.contains(stay22NormalizeCountryLabel(stayCountry));
+}
+
 /// Country picker options: priority markets first, then the rest of Europe,
 /// sorted locally, without duplicate ISO codes.
 List<HotelGeoOption> stay22CountryPickerOptions(String languageCode) {

@@ -53,4 +53,53 @@ void main() {
       expect(stay22EnglishCountryName('BE'), 'Belgium');
     },
   );
+
+  test('structured ISO identity uses taxonomy without a second country table', () {
+    final spain = stay22CountryIdentityFor(countryCode: 'ES', languageCode: 'nl');
+    expect(spain?.isoCode, 'ES');
+    expect(spain?.englishName, 'Spain');
+    expect(spain?.localizedLabel, 'Spanje');
+    expect(spain?.hasSeededTaxonomy, isTrue);
+
+    final portugal = stay22CountryIdentityFor(
+      countryCode: 'PT',
+      languageCode: 'nl',
+    );
+    expect(portugal?.isoCode, 'PT');
+    expect(portugal?.englishName, 'Portugal');
+    expect(portugal?.hasSeededTaxonomy, isFalse);
+  });
+
+  test('localized names resolve to ISO and never slice two letters', () {
+    expect(stay22ResolveIsoCountryCode('Denmark'), 'DK');
+    expect(stay22ResolveIsoCountryCode('Denemarken'), 'DK');
+    expect(stay22ResolveIsoCountryCode('Spain'), 'ES');
+    expect(stay22ResolveIsoCountryCode('Spanje'), 'ES');
+    expect(stay22ResolveIsoCountryCode('Germany'), 'DE');
+    expect(stay22ResolveIsoCountryCode('Duitsland'), 'DE');
+    expect(stay22ResolveIsoCountryCode('Netherlands'), 'NL');
+    expect(stay22ResolveIsoCountryCode('Nederland'), 'NL');
+    expect(stay22ResolveIsoCountryCode('Verenigd Koninkrijk'), 'GB');
+    expect(stay22ResolveIsoCountryCode('Portugal'), 'PT');
+    expect(stay22ResolveIsoCountryCode('SP'), isNull);
+    expect(stay22ResolveIsoCountryCode('PO'), isNull);
+    expect(stay22ResolveIsoCountryCode('NE'), isNull);
+  });
+
+  test('featured cards stay visible for ISO country codes', () {
+    for (final iso in <String>['ES', 'DE', 'NL', 'GB', 'PT', 'DK']) {
+      expect(
+        stay22StayMatchesCountry(stayCountry: iso, selectedCountryCode: iso),
+        isTrue,
+      );
+    }
+    expect(
+      stay22StayMatchesCountry(stayCountry: 'Spain', selectedCountryCode: 'ES'),
+      isTrue,
+    );
+    expect(
+      stay22StayMatchesCountry(stayCountry: 'SP', selectedCountryCode: 'ES'),
+      isFalse,
+    );
+  });
 }

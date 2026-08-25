@@ -342,6 +342,15 @@ String stay22LiveSearchSubtitle(String languageCode) {
 }
 
 String stay22FeaturedCountLabel(int count, String languageCode) {
+  if (count >= 20) {
+    return _label(
+      languageCode,
+      nl: 'Tot 20 uitgelichte verblijven',
+      en: 'Up to 20 featured stays',
+      fr: 'Jusqu’à 20 hébergements en vedette',
+      es: 'Hasta 20 alojamientos destacados',
+    );
+  }
   return _label(
     languageCode,
     nl: '$count uitgelichte verblijven',
@@ -352,6 +361,15 @@ String stay22FeaturedCountLabel(int count, String languageCode) {
 }
 
 String stay22FeaturedFilterLabel(int count, String languageCode) {
+  if (count >= 20) {
+    return _label(
+      languageCode,
+      nl: 'Tot 20 uitgelichte verblijven in deze selectie',
+      en: 'Up to 20 featured stays in this selection',
+      fr: 'Jusqu’à 20 hébergements en vedette dans cette sélection',
+      es: 'Hasta 20 alojamientos destacados en esta selección',
+    );
+  }
   return _label(
     languageCode,
     nl: '$count uitgelichte verblijven in deze selectie',
@@ -368,6 +386,56 @@ String stay22FeaturedExplanation(String languageCode) {
     en: 'These cards are featured inspiration. Live prices and availability open with Stay22 partners.',
     fr: 'Ces fiches sont une inspiration mise en avant. Les prix et disponibilités en direct s’ouvrent chez les partenaires Stay22.',
     es: 'Estas fichas son inspiración destacada. Los precios y la disponibilidad en vivo se abren con socios Stay22.',
+  );
+}
+
+String stay22EmptyFeaturedTitle(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Geen uitgelichte inspiratie voor deze selectie',
+    en: 'No featured inspiration for this selection',
+    fr: 'Aucune inspiration mise en avant pour cette sélection',
+    es: 'No hay inspiración destacada para esta selección',
+  );
+}
+
+String stay22EmptyFeaturedBody(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Er is geen uitgelichte Fluxidi-inspiratie voor deze keuze. Live verblijven zoeken kan nog via de Stay22-knop hierboven.',
+    en: 'No featured Fluxidi inspiration is available for this selection. You can still search live stays with the Stay22 button above.',
+    fr: 'Aucune inspiration Fluxidi n’est disponible pour cette sélection. Vous pouvez encore rechercher des hébergements en direct avec le bouton Stay22 ci-dessus.',
+    es: 'No hay inspiración destacada de Fluxidi para esta selección. Aún puedes buscar alojamientos en vivo con el botón Stay22 de arriba.',
+  );
+}
+
+String stay22CityRegionGuidance(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Vul een stad of regio in, bijvoorbeeld Lissabon.',
+    en: 'Enter a city or region, for example Lisbon.',
+    fr: 'Saisissez une ville ou une région, par exemple Lisbonne.',
+    es: 'Introduce una ciudad o región, por ejemplo Lisboa.',
+  );
+}
+
+String stay22UnseededGeoControlHint(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Geen vaste steden- of regio lijst. Gebruik het veld stad of regio.',
+    en: 'No fixed city or region list. Use the city or region field.',
+    fr: 'Pas de liste fixe de villes ou régions. Utilisez le champ ville ou région.',
+    es: 'No hay una lista fija de ciudades o regiones. Usa el campo de ciudad o región.',
+  );
+}
+
+String stay22BroadInspirationLabel(String languageCode) {
+  return _label(
+    languageCode,
+    nl: 'Brede uitgelichte inspiratie voor dit land. Dit is geen volledige inventaris.',
+    en: 'Broad featured inspiration for this country. This is not complete inventory.',
+    fr: 'Inspiration mise en avant à l’échelle du pays. Ce n’est pas un inventaire complet.',
+    es: 'Inspiración destacada amplia para este país. No es un inventario completo.',
   );
 }
 

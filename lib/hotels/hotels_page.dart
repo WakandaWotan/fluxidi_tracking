@@ -20,6 +20,7 @@ import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
 import '../nearby_partners_page.dart';
+import 'google_places_refresh.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
@@ -54,6 +55,9 @@ class HotelsPage extends StatefulWidget {
     this.ratehawkPrebookClient,
     this.initialRatehawkCriteria,
     this.externalUrlLauncher,
+    this.hotelDataSource,
+    this.ratehawkSearchSubmitEnabled,
+    this.initialCountryCode,
     super.key,
   });
 
@@ -74,12 +78,15 @@ class HotelsPage extends StatefulWidget {
   final RatehawkPrebookClient? ratehawkPrebookClient;
   final RatehawkSearchCriteria? initialRatehawkCriteria;
   final HotelsExternalUrlLauncher? externalUrlLauncher;
+  final HotelDataSource? hotelDataSource;
+  final bool? ratehawkSearchSubmitEnabled;
+  final String? initialCountryCode;
 
   @override
-  State<HotelsPage> createState() => _HotelsPageState();
+  State<HotelsPage> createState() => HotelsPageState();
 }
 
-class _HotelsPageState extends State<HotelsPage> {
+class HotelsPageState extends State<HotelsPage> {
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -110,7 +117,8 @@ class _HotelsPageState extends State<HotelsPage> {
   String _selectedType = _allKey;
   bool _showSavedOnly = false;
   Timer? _googlePlacesRefreshDebounce;
-  bool _googlePlacesFetchInFlight = false;
+  final GooglePlacesRefreshGate _googlePlacesGate = GooglePlacesRefreshGate();
+  String _lastDestinationForPlaces = '';
   late final RatehawkSearchController _ratehawkSearch;
   bool _stay22LaunchInFlight = false;
 
@@ -139,6 +147,12 @@ class _HotelsPageState extends State<HotelsPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
+    final initialCountry = (widget.initialCountryCode ?? '')
+        .trim()
+        .toUpperCase();
+    if (initialCountry.isNotEmpty && initialCountry != _allKey) {
+      _selectedCountryCode = initialCountry;
+    }
     _allStays = List<HotelStay>.from(widget.stays ?? const <HotelStay>[]);
     _searchController.addListener(_onSearchChanged);
     _ratehawkSearch = RatehawkSearchController(
@@ -148,6 +162,7 @@ class _HotelsPageState extends State<HotelsPage> {
     if (widget.initialRatehawkCriteria != null) {
       _ratehawkSearch.setCriteria(widget.initialRatehawkCriteria!);
     }
+    _lastDestinationForPlaces = _ratehawkSearch.criteria.destination.trim();
     _ratehawkSearch.addListener(_onRatehawkSearchChanged);
     _syncRatehawkDestinationHint(notify: false);
     _loadSavedStayIds();
@@ -156,9 +171,30 @@ class _HotelsPageState extends State<HotelsPage> {
     }
   }
 
+  bool get _ratehawkSearchSubmitEnabled =>
+      widget.ratehawkSearchSubmitEnabled ?? kRatehawkSearchSubmitEnabled;
+
+  HotelDataSource get _hotelDataSource =>
+      widget.hotelDataSource ?? _remoteHotelDataSource;
+
+  Stay22CountryIdentity? get _selectedCountryIdentity {
+    if (_selectedCountryCode == _allKey) return null;
+    return stay22CountryIdentityFor(
+      countryCode: _selectedCountryCode,
+      languageCode: _languageCode,
+    );
+  }
+
+  bool get _selectedCountryHasSeededTaxonomy =>
+      _selectedCountryIdentity?.hasSeededTaxonomy == true;
+
   void _onRatehawkSearchChanged() {
     if (!mounted) return;
     setState(() {});
+    final destination = _ratehawkSearch.criteria.destination.trim();
+    if (destination == _lastDestinationForPlaces) return;
+    _lastDestinationForPlaces = destination;
+    _scheduleGooglePlacesRefresh();
   }
 
   void _syncRatehawkDestinationHint({bool notify = true}) {
@@ -190,10 +226,11 @@ class _HotelsPageState extends State<HotelsPage> {
   // Google Places: official place discovery via worker — not booking inventory.
   HotelStayQuery _buildGooglePlacesQuery() {
     final searchText = _searchController.text.trim();
+    final destination = _ratehawkSearch.criteria.destination.trim();
     String? city;
-    String? country;
     String? region;
-    if (_selectedSettlementKey != _allKey) {
+    if (_selectedCountryHasSeededTaxonomy &&
+        _selectedSettlementKey != _allKey) {
       for (final option in _settlementOptions) {
         if (option.value == _selectedSettlementKey) {
           city = option.label.trim();
@@ -201,7 +238,7 @@ class _HotelsPageState extends State<HotelsPage> {
         }
       }
     }
-    if (_selectedRegionKey != _allKey) {
+    if (_selectedCountryHasSeededTaxonomy && _selectedRegionKey != _allKey) {
       for (final option in _regionOptions) {
         if (option.value == _selectedRegionKey) {
           region = option.label.trim();
@@ -209,42 +246,40 @@ class _HotelsPageState extends State<HotelsPage> {
         }
       }
     }
-    if (_selectedCountryCode != _allKey) {
-      for (final option in _countryOptions) {
-        if (option.value == _selectedCountryCode) {
-          country = option.label.trim();
-          break;
-        }
-      }
-    }
+    final identity = _selectedCountryIdentity;
     return HotelStayQuery(
       source: 'google-places',
       city: city,
-      country: (country == null || country.isEmpty) ? 'Belgium' : country,
+      country: identity?.englishName ?? 'Belgium',
+      countryCode: identity?.isoCode ?? 'BE',
+      destination: destination.isEmpty ? null : destination,
       region: region,
       searchText: searchText.isEmpty ? null : searchText,
     );
   }
 
   Future<void> _fetchGooglePlacesStays() async {
-    if (widget.stays != null || _googlePlacesFetchInFlight) return;
-    _googlePlacesFetchInFlight = true;
+    if (widget.stays != null) return;
+    final query = _buildGooglePlacesQuery();
+    final key = googlePlacesQueryKey(query);
+    if (!_googlePlacesGate.shouldStart(key)) return;
+    final generation = _googlePlacesGate.start(key);
     try {
-      final stays = await _remoteHotelDataSource.fetchStays(
-        query: _buildGooglePlacesQuery(),
-      );
+      final stays = await _hotelDataSource.fetchStays(query: query);
       if (!mounted) return;
+      if (!_googlePlacesGate.shouldApply(generation)) return;
       setState(() => _allStays = stays);
+      _googlePlacesGate.complete(generation: generation, key: key);
     } catch (_) {
       if (!mounted) return;
-    } finally {
-      _googlePlacesFetchInFlight = false;
+      _googlePlacesGate.fail(generation);
     }
   }
 
   void _scheduleGooglePlacesRefresh() {
     if (widget.stays != null) return;
     _googlePlacesRefreshDebounce?.cancel();
+    _googlePlacesGate.invalidate();
     _googlePlacesRefreshDebounce = Timer(const Duration(milliseconds: 500), () {
       unawaited(_fetchGooglePlacesStays());
     });
@@ -318,9 +353,7 @@ class _HotelsPageState extends State<HotelsPage> {
     final query = _searchController.text.trim().toLowerCase();
     final countryMatchValues = _selectedCountryCode == _allKey
         ? const <String>{}
-        : normalizedDiscoveryTextSet(
-            hotelGeoCountryMatchValues(_selectedCountryCode),
-          );
+        : stay22CountryFilterValues(_selectedCountryCode);
     final regionMatchValues =
         (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey)
         ? const <String>{}
@@ -345,8 +378,9 @@ class _HotelsPageState extends State<HotelsPage> {
     return sourceStays
         .where((stay) {
           if (countryMatchValues.isNotEmpty &&
-              !countryMatchValues.contains(
-                normalizeDiscoveryText(stay.country),
+              !stay22StayMatchesCountry(
+                stayCountry: stay.country,
+                selectedCountryCode: _selectedCountryCode,
               )) {
             return false;
           }
@@ -593,15 +627,6 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _stay22AvailabilitySubtitle {
     return stay22LiveSearchSubtitle(_languageCode);
-  }
-
-  String get _bookingComPendingNotice {
-    return _t(
-      nl: 'Booking.com wordt geactiveerd zodra de partneraanvraag is goedgekeurd.',
-      en: 'Booking.com will activate once the partner application is approved.',
-      fr: 'Booking.com sera activé une fois la demande partenaire approuvée.',
-      es: 'Booking.com se activará cuando se apruebe la solicitud de socio.',
-    );
   }
 
   String get _discoveryRegionBadgeLabel {
@@ -906,6 +931,10 @@ class _HotelsPageState extends State<HotelsPage> {
       if (option.value == value) return option.label.trim();
     }
     return '';
+  }
+
+  String _stayLocationLabel(HotelStay stay) {
+    return hotelStayLocationLabel(stay, _languageCode);
   }
 
   String _stay22SelectedCountryAddressName() {
@@ -1494,10 +1523,8 @@ class _HotelsPageState extends State<HotelsPage> {
         .where(_isApprovedCustomerFacingStay)
         .toList(growable: false);
     final hasTrustedNativeStays = approvedRealStays.isNotEmpty;
-    final showingDiscoveryRegions = !hasTrustedNativeStays && !_showSavedOnly;
-    final baseCards = _showSavedOnly
-        ? approvedRealStays
-        : (hasTrustedNativeStays ? approvedRealStays : _discoveryRegionStays);
+    const showingDiscoveryRegions = false;
+    final baseCards = approvedRealStays;
     final displayCards = _showSavedOnly
         ? baseCards
         : mergeRatehawkHotelStays(
@@ -1524,6 +1551,10 @@ class _HotelsPageState extends State<HotelsPage> {
                     controller: _ratehawkSearch,
                     languageCode: _languageCode,
                     palette: _themePalette,
+                    showSubmitButton: _ratehawkSearchSubmitEnabled,
+                    destinationGuidance: _selectedCountryHasSeededTaxonomy
+                        ? null
+                        : stay22CityRegionGuidance(_languageCode),
                   ),
                   const SizedBox(height: 8),
                   _buildLiveAccommodationsPanel(),
@@ -1676,6 +1707,19 @@ class _HotelsPageState extends State<HotelsPage> {
     return _allCitiesLabel;
   }
 
+  @visibleForTesting
+  void selectCountryForTest(String countryCode) {
+    setState(() {
+      _selectedCountryCode = countryCode.trim().isEmpty
+          ? _allKey
+          : countryCode.trim().toUpperCase();
+      _selectedRegionKey = _allKey;
+      _selectedSettlementKey = _allKey;
+    });
+    _syncRatehawkDestinationHint();
+    _scheduleGooglePlacesRefresh();
+  }
+
   Future<void> _openCountryPicker() async {
     final options = <HotelGeoOption>[
       HotelGeoOption(value: _allKey, label: _allCountriesLabel),
@@ -1697,7 +1741,10 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Future<void> _openRegionPicker() async {
-    if (_selectedCountryCode == _allKey) return;
+    if (_selectedCountryCode == _allKey || !_selectedCountryHasSeededTaxonomy) {
+      return;
+    }
+    if (_regionOptions.isEmpty) return;
     final options = <HotelGeoOption>[
       HotelGeoOption(value: _allKey, label: _allRegionsLabel),
       ..._regionOptions,
@@ -1717,8 +1764,12 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   Future<void> _openSettlementPicker() async {
-    if (_selectedCountryCode == _allKey || _selectedRegionKey == _allKey)
+    if (_selectedCountryCode == _allKey ||
+        _selectedRegionKey == _allKey ||
+        !_selectedCountryHasSeededTaxonomy) {
       return;
+    }
+    if (_settlementOptions.isEmpty) return;
     final options = <HotelGeoOption>[
       HotelGeoOption(value: _allKey, label: _allCitiesLabel),
       ..._settlementOptions,
@@ -1885,52 +1936,70 @@ class _HotelsPageState extends State<HotelsPage> {
                     await _openCountryPicker();
                   },
                 ),
-                ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
-                  leading: Icon(
-                    Icons.map_outlined,
-                    color: _gold.withOpacity(0.95),
+                if (_selectedCountryHasSeededTaxonomy) ...[
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                    leading: Icon(
+                      Icons.map_outlined,
+                      color: _gold.withOpacity(0.95),
+                    ),
+                    title: Text(
+                      _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
+                      style: TextStyle(color: _textPrimary),
+                    ),
+                    subtitle: Text(
+                      _selectedRegionLabel,
+                      style: TextStyle(color: _softText.withOpacity(0.9)),
+                    ),
+                    onTap: _selectedCountryCode == _allKey
+                        ? null
+                        : () async {
+                            Navigator.of(sheetContext).pop();
+                            await _openRegionPicker();
+                          },
                   ),
-                  title: Text(
-                    _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
-                    style: TextStyle(color: _textPrimary),
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                    leading: Icon(
+                      Icons.location_city_rounded,
+                      color: _gold.withOpacity(0.95),
+                    ),
+                    title: Text(
+                      _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
+                      style: TextStyle(color: _textPrimary),
+                    ),
+                    subtitle: Text(
+                      _selectedCityLabel,
+                      style: TextStyle(color: _softText.withOpacity(0.9)),
+                    ),
+                    onTap:
+                        (_selectedCountryCode == _allKey ||
+                            _selectedRegionKey == _allKey)
+                        ? null
+                        : () async {
+                            Navigator.of(sheetContext).pop();
+                            await _openSettlementPicker();
+                          },
                   ),
-                  subtitle: Text(
-                    _selectedRegionLabel,
-                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                ] else if (_selectedCountryCode != _allKey) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(2, 4, 2, 8),
+                    child: Semantics(
+                      label: stay22UnseededGeoControlHint(_languageCode),
+                      child: Text(
+                        stay22UnseededGeoControlHint(_languageCode),
+                        style: TextStyle(
+                          color: _softText.withOpacity(0.92),
+                          fontSize: 12.2,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
                   ),
-                  onTap: _selectedCountryCode == _allKey
-                      ? null
-                      : () async {
-                          Navigator.of(sheetContext).pop();
-                          await _openRegionPicker();
-                        },
-                ),
-                ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
-                  leading: Icon(
-                    Icons.location_city_rounded,
-                    color: _gold.withOpacity(0.95),
-                  ),
-                  title: Text(
-                    _t(nl: 'Stad', en: 'City', fr: 'Ville', es: 'Ciudad'),
-                    style: TextStyle(color: _textPrimary),
-                  ),
-                  subtitle: Text(
-                    _selectedCityLabel,
-                    style: TextStyle(color: _softText.withOpacity(0.9)),
-                  ),
-                  onTap:
-                      (_selectedCountryCode == _allKey ||
-                          _selectedRegionKey == _allKey)
-                      ? null
-                      : () async {
-                          Navigator.of(sheetContext).pop();
-                          await _openSettlementPicker();
-                        },
-                ),
+                ],
                 ListTile(
                   dense: true,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 2),
@@ -2099,7 +2168,9 @@ class _HotelsPageState extends State<HotelsPage> {
   Widget _buildCompactFilterChips() {
     final hasCountrySelection = _selectedCountryCode != _allKey;
     final hasRegionSelection =
-        hasCountrySelection && _selectedRegionKey != _allKey;
+        hasCountrySelection &&
+        _selectedCountryHasSeededTaxonomy &&
+        _selectedRegionKey != _allKey;
     return LayoutBuilder(
       builder: (context, constraints) {
         final landChip = _buildFilterChip(
@@ -2115,7 +2186,9 @@ class _HotelsPageState extends State<HotelsPage> {
         final regionChip = _buildFilterChip(
           label: _t(nl: 'Regio', en: 'Region', fr: 'Région', es: 'Región'),
           value: _selectedRegionLabel,
-          onTap: hasCountrySelection ? _openRegionPicker : null,
+          onTap: hasCountrySelection && _selectedCountryHasSeededTaxonomy
+              ? _openRegionPicker
+              : null,
         );
         final typeChip = _buildFilterChip(
           label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
@@ -2123,6 +2196,34 @@ class _HotelsPageState extends State<HotelsPage> {
           onTap: _openTypePicker,
           emphasize: _selectedType != _allKey,
         );
+
+        if (!_selectedCountryHasSeededTaxonomy && hasCountrySelection) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: landChip),
+                  const SizedBox(width: 6),
+                  Expanded(child: typeChip),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Semantics(
+                label: stay22UnseededGeoControlHint(_languageCode),
+                child: Text(
+                  stay22UnseededGeoControlHint(_languageCode),
+                  style: TextStyle(
+                    color: _softText.withOpacity(0.92),
+                    fontSize: 11.1,
+                    fontWeight: FontWeight.w600,
+                    height: 1.28,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
 
         if (constraints.maxWidth < 700) {
           return Column(
@@ -2168,46 +2269,52 @@ class _HotelsPageState extends State<HotelsPage> {
     bool emphasize = false,
   }) {
     final enabled = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        decoration: BoxDecoration(
-          color: emphasize ? _gold : _panelBlack,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: emphasize
-                ? _gold
-                : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: '$label: $value',
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+          decoration: BoxDecoration(
+            color: emphasize ? _gold : _panelBlack,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: emphasize
+                  ? _gold
+                  : _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+            ),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.max,
-          children: [
-            Expanded(
-              child: Text(
-                '$label: $value',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: emphasize
-                      ? _actionOnGold
-                      : (enabled ? _textPrimary : _softText.withOpacity(0.8)),
-                  fontWeight: FontWeight.w700,
-                  fontSize: 11.4,
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            children: [
+              Expanded(
+                child: Text(
+                  '$label: $value',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: emphasize
+                        ? _actionOnGold
+                        : (enabled ? _textPrimary : _softText.withOpacity(0.8)),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11.4,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 4),
-            Icon(
-              Icons.expand_more_rounded,
-              size: 14,
-              color: emphasize
-                  ? _actionOnGold
-                  : (enabled ? _gold : _softText.withOpacity(0.8)),
-            ),
-          ],
+              const SizedBox(width: 4),
+              Icon(
+                Icons.expand_more_rounded,
+                size: 14,
+                color: emphasize
+                    ? _actionOnGold
+                    : (enabled ? _gold : _softText.withOpacity(0.8)),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2479,6 +2586,22 @@ class _HotelsPageState extends State<HotelsPage> {
               height: 1.28,
             ),
           ),
+          if (_selectedCountryCode != _allKey &&
+              _selectedRegionKey == _allKey &&
+              _selectedSettlementKey == _allKey &&
+              _ratehawkSearch.criteria.destination.trim().isEmpty &&
+              _searchController.text.trim().isEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              stay22BroadInspirationLabel(_languageCode),
+              style: TextStyle(
+                color: _softText.withOpacity(0.9),
+                fontSize: 11.1,
+                fontWeight: FontWeight.w600,
+                height: 1.28,
+              ),
+            ),
+          ],
         ],
       ],
     );
@@ -2829,95 +2952,24 @@ class _HotelsPageState extends State<HotelsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.travel_explore_rounded,
-                color: _gold.withOpacity(0.95),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _safeDiscoveryCopy,
-                  style: TextStyle(
-                    color: _textPrimary.withOpacity(0.96),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _onPlanTaxiToSearchQueryTap,
-              style: FilledButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: _actionOnGold,
-                minimumSize: const Size.fromHeight(42),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: const Icon(Icons.local_taxi_rounded, size: 18),
-              label: Text(
-                _planTaxiToStayLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
+          Text(
+            stay22EmptyFeaturedTitle(_languageCode),
+            style: TextStyle(
+              color: _textPrimary.withOpacity(0.96),
+              fontSize: 13.4,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: Semantics(
-              button: true,
-              enabled: _canLaunchGeneralStay22Search,
-              label: stay22ExternalActionSemantics(_languageCode),
-              child: OutlinedButton.icon(
-                onPressed: _canLaunchGeneralStay22Search
-                    ? () => _openExternalHotelSearch()
-                    : null,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _textPrimary,
-                  disabledForegroundColor: _textPrimary.withOpacity(0.45),
-                  side: BorderSide(color: _gold.withOpacity(0.42)),
-                  minimumSize: const Size.fromHeight(42),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                icon: Icon(Icons.open_in_new_rounded, size: 16, color: _gold),
-                label: Text(
-                  stay22LiveSearchCta(_languageCode),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
           Text(
-            stay22LiveSearchSubtitle(_languageCode),
+            stay22EmptyFeaturedBody(_languageCode),
             style: TextStyle(
-              color: _softText.withOpacity(0.92),
-              fontSize: 11.2,
+              color: _softText.withOpacity(0.94),
+              fontSize: 12.2,
               fontWeight: FontWeight.w600,
-              height: 1.25,
+              height: 1.3,
             ),
           ),
-          if (!kBookingComCjConfigured) ...[
-            const SizedBox(height: 4),
-            Text(
-              _bookingComPendingNotice,
-              style: TextStyle(
-                color: _softText.withOpacity(0.82),
-                fontSize: 11.1,
-                fontWeight: FontWeight.w600,
-                height: 1.25,
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -3223,7 +3275,7 @@ class _HotelsPageState extends State<HotelsPage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${stay.city}, ${stay.region}, ${stay.country}',
+                        _stayLocationLabel(stay),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -3576,15 +3628,6 @@ class HotelStayDetailPage extends StatelessWidget {
 
   String get _stay22AvailabilitySubtitle {
     return stay22FeaturedExplanation(_languageCode);
-  }
-
-  String get _bookingComPendingNotice {
-    return _t(
-      nl: 'Booking.com wordt geactiveerd zodra de partneraanvraag is goedgekeurd.',
-      en: 'Booking.com will activate once the partner application is approved.',
-      fr: 'Booking.com sera activé une fois la demande partenaire approuvée.',
-      es: 'Booking.com se activará cuando se apruebe la solicitud de socio.',
-    );
   }
 
   String get _taxiLabel {
@@ -4221,7 +4264,7 @@ class HotelStayDetailPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '${stay.city}, ${stay.region}, ${stay.country}',
+                            hotelStayLocationLabel(stay, _languageCode),
                             style: TextStyle(
                               color: _gold.withOpacity(0.92),
                               fontSize: 13.2,
@@ -4448,18 +4491,6 @@ class HotelStayDetailPage extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (isDiscoveryCard && !kBookingComCjConfigured) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        _bookingComPendingNotice,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: _softText.withOpacity(0.82),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
                     if (canShowAirportTransferCta) ...[
                       const SizedBox(height: 8),
                       SizedBox(

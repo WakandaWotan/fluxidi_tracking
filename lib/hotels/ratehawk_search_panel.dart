@@ -8,12 +8,16 @@ class RatehawkSearchStrip extends StatelessWidget {
     required this.controller,
     required this.languageCode,
     required this.palette,
+    this.showSubmitButton = true,
+    this.destinationGuidance,
     super.key,
   });
 
   final RatehawkSearchController controller;
   final String languageCode;
   final CustomerThemePalette palette;
+  final bool showSubmitButton;
+  final String? destinationGuidance;
 
   @override
   Widget build(BuildContext context) {
@@ -49,21 +53,44 @@ class RatehawkSearchStrip extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          _field(
-            value: controller.criteria.destination,
-            hint: ratehawkSearchLabel(
-              languageCode,
-              nl: 'Stad of regio',
-              en: 'City or region',
-              fr: 'Ville ou région',
-              es: 'Ciudad o región',
+          Semantics(
+            textField: true,
+            label: destinationGuidance ??
+                ratehawkSearchLabel(
+                  languageCode,
+                  nl: 'Stad of regio',
+                  en: 'City or region',
+                  fr: 'Ville ou région',
+                  es: 'Ciudad o región',
+                ),
+            child: _field(
+              value: controller.criteria.destination,
+              hint: ratehawkSearchLabel(
+                languageCode,
+                nl: 'Stad of regio',
+                en: 'City or region',
+                fr: 'Ville ou région',
+                es: 'Ciudad o región',
+              ),
+              onChanged: (value) {
+                controller.setCriteria(
+                  controller.criteria.copyWith(destination: value),
+                );
+              },
             ),
-            onChanged: (value) {
-              controller.setCriteria(
-                controller.criteria.copyWith(destination: value),
-              );
-            },
           ),
+          if ((destinationGuidance ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              destinationGuidance!.trim(),
+              style: TextStyle(
+                color: muted,
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+                height: 1.28,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
@@ -205,28 +232,30 @@ class RatehawkSearchStrip extends StatelessWidget {
               ],
             ),
           ],
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: complete ? () => controller.submit() : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: gold,
-                foregroundColor: palette.isDark
-                    ? Colors.black
-                    : const Color(0xFF1F1706),
-                disabledBackgroundColor: gold.withOpacity(0.28),
-                minimumSize: const Size.fromHeight(40),
-              ),
-              child: Text(
-                ratehawkStateLabel(
-                  RatehawkSearchLifecycleState.idle,
-                  languageCode,
+          if (showSubmitButton) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: complete ? () => controller.submit() : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: gold,
+                  foregroundColor: palette.isDark
+                      ? Colors.black
+                      : const Color(0xFF1F1706),
+                  disabledBackgroundColor: gold.withOpacity(0.28),
+                  minimumSize: const Size.fromHeight(40),
                 ),
-                style: const TextStyle(fontWeight: FontWeight.w800),
+                child: Text(
+                  ratehawkStateLabel(
+                    RatehawkSearchLifecycleState.idle,
+                    languageCode,
+                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
