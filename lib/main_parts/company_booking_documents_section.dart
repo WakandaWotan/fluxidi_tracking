@@ -2298,13 +2298,14 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     );
   }
 
-  /// B11-O: compact, read-only "not linked to Billit yet" line for an issued
-  /// invoice whose Document Core record has no Billit export / no Billit order
-  /// id yet. Pure display: no onTap, no button, no network call, no confirmation
-  /// dialog. Never triggers a Billit create / link / send / reconcile and never
-  /// tells the user anything is wrong — it just makes an otherwise blank card
-  /// area explicit and consistent with older invoices that DO show a Billit
-  /// block. Existing linked-Billit rows never render this and are unaffected.
+  /// B11-O: compact "not linked to Billit yet" line for an issued invoice whose
+  /// Document Core record has no Billit export / no Billit order id yet. The
+  /// status text itself is pure display and never tells the user anything is
+  /// wrong — it just makes an otherwise blank card area explicit and consistent
+  /// with older invoices that DO show a Billit block. Existing linked-Billit
+  /// rows never render this and are unaffected. The one action here is the
+  /// explicit manual "Registreren in Billit" recovery button; it never sends
+  /// Peppol and never reconciles on its own.
   Widget _buildBillitNotLinkedYetBlock(
     _CompanyBookingsThemeTokens tokens, {
     _BookingDocumentMetadata? doc,
@@ -2336,12 +2337,15 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             fr: 'Peppol sera disponible dès que cette facture sera prête dans Billit.',
             es: 'Peppol estará disponible cuando esta factura esté lista en Billit.',
           );
-    // Business invoices only: manual "Registreren in Billit" recovery. A local
-    // non-null binding lets Dart promote it inside the conditional children.
+    // Manual "Registreren in Billit" recovery for any issued, still-unlinked
+    // invoice. BILLIT-CONSUMER-PROD-CREATE-1: consumer sales are no longer
+    // excluded — they reach Billit through the same canonical create engine as
+    // business invoices, so hiding the action here only stranded them. The
+    // backend /billit/register route enforces scope, environment and Billit
+    // connectivity; a disconnected Billit surfaces the reconnect message.
+    // A local non-null binding lets Dart promote it inside the children below.
     final _BookingDocumentMetadata? registerDoc =
-        (!isConsumer && doc != null && doc.documentId.trim().isNotEmpty)
-        ? doc
-        : null;
+        (doc != null && doc.documentId.trim().isNotEmpty) ? doc : null;
     final registering = registerDoc != null &&
         _registeringBillitDocIds.contains(registerDoc.documentId.trim());
     return Padding(

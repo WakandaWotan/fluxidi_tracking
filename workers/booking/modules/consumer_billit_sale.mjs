@@ -395,13 +395,20 @@ export function buildConsumerBillitSaleIntentKey({
  * MUST derive from the canonical sale identity — never from a freshly minted
  * document UUID. Two independently allocated docs would otherwise produce two
  * independent Billit creates (`fluxidi-billit-order-create:{documentId}:…`).
+ *
+ * BILLIT-CONSUMER-PROD-CREATE-1: the suffix carries the ACTIVE Billit
+ * environment so a sandbox replay and a production create for the same
+ * canonical sale can never collide on one ambiguous key. `environment` defaults
+ * to "sandbox", which keeps every pre-existing sandbox key byte-identical.
  */
 export function buildBillitConsumerSaleOrderCreateIdempotencyKey(
   saleIdempotencyKey,
+  environment = "sandbox",
 ) {
   const key = _str(saleIdempotencyKey, 200);
   if (!key) return null;
-  return `fluxidi-billit-consumer-order:${key}:sandbox:v1`;
+  const env = _lower(environment, 24) || "sandbox";
+  return `fluxidi-billit-consumer-order:${key}:${env}:v1`;
 }
 
 export function normalizeConsumerBillitSaleIntent(raw = null) {

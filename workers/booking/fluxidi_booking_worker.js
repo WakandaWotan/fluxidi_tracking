@@ -6601,8 +6601,31 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
   // allocate a second consumer invoice for this canonical sale.
   billitOrderId =
     billitOrderId || existing?.billit_order_id || intent?.billit_order_id || null;
-  const config = resolveBillitOAuthConfig(env);
-  if (config.environment === "sandbox" && documentId && !billitOrderId) {
+  // Optional config override is for hermetic regression tests only — same
+  // convention as issueInvoiceImpl / ensureBillitOrderImpl above. Production
+  // callers never pass it, so the active OAuth config stays authoritative.
+  const config =
+    opts.configOverride && typeof opts.configOverride === "object"
+      ? opts.configOverride
+      : resolveBillitOAuthConfig(env);
+  // BILLIT-CONSUMER-PROD-CREATE-1: consumer-sale CREATE now follows the same
+  // managed-environment rule as business create/register (sandbox + production,
+  // always derived from the active OAuth connection, never user-selected). The
+  // previous literal `config.environment === "sandbox"` silently skipped the
+  // whole create block in production, leaving the sale at document_issued with
+  // no error and no outbox retry. Unknown environments stay fail-closed but are
+  // now recorded so the sale remains visibly retryable. Peppol/send is a
+  // separate pipeline and is intentionally NOT touched here.
+  const consumerCreateEnvironmentManaged = isBillitManagedEnvironment(
+    config.environment,
+  );
+  if (!consumerCreateEnvironmentManaged && documentId && !billitOrderId) {
+    billitLastError = "billit_environment_unsupported";
+    console.log(
+      `[CONSUMER_BILLIT_SALE][BILLIT_SKIP] booking=${maskedBooking} reason=billit_environment_unsupported`,
+    );
+  }
+  if (consumerCreateEnvironmentManaged && documentId && !billitOrderId) {
     const lockHolder =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -8236,7 +8259,7 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   const saleKey = safeStr(saleIdempotencyKey, 200);
   const idempotencyKey =
     (saleKey
-      ? buildBillitConsumerSaleOrderCreateIdempotencyKey(saleKey)
+      ? buildBillitConsumerSaleOrderCreateIdempotencyKey(saleKey, activeEnvironment)
       : null) || buildBillitSandboxOrderCreateIdempotencyKey(docId);
   if (!idempotencyKey) {
     return { ok: false, status: 409, error: "billit_idempotency_key_unavailable" };
@@ -9667,8 +9690,9 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
  *     itself (only the inner wrappers may mutate the document registry).
  *   - NEVER logs raw PII (masked ids + reason codes + booleans + first-8
  *     document id + counts only).
- *   - NEVER creates a Billit production order (inner wrapper is sandbox +
- *     setting-gated).
+ *   - NEVER creates a Billit order outside the managed environments (sandbox +
+ *     production, always derived from the active OAuth connection) and never
+ *     outside the auto-create setting gate.
  *   - Idempotent replays are safe: deterministic keys inside both wrappers
  *     (`inv-auto:<t>:<c>:<b>:<leg>:v1` + `billit_export.order_id` duplicate
  *     guard) mean a Mollie webhook retry OR a later /pay/status poll OR a
@@ -10224,12 +10248,43 @@ async function handleBillitRegisterInvoice({ request, url, env, documentId }) {
     );
   }
 
+  // BILLIT-CONSUMER-PROD-CREATE-1: a consumer sale must present the SAME
+  // canonical sale-scoped Idempotent-Key whether Billit is reached through the
+  // paid lifecycle or through this manual recovery. Without it the manual path
+  // would fall back to the document-scoped business key, and an ambiguous
+  // remote timeout could leave two Billit orders for one canonical sale.
+  // Business invoices keep the legacy document-scoped key (null here).
+  const saleKind = safeStr(
+    record?.fluxidi_sale_kind ?? record?.fluxidiSaleKind,
+    40,
+  ).toLowerCase();
+  let saleIdempotencyKey = null;
+  if (saleKind === CONSUMER_SALE_KIND) {
+    const storedSaleKey = safeStr(
+      record?.idempotency_key ?? record?.idempotencyKey,
+      200,
+    );
+    saleIdempotencyKey = storedSaleKey.startsWith("inv-consumer:")
+      ? storedSaleKey
+      : buildConsumerSaleIdempotencyKey({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          bookingId: safeStr(
+            record?.source_booking_id ?? record?.sourceBookingId,
+            200,
+          ),
+          legId:
+            safeStr(record?.source_leg_id ?? record?.sourceLegId, 200) || null,
+        });
+  }
+
   // Delegate to the idempotent canonical create engine (reuse-or-create). It
   // reuses an existing billit_export.order_id for the active environment, keeps
   // the frozen amounts, and NEVER sends Peppol.
   const result = await ensureBillitSandboxOrderForIssuedInvoice(env, scope, config, record, {
     documentId: docId,
     documentNumber: recordDocNumber,
+    ...(saleIdempotencyKey ? { saleIdempotencyKey } : {}),
   });
   if (!result.ok) {
     const status = Number.isFinite(Number(result.status)) ? Number(result.status) : 502;
