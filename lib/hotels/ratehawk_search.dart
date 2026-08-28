@@ -6,6 +6,13 @@ import 'hotel_data_source.dart';
 import 'hotel_model.dart';
 import 'ratehawk_view_stay.dart';
 
+/// Customer RateHawk submit stays hidden unless this compile-time gate is on.
+/// Server-side RateHawk gates remain unchanged.
+const bool kRatehawkSearchSubmitEnabled = bool.fromEnvironment(
+  'RATEHAWK_SEARCH_ENABLED',
+  defaultValue: false,
+);
+
 const int kRatehawkInitialHotelLimit = 20;
 const int kRatehawkLoadMoreIncrement = 20;
 const int kRatehawkAbsoluteMaximum = 100;

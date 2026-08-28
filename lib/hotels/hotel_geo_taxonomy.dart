@@ -44,11 +44,23 @@ class HotelGeoSettlement {
     required this.key,
     required this.labels,
     required this.kind,
+    this.aliases = const <String>[],
+    this.queryName,
+    this.isCapital = false,
   });
 
   final String key;
   final HotelGeoLabel labels;
   final String kind;
+  final List<String> aliases;
+  final String? queryName;
+  final bool isCapital;
+
+  String get canonicalQueryName {
+    final explicit = (queryName ?? '').trim();
+    if (explicit.isNotEmpty) return explicit;
+    return labels.en.trim();
+  }
 }
 
 class HotelGeoRegion {
@@ -68,23 +80,61 @@ class HotelGeoCountry {
     required this.code,
     required this.labels,
     this.regions = const <HotelGeoRegion>[],
+    this.hideRegionSelector = false,
+    this.capitalKey,
   });
 
   final String code;
   final HotelGeoLabel labels;
   final List<HotelGeoRegion> regions;
+  final bool hideRegionSelector;
+  final String? capitalKey;
+
+  Iterable<HotelGeoSettlement> get allSettlements sync* {
+    for (final region in regions) {
+      yield* region.settlements;
+    }
+  }
+
+  HotelGeoSettlement? get capitalSettlement {
+    final wanted = (capitalKey ?? '').trim().toLowerCase();
+    for (final settlement in allSettlements) {
+      if (wanted.isNotEmpty &&
+          settlement.key.trim().toLowerCase() == wanted) {
+        return settlement;
+      }
+      if (settlement.isCapital) return settlement;
+    }
+    return null;
+  }
 }
 
 class HotelGeoOption {
-  const HotelGeoOption({required this.value, required this.label});
+  const HotelGeoOption({
+    required this.value,
+    required this.label,
+    this.groupLabel,
+    this.searchAliases = const <String>[],
+  });
 
   final String value;
   final String label;
+  final String? groupLabel;
+  final List<String> searchAliases;
+
+  Iterable<String> get searchValues sync* {
+    yield label;
+    if (groupLabel != null && groupLabel!.trim().isNotEmpty) {
+      yield groupLabel!;
+    }
+    yield* searchAliases;
+  }
 }
 
 const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   HotelGeoCountry(
     code: 'BE',
+    capitalKey: 'brussel',
     labels: HotelGeoLabel(
       nl: 'België',
       en: 'Belgium',
@@ -638,6 +688,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'brussel',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Brussel',
               en: 'Brussels',
@@ -682,6 +733,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'NL',
+    capitalKey: 'amsterdam',
     labels: HotelGeoLabel(
       nl: 'Nederland',
       en: 'Netherlands',
@@ -700,6 +752,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'amsterdam',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Amsterdam',
               en: 'Amsterdam',
@@ -929,6 +982,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'FR',
+    capitalKey: 'paris',
     labels: HotelGeoLabel(
       nl: 'Frankrijk',
       en: 'France',
@@ -998,6 +1052,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'paris',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Parijs',
               en: 'Paris',
@@ -1145,6 +1200,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'DE',
+    capitalKey: 'berlin-city',
     labels: HotelGeoLabel(
       nl: 'Duitsland',
       en: 'Germany',
@@ -1163,6 +1219,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'berlin-city',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Berlijn',
               en: 'Berlin',
@@ -1331,6 +1388,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'LU',
+    capitalKey: 'luxembourg-city',
     labels: HotelGeoLabel(
       nl: 'Luxemburg',
       en: 'Luxembourg',
@@ -1349,6 +1407,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'luxembourg-city',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Luxembourg City',
               en: 'Luxembourg City',
@@ -1393,6 +1452,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'GB',
+    capitalKey: 'london',
     labels: HotelGeoLabel(
       nl: 'Verenigd Koninkrijk',
       en: 'United Kingdom',
@@ -1411,6 +1471,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'london',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'London',
               en: 'London',
@@ -1580,6 +1641,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
   ),
   HotelGeoCountry(
     code: 'ES',
+    capitalKey: 'madrid',
     labels: HotelGeoLabel(
       nl: 'Spanje',
       en: 'Spain',
@@ -1741,6 +1803,7 @@ const List<HotelGeoCountry> kHotelGeoTaxonomy = <HotelGeoCountry>[
         settlements: <HotelGeoSettlement>[
           HotelGeoSettlement(
             key: 'madrid',
+            isCapital: true,
             labels: HotelGeoLabel(
               nl: 'Madrid',
               en: 'Madrid',
@@ -1931,5 +1994,10 @@ Set<String> hotelGeoSettlementMatchValues({
   return <String>{
     settlement.key.toLowerCase(),
     ...settlement.labels.allValuesNormalized(),
+    ...settlement.aliases
+        .map((alias) => alias.trim().toLowerCase())
+        .where((alias) => alias.isNotEmpty),
+    if (settlement.canonicalQueryName.trim().isNotEmpty)
+      settlement.canonicalQueryName.trim().toLowerCase(),
   };
 }

@@ -71,8 +71,7 @@ void main() {
     expect(find.text('Warwick Brussels'), findsWidgets);
     expect(client.calls, isEmpty);
     expect(hotelpage.calls, isEmpty);
-    expect(find.text('Bekijk beschikbaarheid'), findsWidgets);
-    expect(find.textContaining('Stay22'), findsNothing);
+    expect(find.text('Live verblijven zoeken'), findsWidgets);
     expect(find.text('Taxi naar dit verblijf'), findsWidgets);
     expect(find.text('Bekijk verblijf'), findsWidgets);
     expect(find.text('Opgeslagen'), findsWidgets);

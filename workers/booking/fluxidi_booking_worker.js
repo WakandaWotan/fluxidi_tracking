@@ -125,6 +125,12 @@ import {
   stampBusinessProfileRecord,
 } from "./modules/business_profile_revision.mjs";
 import {
+  resolveGooglePlacesCountry,
+  buildGooglePlacesTextQuery,
+  mapGooglePlacesAddressParts,
+} from "./modules/google_places_country.mjs";
+import { resolveGooglePlacesHotelsSearch } from "./modules/google_places_hotels_page.mjs";
+import {
   isEligibleLimousineProvider as _isEligibleLimousineProvider,
   isLimousineServiceToken,
   projectLimousineEntitled as _projectLimousineEntitled,
@@ -42956,14 +42962,21 @@ export default {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
         const query = _normalizePublicHotelsSearchQuery(url);
-        return json(
-          await _buildPublicHotelsSearchPayload({
-            query,
-            env,
-            requestUrl: url.toString(),
-            request,
-          }),
-        );
+        const payload = await _buildPublicHotelsSearchPayload({
+          query,
+          env,
+          requestUrl: url.toString(),
+          request,
+        });
+        const source = String(query?.source || "");
+        const honorStatus =
+          source === "google-places" || source === "places";
+        const status = honorStatus
+          ? Number(payload?.http_status || 200)
+          : 200;
+        const body = { ...(payload || {}) };
+        delete body.http_status;
+        return json(body, Number.isFinite(status) ? status : 200);
       }
 
       if (url.pathname === "/public/hotels/ratehawk/hotelpage") {
@@ -52536,9 +52549,19 @@ function _normalizePublicHotelsSearchQuery(url) {
     .toLowerCase()
     .replace(/_/g, "-");
 
+  const countryCodeRaw = String(
+    url?.searchParams?.get("country_code") ?? url?.searchParams?.get("countryCode") ?? "",
+  ).trim();
+  const destinationRaw = String(url?.searchParams?.get("destination") ?? "").trim();
+  const cursorRaw = String(url?.searchParams?.get("cursor") ?? "").trim();
+
   return {
     city: cityRaw.slice(0, 120),
     country: countryRaw.slice(0, 80),
+    country_code: countryCodeRaw.slice(0, 8),
+    countryCode: countryCodeRaw.slice(0, 8),
+    destination: destinationRaw.slice(0, 160),
+    cursor: cursorRaw.slice(0, 96),
     region: regionRaw.slice(0, 120),
     searchText: searchTextRaw.slice(0, 200),
     latitude,
@@ -53112,17 +53135,7 @@ function _googlePlacesHotelType(place, query) {
 }
 
 function _googlePlacesBuildTextQuery(query) {
-  const explicit = String(query?.searchText ?? "").trim();
-  if (explicit) return explicit.slice(0, 200);
-  const city = String(query?.city ?? "").trim();
-  const region = String(query?.region ?? "").trim();
-  const country = String(query?.country ?? "").trim();
-  if (city && country) return `hotels in ${city}, ${country}`;
-  if (city) return `hotels in ${city}`;
-  if (region && country) return `bed and breakfast in ${region}, ${country}`;
-  if (region) return `hotels in ${region}`;
-  if (country) return `hotels in ${country}`;
-  return "hotels in Belgium";
+  return buildGooglePlacesTextQuery(query);
 }
 
 function _googlePlacesPhotoProxyAbsoluteUrl(origin, photoName) {
@@ -53284,28 +53297,8 @@ async function _googlePlacesSearchNearby({ query, apiKey, fieldMask }) {
 async function _googlePlacesSearchText({ query, apiKey, fieldMask }) {
   return await _googlePlacesLegacyTextSearch({ query, apiKey });
 }
-function _googlePlacesAddressParts(address) {
-  const text = safeStr(address, 400).trim();
-  if (!text) return { city: "", country: "" };
-
-  const parts = text
-    .split(",")
-    .map((part) => safeStr(part, 120).trim())
-    .filter(Boolean);
-
-  const last = parts.length ? parts[parts.length - 1] : "";
-  const country = /belgium|belgië|belgique/i.test(last) ? "BE" : "";
-
-  let city = "";
-  if (parts.length >= 2) {
-    const beforeCountry = country ? parts[parts.length - 2] : parts[parts.length - 1];
-    city = beforeCountry
-      .replace(/^\d{4,5}\s+/, "")
-      .replace(/\s*\d{4,5}$/, "")
-      .trim();
-  }
-
-  return { city, country };
+function _googlePlacesAddressParts(address, query) {
+  return mapGooglePlacesAddressParts(address, query);
 }
 
 function _googlePlacesCountryCodeFromCoordinates(query) {
@@ -53324,13 +53317,7 @@ function _googlePlacesCountryCodeFromCoordinates(query) {
   return "";
 }
 function _googlePlacesQueryCountryCode(query) {
-  const raw = safeStr(query?.country, 32).trim();
-  if (!raw) return "";
-  const upper = raw.toUpperCase();
-  if (upper === "BE" || upper === "BELGIUM" || upper === "BELGIË" || upper === "BELGIQUE") {
-    return "BE";
-  }
-  return upper.replace(/[^A-Z]/g, "").slice(0, 2);
+  return resolveGooglePlacesCountry(query).iso;
 }
 
 function _googlePlacesLegacyRatingLabel(place) {
@@ -53362,10 +53349,13 @@ function _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl } = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
   const address = String(place?.formattedAddress ?? "").trim();
-  const addressParts = _googlePlacesAddressParts(address);
-  const city = String(query?.city ?? "").trim() || addressParts.city;
-  const region = String(query?.region ?? "").trim();
-  const country = _googlePlacesQueryCountryCode(query) || addressParts.country || _googlePlacesCountryCodeFromCoordinates(query);
+  const addressParts = _googlePlacesAddressParts(address, query);
+  const city = addressParts.city;
+  const region = addressParts.region;
+  const country =
+    addressParts.country ||
+    _googlePlacesQueryCountryCode(query) ||
+    _googlePlacesCountryCodeFromCoordinates(query);
   const { photoName, attribution } = _googlePlacesPrimaryPhotoMeta(place);
   const origin = _publicHotelsRequestOrigin(requestUrl);
   const imageUrl = photoName
@@ -53428,20 +53418,50 @@ async function _buildGooglePlacesHotelsPayload({
     "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.photos,places.primaryType,places.types";
 
   try {
-    let places = [];
-    if (query?.latitude != null && query?.longitude != null) {
-      places = await _googlePlacesSearchNearby({ query, apiKey, fieldMask });
+    const resolved = await resolveGooglePlacesHotelsSearch({
+      query,
+      env,
+    });
+    if (resolved?.ok === false) {
+      return {
+        ok: false,
+        error: resolved.error || "invalid_cursor",
+        source: "google-places",
+        provider: "google-places",
+        count: 0,
+        stays: [],
+        warnings: nextWarnings,
+        pagination: resolved.pagination,
+        retry_after_ms: resolved.retry_after_ms,
+        available_at: resolved.available_at,
+        http_status: resolved.http_status || 400,
+      };
     }
-    if (!places.length) {
-      places = await _googlePlacesSearchText({ query, apiKey, fieldMask });
-    }
-    places = _googlePlacesDedupePlaces(places).slice(0, 20);
+
+    const mappedPlaces = (Array.isArray(resolved?.places) ? resolved.places : [])
+      .map((place) => _legacyGooglePlacesMapResultToV1Like(place) || place)
+      .filter(Boolean);
+    const places = _googlePlacesDedupePlaces(mappedPlaces).slice(0, 20);
+    const mappingQuery = {
+      ...query,
+      countryCode: resolved?.preserved_country_code || query?.countryCode,
+      country_code: resolved?.preserved_country_code || query?.country_code,
+    };
 
     const stays = [];
     for (const place of places) {
-      const mapped = _mapGooglePlaceToPublicHotelStay(place, { query, requestUrl });
+      const mapped = _mapGooglePlaceToPublicHotelStay(place, {
+        query: mappingQuery,
+        requestUrl,
+      });
       if (!mapped) continue;
       stays.push(_mapPublicHotelStayToResponse(mapped));
+    }
+
+    if (Array.isArray(resolved?.warnings)) {
+      for (const warning of resolved.warnings) {
+        if (warning && !nextWarnings.includes(warning)) nextWarnings.push(warning);
+      }
     }
 
     return {
@@ -53451,6 +53471,8 @@ async function _buildGooglePlacesHotelsPayload({
       count: stays.length,
       stays,
       warnings: nextWarnings,
+      pagination: resolved?.pagination,
+      http_status: resolved?.http_status || 200,
     };
   } catch (_) {
     if (!nextWarnings.includes("google_places_fetch_failed")) {

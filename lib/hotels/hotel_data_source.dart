@@ -2,6 +2,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 
 import 'approved_hotel_data.dart';
 import 'hotel_model.dart';
+import 'hotel_places_pagination.dart';
 import 'ratehawk_view_stay.dart';
 
 // TODO(HOTELS-PARTNER): Switch HotelsPage source to partner-approved once catalog has rows.
@@ -16,6 +17,8 @@ class HotelStayQuery {
   const HotelStayQuery({
     this.city,
     this.country,
+    this.countryCode,
+    this.destination,
     this.region,
     this.searchText,
     this.lat,
@@ -27,10 +30,13 @@ class HotelStayQuery {
     this.rooms,
     this.adults,
     this.childAges = const <int>[],
+    this.pageCursor,
   });
 
   final String? city;
   final String? country;
+  final String? countryCode;
+  final String? destination;
   final String? region;
   final String? searchText;
   final double? lat;
@@ -42,10 +48,35 @@ class HotelStayQuery {
   final int? rooms;
   final int? adults;
   final List<int> childAges;
+  final String? pageCursor;
+}
+
+enum HotelStaySearchStatus { ok, cursorNotReady, cursorRejected, failed }
+
+class HotelStaySearchPage {
+  const HotelStaySearchPage({
+    required this.stays,
+    this.pagination,
+    this.status = HotelStaySearchStatus.ok,
+    this.retryAfterMs,
+    this.error,
+  });
+
+  final List<HotelStay> stays;
+  final HotelPlacesPaginationMeta? pagination;
+  final HotelStaySearchStatus status;
+  final int? retryAfterMs;
+  final String? error;
 }
 
 abstract class HotelDataSource {
   Future<List<HotelStay>> fetchStays({
+    HotelStayQuery query = const HotelStayQuery(),
+  });
+}
+
+abstract class HotelPagedDataSource implements HotelDataSource {
+  Future<HotelStaySearchPage> fetchStayPage({
     HotelStayQuery query = const HotelStayQuery(),
   });
 }
@@ -61,7 +92,7 @@ class LocalApprovedHotelDataSource implements HotelDataSource {
   }
 }
 
-class RemoteHotelDataSource implements HotelDataSource {
+class RemoteHotelDataSource implements HotelPagedDataSource {
   const RemoteHotelDataSource();
 
   @override
@@ -72,6 +103,8 @@ class RemoteHotelDataSource implements HotelDataSource {
       final payload = await fetchPublicHotelSearch(
         city: query.city,
         country: query.country,
+        countryCode: query.countryCode,
+        destination: query.destination,
         region: query.region,
         searchText: query.searchText,
         lat: query.lat,
@@ -83,25 +116,88 @@ class RemoteHotelDataSource implements HotelDataSource {
         rooms: query.rooms,
         adults: query.adults,
         childAges: query.childAges,
+        cursor: query.pageCursor,
       );
-      if (payload == null) return const <HotelStay>[];
-      if (payload['ok'] != true) return const <HotelStay>[];
-      final rawStays = payload['stays'];
-      if (rawStays is! List) return const <HotelStay>[];
-
-      final mapped = <HotelStay>[];
-      for (final item in rawStays) {
-        if (item is! Map) continue;
-        final stay = hotelStayFromPublicHotelJson(
-          Map<String, dynamic>.from(item),
-        );
-        if (stay != null) mapped.add(stay);
-      }
-      return List<HotelStay>.unmodifiable(mapped);
+      return _mapPublicHotelStays(payload);
     } catch (_) {
       return const <HotelStay>[];
     }
   }
+
+  @override
+  Future<HotelStaySearchPage> fetchStayPage({
+    HotelStayQuery query = const HotelStayQuery(),
+  }) async {
+    try {
+      final result = await fetchPublicHotelSearchResult(
+        city: query.city,
+        country: query.country,
+        countryCode: query.countryCode,
+        destination: query.destination,
+        region: query.region,
+        searchText: query.searchText,
+        lat: query.lat,
+        lng: query.lng,
+        radiusKm: query.radiusKm,
+        source: query.source,
+        checkin: query.checkin,
+        checkout: query.checkout,
+        rooms: query.rooms,
+        adults: query.adults,
+        childAges: query.childAges,
+        cursor: query.pageCursor,
+      );
+      if (result.retryable) {
+        return HotelStaySearchPage(
+          stays: const <HotelStay>[],
+          status: HotelStaySearchStatus.cursorNotReady,
+          retryAfterMs: result.retryAfterMs,
+          error: result.error,
+        );
+      }
+      if (result.rejected) {
+        return HotelStaySearchPage(
+          stays: const <HotelStay>[],
+          status: HotelStaySearchStatus.cursorRejected,
+          error: result.error,
+        );
+      }
+      if (result.body == null || result.body!['ok'] != true) {
+        return const HotelStaySearchPage(
+          stays: <HotelStay>[],
+          status: HotelStaySearchStatus.failed,
+        );
+      }
+      return HotelStaySearchPage(
+        stays: _mapPublicHotelStays(result.body),
+        pagination: HotelPlacesPaginationMeta.fromJson(
+          result.body!['pagination'] is Map
+              ? Map<String, dynamic>.from(result.body!['pagination'] as Map)
+              : null,
+        ),
+      );
+    } catch (_) {
+      return const HotelStaySearchPage(
+        stays: <HotelStay>[],
+        status: HotelStaySearchStatus.failed,
+      );
+    }
+  }
+}
+
+List<HotelStay> _mapPublicHotelStays(Map<String, dynamic>? payload) {
+  if (payload == null || payload['ok'] != true) return const <HotelStay>[];
+  final rawStays = payload['stays'];
+  if (rawStays is! List) return const <HotelStay>[];
+  final mapped = <HotelStay>[];
+  for (final item in rawStays) {
+    if (item is! Map) continue;
+    final stay = hotelStayFromPublicHotelJson(
+      Map<String, dynamic>.from(item),
+    );
+    if (stay != null) mapped.add(stay);
+  }
+  return List<HotelStay>.unmodifiable(mapped);
 }
 
 bool _isSafeApprovedCatalogValue(String? value) {
