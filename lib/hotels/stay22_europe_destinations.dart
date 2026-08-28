@@ -1227,6 +1227,7 @@ class Stay22ResolvedDestination {
     this.city,
     this.region,
     this.destination,
+    this.countryExplicit = true,
   });
 
   final String countryCode;
@@ -1234,6 +1235,11 @@ class Stay22ResolvedDestination {
   final String? city;
   final String? region;
   final String? destination;
+
+  /// False when [countryCode] only came from the default fallback because the
+  /// picker is still on "all countries". Place discovery still needs a concrete
+  /// ISO, but a Stay22 address must not be narrowed to that fallback country.
+  final bool countryExplicit;
 }
 
 Stay22ResolvedDestination stay22ResolveDestinationQuery({
@@ -1244,9 +1250,8 @@ Stay22ResolvedDestination stay22ResolveDestinationQuery({
   String defaultCountryCode = 'BE',
 }) {
   final selected = countryCode.trim().toUpperCase();
-  final iso = selected.isEmpty || selected == 'ALL'
-      ? defaultCountryCode
-      : selected;
+  final countryExplicit = selected.isNotEmpty && selected != 'ALL';
+  final iso = countryExplicit ? selected : defaultCountryCode;
   final country = stay22CatalogueCountryByCode(iso);
   final countryEnglish =
       country?.labels.en ?? stay22EnglishCountryName(iso) ?? 'Belgium';
@@ -1262,6 +1267,7 @@ Stay22ResolvedDestination stay22ResolveDestinationQuery({
     city: city?.canonicalQueryName,
     region: region?.labels.en,
     destination: destination.isEmpty ? null : destination,
+    countryExplicit: countryExplicit,
   );
 }
 
@@ -1272,11 +1278,14 @@ String stay22EffectiveStay22Address({
   final preferred = extraFreeText.trim().isNotEmpty
       ? extraFreeText.trim()
       : (resolved.destination ?? '');
+  // A typed destination is global: appending the fallback country would send
+  // "Tokyo, Japan" to Stay22 as "Tokyo, Japan, Belgium".
+  final includeCountry = resolved.countryExplicit || preferred.isEmpty;
   return composeStay22AddressFromParts(
     freeText: preferred,
     city: resolved.city ?? '',
     region: resolved.region ?? '',
-    country: resolved.countryEnglish,
+    country: includeCountry ? resolved.countryEnglish : '',
   );
 }
 
@@ -1292,16 +1301,10 @@ String composeStay22AddressFromParts({
     if (value.isEmpty) return;
     final lower = value.toLowerCase();
     if (parts.any((part) => part.toLowerCase() == lower)) return;
+    // Drop a part that an earlier one already spells out ("Paris, France" then
+    // "France"). The reverse is not a duplicate: a region legitimately repeats
+    // its city name, and "Lisbon, Lisbon District" must survive as both.
     if (parts.any((part) => part.toLowerCase().contains(lower))) return;
-    if (parts.any((part) => lower.contains(part.toLowerCase()))) {
-      final index = parts.indexWhere(
-        (part) => lower.contains(part.toLowerCase()),
-      );
-      if (index >= 0 && value.length > parts[index].length) {
-        parts[index] = value;
-      }
-      return;
-    }
     parts.add(value);
   }
 

@@ -163,7 +163,7 @@ void main() {
     expect(source.page2Calls, 1);
     expect(find.text('Page two A'), findsOneWidget);
     expect(find.text('Page two B'), findsOneWidget);
-    expect(find.textContaining('21 uitgelichte verblijven'), findsWidgets);
+    expect(find.textContaining('22 uitgelichte verblijven'), findsWidgets);
     expect(_moreButton(), findsNothing);
     expect(source.calls.last.pageCursor, 'opaque-cursor-value-1234');
     expect(source.calls.last.countryCode, 'PT');
