@@ -475,6 +475,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   // B11-D: per-document Peppol send in-flight set, keyed by document_id so one
   // send never blocks unrelated rows or the status refresh button.
   Set<String> _sendingPeppolDocIds = <String>{};
+  // BILLIT-PROD-CREATE-1: per-document manual "Registreren in Billit" in-flight
+  // set, keyed by document_id. Never sends Peppol; registers/creates only.
+  Set<String> _registeringBillitDocIds = <String>{};
   // B12-G2: proactive Peppol readiness preview cache, keyed by document_id
   // within the active booking scope. Discarded when the booking identity changes.
   Map<String, BookingPeppolReadinessState> _peppolReadinessByDocId =
@@ -1583,6 +1586,110 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     }
   }
 
+  /// BILLIT-PROD-CREATE-1: manual "Registreren in Billit" recovery for ONE
+  /// already-issued invoice that was never registered (e.g. auto-create was
+  /// OFF). Uses the neutral company route; the environment is derived server-
+  /// side from the active OAuth connection. Idempotent (reuse-or-create) and
+  /// NEVER sends Peppol. Refreshes the document list on success so the badge
+  /// flips to "Klaargezet/Geregistreerd in Billit".
+  Future<void> _registerBillitOrder(_BookingDocumentMetadata doc) async {
+    final docId = doc.documentId.trim();
+    if (docId.isEmpty) return;
+    if (_registeringBillitDocIds.contains(docId)) return;
+
+    final requestScopeKey = _documentsScopeKey;
+    setState(() {
+      _registeringBillitDocIds = <String>{..._registeringBillitDocIds, docId};
+    });
+
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/documents/${Uri.encodeComponent(docId)}/billit/register',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final docNumber = doc.documentNumber.trim();
+      final payload = <String, dynamic>{
+        'confirm_billit_register': true,
+        if (docNumber.isNotEmpty) 'document_number': docNumber,
+      };
+      final res = await http
+          .post(
+            uri,
+            headers: {...auth.headers, 'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+
+      Map<String, dynamic>? decoded;
+      try {
+        final raw = jsonDecode(res.body);
+        if (raw is Map) {
+          decoded = raw.map((k, v) => MapEntry(k.toString(), v));
+        }
+      } catch (_) {
+        decoded = null;
+      }
+
+      if (res.statusCode == 200 && decoded != null && decoded['ok'] == true) {
+        _showBillitPeppolSendSnackBar(
+          decoded['already_registered'] == true
+              ? _tr(
+                  nl: 'Deze factuur staat al in Billit.',
+                  en: 'This invoice is already in Billit.',
+                  fr: 'Cette facture est déjà dans Billit.',
+                  es: 'Esta factura ya está en Billit.',
+                )
+              : _tr(
+                  nl: 'Factuur geregistreerd in Billit.',
+                  en: 'Invoice registered in Billit.',
+                  fr: 'Facture enregistrée dans Billit.',
+                  es: 'Factura registrada en Billit.',
+                ),
+        );
+        _loadDocuments();
+        return;
+      }
+
+      final errorCode = decoded?['error']?.toString().trim() ?? '';
+      _showBillitPeppolSendSnackBar(
+        errorCode == 'billit_party_id_missing' ||
+                errorCode == 'billit_register_environment_unsupported' ||
+                errorCode == 'billit_oauth_not_configured'
+            ? _tr(
+                nl: 'Billit is niet verbonden. Koppel Billit opnieuw en probeer daarna te registreren.',
+                en: 'Billit is not connected. Reconnect Billit, then try to register.',
+                fr: 'Billit n’est pas connecté. Reconnectez Billit puis réessayez.',
+                es: 'Billit no está conectado. Vuelva a conectar Billit e inténtelo de nuevo.',
+              )
+            : _tr(
+                nl: 'Registreren in Billit is mislukt.',
+                en: 'Registering in Billit failed.',
+                fr: 'Échec de l’enregistrement dans Billit.',
+                es: 'Error al registrar en Billit.',
+              ),
+      );
+    } catch (_) {
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      _showBillitPeppolSendSnackBar(
+        _tr(
+          nl: 'Registreren in Billit is mislukt.',
+          en: 'Registering in Billit failed.',
+          fr: 'Échec de l’enregistrement dans Billit.',
+          es: 'Error al registrar en Billit.',
+        ),
+      );
+    } finally {
+      if (mounted && requestScopeKey == _activeScopeKey) {
+        setState(() {
+          _registeringBillitDocIds = <String>{..._registeringBillitDocIds}
+            ..remove(docId);
+        });
+      }
+    }
+  }
+
   /// B11-D: show confirmation first; only Send/Verzenden calls the backend.
   Future<void> _promptAndSendBillitPeppolSandbox(
     _BookingDocumentMetadata doc,
@@ -2229,6 +2336,14 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             fr: 'Peppol sera disponible dès que cette facture sera prête dans Billit.',
             es: 'Peppol estará disponible cuando esta factura esté lista en Billit.',
           );
+    // Business invoices only: manual "Registreren in Billit" recovery. A local
+    // non-null binding lets Dart promote it inside the conditional children.
+    final _BookingDocumentMetadata? registerDoc =
+        (!isConsumer && doc != null && doc.documentId.trim().isNotEmpty)
+        ? doc
+        : null;
+    final registering = registerDoc != null &&
+        _registeringBillitDocIds.contains(registerDoc.documentId.trim());
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -2244,6 +2359,42 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               fontStyle: FontStyle.italic,
             ),
           ),
+          if (registerDoc != null) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed:
+                    registering ? null : () => _registerBillitOrder(registerDoc),
+                icon: registering
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.playlist_add_check, size: 16),
+                label: Text(
+                  registering
+                      ? _tr(
+                          nl: 'Bezig met registreren…',
+                          en: 'Registering…',
+                          fr: 'Enregistrement…',
+                          es: 'Registrando…',
+                        )
+                      : _tr(
+                          nl: 'Registreren in Billit',
+                          en: 'Register in Billit',
+                          fr: 'Enregistrer dans Billit',
+                          es: 'Registrar en Billit',
+                        ),
+                  style: const TextStyle(
+                    fontSize: 11.0,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -4307,13 +4307,14 @@ async function handleAdminBillitSandboxOrderStatus({ request, url, env, document
     );
   }
 
-  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  // 2. Resolve config + managed-environment guard (before any KV/network work).
+  // Status reads follow the active OAuth environment (sandbox or production).
   const config = resolveBillitOAuthConfig(env);
-  if (config.environment !== "sandbox") {
+  if (!isBillitManagedEnvironment(config.environment)) {
     return json(
       {
         ok: false,
-        error: "billit_status_read_sandbox_only",
+        error: "billit_status_read_environment_unsupported",
         environment: config.environment,
       },
       409,
@@ -4353,8 +4354,8 @@ async function handleAdminBillitSandboxOrderStatus({ request, url, env, document
   if (!exportObj || !exportOrderId) {
     return json({ ok: false, error: "billit_order_not_linked" }, 409);
   }
-  if (safeStr(exportObj.environment, 24).toLowerCase() !== "sandbox") {
-    return json({ ok: false, error: "billit_export_not_sandbox" }, 409);
+  if (!isBillitManagedEnvironment(exportObj.environment)) {
+    return json({ ok: false, error: "billit_export_environment_unsupported" }, 409);
   }
 
   const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
@@ -4676,13 +4677,14 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     company_id: authScope.explicitScope.company_id,
   };
 
-  // 2. Resolve config + SANDBOX-ONLY guard (before any KV/network work).
+  // 2. Resolve config + managed-environment guard (before any KV/network work).
+  // Status reads follow the active OAuth environment (sandbox or production).
   const config = resolveBillitOAuthConfig(env);
-  if (config.environment !== "sandbox") {
+  if (!isBillitManagedEnvironment(config.environment)) {
     return json(
       {
         ok: false,
-        error: "billit_status_read_sandbox_only",
+        error: "billit_status_read_environment_unsupported",
         environment: config.environment,
       },
       409,
@@ -4720,8 +4722,8 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
   if (!exportObj || !exportOrderId) {
     return json({ ok: false, error: "billit_order_not_linked" }, 409);
   }
-  if (safeStr(exportObj.environment, 24).toLowerCase() !== "sandbox") {
-    return json({ ok: false, error: "billit_export_not_sandbox" }, 409);
+  if (!isBillitManagedEnvironment(exportObj.environment)) {
+    return json({ ok: false, error: "billit_export_environment_unsupported" }, 409);
   }
 
   const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
@@ -8096,13 +8098,23 @@ async function maybeHealIncompleteBillitPaymentSyncForBookingDocuments(
   return { healed };
 }
 
-/* Orchestrator (Patch B8a): idempotently ensure a Billit SANDBOX order exists
- * for an already-issued Document Core invoice. If the registry record already
- * carries a sandbox billit_export.order_id, it short-circuits (NO second POST).
- * Otherwise it runs the SAME safe create path as B6a (official order preview →
- * readiness gate → token → exactly one POST /v1/orders → envelope-only persist),
- * reusing the same factored helpers. NEVER sends / Peppol-sends, NEVER supports
- * production, NEVER returns tokens or the raw Billit body. Returns a structured
+/* BILLIT-PROD-CREATE-1: CREATE/REGISTER is allowed for the canonical managed
+ * Billit environments (sandbox + production), always derived from the active
+ * OAuth connection/config — never a user-selected value. SEND (Peppol) stays a
+ * separate, still-sandbox-gated pipeline and is intentionally NOT covered here. */
+function isBillitManagedEnvironment(environment) {
+  const e = safeStr(environment, 24).toLowerCase();
+  return e === "sandbox" || e === "production";
+}
+
+/* Orchestrator (Patch B8a): idempotently ensure a Billit order exists for an
+ * already-issued Document Core invoice. If the registry record already carries a
+ * billit_export.order_id for the active environment, it short-circuits (NO
+ * second POST). Otherwise it runs the SAME safe create path as B6a (official
+ * order preview → readiness gate → token → exactly one POST /v1/orders →
+ * envelope-only persist), reusing the same factored helpers. NEVER sends /
+ * Peppol-sends, NEVER returns tokens or the raw Billit body. The outbound host
+ * follows config.api_base_url (sandbox or production). Returns a structured
  * result (not an HTTP Response). */
 async function ensureBillitSandboxOrderForIssuedInvoice(
   env,
@@ -8115,12 +8127,18 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   const docId = safeStr(documentId, 200);
   const recordDocNumber = safeStr(documentNumber, 80);
 
-  // 0. Duplicate guard: reuse an already-linked sandbox order (no Billit call).
+  // 0. Duplicate guard: reuse an already-linked order for the ACTIVE environment
+  // (no Billit call). Keyed on the stored export environment matching the active
+  // config environment so a sandbox link is never reused in production (or vice
+  // versa) and a canonical invoice never mints a second Billit order.
+  const activeEnvironment =
+    safeStr(config?.environment, 24).toLowerCase() || "sandbox";
   const existingProjection = buildSafeBillitExportProjection(documentRecord);
   if (
     existingProjection &&
     existingProjection.order_id &&
-    safeStr(documentRecord?.billit_export?.environment, 24).toLowerCase() === "sandbox"
+    safeStr(documentRecord?.billit_export?.environment, 24).toLowerCase() ===
+      activeEnvironment
   ) {
     let exportProjection = existingProjection;
     const earlyWarnings = ["billit_order_already_linked"];
@@ -8171,7 +8189,7 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   }
   const classification = classifyDocumentExportReadiness(documentRecord, businessProfile);
   const docPreview = buildDocumentExportPreview(documentRecord, classification, null);
-  const billitEnvironment = "sandbox";
+  const billitEnvironment = activeEnvironment;
   const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
     docPreview,
     { ...scope, billit_environment: billitEnvironment },
@@ -8292,7 +8310,7 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   // is non-fatal: the Billit order already exists, so return success + warning.
   let exportProjection = null;
   const normalizedExport = normalizeBillitExportMetadata({
-    environment: "sandbox",
+    environment: billitEnvironment,
     party_id: previewPartyId,
     order_id: summary.billit_order_id,
     order_number: recordDocNumber,
@@ -8383,15 +8401,22 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
   const sourceLegType = safeStr(opts.sourceLegType, 24) || null;
   const scopeForBookingMatch = opts.scopeForBookingMatch || null;
 
-  // Fail-closed guards (never run unconfirmed, never in production).
-  if (opts.confirmSandbox !== true) {
-    return { ok: false, http_status: 400, body: { ok: false, error: "confirm_sandbox_auto_create_required" } };
+  // Fail-closed guards. CREATE/REGISTER runs only for a canonical managed
+  // environment (sandbox + production), always derived from the active OAuth
+  // config. It never runs unconfirmed and never sends Peppol. Callers pass
+  // confirmCreate (or the legacy confirmSandbox alias) as an explicit gate.
+  if (opts.confirmCreate !== true && opts.confirmSandbox !== true) {
+    return { ok: false, http_status: 400, body: { ok: false, error: "confirm_billit_create_required" } };
   }
-  if (!config || environment !== "sandbox") {
+  if (!config || !isBillitManagedEnvironment(environment)) {
     return {
       ok: false,
       http_status: 409,
-      body: { ok: false, error: "billit_auto_create_sandbox_only", environment: config?.environment ?? null },
+      body: {
+        ok: false,
+        error: "billit_auto_create_environment_unsupported",
+        environment: config?.environment ?? null,
+      },
     };
   }
   if (!config.configured) {
@@ -8401,7 +8426,7 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
       body: {
         ok: false,
         error: "billit_oauth_not_configured",
-        environment: "sandbox",
+        environment,
         missing_fields: config.missing_fields,
       },
     };
@@ -8491,7 +8516,7 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
         body: {
           ok: false,
           error: healError,
-          environment: "sandbox",
+          environment,
           retryable,
           billit_link_state: linkState,
           party_healed: false,
@@ -8786,14 +8811,16 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
     const autoCreateEnabled =
       settings.billit_auto_create_after_paid_business_invoice === true;
 
-    // Sandbox OAuth gate: paid sync and create both use sandbox Billit APIs.
-    // Never run against production from the lifecycle path.
+    // Managed-environment gate: CREATE + paid sync use the Billit API host that
+    // config.api_base_url resolves to (sandbox or production, from the active
+    // OAuth connection). Peppol SEND is never triggered here. Any unknown /
+    // unconfigured environment fails closed and skips the lifecycle.
     const config = resolveBillitOAuthConfig(env);
-    if (config.environment !== "sandbox") {
+    if (!isBillitManagedEnvironment(config.environment)) {
       console.log(
-        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped config_not_sandbox booking=${maskedBooking}`,
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped config_environment_unsupported booking=${maskedBooking}`,
       );
-      return { ok: true, skipped: true, reason: "config_not_sandbox" };
+      return { ok: true, skipped: true, reason: "config_environment_unsupported" };
     }
 
     // Business invoice path stays unchanged. Private/consumer rides fall
@@ -8875,18 +8902,19 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
     };
 
     const runCreateThenSyncPath = async (sourceLegId, sourceLegType) => {
-      // NEW invoice/order create remains behind the auto-create environment gate.
-      if (settings.billit_auto_create_environment !== "sandbox") {
+      // NEW invoice/order create runs against the active managed environment,
+      // derived from the OAuth connection (never a user-selected value).
+      if (!isBillitManagedEnvironment(config.environment)) {
         console.log(
-          `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped environment_not_sandbox booking=${maskedBooking}`,
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped environment_unsupported booking=${maskedBooking}`,
         );
-        return { ok: true, skipped: true, reason: "environment_not_sandbox" };
+        return { ok: true, skipped: true, reason: "environment_unsupported" };
       }
       const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
-        source: "paid_lifecycle_sandbox",
-        environment: "sandbox",
+        source: "paid_lifecycle_create",
+        environment: config.environment,
         config,
-        confirmSandbox: true,
+        confirmCreate: true,
         sourceLegId,
         sourceLegType,
         nowIso,
@@ -10097,6 +10125,146 @@ async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bo
   return json(result.body, result.http_status);
 }
 
+/* BILLIT-PROD-CREATE-1: neutral manual "Registreren in Billit" recovery action
+ * for an ALREADY-ISSUED Document Core invoice that was never registered in
+ * Billit (e.g. auto-create was OFF when the ride completed). Available to an
+ * authenticated company session OR admin tooling, with the SAME explicit
+ * tenant/company scope checks as every other company route. The active
+ * environment is DERIVED from the canonical Billit OAuth connection/config
+ * (sandbox or production) — never user-selected.
+ *
+ * It reuses the canonical create engine (ensureBillitSandboxOrderForIssuedInvoice)
+ * which is idempotent (reuse-or-create keyed on billit_export.order_id + the
+ * document-scoped Idempotent-Key), operates on the frozen issued invoice
+ * (exact canonical invoice/document number + frozen seller/buyer + frozen
+ * net/VAT/gross from the immutable snapshot), and NEVER sends Peppol. Manual
+ * registration is intentionally independent of the auto-create toggle so it
+ * works even when auto-create is OFF. It never issues a new invoice. */
+async function handleBillitRegisterInvoice({ request, url, env, documentId }) {
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+
+  // Auth: admin token OR company session, cross-scope rejected by the helper.
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body: bodyObj,
+    routeLabel: "BILLIT_REGISTER_INVOICE",
+  });
+  if (!authScope.ok) return authScope.response;
+
+  // Explicit confirmation (never register unattended from this route).
+  if (bodyObj.confirm_billit_register !== true) {
+    return json({ ok: false, error: "confirm_billit_register_required" }, 400);
+  }
+
+  // Managed-environment + configured gate, derived from the OAuth connection.
+  const config = resolveBillitOAuthConfig(env);
+  if (!isBillitManagedEnvironment(config.environment)) {
+    return json(
+      { ok: false, error: "billit_register_environment_unsupported", environment: config.environment },
+      409,
+    );
+  }
+  if (!config.configured) {
+    return json(
+      {
+        ok: false,
+        error: "billit_oauth_not_configured",
+        environment: config.environment,
+        missing_fields: config.missing_fields,
+      },
+      400,
+    );
+  }
+
+  const scope = {
+    tenant_id: authScope.explicitScope.tenant_id,
+    company_id: authScope.explicitScope.company_id,
+  };
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  // Load the issued document + strict scope check (no cross-tenant reach).
+  const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+  const recordTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
+  const recordCompany = safeStr(record?.company_id ?? record?.companyId, 80);
+  if (
+    !record ||
+    (recordTenant && recordTenant !== scope.tenant_id) ||
+    (recordCompany && recordCompany !== scope.company_id)
+  ) {
+    return json({ ok: false, error: "document_not_found" }, 404);
+  }
+
+  // Invoice-only (credit notes / other document types are out of scope).
+  const docType = safeStr(record?.document_type ?? record?.documentType, 40).toLowerCase();
+  if (docType !== "invoice") {
+    return json(
+      { ok: false, error: "document_type_not_supported_for_register", document_type: docType || null },
+      400,
+    );
+  }
+
+  // Preserve the exact canonical invoice number: when the caller asserts a
+  // specific document_number, refuse a mismatch BEFORE any Billit POST.
+  const recordDocNumber = safeStr(record?.document_number ?? record?.documentNumber, 80);
+  const requestedDocNumber = safeStr(bodyObj.document_number ?? bodyObj.documentNumber, 80);
+  if (requestedDocNumber && recordDocNumber && requestedDocNumber !== recordDocNumber) {
+    return json(
+      {
+        ok: false,
+        error: "billit_register_document_number_mismatch",
+        expected_document_number: requestedDocNumber,
+        document_number: recordDocNumber,
+      },
+      409,
+    );
+  }
+
+  // Delegate to the idempotent canonical create engine (reuse-or-create). It
+  // reuses an existing billit_export.order_id for the active environment, keeps
+  // the frozen amounts, and NEVER sends Peppol.
+  const result = await ensureBillitSandboxOrderForIssuedInvoice(env, scope, config, record, {
+    documentId: docId,
+    documentNumber: recordDocNumber,
+  });
+  if (!result.ok) {
+    const status = Number.isFinite(Number(result.status)) ? Number(result.status) : 502;
+    return json(
+      {
+        ok: false,
+        error: safeStr(result.error, 80) || "billit_order_create_failed",
+        environment: config.environment,
+        document_id: docId,
+        document_number: recordDocNumber,
+        ...(Array.isArray(result.reasons) ? { reasons: result.reasons } : {}),
+        ...(result.status_code ? { status_code: result.status_code } : {}),
+      },
+      status,
+    );
+  }
+  return json({
+    ok: true,
+    registered: true,
+    already_registered: result.already_created === true,
+    reused: result.already_created === true,
+    environment: config.environment,
+    document_id: docId,
+    document_number: recordDocNumber,
+    billit_party_id: result.billit_party_id ?? null,
+    billit_order_id: result.billit_order_id ?? null,
+    billit_order_number: result.billit_order_number ?? null,
+    billit_status: result.billit_status ?? null,
+    billit_export: result.billit_export ?? null,
+    sent: false,
+    peppol_sent: false,
+    warnings: Array.isArray(result.warnings) ? result.warnings : [],
+  });
+}
+
 /* Pure builder (Patch B7-4) for a MINIMAL Peppol-ready test-fixture booking
  * record. Produces exactly the smallest field set that the existing
  * deriveServerSideInvoiceContext + _issueInvoiceCore path already reads, so a
@@ -10542,7 +10710,7 @@ async function handleAdminCompanyBillitAutoCreateSettingsGet({ request, url, env
     ok: true,
     billit_auto_create_after_paid_business_invoice:
       settings.billit_auto_create_after_paid_business_invoice === true,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: resolveBillitOAuthConfig(env).environment,
     defaulted: settings.defaulted === true,
     warnings: [],
   });
@@ -10583,16 +10751,10 @@ async function handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, 
   }
   const enabled = bodyObj.billit_auto_create_after_paid_business_invoice === true;
 
-  // Environment is sandbox-only for now; reject any explicit non-sandbox value.
-  if (bodyObj.billit_auto_create_environment !== undefined) {
-    const envRaw = safeStr(bodyObj.billit_auto_create_environment, 24).toLowerCase();
-    if (envRaw !== "sandbox") {
-      return json(
-        { ok: false, error: "billit_auto_create_environment_sandbox_only", environment: envRaw },
-        400,
-      );
-    }
-  }
+  // Environment is DERIVED from the active Billit OAuth connection (sandbox or
+  // production) and is never user-selected; any client-provided value is
+  // ignored. The boolean toggle is the only user-controlled preference.
+  const billitActiveEnvironment = resolveBillitOAuthConfig(env).environment;
 
   const scopedRoute = requireExplicitBookingRouteScope({ request, url, body: bodyObj });
   if (!scopedRoute.ok) return scopedRoute.response;
@@ -10614,7 +10776,7 @@ async function handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, 
   const merged = {
     ...(existing || DEFAULT_BUSINESS_PROFILE),
     billit_auto_create_after_paid_business_invoice: enabled,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: billitActiveEnvironment,
   };
   const normalized = await saveBusinessProfile(env, merged, scope, {
     allowTenantLegacyWrite: false,
@@ -10625,7 +10787,7 @@ async function handleAdminCompanyBillitAutoCreateSettingsUpdate({ request, url, 
     updated: true,
     billit_auto_create_after_paid_business_invoice:
       normalized.billit_auto_create_after_paid_business_invoice === true,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: billitActiveEnvironment,
     warnings: [],
   });
 }
@@ -10657,7 +10819,7 @@ async function handleCompanyBillitAutoCreateSettingsGet({ request, url, env }) {
     ok: true,
     billit_auto_create_after_paid_business_invoice:
       settings.billit_auto_create_after_paid_business_invoice === true,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: resolveBillitOAuthConfig(env).environment,
     warnings: [],
   });
 }
@@ -10691,16 +10853,10 @@ async function handleCompanyBillitAutoCreateSettingsUpdate({ request, url, env }
   }
   const enabled = bodyObj.billit_auto_create_after_paid_business_invoice === true;
 
-  // Environment is sandbox-only for now; reject any explicit non-sandbox value.
-  if (bodyObj.billit_auto_create_environment !== undefined) {
-    const envRaw = safeStr(bodyObj.billit_auto_create_environment, 24).toLowerCase();
-    if (envRaw !== "sandbox") {
-      return json(
-        { ok: false, error: "billit_auto_create_environment_sandbox_only", environment: envRaw },
-        400,
-      );
-    }
-  }
+  // Environment is DERIVED from the active Billit OAuth connection (sandbox or
+  // production) and is never user-selected; any client-provided value is
+  // ignored. The boolean toggle is the only user-controlled preference.
+  const billitActiveEnvironment = resolveBillitOAuthConfig(env).environment;
 
   if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
 
@@ -10720,7 +10876,7 @@ async function handleCompanyBillitAutoCreateSettingsUpdate({ request, url, env }
   const merged = {
     ...(existing || DEFAULT_BUSINESS_PROFILE),
     billit_auto_create_after_paid_business_invoice: enabled,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: billitActiveEnvironment,
   };
   const normalized = await saveBusinessProfile(env, merged, scope, {
     allowTenantLegacyWrite: false,
@@ -10731,7 +10887,7 @@ async function handleCompanyBillitAutoCreateSettingsUpdate({ request, url, env }
     updated: true,
     billit_auto_create_after_paid_business_invoice:
       normalized.billit_auto_create_after_paid_business_invoice === true,
-    billit_auto_create_environment: "sandbox",
+    billit_auto_create_environment: billitActiveEnvironment,
     warnings: [],
   });
 }
@@ -14783,8 +14939,8 @@ function normalizeBusinessProfile(input = {}) {
           source.billitAutoCreateEnvironment ??
           DEFAULT_BUSINESS_PROFILE.billit_auto_create_environment,
         24,
-      ).toLowerCase() === "sandbox"
-        ? "sandbox"
+      ).toLowerCase() === "production"
+        ? "production"
         : "sandbox",
     payment_owner_mode: normalizePaymentOwnerMode(
       source.payment_owner_mode ??
@@ -15873,8 +16029,10 @@ function normalizeBillitAutoCreateSettingsFromBusinessProfile(profile) {
   ).toLowerCase();
   return {
     billit_auto_create_after_paid_business_invoice: enabled,
-    // Sandbox-only for now: any other/missing value is clamped to "sandbox".
-    billit_auto_create_environment: envRaw === "sandbox" ? "sandbox" : "sandbox",
+    // Managed environments only: production is preserved, anything else (missing
+    // or unknown) is clamped to the safe default "sandbox". The effective
+    // runtime environment is always derived from the active OAuth connection.
+    billit_auto_create_environment: envRaw === "production" ? "production" : "sandbox",
   };
 }
 
@@ -39041,6 +39199,49 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_AUTO_CREATE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /company/documents/:documentId/billit/register
+      // POST /admin/documents/:documentId/billit/register
+      // BILLIT-PROD-CREATE-1: neutral manual "Registreren in Billit" recovery
+      // action for an already-issued eligible invoice. Available to a company
+      // session OR admin tooling (same explicit scope checks). Environment is
+      // derived from the canonical OAuth connection (sandbox/production). Reuses
+      // the idempotent canonical create engine, preserves the exact invoice
+      // number + frozen amounts, and NEVER sends Peppol (see
+      // handleBillitRegisterInvoice).
+      if (
+        request.method === "POST" &&
+        (url.pathname.startsWith("/company/documents/") ||
+          url.pathname.startsWith("/admin/documents/")) &&
+        url.pathname.endsWith("/billit/register")
+      ) {
+        const billitRegisterSegments = url.pathname.split("/").filter(Boolean);
+        // Exact shape: ["<company|admin>","documents","<documentId>","billit","register"]
+        if (
+          billitRegisterSegments.length === 5 &&
+          (billitRegisterSegments[0] === "company" ||
+            billitRegisterSegments[0] === "admin") &&
+          billitRegisterSegments[1] === "documents" &&
+          billitRegisterSegments[3] === "billit" &&
+          billitRegisterSegments[4] === "register"
+        ) {
+          try {
+            const documentId =
+              safeStr(decodeURIComponent(billitRegisterSegments[2]), 200) || "";
+            return await handleBillitRegisterInvoice({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_REGISTER_INVOICE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }

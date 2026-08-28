@@ -1720,9 +1720,11 @@ export function sanitizeBillitOrderCreateResponse(responseJson) {
 export function normalizeBillitExportMetadata(input = {}) {
   const src = input && typeof input === "object" ? input : {};
   const environment = safeStr(src.environment, 24).toLowerCase() || "sandbox";
-  // B6b is sandbox-only; refuse anything else so production links never persist.
-  if (environment !== "sandbox") {
-    return { ok: false, error: "billit_export_sandbox_only" };
+  // CREATE/REGISTER is allowed for the canonical managed environments
+  // (sandbox + production). SEND stays a separate, still-sandbox-gated pipeline.
+  // Any unknown environment is refused so partial/foreign links never persist.
+  if (environment !== "sandbox" && environment !== "production") {
+    return { ok: false, error: "billit_export_environment_unsupported" };
   }
   const orderId = safeStr(src.order_id ?? src.orderId, 120);
   if (!orderId) {
@@ -1739,7 +1741,7 @@ export function normalizeBillitExportMetadata(input = {}) {
     ok: true,
     export: {
       provider: "billit",
-      environment: "sandbox",
+      environment,
       party_id: partyId,
       order_id: orderId,
       order_number: orderNumber,
@@ -2138,8 +2140,8 @@ export function buildBillitCreateOutboxKey(scope, documentId) {
 export function normalizeBillitLinkStatusMetadata(input = {}) {
   const src = input && typeof input === "object" ? input : {};
   const environment = safeStr(src.environment, 24).toLowerCase() || "sandbox";
-  if (environment !== "sandbox") {
-    return { ok: false, error: "billit_link_status_sandbox_only" };
+  if (environment !== "sandbox" && environment !== "production") {
+    return { ok: false, error: "billit_link_status_environment_unsupported" };
   }
   const state = safeStr(src.state, 64);
   const allowed = new Set(Object.values(BILLIT_LINK_STATES));
@@ -2151,7 +2153,7 @@ export function normalizeBillitLinkStatusMetadata(input = {}) {
     ok: true,
     status: {
       provider: "billit",
-      environment: "sandbox",
+      environment,
       state,
       error_code: safeStr(src.error_code ?? src.errorCode, 80) || null,
       attempted_at:

@@ -11103,8 +11103,10 @@ Future<Map<String, dynamic>> updateCompanyBillitAutoCreateSettings({
         headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
+          // The boolean toggle is the ONLY user-controlled preference. The
+          // effective Billit environment is derived server-side from the active
+          // OAuth connection, so no environment is sent here.
           'billit_auto_create_after_paid_business_invoice': enabled,
-          'billit_auto_create_environment': 'sandbox',
         }),
       )
       .timeout(const Duration(seconds: 12));
@@ -11122,6 +11124,64 @@ Future<Map<String, dynamic>> updateCompanyBillitAutoCreateSettings({
       error: map['error']?.toString().isNotEmpty == true
           ? map['error'].toString()
           : 'billit_auto_create_settings_update_failed',
+      statusCode: res.statusCode,
+    );
+  }
+  return map;
+}
+
+/// POST /company/documents/:documentId/billit/register (company-session auth).
+/// Manual "Registreren in Billit" recovery for an already-issued invoice that
+/// was never registered (e.g. auto-create was OFF). The environment is derived
+/// server-side from the active OAuth connection; the boolean auto-create toggle
+/// is irrelevant here. Idempotent: an already-linked order is reused, never
+/// duplicated, and Peppol is NEVER sent. Returns the safe response map. Throws
+/// [BillitIntegrationApiException] on 400/401/403/409/5xx.
+Future<Map<String, dynamic>> registerDocumentInBillit({
+  required String documentId,
+  String? documentNumber,
+  String? tenantId,
+  String? companyId,
+}) async {
+  final docId = documentId.trim();
+  if (docId.isEmpty) {
+    throw BillitIntegrationApiException(error: 'missing_document_id', statusCode: 400);
+  }
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/documents/${Uri.encodeComponent(docId)}/billit/register',
+    ),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'confirm_billit_register': true,
+          if (documentNumber != null && documentNumber.trim().isNotEmpty)
+            'document_number': documentNumber.trim(),
+        }),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode == 401 || res.statusCode == 403) {
+    throw BillitIntegrationApiException(error: 'forbidden', statusCode: res.statusCode);
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw BillitIntegrationApiException(
+      error: map['error']?.toString().isNotEmpty == true
+          ? map['error'].toString()
+          : 'billit_register_failed',
       statusCode: res.statusCode,
     );
   }
