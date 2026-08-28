@@ -11076,6 +11076,42 @@ function preserveServerOwnedBusinessProfilePaymentFields(existingProfile, incomi
   out.paymentOwnerMode = paymentOwnerMode;
   out.payment_demo_mode = paymentDemoMode;
   out.paymentDemoMode = paymentDemoMode;
+  // BILLIT-AUTO-CREATE-PERSISTENCE-1: the Billit auto-create preference lives on
+  // the shared business_profile record but is written through its OWN dedicated
+  // settings route. A general business-profile save (e.g. /admin/business/profile
+  // from the Flutter settings form) sends BackendBusinessProfile.toJson(), which
+  // does NOT carry these fields. Without preservation, normalizeBusinessProfile
+  // would default the absent flag back to OFF and silently clobber the toggle on
+  // every profile save (root cause of the "toggle reverts after navigation" bug).
+  // Preserve the persisted values ONLY when the incoming payload omits them; the
+  // dedicated toggle route always includes them and therefore stays authoritative.
+  const incomingHas = (snakeKey, camelKey) =>
+    Object.prototype.hasOwnProperty.call(incoming, snakeKey) ||
+    Object.prototype.hasOwnProperty.call(incoming, camelKey);
+  if (!incomingHas(
+    "billit_auto_create_after_paid_business_invoice",
+    "billitAutoCreateAfterPaidBusinessInvoice",
+  )) {
+    const billitAutoCreateEnabled = pickServerField(
+      "billit_auto_create_after_paid_business_invoice",
+      "billitAutoCreateAfterPaidBusinessInvoice",
+      DEFAULT_BUSINESS_PROFILE.billit_auto_create_after_paid_business_invoice,
+    );
+    out.billit_auto_create_after_paid_business_invoice = billitAutoCreateEnabled;
+    out.billitAutoCreateAfterPaidBusinessInvoice = billitAutoCreateEnabled;
+  }
+  if (!incomingHas(
+    "billit_auto_create_environment",
+    "billitAutoCreateEnvironment",
+  )) {
+    const billitAutoCreateEnvironment = pickServerField(
+      "billit_auto_create_environment",
+      "billitAutoCreateEnvironment",
+      DEFAULT_BUSINESS_PROFILE.billit_auto_create_environment,
+    );
+    out.billit_auto_create_environment = billitAutoCreateEnvironment;
+    out.billitAutoCreateEnvironment = billitAutoCreateEnvironment;
+  }
   return out;
 }
 
