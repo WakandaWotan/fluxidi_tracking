@@ -4,6 +4,7 @@ import {
   HOTEL_PLACES_MAX_PAGES,
   consumeHotelPlacesCursor,
   hotelPlacesQueryFingerprint,
+  isUsableProviderToken,
   normalizeHotelPlacesCursorId,
   publicHotelPlacesPagination,
   readHotelPlacesCursor,
@@ -32,11 +33,12 @@ export async function fetchGooglePlacesTextSearchPage({
   }
   const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
   const token = String(pageToken ?? "").trim();
+  // Text Search answers INVALID_REQUEST to a bare pagetoken; the originating
+  // query has to be repeated even though the docs call it ignored.
+  url.searchParams.set("query", buildGooglePlacesTextQuery(query));
+  url.searchParams.set("type", "lodging");
   if (token) {
     url.searchParams.set("pagetoken", token);
-  } else {
-    url.searchParams.set("query", buildGooglePlacesTextQuery(query));
-    url.searchParams.set("type", "lodging");
   }
   url.searchParams.set("key", apiKey);
 
@@ -106,12 +108,22 @@ export async function resolveGooglePlacesHotelsSearch({
     fetchImpl,
   });
   const places = Array.isArray(first.places) ? first.places.slice(0, 20) : [];
+  const providerToken = String(first.nextPageToken ?? "").trim();
+  // Losing the cursor silently looks identical to "provider has no page 2", so
+  // say which one happened. Never emit the token itself.
+  const cursorWarnings = [];
   let stored = null;
-  if (first.nextPageToken && env?.BOOKING_KV) {
+  if (!providerToken) {
+    if (first.called === true && !first.error) {
+      cursorWarnings.push("google_places_no_next_page_token");
+    }
+  } else if (!env?.BOOKING_KV) {
+    cursorWarnings.push("hotel_places_cursor_missing_kv");
+  } else {
     stored = await storeHotelPlacesCursor(
       env,
       {
-        providerToken: first.nextPageToken,
+        providerToken,
         fingerprint: hotelPlacesQueryFingerprint(query),
         countryCode: query?.countryCode || query?.country_code || "",
         issuedAtMs: nowMs,
@@ -120,6 +132,13 @@ export async function resolveGooglePlacesHotelsSearch({
       },
       { nowMs, randomBytesFn },
     );
+    if (stored?.ok !== true) {
+      cursorWarnings.push(`hotel_places_cursor_${stored?.error || "store_failed"}`);
+      if (!isUsableProviderToken(providerToken)) {
+        cursorWarnings.push("hotel_places_token_rejected");
+        cursorWarnings.push(`hotel_places_token_len_${providerToken.length}`);
+      }
+    }
   }
 
   return {
@@ -133,7 +152,7 @@ export async function resolveGooglePlacesHotelsSearch({
       hasMore: stored?.ok === true,
     }),
     google_called: first.called === true,
-    warnings: first.error ? [first.error] : [],
+    warnings: first.error ? [first.error, ...cursorWarnings] : cursorWarnings,
   };
 }
 
@@ -180,6 +199,13 @@ async function resolveGooglePlacesHotelsPage2({
     fetchImpl,
   });
   const places = Array.isArray(second.places) ? second.places.slice(0, 20) : [];
+  const warnings = second.error ? [second.error] : [];
+  // Google answers an unusable page token with HTTP 200 and a status field, so
+  // an empty page 2 is otherwise indistinguishable from a genuinely short list.
+  const providerStatus = String(second.status ?? "").trim();
+  if (providerStatus && providerStatus !== "OK") {
+    warnings.push(`google_places_page2_${providerStatus.toLowerCase()}`);
+  }
   return {
     ok: true,
     http_status: 200,
@@ -192,7 +218,7 @@ async function resolveGooglePlacesHotelsPage2({
     preserved_country_code: validated.record.country_code,
     preserved_fingerprint: validated.record.fingerprint,
     max_pages: HOTEL_PLACES_MAX_PAGES,
-    warnings: second.error ? [second.error] : [],
+    warnings,
   };
 }
 

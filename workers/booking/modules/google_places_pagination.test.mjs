@@ -15,6 +15,7 @@ import {
   hotelPlacesCursorKey,
   hotelPlacesQueryFingerprint,
   isHotelPlacesCursorKey,
+  isUsableProviderToken,
   normalizeHotelPlacesCursorId,
   publicHotelPlacesPagination,
   readHotelPlacesCursor,
@@ -406,4 +407,63 @@ test("read after consume cannot reuse the provider token", async () => {
   } else {
     assert.equal(again.error, "unknown_cursor");
   }
+});
+
+test("real-size Google page tokens are accepted, junk is still rejected", async () => {
+  // Production returned an 847-character token for "hotels in Paris, France";
+  // the previous 800-character bound dropped it and page 2 never appeared.
+  const realistic = `A${"aZ9_-".repeat(169)}`;
+  assert.equal(realistic.length, 846);
+  assert.equal(isUsableProviderToken(realistic), true);
+  assert.equal(isUsableProviderToken(`${realistic}==`), true);
+
+  assert.equal(isUsableProviderToken("short"), false);
+  assert.equal(isUsableProviderToken(`tok${"!".repeat(20)}`), false);
+  assert.equal(isUsableProviderToken("a".repeat(5000)), false);
+
+  const kv = memoryKv();
+  const env = { BOOKING_KV: kv };
+  const stored = await storeHotelPlacesCursor(
+    env,
+    {
+      providerToken: realistic,
+      fingerprint: "fp",
+      countryCode: "FR",
+      issuedAtMs: 1,
+      availableAtMs: 1,
+      page: 2,
+    },
+    { nowMs: 1 },
+  );
+  assert.equal(stored.ok, true);
+});
+
+test("a dropped cursor is reported instead of looking like no page 2", async () => {
+  const oversized = "a".repeat(5000);
+  const noKv = await resolveGooglePlacesHotelsSearch({
+    query: firstPageQuery(),
+    env: { GOOGLE_PLACES_API_KEY: "k" },
+    fetchImpl: mockFetch([googlePayload([lodging("a", "A")], oversized)]),
+    nowMs: 1_000,
+  });
+  assert.equal(noKv.pagination.has_more, false);
+  assert.ok(noKv.warnings.includes("hotel_places_cursor_missing_kv"));
+
+  const rejected = await resolveGooglePlacesHotelsSearch({
+    query: firstPageQuery(),
+    env: { GOOGLE_PLACES_API_KEY: "k", BOOKING_KV: memoryKv() },
+    fetchImpl: mockFetch([googlePayload([lodging("a", "A")], oversized)]),
+    nowMs: 1_000,
+  });
+  assert.equal(rejected.pagination.has_more, false);
+  assert.ok(rejected.warnings.includes("hotel_places_token_rejected"));
+
+  const absent = await resolveGooglePlacesHotelsSearch({
+    query: firstPageQuery(),
+    env: { GOOGLE_PLACES_API_KEY: "k", BOOKING_KV: memoryKv() },
+    fetchImpl: mockFetch([googlePayload([lodging("a", "A")])]),
+    nowMs: 1_000,
+  });
+  assert.equal(absent.pagination.has_more, false);
+  assert.ok(absent.warnings.includes("google_places_no_next_page_token"));
 });

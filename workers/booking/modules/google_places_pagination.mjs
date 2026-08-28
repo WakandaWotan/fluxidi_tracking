@@ -16,7 +16,10 @@ export const HOTEL_PLACES_MAX_PAGES = 2;
 export const EVENT_VENUE_GEOCODE_PREFIX = "event_venue_geocode:v1:";
 
 const CURSOR_ID_RE = /^[A-Za-z0-9_-]{16,80}$/;
-const PROVIDER_TOKEN_RE = /^[A-Za-z0-9_-]{10,800}$/;
+// Real Google next_page_token values run well past 800 characters (847 observed
+// for "hotels in Paris, France") and are base64, so padding must be allowed.
+// Too tight a bound silently drops the cursor and page 2 never becomes offerable.
+const PROVIDER_TOKEN_RE = /^[A-Za-z0-9_=-]{10,4096}$/;
 
 export function normalizeHotelPlacesCursorId(raw) {
   const text = String(raw ?? "").trim();
