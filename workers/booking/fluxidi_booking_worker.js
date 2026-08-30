@@ -28,6 +28,7 @@ import {
   noteIsolateReads,
   logKvPass,
 } from "./modules/kv_op_budget.js";
+import { upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
   scheduleBaseCancellation,
@@ -21089,6 +21090,17 @@ async function _upsertCompanyCodeIndexesForScope(
       code_index_key: codeKey,
     }),
   );
+  try {
+    await upsertCompanyRegistryEntry(env.BOOKING_KV, {
+      company_code: normalizedCode,
+      display_name: displayName || currentDisplayName || null,
+      lifecycle_status: linkedRecord.linking_enabled === false ? "inactive" : "active",
+      created_at: createdAt,
+      updated_at: nowIso,
+    }, { nowIso });
+  } catch {
+    // Code indexes already landed. The next lifecycle upsert retries membership.
+  }
   return _companyCodeResultPayload({
     companyCode: normalizedCode,
     publicCompanySlug,
