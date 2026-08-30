@@ -17016,8 +17016,9 @@ function loadFluxidiSubscriptionMollieConfig(env) {
     return { ok: false, error: "fluxidi_subscription_api_key_collides_with_mollie_connect_client_secret" };
   }
   // Derived mode remains non-authoritative logging metadata. Add-on
-  // checkout and activation require FLUXIDI_SUBSCRIPTION_MOLLIE_MODE to
-  // match the key prefix via resolveSubscriptionBillingMode.
+  // checkout and activation derive the authoritative billing mode from
+  // the key prefix. FLUXIDI_SUBSCRIPTION_MOLLIE_MODE is an optional
+  // assertion: absent uses the derived mode; a mismatch fails closed.
   const modeRaw = _fluxidiSubscriptionSafeStr(env?.FLUXIDI_SUBSCRIPTION_MOLLIE_MODE).toLowerCase();
   let mode = "";
   if (modeRaw === "test" || modeRaw === "live") {

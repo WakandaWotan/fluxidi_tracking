@@ -36,8 +36,8 @@ export function effectiveMollieKeyMode(apiKey) {
 
 export function declaredSubscriptionMollieMode(raw) {
   const mode = text(raw, 16).toLowerCase();
-  if (mode === "test" || mode === "live") return { ok: true, mode };
-  if (!mode) return { ok: false, error: "missing_declared_mollie_mode" };
+  if (!mode) return { ok: true, asserted: false, mode: "" };
+  if (mode === "test" || mode === "live") return { ok: true, asserted: true, mode };
   return { ok: false, error: "unrecognized_declared_mollie_mode" };
 }
 
@@ -50,7 +50,7 @@ export function resolveSubscriptionBillingMode({ apiKey, declaredMode } = {}) {
   if (!declared.ok) {
     return { ok: false, error: declared.error, http_status: 503 };
   }
-  if (declared.mode !== effective.mode) {
+  if (declared.asserted && declared.mode !== effective.mode) {
     return {
       ok: false,
       error: "mollie_mode_mismatch",
@@ -62,7 +62,8 @@ export function resolveSubscriptionBillingMode({ apiKey, declaredMode } = {}) {
   return {
     ok: true,
     mode: effective.mode,
-    declared_mode: declared.mode,
+    declared_mode: declared.asserted ? declared.mode : "",
+    declared_mode_asserted: declared.asserted === true,
     effective_mode: effective.mode,
   };
 }

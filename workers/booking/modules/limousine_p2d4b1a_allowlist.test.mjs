@@ -371,7 +371,7 @@ test("28) Billit and RateHawk coexistence unchanged", () => {
   assert.ok(!wrangler.includes('crons = ["*/2 * * * *"]'));
   assert.equal(
     createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "FC6745142839C36E02FA86DE39D4F1BDEBC39FBCDC82E1B396FB33F215A7B0C2",
+    "90F69097B4F9E458CB122058FE85491A840BF03B3D38EB6EC1F0182A8F9C6556",
   );
   assert.equal(
     createHash("sha256").update(dueIndex, "utf8").digest("hex").toUpperCase(),

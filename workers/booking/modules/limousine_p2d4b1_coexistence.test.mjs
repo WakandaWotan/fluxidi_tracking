@@ -265,5 +265,5 @@ test("20) limousine request traffic adds no scheduled KV reads while gates are O
   // empty fail-closed FLUXIDI_SUBSCRIPTION_ADDON_TEST_COMPANY_ALLOWLIST var.
   // Crons stay empty; no limousine gates or secrets were added.
   assert.equal(createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "FC6745142839C36E02FA86DE39D4F1BDEBC39FBCDC82E1B396FB33F215A7B0C2");
+    "90F69097B4F9E458CB122058FE85491A840BF03B3D38EB6EC1F0182A8F9C6556");
 });

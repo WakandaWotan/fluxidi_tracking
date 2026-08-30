@@ -11,6 +11,7 @@ import {
   buildAddonPendingBillingEvidence,
   effectiveMollieKeyMode,
   parseAddonTestCompanyAllowlist,
+  declaredSubscriptionMollieMode,
   resolveSubscriptionBillingMode,
   testGrantRevenueAudit,
 } from "./subscription_addon_test_mode_gate.mjs";
@@ -80,14 +81,39 @@ function envFor({
   apiKey = "live_dummy_not_a_real_secret",
   mode = "live",
   allowlist = "",
+  omitDeclaredMode = false,
 } = {}) {
-  return {
+  const env = {
     ADMIN_TOKEN: ADMIN,
     BOOKING_KV: kv,
     FLUXIDI_SUBSCRIPTION_MOLLIE_API_KEY: apiKey,
     FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET: WEBHOOK_SECRET,
-    FLUXIDI_SUBSCRIPTION_MOLLIE_MODE: mode,
     FLUXIDI_SUBSCRIPTION_ADDON_TEST_COMPANY_ALLOWLIST: allowlist,
+  };
+  if (!omitDeclaredMode) env.FLUXIDI_SUBSCRIPTION_MOLLIE_MODE = mode;
+  return env;
+}
+
+function mockMolliePaymentCreate(paymentMode) {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes("/v2/payments") && !href.includes("tr_")) {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: `tr_${paymentMode}_ok`,
+          mode: paymentMode,
+          status: "open",
+          _links: { checkout: { href: `https://www.mollie.com/checkout/${paymentMode}` } },
+        }),
+      };
+    }
+    throw new Error(`unexpected_fetch:${href}`);
+  };
+  return () => {
+    globalThis.fetch = previousFetch;
   };
 }
 
@@ -301,22 +327,156 @@ test("live key + ordinary company + verified paid payment activates normally", a
   assert.equal(profile.subscription_profile.extra_vehicle_active_quantity, 1);
 });
 
-test("configured and effective mode mismatch fails closed", () => {
+test("missing MODE + valid live key keeps live checkout functional", async () => {
+  const resolved = resolveSubscriptionBillingMode({
+    apiKey: "live_dummy_not_a_real_secret",
+    declaredMode: "",
+  });
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.mode, "live");
+  assert.equal(resolved.declared_mode_asserted, false);
+
+  const kv = memoryKv();
+  seedSubscription(kv, "t_live", "c_nomode", { public_company_code: "FLX-00003" });
+  const restore = mockMolliePaymentCreate("live");
+  try {
+    const res = await worker.fetch(
+      checkoutRequest("t_live", "c_nomode"),
+      envFor({
+        kv,
+        apiKey: "live_dummy_not_a_real_secret",
+        omitDeclaredMode: true,
+      }),
+    );
+    assert.equal(res.status, 200);
+    const pendingRaw = [...kv.store.entries()].find(([key]) =>
+      key.startsWith("subscription:addon:pending_activation:"));
+    assert.ok(pendingRaw);
+    const pending = JSON.parse(pendingRaw[1]);
+    assert.equal(pending.billing_mode, "live");
+    assert.equal(pending.counts_as_live_revenue, true);
+    assert.equal(pending.contributes_mrr, true);
+  } finally {
+    restore();
+  }
+});
+
+test("missing MODE + valid test key + empty allowlist is denied", async () => {
+  const denied = authorizeAddonCheckout({
+    apiKey: "test_dummy_not_a_real_secret",
+    declaredMode: "",
+    companyCode: "FLX-00001",
+    companyId: "c_ord",
+    allowlistRaw: "",
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.error, "addon_test_mode_not_authorized");
+
+  const kv = memoryKv();
+  seedSubscription(kv, "t_ord", "c_nomode", { public_company_code: "FLX-00001" });
+  const res = await worker.fetch(
+    checkoutRequest("t_ord", "c_nomode"),
+    envFor({
+      kv,
+      apiKey: "test_dummy_not_a_real_secret",
+      omitDeclaredMode: true,
+      allowlist: "",
+    }),
+  );
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.error, "addon_test_mode_not_authorized");
+});
+
+test("missing MODE + valid test key + authorized company stays on the test path", async () => {
+  const allowed = authorizeAddonCheckout({
+    apiKey: "test_dummy_not_a_real_secret",
+    declaredMode: undefined,
+    companyCode: "FLX-88999",
+    companyId: "c_qa",
+    allowlistRaw: "FLX-88999,c_qa",
+  });
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.billing_mode, "test");
+  assert.equal(allowed.counts_as_live_revenue, false);
+  assert.equal(allowed.contributes_mrr, false);
+
+  const kv = memoryKv();
+  seedSubscription(kv, "t_qa", "c_nomode", { public_company_code: "FLX-88999" });
+  const restore = mockMolliePaymentCreate("test");
+  try {
+    const res = await worker.fetch(
+      checkoutRequest("t_qa", "c_nomode"),
+      envFor({
+        kv,
+        apiKey: "test_dummy_not_a_real_secret",
+        omitDeclaredMode: true,
+        allowlist: "FLX-88999,c_nomode",
+      }),
+    );
+    assert.equal(res.status, 200);
+    const pendingRaw = [...kv.store.entries()].find(([key]) =>
+      key.startsWith("subscription:addon:pending_activation:"));
+    assert.ok(pendingRaw);
+    const pending = JSON.parse(pendingRaw[1]);
+    assert.equal(pending.billing_mode, "test");
+    assert.equal(pending.test_company_authorized, true);
+    assert.equal(pending.counts_as_live_revenue, false);
+    assert.equal(pending.contributes_mrr, false);
+  } finally {
+    restore();
+  }
+});
+
+test("configured and effective mode mismatch fails closed", async () => {
   const mismatch = resolveSubscriptionBillingMode({
     apiKey: "live_dummy_not_a_real_secret",
     declaredMode: "test",
   });
   assert.equal(mismatch.ok, false);
   assert.equal(mismatch.error, "mollie_mode_mismatch");
+  assert.equal(
+    declaredSubscriptionMollieMode("sandbox").error,
+    "unrecognized_declared_mollie_mode",
+  );
+
+  const kv = memoryKv();
+  seedSubscription(kv, "t_live", "c_mis", { public_company_code: "FLX-00003" });
+  const res = await worker.fetch(
+    checkoutRequest("t_live", "c_mis"),
+    envFor({ kv, apiKey: "live_dummy_not_a_real_secret", mode: "test" }),
+  );
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.equal(body.error, "mollie_mode_mismatch");
 });
 
-test("missing or unrecognized key fails closed", () => {
+test("missing or unrecognized key fails closed", async () => {
   assert.equal(effectiveMollieKeyMode("").ok, false);
   assert.equal(effectiveMollieKeyMode("sk_unknown").error, "unrecognized_mollie_key_mode");
   assert.equal(resolveSubscriptionBillingMode({
     apiKey: "",
     declaredMode: "live",
   }).error, "missing_mollie_api_key");
+  assert.equal(resolveSubscriptionBillingMode({
+    apiKey: "sk_unknown",
+    declaredMode: "",
+  }).error, "unrecognized_mollie_key_mode");
+
+  const kv = memoryKv();
+  seedSubscription(kv, "t_live", "c_badkey", { public_company_code: "FLX-00003" });
+  const missing = await worker.fetch(
+    checkoutRequest("t_live", "c_badkey"),
+    envFor({ kv, apiKey: "", omitDeclaredMode: true }),
+  );
+  assert.equal(missing.status, 503);
+  const unrecognized = await worker.fetch(
+    checkoutRequest("t_live", "c_badkey"),
+    envFor({ kv, apiKey: "sk_unknown", omitDeclaredMode: true }),
+  );
+  assert.equal(unrecognized.status, 503);
+  const unrecognizedBody = await unrecognized.json();
+  assert.equal(unrecognizedBody.error, "unrecognized_mollie_key_mode");
 });
 
 test("crafted webhook cannot bypass the checkout gate", async () => {
