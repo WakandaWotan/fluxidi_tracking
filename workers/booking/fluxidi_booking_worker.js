@@ -24,6 +24,7 @@ import { corsHeaders, json, html } from "./modules/http_response.js";
 import {
   envFlagOn,
   wrapKvBudget,
+  KvBudgetExceededError,
   noteIsolateReads,
   logKvPass,
 } from "./modules/kv_op_budget.js";
@@ -9984,6 +9985,15 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
 // Production fetch routes keep calling the internal binding; this export does
 // not change payment, invoice numbering, Billit, or Peppol behaviour.
 export { runPaidBookingAfterLifecycle };
+export {
+  upsertDashboardBookingsKpiProjectionBestEffort,
+  removeDashboardBookingsKpiProjectionBestEffort,
+  _loadScopedActiveDemandWithRepair,
+  rebuildBookingDemandIndexForScope,
+  computeDashboardBookingKpiContribution,
+  dashboardBookingsKpiAggregateKey,
+  serveDashboardBookingsKpisHttpGet,
+};
 export {
   runBillitDurableExportAttempt,
   sweepBillitDurableRecoveryOutbox,
@@ -36549,7 +36559,11 @@ async function applyScopedBookingTestReset(env, scope, mode, plan) {
   }
 
   try {
-    await rebuildBookingDemandIndexForScope(env, scope, { dryRun: false });
+    await saveBookingDemandIndex(env, scope, {
+      items: [],
+      source: "test_reset_empty",
+      reason: "reset_empty_index",
+    });
     rebuilt_empty.push("demand_index");
   } catch (err) {
     errors.push({
@@ -36972,7 +36986,8 @@ export default {
   // BOOKING_KV reads every 2 minutes. Cron stays off in wrangler.toml and
   // BILLIT_RECOVERY_CRON_ENABLED must be "1" before any scheduled work runs.
   // When enabled, BOOKING_KV is budget-wrapped so a regression cannot resume
-  // the amplifier. HTTP fetch is unchanged and does not use the wrapper.
+  // the amplifier. Targeted HTTP KPI handlers use a separate wrap instance;
+  // scheduled and HTTP budgets never share counters.
   async scheduled(event, env, ctx) {
     try {
       if (!envFlagOn(env?.BILLIT_RECOVERY_CRON_ENABLED)) {
@@ -45645,670 +45660,11 @@ export default {
         });
         if (!auth.ok) return auth.response;
         console.log(`[ADMIN_DASHBOARD_BOOKINGS_KPIS][AUTH] auth_mode=${auth.auth_mode}`);
-        const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
-        const debugEnabled = debugRaw === "1" || debugRaw === "true";
-        const debugBookingFinanceRaw = safeStr(
-          url.searchParams.get("debug_booking_finance"),
-          16,
-        ).toLowerCase();
-        const debugBookingFinance =
-          debugBookingFinanceRaw === "1" || debugBookingFinanceRaw === "true";
-        const debugFinanceItemsEnabled =
-          debugEnabled && safeStr(auth?.auth_mode, 32) === "admin_token";
-        const monthParam = safeStr(url.searchParams.get("month"), 16);
-        if (monthParam && !_dashboardBookingsKpiNormalizeMonth(monthParam)) {
-          return json({ ok: false, error: "month must be YYYY-MM" }, 400);
-        }
-        const selectedMonth = _dashboardBookingsKpiNormalizeMonth(monthParam || null);
-        const bookingFinanceMonthKey = _trackingSyncScopedBookingFinanceMonthKey(
-          scopedRoute.scope,
-          selectedMonth,
-        );
-        const bookingFinanceContribPrefix = _trackingSyncScopedBookingFinanceContribPrefix(
-          scopedRoute.scope,
-        );
-        const bookingFinanceMonth = bookingFinanceMonthKey
-          ? ((await _trackingSyncGetJson(env, bookingFinanceMonthKey)) || {})
-          : {};
-        let bookingFinanceMonthIncomeCents = Number.isFinite(
-          Number(bookingFinanceMonth?.monthly_paid_bookings_income_cents),
-        )
-          ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_income_cents)))
-          : 0;
-        let bookingFinanceMonthPaidCount = Number.isFinite(
-          Number(bookingFinanceMonth?.monthly_paid_bookings_count),
-        )
-          ? Math.max(0, Math.round(Number(bookingFinanceMonth.monthly_paid_bookings_count)))
-          : 0;
-        const routeScopeMask = _bookingIntentScopeMask(scopedRoute.scope);
-        console.log(
-          `[BOOKING_FINANCE_KPI][READ_KEYS] tenant=${routeScopeMask.tenant || "-"} company=${routeScopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} contrib_prefix=${_bookingIntentMask(bookingFinanceContribPrefix)}`,
-        );
-        // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: keep the normal GET off the
-        // reconciliation path when the authoritative aggregate is already
-        // present and structurally valid. Debug reads and cold/absent
-        // aggregates use a bounded fallback; unbounded contribution scans
-        // belong to the /admin/dashboard/bookings-kpis/rebuild path.
-        const kpiReadStartedAt = Date.now();
-        const bookingFinanceAggregateReady =
-          _bookingFinanceAggregateStructurallyValidLocal(bookingFinanceMonth);
-        const shouldReconcileBookingFinance =
-          debugBookingFinance ||
-          debugFinanceItemsEnabled ||
-          !bookingFinanceAggregateReady;
-        const routeReconcileFinance = shouldReconcileBookingFinance
-          ? await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
-              env,
-              scopedRoute.scope,
-              selectedMonth,
-              {
-                persist: true,
-                source: "dashboard_bookings_kpis_route_read",
-                includeDebugRows: debugBookingFinance,
-                debugRowLimit: 20,
-                includeDebugItems: debugFinanceItemsEnabled,
-                maxScanned:
-                  debugBookingFinance || debugFinanceItemsEnabled
-                    ? 0
-                    : _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS,
-              },
-            )
-          : null;
-        const kpiReadSource = bookingFinanceAggregateReady
-          ? "aggregate"
-          : routeReconcileFinance?.booking_finance_reconcile_budget_exceeded
-            ? "data_pending"
-            : "bounded_fallback";
-        const kpiReadReconcile = shouldReconcileBookingFinance
-          ? "bounded"
-          : "skipped";
-        console.log(
-          _formatKpiReadDiagnosticLocal({
-            endpoint: "bookings",
-            source: kpiReadSource,
-            reconcile: kpiReadReconcile,
-            elapsedMs: Date.now() - kpiReadStartedAt,
-            status: 200,
-          }),
-        );
-        if (routeReconcileFinance?.ok) {
-          bookingFinanceMonthIncomeCents = Math.max(
-            bookingFinanceMonthIncomeCents,
-            Number.isFinite(Number(routeReconcileFinance.monthly_paid_bookings_income_cents))
-              ? Math.max(0, Math.round(Number(routeReconcileFinance.monthly_paid_bookings_income_cents)))
-              : 0,
-          );
-          bookingFinanceMonthPaidCount = Math.max(
-            bookingFinanceMonthPaidCount,
-            Number.isFinite(Number(routeReconcileFinance.monthly_paid_bookings_count))
-              ? Math.max(0, Math.round(Number(routeReconcileFinance.monthly_paid_bookings_count)))
-              : 0,
-          );
-        }
-        console.log(
-          `[BOOKING_FINANCE_KPI][AGG_READ] tenant=${routeScopeMask.tenant || "-"} company=${routeScopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} reconciled=${routeReconcileFinance?.ok ? "true" : "false"} scanned=${Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned)) ? Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)) : 0}`,
-        );
-        console.log(
-          `[DASHBOARD_BOOKINGS_KPI][BOOKING_FINANCE_READ] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} income_cents=${bookingFinanceMonthIncomeCents} paid_count=${bookingFinanceMonthPaidCount} key=${bookingFinanceMonthKey ? "present" : "missing"} source=route`,
-        );
-        console.log(
-          `[DASHBOARD_BOOKINGS_KPI][MONTHLY_INCOME_MERGE] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} projection_income_cents=0 booking_finance_income_cents=${bookingFinanceMonthIncomeCents} merged_income_cents=${bookingFinanceMonthIncomeCents} source=route_precompute`,
-        );
-        const routeBookingFinanceNetFields = _dashboardBookingFinanceNetAggregateFields(
-          bookingFinanceMonth,
-          routeReconcileFinance,
-        );
-        const listIndexRead = await readCompanyBookingsListIndex(
+        return await serveDashboardBookingsKpisHttpGet({
+          url,
           env,
-          scopedRoute.scope,
-        );
-        const listItems = Array.isArray(listIndexRead?.index?.items)
-          ? listIndexRead.index.items
-          : null;
-        const listIndexStaleAfterMs = _companyBookingsListIndexStaleAfterMs(env);
-        const listIndexUpdatedAtMs = Date.parse(
-          safeStr(
-            listIndexRead?.index?.updated_at ?? listIndexRead?.index?.updatedAt,
-            80,
-          ),
-        );
-        const listIndexStale =
-          listIndexStaleAfterMs > 0 &&
-          (!Number.isFinite(listIndexUpdatedAtMs) ||
-            Date.now() - listIndexUpdatedAtMs > listIndexStaleAfterMs);
-        const resetEmptyMissingListIndex =
-          listIndexRead?.ok === true && listIndexRead?.exists === false;
-        const resetEmptyValidFreshEmptyListIndex =
-          listIndexRead?.ok === true &&
-          listIndexRead?.exists === true &&
-          listIndexRead?.valid === true &&
-          Array.isArray(listItems) &&
-          listItems.length === 0 &&
-          !listIndexStale;
-        const isResetEmptyState =
-          resetEmptyMissingListIndex || resetEmptyValidFreshEmptyListIndex;
-        if (isResetEmptyState) {
-          return json(
-            {
-              ok: true,
-              tenant_id: scopedRoute.scope?.tenant_id || null,
-              company_id: scopedRoute.scope?.company_id || null,
-              generated_at: new Date().toISOString(),
-              month: selectedMonth,
-              monthly_income_cents: bookingFinanceMonthIncomeCents,
-              monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-              booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
-              booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-              booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
-              ...routeBookingFinanceNetFields,
-              booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
-                : 0,
-              booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
-                : 0,
-              booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
-                : 0,
-              booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
-                : 0,
-              booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
-                : 0,
-              booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
-                : 0,
-              booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
-                : 0,
-              booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
-                : 0,
-              booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
-                : 0,
-              booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
-                ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
-                : 0,
-              booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
-              ...(debugBookingFinance
-                ? {
-                    booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
-                      ? routeReconcileFinance.booking_finance_reconcile_debug_rows
-                      : [],
-                  }
-                : {}),
-              ...(debugFinanceItemsEnabled
-                ? {
-                    booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
-                      ? routeReconcileFinance.booking_finance_debug_items
-                      : [],
-                  }
-                : {}),
-              income_merge_strategy: "max_projection_vs_booking_finance",
-              open_bookings_count: 0,
-              considered_open: 0,
-              excluded_terminal: 0,
-              excluded_payment_failed: 0,
-              excluded_stale_payment_pending: 0,
-              excluded_hidden: 0,
-              excluded_missing_pickup_time: 0,
-              excluded_stale_past_pickup: 0,
-              excluded_non_canonical_provisional_record: 0,
-              excluded_reference_only_provisional_record: 0,
-              excluded_duplicate_identity: 0,
-              excluded_terminal_identity: 0,
-              excluded_out_of_scope: 0,
-              excluded_invalid_record: 0,
-              total_scanned: 0,
-              excluded_terminal_statuses:
-                DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-              scan_complete: true,
-              scan_stats: {
-                scanned_keys: 0,
-                matched_scope: 0,
-                considered_open: 0,
-                excluded_terminal: 0,
-                excluded_payment_failed: 0,
-                excluded_stale_payment_pending: 0,
-                excluded_hidden: 0,
-                excluded_missing_pickup_time: 0,
-                excluded_stale_past_pickup: 0,
-                excluded_non_canonical_provisional_record: 0,
-                excluded_reference_only_provisional_record: 0,
-                excluded_duplicate_identity: 0,
-                excluded_terminal_identity: 0,
-                excluded_out_of_scope: 0,
-                excluded_invalid_record: 0,
-              },
-              source: "projection_degraded",
-              projection_health: "missing_index",
-              projection_complete: false,
-              projection_updated_at: null,
-              projection_rebuilt_at: null,
-              projection_evaluated_at: null,
-            },
-            200,
-          );
-        }
-        const out = await computeDashboardBookingsKpis(env, {
           tenantScope: scopedRoute.scope,
-          month: monthParam || null,
-          debug: debugEnabled,
-          debugBookingFinance,
-          debugFinanceItems: debugFinanceItemsEnabled,
-          debugLimit: 50,
         });
-        if (!out?.ok) {
-          const errorCode = safeStr(out?.error, 80);
-          const openFallback = await computeDashboardOpenBookingsKpiFallback(
-            env,
-            scopedRoute.scope,
-            {
-              listIndexItems: listItems,
-              listIndexRead,
-            },
-          );
-          const openFallbackKpiFields =
-            openFallback?.ok === true
-              ? _dashboardOpenBookingsKpiFieldsFromFallbackScan(
-                  {
-                    considered_open: openFallback.considered_open,
-                    excluded_terminal: openFallback.excluded_terminal,
-                    excluded_payment_failed: openFallback.excluded_payment_failed,
-                    excluded_stale_payment_pending: openFallback.excluded_stale_payment_pending,
-                    excluded_hidden: openFallback.excluded_hidden,
-                    excluded_missing_pickup_time: openFallback.excluded_missing_pickup_time,
-                    excluded_stale_past_pickup: openFallback.excluded_stale_past_pickup,
-                    excluded_non_canonical_provisional_record:
-                      openFallback.excluded_non_canonical_provisional_record,
-                    excluded_reference_only_provisional_record:
-                      openFallback.excluded_reference_only_provisional_record,
-                    excluded_duplicate_identity: openFallback.excluded_duplicate_identity,
-                    excluded_terminal_identity: openFallback.excluded_terminal_identity,
-                    excluded_out_of_scope: openFallback.excluded_out_of_scope,
-                    excluded_invalid_record: openFallback.excluded_invalid_record,
-                  },
-                  {
-                    totalScanned: openFallback.total_scanned,
-                    matchedScope: openFallback.scan_stats?.matched_scope,
-                    scanComplete: openFallback.scan_complete,
-                  },
-                )
-              : null;
-          const resolvedOpenBookingsCount = openFallbackKpiFields
-            ? Math.max(0, Math.round(Number(openFallbackKpiFields.open_bookings_count) || 0))
-            : 0;
-          if (errorCode === "dashboard_bookings_kpi_index_unavailable") {
-            if (isResetEmptyState) {
-              return json(
-                {
-                  ok: true,
-                  tenant_id: scopedRoute.scope?.tenant_id || null,
-                  company_id: scopedRoute.scope?.company_id || null,
-                  generated_at: new Date().toISOString(),
-                  month: selectedMonth,
-                  monthly_income_cents: bookingFinanceMonthIncomeCents,
-                  monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                  booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
-                  booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                  booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
-                  ...routeBookingFinanceNetFields,
-                  booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
-                    : 0,
-                  booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
-                    : 0,
-                  booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
-                    : 0,
-                  booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
-                    : 0,
-                  booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
-                    : 0,
-                  booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
-                    : 0,
-                  booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
-                    : 0,
-                  booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
-                    : 0,
-                  booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
-                    : 0,
-                  booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
-                    ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
-                    : 0,
-                  booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
-                  ...(debugBookingFinance
-                    ? {
-                        booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
-                          ? routeReconcileFinance.booking_finance_reconcile_debug_rows
-                          : [],
-                      }
-                    : {}),
-                  ...(debugFinanceItemsEnabled
-                    ? {
-                        booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
-                          ? routeReconcileFinance.booking_finance_debug_items
-                          : [],
-                      }
-                    : {}),
-                  income_merge_strategy: "max_projection_vs_booking_finance",
-                  open_bookings_count: 0,
-                  considered_open: 0,
-                  excluded_terminal: 0,
-                  excluded_payment_failed: 0,
-                  excluded_stale_payment_pending: 0,
-                  excluded_hidden: 0,
-                  excluded_missing_pickup_time: 0,
-                  excluded_stale_past_pickup: 0,
-                  excluded_non_canonical_provisional_record: 0,
-                  excluded_reference_only_provisional_record: 0,
-                  excluded_duplicate_identity: 0,
-                  excluded_terminal_identity: 0,
-                  excluded_out_of_scope: 0,
-                  excluded_invalid_record: 0,
-                  total_scanned: 0,
-                  excluded_terminal_statuses:
-                    DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-                  scan_complete: true,
-                  scan_stats: {
-                    scanned_keys: 0,
-                    matched_scope: 0,
-                    considered_open: 0,
-                    excluded_terminal: 0,
-                    excluded_payment_failed: 0,
-                    excluded_stale_payment_pending: 0,
-                    excluded_hidden: 0,
-                    excluded_missing_pickup_time: 0,
-                    excluded_stale_past_pickup: 0,
-                    excluded_non_canonical_provisional_record: 0,
-                    excluded_reference_only_provisional_record: 0,
-                    excluded_duplicate_identity: 0,
-                    excluded_terminal_identity: 0,
-                    excluded_out_of_scope: 0,
-                    excluded_invalid_record: 0,
-                  },
-                  source: "projection_degraded",
-                  projection_health: "missing_index",
-                  projection_complete: false,
-                  projection_updated_at: null,
-                  projection_rebuilt_at: null,
-                  projection_evaluated_at: null,
-                },
-                200,
-              );
-            }
-          }
-          if (errorCode === "dashboard_bookings_kpi_index_stale") {
-            const rebuilt = await rebuildDashboardBookingsKpiProjectionForScope(
-              env,
-              scopedRoute.scope,
-              { dryRun: false, compare: false },
-            );
-            if (rebuilt?.ok === true) {
-              const repaired = await computeDashboardBookingsKpis(env, {
-                tenantScope: scopedRoute.scope,
-                month: monthParam || null,
-                debug: debugEnabled,
-                debugBookingFinance,
-                debugFinanceItems: debugFinanceItemsEnabled,
-                debugLimit: 50,
-              });
-              if (repaired?.ok) {
-                return json(
-                  {
-                    ...repaired,
-                    projection_rebuilt: true,
-                    projection_stale_before_rebuild: true,
-                  },
-                  200,
-                );
-              }
-            }
-            return json(
-              {
-                ok: true,
-                degraded: true,
-                reason: "dashboard_bookings_kpi_index_stale",
-                tenant_id: scopedRoute.scope?.tenant_id || null,
-                company_id: scopedRoute.scope?.company_id || null,
-                generated_at: new Date().toISOString(),
-                month: selectedMonth,
-                monthly_income_cents: bookingFinanceMonthIncomeCents,
-                monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
-                booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
-                ...routeBookingFinanceNetFields,
-                booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
-                  : 0,
-                booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
-                  : 0,
-                booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
-                  : 0,
-                booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
-                  : 0,
-                booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
-                  : 0,
-                booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
-                  : 0,
-                booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
-                  : 0,
-                booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
-                  : 0,
-                booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
-                  : 0,
-                booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
-                  : 0,
-                booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
-                ...(debugBookingFinance
-                  ? {
-                      booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
-                        ? routeReconcileFinance.booking_finance_reconcile_debug_rows
-                        : [],
-                    }
-                  : {}),
-                ...(debugFinanceItemsEnabled
-                  ? {
-                      booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
-                        ? routeReconcileFinance.booking_finance_debug_items
-                        : [],
-                    }
-                  : {}),
-                income_merge_strategy: "max_projection_vs_booking_finance",
-                ...(openFallbackKpiFields || {
-                  open_bookings_count: 0,
-                  considered_open: 0,
-                  excluded_terminal: 0,
-                  excluded_payment_failed: 0,
-                  excluded_stale_payment_pending: 0,
-                  excluded_hidden: 0,
-                  excluded_missing_pickup_time: 0,
-                  excluded_stale_past_pickup: 0,
-                  excluded_non_canonical_provisional_record: 0,
-                  excluded_reference_only_provisional_record: 0,
-                  excluded_duplicate_identity: 0,
-                  excluded_terminal_identity: 0,
-                  excluded_out_of_scope: 0,
-                  excluded_invalid_record: 0,
-                  total_scanned: 0,
-                  scan_complete: true,
-                  scan_stats: {
-                    scanned_keys: 0,
-                    matched_scope: 0,
-                    considered_open: 0,
-                    excluded_terminal: 0,
-                    excluded_payment_failed: 0,
-                    excluded_stale_payment_pending: 0,
-                    excluded_hidden: 0,
-                    excluded_missing_pickup_time: 0,
-                    excluded_stale_past_pickup: 0,
-                    excluded_non_canonical_provisional_record: 0,
-                    excluded_reference_only_provisional_record: 0,
-                    excluded_duplicate_identity: 0,
-                    excluded_terminal_identity: 0,
-                    excluded_out_of_scope: 0,
-                    excluded_invalid_record: 0,
-                  },
-                }),
-                ...(openFallback?.ok === true
-                  ? { open_count_source: openFallback.open_fallback_source }
-                  : {}),
-                excluded_terminal_statuses:
-                  DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-                source: "projection_degraded",
-                projection_health: "stale",
-                projection_rebuilt: rebuilt?.ok === true,
-                projection_stale_before_rebuild: true,
-                projection_rebuild_attempted: true,
-              },
-              200,
-            );
-          }
-          if (errorCode === "dashboard_bookings_kpi_index_dirty") {
-            console.log(
-              `[DASHBOARD_BOOKINGS_KPI][DIRTY_DEGRADED] tenant=${_maskPublicDriverLoginValue(scopedRoute.scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scopedRoute.scope?.company_id)} month=${selectedMonth} reason=${errorCode} open=${resolvedOpenBookingsCount} income_cents=${bookingFinanceMonthIncomeCents} fallback=${openFallback?.ok === true ? openFallback.open_fallback_source : "none"}`,
-            );
-            return json(
-              {
-                ok: true,
-                degraded: true,
-                degraded_reason: "dashboard_bookings_kpi_index_dirty",
-                error_reason: errorCode,
-                diagnostics: {
-                  degraded_reason: "dashboard_bookings_kpi_index_dirty",
-                  original_error: errorCode,
-                },
-                tenant_id: scopedRoute.scope?.tenant_id || null,
-                company_id: scopedRoute.scope?.company_id || null,
-                generated_at: new Date().toISOString(),
-                month: selectedMonth,
-                monthly_income_cents: bookingFinanceMonthIncomeCents,
-                monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
-                booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
-                booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
-                ...routeBookingFinanceNetFields,
-                booking_finance_reconcile_scanned: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_scanned))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_scanned)))
-                  : 0,
-                booking_finance_reconcile_matched_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_matched_month))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_matched_month)))
-                  : 0,
-                booking_finance_reconcile_sum_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_sum_cents))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_sum_cents)))
-                  : 0,
-                booking_finance_reconcile_paid_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_paid_count))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_paid_count)))
-                  : 0,
-                booking_finance_reconcile_skipped_wrong_month: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_wrong_month))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_wrong_month)))
-                  : 0,
-                booking_finance_reconcile_skipped_unpaid: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_unpaid))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_unpaid)))
-                  : 0,
-                booking_finance_reconcile_skipped_missing_amount: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount)))
-                  : 0,
-                booking_finance_reconcile_recovered_amount_count: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_count))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_count)))
-                  : 0,
-                booking_finance_reconcile_recovered_amount_cents: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_recovered_amount_cents))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_recovered_amount_cents)))
-                  : 0,
-                booking_finance_reconcile_skipped_missing_amount_unrecoverable: Number.isFinite(Number(routeReconcileFinance?.booking_finance_reconcile_skipped_missing_amount_unrecoverable))
-                  ? Math.max(0, Math.round(Number(routeReconcileFinance.booking_finance_reconcile_skipped_missing_amount_unrecoverable)))
-                  : 0,
-                booking_finance_reconcile_prefix_preview: safeStr(routeReconcileFinance?.booking_finance_reconcile_prefix_preview, 160) || null,
-                ...(debugBookingFinance
-                  ? {
-                      booking_finance_debug_rows: Array.isArray(routeReconcileFinance?.booking_finance_reconcile_debug_rows)
-                        ? routeReconcileFinance.booking_finance_reconcile_debug_rows
-                        : [],
-                    }
-                  : {}),
-                ...(debugFinanceItemsEnabled
-                  ? {
-                      booking_finance_debug_items: Array.isArray(routeReconcileFinance?.booking_finance_debug_items)
-                        ? routeReconcileFinance.booking_finance_debug_items
-                        : [],
-                    }
-                  : {}),
-                income_merge_strategy: "max_projection_vs_booking_finance",
-                ...(openFallbackKpiFields || {
-                  open_bookings_count: 0,
-                  considered_open: 0,
-                  excluded_terminal: 0,
-                  excluded_payment_failed: 0,
-                  excluded_stale_payment_pending: 0,
-                  excluded_hidden: 0,
-                  excluded_missing_pickup_time: 0,
-                  excluded_stale_past_pickup: 0,
-                  excluded_non_canonical_provisional_record: 0,
-                  excluded_reference_only_provisional_record: 0,
-                  excluded_duplicate_identity: 0,
-                  excluded_terminal_identity: 0,
-                  excluded_out_of_scope: 0,
-                  excluded_invalid_record: 0,
-                  total_scanned: 0,
-                  scan_complete: false,
-                  scan_stats: {
-                    scanned_keys: 0,
-                    matched_scope: 0,
-                    considered_open: 0,
-                    excluded_terminal: 0,
-                    excluded_payment_failed: 0,
-                    excluded_stale_payment_pending: 0,
-                    excluded_hidden: 0,
-                    excluded_missing_pickup_time: 0,
-                    excluded_stale_past_pickup: 0,
-                    excluded_non_canonical_provisional_record: 0,
-                    excluded_reference_only_provisional_record: 0,
-                    excluded_duplicate_identity: 0,
-                    excluded_terminal_identity: 0,
-                    excluded_out_of_scope: 0,
-                    excluded_invalid_record: 0,
-                  },
-                }),
-                ...(openFallback?.ok === true
-                  ? { open_count_source: openFallback.open_fallback_source }
-                  : {}),
-                excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
-                source: "projection_degraded",
-                projection_health: "dirty",
-                projection_rebuild_attempted: false,
-              },
-              200,
-            );
-          }
-          const projectionUnavailable =
-            errorCode === "dashboard_bookings_kpi_index_unavailable" ||
-            errorCode === "dashboard_bookings_kpi_index_dirty" ||
-            errorCode === "dashboard_bookings_kpi_index_stale";
-          return json(
-            out,
-            projectionUnavailable ? 503 : (out?.error === "tenant_scope_conflict" ? 409 : 400),
-          );
-        }
-        return json(out, 200);
       }
 
       if (
@@ -49638,10 +48994,30 @@ export default {
             url.searchParams.get("dry_run"),
           false,
         );
+        const cursorRaw = safeStr(
+          body?.cursor ?? url.searchParams.get("cursor"),
+          240,
+        );
+        const maxKeys = Math.max(
+          1,
+          Math.min(
+            200,
+            Number(body?.maxKeys ?? body?.max_keys ?? url.searchParams.get("maxKeys")) || 200,
+          ),
+        );
+        const reset = _coerceBoolean(
+          body?.reset ?? url.searchParams.get("reset"),
+          false,
+        );
         const out = await rebuildBookingDemandIndexForScope(
           env,
           explicitScope,
-          { dryRun },
+          {
+            dryRun,
+            cursor: cursorRaw || undefined,
+            maxKeys,
+            reset,
+          },
         );
         return json(out, out?.ok ? 200 : 400);
       }
@@ -85774,8 +85150,12 @@ function _demandItemHasRecognizableBookingIdentity(item) {
 }
 
 function _fleetDemandIndexStaleAfterMs(env, options = {}) {
-  const explicit = Number(options?.staleAfterMs);
-  if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+  if (options?.ignoreAge === true) return 0;
+  if (Object.prototype.hasOwnProperty.call(options || {}, "staleAfterMs")) {
+    const explicit = Number(options.staleAfterMs);
+    if (Number.isFinite(explicit) && explicit <= 0) return 0;
+    if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+  }
   const fromEnv = Number(env?.FLEET_DEMAND_INDEX_STALE_AFTER_MS);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
     return Math.max(30 * 1000, Math.min(24 * 60 * 60 * 1000, Math.round(fromEnv)));
@@ -85784,9 +85164,13 @@ function _fleetDemandIndexStaleAfterMs(env, options = {}) {
 }
 
 function _fleetDemandIndexEmptyMarkerStaleAfterMs(env, options = {}) {
-  const explicit = Number(options?.emptyMarkerStaleAfterMs);
-  if (Number.isFinite(explicit) && explicit > 0) {
-    return Math.max(5 * 60 * 1000, Math.min(7 * 24 * 60 * 60 * 1000, Math.round(explicit)));
+  if (options?.ignoreAge === true) return 0;
+  if (Object.prototype.hasOwnProperty.call(options || {}, "emptyMarkerStaleAfterMs")) {
+    const explicit = Number(options.emptyMarkerStaleAfterMs);
+    if (Number.isFinite(explicit) && explicit <= 0) return 0;
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return Math.max(5 * 60 * 1000, Math.min(7 * 24 * 60 * 60 * 1000, Math.round(explicit)));
+    }
   }
   const fromEnv = Number(env?.FLEET_DEMAND_INDEX_EMPTY_STALE_AFTER_MS);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
@@ -85910,6 +85294,14 @@ async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
       empty_marker: true,
     };
   }
+  if (!Array.isArray(loaded.items) || loaded.items.length === 0) {
+    return {
+      ok: false,
+      reason: "demand_index_unavailable",
+      items: [],
+      index_updated_at: indexUpdatedAt,
+    };
+  }
   const items = [];
   for (const rawItem of loaded.items) {
     if (isTerminalLifecycleStatus(rawItem?.lifecycle)) continue;
@@ -85926,6 +85318,37 @@ async function _loadScopedActiveDemandFromIndex(env, scope, options = {}) {
   };
 }
 
+function bookingDemandIndexRepairMarkerKey(scope) {
+  const normalized = _safeResetNormalizedScope(scope);
+  if (!normalized?.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:booking:demand:repair_marker:v1`;
+}
+
+function bookingDemandIndexRebuildProgressKey(scope) {
+  const normalized = _safeResetNormalizedScope(scope);
+  if (!normalized?.hasScope) return "";
+  return `tenant:${normalized.tenant_id}:company:${normalized.company_id}:booking:demand:rebuild_progress:v1`;
+}
+
+async function _writeDemandIndexRepairMarkerBestEffort(env, scope, reason) {
+  const key = bookingDemandIndexRepairMarkerKey(scope);
+  if (!key || !env?.BOOKING_KV) return { ok: false };
+  try {
+    await env.BOOKING_KV.put(
+      key,
+      JSON.stringify({
+        version: 1,
+        needed: true,
+        reason: safeStr(reason, 80) || "demand_index_unavailable",
+        updated_at: new Date().toISOString(),
+      }),
+    );
+    return { ok: true, key };
+  } catch (_) {
+    return { ok: false };
+  }
+}
+
 async function _loadScopedActiveDemandWithRepair(env, scope, options = {}) {
   const normalizedScope = normalizeFleetTenantScope(scope || {});
   if (!normalizedScope?.hasScope) {
@@ -85938,7 +85361,14 @@ async function _loadScopedActiveDemandWithRepair(env, scope, options = {}) {
       demand_index_reason_before_rebuild: "missing_scope",
     };
   }
-  const initial = await _loadScopedActiveDemandFromIndex(env, normalizedScope, options);
+  // HTTP-KV-AMPLIFIERS-P0: age alone must never fail or rebuild. Serve the
+  // mutation-maintained company-scoped index even when it is five minutes old.
+  const initial = await _loadScopedActiveDemandFromIndex(env, normalizedScope, {
+    ...options,
+    ignoreAge: true,
+    staleAfterMs: 0,
+    emptyMarkerStaleAfterMs: 0,
+  });
   if (initial?.ok) {
     return {
       ...initial,
@@ -85948,67 +85378,22 @@ async function _loadScopedActiveDemandWithRepair(env, scope, options = {}) {
     };
   }
   const initialReason = safeStr(initial?.reason, 80) || "demand_index_unavailable";
-  const staleBeforeRebuild = initialReason === "demand_index_stale" || initial?.stale === true;
-  const shouldRebuild = (
-    initialReason === "demand_index_stale" ||
-    initialReason === "demand_index_unavailable" ||
-    initialReason === "demand_index_invalid"
-  );
-  if (!shouldRebuild) {
-    return {
-      ...initial,
-      ok: false,
-      reason: initialReason,
-      items: [],
-      demand_index_rebuilt: false,
-      demand_index_stale_before_rebuild: staleBeforeRebuild,
-      demand_index_reason_before_rebuild: initialReason,
-    };
-  }
-  let rebuilt = null;
-  try {
-    rebuilt = await rebuildBookingDemandIndexForScope(env, normalizedScope, { dryRun: false });
-  } catch (err) {
-    rebuilt = {
-      ok: false,
-      error: safeStr(err?.message || err, 120) || "unknown",
-    };
+  if (initialReason !== "missing_scope") {
+    await _writeDemandIndexRepairMarkerBestEffort(env, normalizedScope, initialReason);
   }
   const maskedScope = _bookingIntentScopeMask(normalizedScope);
   console.log(
-    `[BOOKING_DEMAND_INDEX][REPAIR] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} initial_reason=${initialReason} rebuild_ok=${rebuilt?.ok === true ? "true" : "false"}`,
+    `[BOOKING_DEMAND_INDEX][READ_UNAVAILABLE] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} reason=${initialReason}`,
   );
-  if (rebuilt?.ok !== true) {
-    return {
-      ok: false,
-      reason: "demand_index_rebuild_failed",
-      items: [],
-      stale: initial?.stale === true,
-      index_updated_at: safeStr(initial?.index_updated_at, 80) || null,
-      demand_index_rebuilt: false,
-      demand_index_stale_before_rebuild: staleBeforeRebuild,
-      demand_index_reason_before_rebuild: initialReason,
-      demand_index_rebuild_error: safeStr(rebuilt?.error, 120) || null,
-    };
-  }
-  const reloaded = await _loadScopedActiveDemandFromIndex(env, normalizedScope, options);
-  if (!reloaded?.ok) {
-    return {
-      ok: false,
-      reason: "availability_index_unavailable",
-      items: [],
-      stale: reloaded?.stale === true,
-      index_updated_at: safeStr(reloaded?.index_updated_at, 80) || null,
-      demand_index_rebuilt: true,
-      demand_index_stale_before_rebuild: staleBeforeRebuild,
-      demand_index_reason_before_rebuild: initialReason,
-      demand_index_reload_reason: safeStr(reloaded?.reason, 80) || "availability_index_unavailable",
-    };
-  }
   return {
-    ...reloaded,
-    demand_index_rebuilt: true,
-    demand_index_stale_before_rebuild: staleBeforeRebuild,
+    ok: false,
+    reason: initialReason,
+    items: [],
+    stale: initial?.stale === true,
+    index_updated_at: safeStr(initial?.index_updated_at, 80) || null,
+    demand_index_rebuilt: false,
+    demand_index_repair_marker_written: true,
+    demand_index_stale_before_rebuild: false,
     demand_index_reason_before_rebuild: initialReason,
   };
 }
@@ -87910,7 +87295,11 @@ async function rebuildRatingAggregatesForScope(env, scope, { dryRun = false } = 
   };
 }
 
-async function rebuildBookingDemandIndexForScope(env, scope, { dryRun = false } = {}) {
+async function rebuildBookingDemandIndexForScope(
+  env,
+  scope,
+  { dryRun = false, cursor = undefined, maxKeys = 200, reset = false } = {},
+) {
   const normalizedScope = normalizeFleetTenantScope(scope || {});
   if (!normalizedScope?.hasScope) {
     return { ok: false, error: "missing_tenant_scope" };
@@ -87918,69 +87307,117 @@ async function rebuildBookingDemandIndexForScope(env, scope, { dryRun = false } 
   if (!env?.BOOKING_KV) {
     return { ok: false, error: "Missing BOOKING_KV binding" };
   }
+  const batchLimit = Math.max(1, Math.min(200, Number(maxKeys) || 200));
+  const progressKey = bookingDemandIndexRebuildProgressKey(normalizedScope);
+  let progress = {
+    cursor: null,
+    items: [],
+    scanned: 0,
+    matched_scope: 0,
+    terminal_skipped: 0,
+    invalid_demand_skipped: 0,
+    complete: false,
+  };
+  if (reset !== true) {
+    try {
+      const existing = await env.BOOKING_KV.get(progressKey, { type: "json" });
+      if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+        progress = { ...progress, ...existing };
+      }
+    } catch (_) {
+      // start a fresh bounded batch
+    }
+  }
+  const itemsById = new Map(
+    (Array.isArray(progress.items) ? progress.items : [])
+      .filter((item) => item && typeof item === "object" && safeStr(item.booking_id, 160))
+      .map((item) => [safeStr(item.booking_id, 160), item]),
+  );
+  let listCursor =
+    cursor !== undefined && cursor !== null && String(cursor).trim()
+      ? String(cursor)
+      : progress.cursor || undefined;
   let scanned = 0;
   let matchedScope = 0;
   let terminalSkipped = 0;
   let invalidDemandSkipped = 0;
-  const nextItems = [];
-  let cursor = undefined;
-  do {
-    const page = await env.BOOKING_KV.list({
-      prefix: "booking:",
-      limit: 1000,
-      cursor,
-    });
-    for (const item of page?.keys || []) {
-      const key = safeStr(item?.name, 240);
-      if (!key || !key.startsWith("booking:")) continue;
-      scanned += 1;
-      const bookingId = key.slice("booking:".length);
-      if (!bookingId) continue;
-      const rec = await env.BOOKING_KV.get(key, { type: "json" });
-      if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
-      matchedScope += 1;
-      if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
-        terminalSkipped += 1;
-        continue;
-      }
-      const demandItem = bookingDemandItemFromRecord(bookingId, rec, env);
-      if (!demandItem) {
-        invalidDemandSkipped += 1;
-        continue;
-      }
-      nextItems.push(demandItem);
+  const page = await env.BOOKING_KV.list({
+    prefix: "booking:",
+    limit: batchLimit,
+    cursor: listCursor,
+  });
+  for (const item of page?.keys || []) {
+    if (scanned >= batchLimit) break;
+    const key = safeStr(item?.name, 240);
+    if (!key || !key.startsWith("booking:")) continue;
+    scanned += 1;
+    const bookingId = key.slice("booking:".length);
+    if (!bookingId) continue;
+    const rec = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!rec || typeof rec !== "object") continue;
+    if (!bookingMatchesRequiredTenantCompanyScope(rec, normalizedScope)) continue;
+    matchedScope += 1;
+    if (isTerminalLifecycleStatus(_bookingLifecycleValue(rec))) {
+      terminalSkipped += 1;
+      continue;
     }
-    cursor = page?.cursor;
-    if (page?.list_complete !== false) break;
-    if (!cursor) break;
-  } while (cursor);
-
-  const previous = await loadBookingDemandIndex(env, normalizedScope);
-  const prevCount = Number(previous?.items?.length || 0);
-  const nextCount = nextItems.length;
-  const removedOrRebuilt = Math.max(prevCount, nextCount);
-
-  if (!dryRun) {
-    await saveBookingDemandIndex(env, normalizedScope, {
-      items: nextItems,
-      source: nextCount === 0 ? "rebuild_empty" : "admin_rebuild",
-      reason: nextCount === 0 ? "rebuild_empty_index" : "rebuild_active_index",
-    });
+    const demandItem = bookingDemandItemFromRecord(bookingId, rec, env);
+    if (!demandItem) {
+      invalidDemandSkipped += 1;
+      continue;
+    }
+    itemsById.set(demandItem.booking_id, demandItem);
   }
+  const nextCursor = page?.list_complete === false && page?.cursor ? String(page.cursor) : null;
+  const complete = page?.list_complete !== false;
+  const nextItems = Array.from(itemsById.values());
+  const nextProgress = {
+    cursor: nextCursor,
+    items: nextItems,
+    scanned: Number(progress.scanned || 0) + scanned,
+    matched_scope: Number(progress.matched_scope || 0) + matchedScope,
+    terminal_skipped: Number(progress.terminal_skipped || 0) + terminalSkipped,
+    invalid_demand_skipped: Number(progress.invalid_demand_skipped || 0) + invalidDemandSkipped,
+    complete,
+    updated_at: new Date().toISOString(),
+  };
+  if (!dryRun) {
+    if (complete) {
+      await saveBookingDemandIndex(env, normalizedScope, {
+        items: nextItems,
+        source: nextItems.length === 0 ? "rebuild_empty" : "admin_rebuild",
+        reason: nextItems.length === 0 ? "rebuild_empty_index" : "rebuild_active_index",
+      });
+      if (progressKey) {
+        try {
+          await env.BOOKING_KV.delete(progressKey);
+        } catch (_) {
+          // best-effort cleanup
+        }
+      }
+    } else if (progressKey) {
+      await env.BOOKING_KV.put(progressKey, JSON.stringify(nextProgress));
+    }
+  }
+  const previous = complete ? await loadBookingDemandIndex(env, normalizedScope) : null;
+  const prevCount = Number(previous?.items?.length || nextItems.length || 0);
   const maskedScope = _bookingIntentScopeMask(normalizedScope);
   console.log(
-    `[BOOKING_DEMAND_INDEX][REBUILD] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} dry_run=${dryRun ? "true" : "false"} scanned=${scanned} matched=${matchedScope} active=${nextCount}`,
+    `[BOOKING_DEMAND_INDEX][REBUILD] tenant=${maskedScope.tenant || "-"} company=${maskedScope.company || "-"} dry_run=${dryRun ? "true" : "false"} scanned=${nextProgress.scanned} matched=${nextProgress.matched_scope} active=${nextItems.length} complete=${complete ? "true" : "false"}`,
   );
   return {
     ok: true,
-    scanned,
-    matched_scope: matchedScope,
-    active_indexed: nextCount,
-    terminal_skipped: terminalSkipped,
-    invalid_demand_skipped: invalidDemandSkipped,
-    removed_or_rebuilt: removedOrRebuilt,
+    scanned: nextProgress.scanned,
+    matched_scope: nextProgress.matched_scope,
+    active_indexed: nextItems.length,
+    terminal_skipped: nextProgress.terminal_skipped,
+    invalid_demand_skipped: nextProgress.invalid_demand_skipped,
+    removed_or_rebuilt: Math.max(prevCount, nextItems.length),
     dry_run: dryRun === true,
+    complete,
+    cursor: nextCursor,
+    batch_scanned: scanned,
+    batch_limit: batchLimit,
   };
 }
 
@@ -89053,6 +88490,181 @@ async function _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { r
   }
 }
 
+function _dashboardKpiContributionFingerprint(contribution) {
+  if (!contribution || typeof contribution !== "object") return "removed";
+  return [
+    contribution.open_candidate === true ? "1" : "0",
+    safeStr(contribution.open_reason, 80),
+    safeStr(contribution.identity_key, 180),
+    contribution.key_is_canonical === true ? "1" : "0",
+    String(Number(contribution.record_updated_ms) || 0),
+    contribution.has_terminal_lifecycle === true ? "1" : "0",
+    contribution.reference_only_provisional_open_candidate === true ? "1" : "0",
+  ].join("|");
+}
+
+function _dashboardKpiIdentityMemberFromContribution(contribution) {
+  return {
+    booking_id: safeStr(contribution?.booking_id, 160),
+    open_candidate: contribution?.open_candidate === true,
+    open_reason: safeStr(contribution?.open_reason, 80),
+    key_is_canonical: contribution?.key_is_canonical === true,
+    record_updated_ms: Number(contribution?.record_updated_ms) || 0,
+    has_terminal_lifecycle: contribution?.has_terminal_lifecycle === true,
+    reference_only_provisional_open_candidate:
+      contribution?.reference_only_provisional_open_candidate === true,
+    identity_meta:
+      contribution?.identity_meta && typeof contribution.identity_meta === "object"
+        ? {
+            has_public_booking_reference:
+              contribution.identity_meta.has_public_booking_reference === true,
+            has_canonical_booking_number:
+              contribution.identity_meta.has_canonical_booking_number === true,
+            internal_id_like: contribution.identity_meta.internal_id_like === true,
+          }
+        : {},
+  };
+}
+
+function _dashboardKpiCountersForIdentityMembers(identityKey, members) {
+  const contribs = Object.values(members || {}).map((member) => ({
+    ...member,
+    identity_key: identityKey,
+  }));
+  return _buildDashboardBookingsKpiAggregateFromContributions(contribs).counters;
+}
+
+function _dashboardKpiApplyCounterDelta(target, fromCounters, toCounters) {
+  const keys = Object.keys(_dashboardProjectionBaseCounters());
+  for (const key of keys) {
+    const next =
+      (Number(target[key]) || 0) -
+      (Number(fromCounters?.[key]) || 0) +
+      (Number(toCounters?.[key]) || 0);
+    target[key] = Math.max(0, Math.round(next));
+  }
+  return target;
+}
+
+function _dashboardKpiEmptyAggregate(scope, nowIso) {
+  return {
+    version: 1,
+    tenant_id: safeStr(scope?.tenant_id, 80),
+    company_id: safeStr(scope?.company_id, 80),
+    updated_at: nowIso,
+    evaluated_at: nowIso,
+    source: "projection",
+    projection_complete: true,
+    projection_health: "ok",
+    counters: _dashboardProjectionBaseCounters(),
+    open_identities: {},
+    applied_mutations: {},
+  };
+}
+
+function _dashboardKpiLegacyIdentitiesMissing(aggregate) {
+  const identities = aggregate?.open_identities;
+  return !identities || typeof identities !== "object" || Object.keys(identities).length === 0;
+}
+
+function _applyDashboardBookingsKpiContributionDelta(aggregate, oldContribution, newContribution) {
+  const nowIso = new Date().toISOString();
+  const next = {
+    ...(_dashboardKpiEmptyAggregate(
+      {
+        tenant_id: newContribution?.tenant_id || oldContribution?.tenant_id,
+        company_id: newContribution?.company_id || oldContribution?.company_id,
+      },
+      nowIso,
+    )),
+    ...(aggregate && typeof aggregate === "object" ? aggregate : {}),
+  };
+  next.counters = {
+    ..._dashboardProjectionBaseCounters(),
+    ...(next.counters && typeof next.counters === "object" ? next.counters : {}),
+  };
+  next.open_identities =
+    next.open_identities && typeof next.open_identities === "object" ? { ...next.open_identities } : {};
+  next.applied_mutations =
+    next.applied_mutations && typeof next.applied_mutations === "object"
+      ? { ...next.applied_mutations }
+      : {};
+  const bookingId = safeStr(
+    newContribution?.booking_id || oldContribution?.booking_id,
+    160,
+  );
+  const fingerprint = _dashboardKpiContributionFingerprint(newContribution);
+  if (bookingId && next.applied_mutations[bookingId] === fingerprint) {
+    return { aggregate: next, unchanged: true };
+  }
+  const identityKey =
+    safeStr(newContribution?.identity_key || oldContribution?.identity_key, 180) ||
+    bookingId ||
+    "unknown";
+  const existingIdentity = next.open_identities[identityKey];
+  const members = {
+    ...(existingIdentity?.members && typeof existingIdentity.members === "object"
+      ? existingIdentity.members
+      : {}),
+  };
+  const legacyDirty =
+    _dashboardKpiLegacyIdentitiesMissing(next) &&
+    (safeStr(next.projection_health, 40).toLowerCase() === "dirty" ||
+      next.projection_complete === false ||
+      !!safeStr(next.projection_dirty_reason, 80));
+  if (legacyDirty) {
+    if (newContribution && bookingId) {
+      next.open_identities[identityKey] = {
+        members: { [bookingId]: _dashboardKpiIdentityMemberFromContribution(newContribution) },
+      };
+      next.applied_mutations[bookingId] = fingerprint;
+    }
+    next.updated_at = nowIso;
+    next.evaluated_at = nowIso;
+    next.projection_health = "dirty";
+    next.projection_complete = false;
+    next.projection_dirty_reason = safeStr(next.projection_dirty_reason, 80) || "legacy_dirty_snapshot";
+    return { aggregate: next, unchanged: false, kept_dirty: true };
+  }
+  if (
+    _dashboardKpiLegacyIdentitiesMissing(next) &&
+    oldContribution &&
+    bookingId &&
+    !members[bookingId]
+  ) {
+    members[bookingId] = _dashboardKpiIdentityMemberFromContribution(oldContribution);
+  }
+  const oldEffect = _dashboardKpiCountersForIdentityMembers(identityKey, members);
+  if (newContribution) {
+    members[bookingId] = _dashboardKpiIdentityMemberFromContribution(newContribution);
+  } else if (bookingId) {
+    delete members[bookingId];
+  }
+  const newEffect = _dashboardKpiCountersForIdentityMembers(identityKey, members);
+  _dashboardKpiApplyCounterDelta(next.counters, oldEffect, newEffect);
+  if (Object.keys(members).length) {
+    next.open_identities[identityKey] = { members };
+  } else {
+    delete next.open_identities[identityKey];
+  }
+  if (bookingId) next.applied_mutations[bookingId] = fingerprint;
+  next.version = 1;
+  next.source = "projection";
+  next.projection_complete = true;
+  next.projection_health = "ok";
+  next.projection_dirty_reason = undefined;
+  next.updated_at = nowIso;
+  next.evaluated_at = nowIso;
+  next.stale_sensitive = Object.values(next.open_identities || {}).some((identity) =>
+    Object.values(identity?.members || {}).some(
+      (member) =>
+        member?.open_reason === "excluded_stale_payment_pending" ||
+        member?.open_reason === "excluded_stale_past_pickup",
+    ),
+  );
+  return { aggregate: next, unchanged: false };
+}
+
 async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
@@ -89067,16 +88679,37 @@ async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, re
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
     const contribution = computeDashboardBookingKpiContribution(bookingId, rec, scope);
     if (!contribution) return { ok: false, skipped: true, reason: "invalid_contribution" };
+    const loadedContrib = await loadDashboardBookingKpiContribution(env, scope, bookingId);
+    const loadedAggregate = await loadDashboardBookingsKpiAggregate(env, scope);
+    const applied = _applyDashboardBookingsKpiContributionDelta(
+      loadedAggregate?.aggregate,
+      loadedContrib?.contribution,
+      contribution,
+    );
     const saved = await saveDashboardBookingKpiContribution(env, scope, bookingId, contribution);
-    await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { reason: "contribution_upsert" });
+    if (applied.unchanged !== true) {
+      await saveDashboardBookingsKpiAggregate(env, scope, applied.aggregate);
+    }
     return {
       ok: true,
       booking_id: safeStr(bookingId, 160),
       contribution_key: safeStr(saved?.key, 320) || "",
       contribution_updated: true,
-      aggregate_dirty: true,
+      aggregate_dirty: applied.kept_dirty === true,
+      unchanged: applied.unchanged === true,
     };
   } catch (_) {
+    try {
+      const recordScope = resolveBookingTenantScopeFromRecord(rec);
+      const scope = normalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
+      if (scope?.hasScope) {
+        await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, {
+          reason: "contribution_upsert_failed",
+        });
+      }
+    } catch (_) {
+      // preserve last snapshot; never force the next GET to scan
+    }
     return { ok: false, reason: "exception" };
   }
 }
@@ -89091,16 +88724,41 @@ async function removeDashboardBookingsKpiProjectionBestEffort(env, bookingId, re
         : (rec ? resolveBookingTenantScopeFromRecord(rec) : recOrScopeHint),
     );
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
+    const loadedContrib = await loadDashboardBookingKpiContribution(env, scope, bookingId);
+    const loadedAggregate = await loadDashboardBookingsKpiAggregate(env, scope);
+    const applied = _applyDashboardBookingsKpiContributionDelta(
+      loadedAggregate?.aggregate,
+      loadedContrib?.contribution,
+      null,
+    );
     const removed = await removeDashboardBookingKpiContribution(env, scope, bookingId);
-    await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, { reason: "contribution_remove" });
+    if (applied.unchanged !== true) {
+      await saveDashboardBookingsKpiAggregate(env, scope, applied.aggregate);
+    }
     return {
       ok: true,
       booking_id: safeStr(bookingId, 160),
       contribution_key: safeStr(removed?.key, 320) || "",
       contribution_removed: true,
-      aggregate_dirty: true,
+      aggregate_dirty: false,
+      unchanged: applied.unchanged === true,
     };
   } catch (_) {
+    try {
+      const rec = recOrScopeHint && typeof recOrScopeHint === "object" ? recOrScopeHint : null;
+      const scope = normalizeFleetTenantScope(
+        rec?.hasScope
+          ? rec
+          : (rec ? resolveBookingTenantScopeFromRecord(rec) : recOrScopeHint),
+      );
+      if (scope?.hasScope) {
+        await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, {
+          reason: "contribution_remove_failed",
+        });
+      }
+    } catch (_) {
+      // preserve last snapshot; never force the next GET to scan
+    }
     return { ok: false, reason: "exception" };
   }
 }
@@ -89495,6 +89153,310 @@ function _dashboardBookingFinanceNetAggregateFields(bookingFinanceMonth, reconci
     monthly_net_revenue_cents: monthlyNetRevenueCents,
     monthly_net_revenue_eur: monthlyNetRevenueCents / 100,
   };
+}
+
+function _dashboardBookingsKpiHasUsableSnapshot(aggregate) {
+  if (!aggregate || typeof aggregate !== "object" || Array.isArray(aggregate)) return false;
+  const counters = aggregate.counters;
+  if (!counters || typeof counters !== "object" || Array.isArray(counters)) return false;
+  return Number.isFinite(Number(counters.considered_open));
+}
+
+function _composeDashboardBookingsKpisHttpPayload({
+  tenantScope,
+  selectedMonth,
+  aggregate = null,
+  bookingFinanceMonth = {},
+  health = "ok",
+  degraded = false,
+  stale = false,
+  dataPending = false,
+  reason = "",
+  countsAuthoritative = true,
+}) {
+  const counters =
+    aggregate?.counters && typeof aggregate.counters === "object"
+      ? aggregate.counters
+      : _dashboardProjectionBaseCounters();
+  const consideredOpen = Math.max(0, Math.round(Number(counters.considered_open) || 0));
+  const excludedTerminal = Math.max(0, Math.round(Number(counters.excluded_terminal) || 0));
+  const excludedPaymentFailed = Math.max(0, Math.round(Number(counters.excluded_payment_failed) || 0));
+  const excludedStalePaymentPending = Math.max(
+    0,
+    Math.round(Number(counters.excluded_stale_payment_pending) || 0),
+  );
+  const excludedHidden = Math.max(0, Math.round(Number(counters.excluded_hidden) || 0));
+  const excludedMissingPickupTime = Math.max(
+    0,
+    Math.round(Number(counters.excluded_missing_pickup_time) || 0),
+  );
+  const excludedStalePastPickup = Math.max(
+    0,
+    Math.round(Number(counters.excluded_stale_past_pickup) || 0),
+  );
+  const excludedNonCanonicalProvisionalRecord = Math.max(
+    0,
+    Math.round(Number(counters.excluded_non_canonical_provisional_record) || 0),
+  );
+  const excludedReferenceOnlyProvisionalRecord = Math.max(
+    0,
+    Math.round(Number(counters.excluded_reference_only_provisional_record) || 0),
+  );
+  const excludedDuplicateIdentity = Math.max(
+    0,
+    Math.round(Number(counters.excluded_duplicate_identity) || 0),
+  );
+  const excludedTerminalIdentity = Math.max(
+    0,
+    Math.round(Number(counters.excluded_terminal_identity) || 0),
+  );
+  const excludedOutOfScope = Math.max(0, Math.round(Number(counters.excluded_out_of_scope) || 0));
+  const excludedInvalidRecord = Math.max(0, Math.round(Number(counters.excluded_invalid_record) || 0));
+  const projectionIncomeCents = Number.isFinite(Number(counters?.monthly_income_cents))
+    ? Math.max(0, Math.round(Number(counters.monthly_income_cents)))
+    : 0;
+  const finance =
+    bookingFinanceMonth && typeof bookingFinanceMonth === "object" && !Array.isArray(bookingFinanceMonth)
+      ? bookingFinanceMonth
+      : {};
+  const bookingFinanceMonthIncomeCents = Number.isFinite(Number(finance.monthly_paid_bookings_income_cents))
+    ? Math.max(0, Math.round(Number(finance.monthly_paid_bookings_income_cents)))
+    : 0;
+  const bookingFinanceMonthPaidCount = Number.isFinite(Number(finance.monthly_paid_bookings_count))
+    ? Math.max(0, Math.round(Number(finance.monthly_paid_bookings_count)))
+    : 0;
+  const monthlyIncomeMergedCents = Math.max(projectionIncomeCents, bookingFinanceMonthIncomeCents);
+  const pendingCreditCents = Number.isFinite(Number(finance.monthly_pending_credit_cents))
+    ? Math.max(0, Math.round(Number(finance.monthly_pending_credit_cents)))
+    : 0;
+  const creditedCents = Number.isFinite(Number(finance.monthly_credited_cents))
+    ? Math.max(0, Math.round(Number(finance.monthly_credited_cents)))
+    : 0;
+  const netMonthlyIncomeCents = Math.max(0, monthlyIncomeMergedCents - pendingCreditCents - creditedCents);
+  const bookingFinanceNetFields = _dashboardBookingFinanceNetAggregateFields(finance, null);
+  const updatedAt = safeStr(aggregate?.updated_at ?? aggregate?.updatedAt, 80) || null;
+  const evaluatedAt = safeStr(aggregate?.evaluated_at ?? aggregate?.evaluatedAt, 80) || null;
+  const projectionComplete = aggregate?.projection_complete === true && health === "ok";
+  const payload = {
+    ok: true,
+    tenant_id: tenantScope?.tenant_id || null,
+    company_id: tenantScope?.company_id || null,
+    generated_at: new Date().toISOString(),
+    open_bookings_count: consideredOpen,
+    considered_open: consideredOpen,
+    excluded_terminal: excludedTerminal,
+    excluded_payment_failed: excludedPaymentFailed,
+    excluded_stale_payment_pending: excludedStalePaymentPending,
+    excluded_hidden: excludedHidden,
+    excluded_missing_pickup_time: excludedMissingPickupTime,
+    excluded_stale_past_pickup: excludedStalePastPickup,
+    excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
+    excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
+    excluded_duplicate_identity: excludedDuplicateIdentity,
+    excluded_terminal_identity: excludedTerminalIdentity,
+    excluded_out_of_scope: excludedOutOfScope,
+    excluded_invalid_record: excludedInvalidRecord,
+    month: selectedMonth,
+    monthly_income_cents: monthlyIncomeMergedCents,
+    monthly_income_eur: monthlyIncomeMergedCents / 100,
+    gross_monthly_income_cents: monthlyIncomeMergedCents,
+    gross_monthly_income_eur: monthlyIncomeMergedCents / 100,
+    pending_credit_cents: pendingCreditCents,
+    pending_credit_eur: pendingCreditCents / 100,
+    monthly_credited_cents: creditedCents,
+    monthly_credited_eur: creditedCents / 100,
+    credited_cents: creditedCents,
+    credited_eur: creditedCents / 100,
+    net_monthly_income_cents: netMonthlyIncomeCents,
+    net_monthly_income_eur: netMonthlyIncomeCents / 100,
+    booking_finance_monthly_income_cents: bookingFinanceMonthIncomeCents,
+    booking_finance_monthly_income_eur: bookingFinanceMonthIncomeCents / 100,
+    booking_finance_monthly_paid_bookings_count: bookingFinanceMonthPaidCount,
+    ...bookingFinanceNetFields,
+    booking_finance_reconcile_scanned: 0,
+    booking_finance_reconcile_matched_month: 0,
+    booking_finance_reconcile_sum_cents: 0,
+    booking_finance_reconcile_paid_count: 0,
+    booking_finance_reconcile_skipped_wrong_month: 0,
+    booking_finance_reconcile_skipped_unpaid: 0,
+    booking_finance_reconcile_skipped_missing_amount: 0,
+    booking_finance_reconcile_recovered_amount_count: 0,
+    booking_finance_reconcile_recovered_amount_cents: 0,
+    booking_finance_reconcile_skipped_missing_amount_unrecoverable: 0,
+    booking_finance_reconcile_prefix_preview: null,
+    income_merge_strategy: "max_projection_vs_booking_finance",
+    total_scanned: 0,
+    excluded_terminal_statuses: DASHBOARD_BOOKINGS_KPI_EXCLUDED_TERMINAL_STATUSES,
+    scan_complete: projectionComplete,
+    scan_stats: {
+      scanned_keys: 0,
+      matched_scope: 0,
+      considered_open: consideredOpen,
+      excluded_terminal: excludedTerminal,
+      excluded_payment_failed: excludedPaymentFailed,
+      excluded_stale_payment_pending: excludedStalePaymentPending,
+      excluded_hidden: excludedHidden,
+      excluded_missing_pickup_time: excludedMissingPickupTime,
+      excluded_stale_past_pickup: excludedStalePastPickup,
+      excluded_non_canonical_provisional_record: excludedNonCanonicalProvisionalRecord,
+      excluded_reference_only_provisional_record: excludedReferenceOnlyProvisionalRecord,
+      excluded_duplicate_identity: excludedDuplicateIdentity,
+      excluded_terminal_identity: excludedTerminalIdentity,
+      excluded_out_of_scope: excludedOutOfScope,
+      excluded_invalid_record: excludedInvalidRecord,
+    },
+    source: health === "ok" ? "projection" : "projection_degraded",
+    projection_health: health,
+    projection_complete: projectionComplete,
+    projection_updated_at: updatedAt,
+    projection_rebuilt_at: safeStr(aggregate?.rebuilt_at ?? aggregate?.rebuiltAt, 80) || null,
+    projection_evaluated_at: evaluatedAt,
+    counts_are_authoritative: countsAuthoritative === true,
+  };
+  if (degraded) payload.degraded = true;
+  if (stale) payload.stale = true;
+  if (dataPending) payload.data_pending = true;
+  if (reason) {
+    payload.reason = reason;
+    payload.degraded_reason = reason;
+  }
+  return payload;
+}
+
+async function serveDashboardBookingsKpisHttpGet({
+  url,
+  env,
+  tenantScope,
+  lastSafePayload = null,
+} = {}) {
+  const debugRaw = safeStr(url.searchParams.get("debug"), 16).toLowerCase();
+  const debugEnabled = debugRaw === "1" || debugRaw === "true";
+  const monthParam = safeStr(url.searchParams.get("month"), 16);
+  if (monthParam && !_dashboardBookingsKpiNormalizeMonth(monthParam)) {
+    return json({ ok: false, error: "month must be YYYY-MM" }, 400);
+  }
+  const selectedMonth = _dashboardBookingsKpiNormalizeMonth(monthParam || null);
+  const bookingKv = wrapKvBudget(env.BOOKING_KV, {
+    maxReads: 5,
+    maxLists: 0,
+    maxWrites: 1,
+    maxDeletes: 0,
+  });
+  const gated = { ...env, BOOKING_KV: bookingKv };
+  const startedAt = Date.now();
+  try {
+    const loaded = await loadDashboardBookingsKpiAggregate(gated, tenantScope);
+    const aggregate =
+      loaded?.aggregate && typeof loaded.aggregate === "object" ? loaded.aggregate : null;
+    const bookingFinanceMonthKey = _trackingSyncScopedBookingFinanceMonthKey(
+      tenantScope,
+      selectedMonth,
+    );
+    const bookingFinanceMonth = bookingFinanceMonthKey
+      ? (await _trackingSyncGetJson(gated, bookingFinanceMonthKey)) || {}
+      : {};
+    const hasSnapshot = _dashboardBookingsKpiHasUsableSnapshot(aggregate);
+    const source = safeStr(aggregate?.source, 40).toLowerCase();
+    const projectionHealth = safeStr(aggregate?.projection_health, 40).toLowerCase() || "unknown";
+    const projectionComplete = aggregate?.projection_complete === true;
+    const dirtyReason = safeStr(aggregate?.projection_dirty_reason, 120);
+    const staleAfterMs = _dashboardBookingsKpiProjectionStaleAfterMs(gated);
+    const evaluatedAt = safeStr(aggregate?.evaluated_at ?? aggregate?.evaluatedAt, 80);
+    const updatedAt = safeStr(aggregate?.updated_at ?? aggregate?.updatedAt, 80);
+    const referenceTs = Date.parse(evaluatedAt || updatedAt);
+    const isStale =
+      staleAfterMs > 0 &&
+      (!Number.isFinite(referenceTs) || Date.now() - referenceTs > staleAfterMs);
+    const isClean =
+      hasSnapshot &&
+      source === "projection" &&
+      projectionComplete &&
+      projectionHealth === "ok" &&
+      !dirtyReason &&
+      !isStale;
+    let payload;
+    if (isClean) {
+      payload = _composeDashboardBookingsKpisHttpPayload({
+        tenantScope,
+        selectedMonth,
+        aggregate,
+        bookingFinanceMonth,
+        health: "ok",
+        countsAuthoritative: true,
+      });
+    } else if (hasSnapshot) {
+      const health = isStale ? "stale" : projectionHealth === "dirty" || dirtyReason ? "dirty" : "degraded";
+      payload = _composeDashboardBookingsKpisHttpPayload({
+        tenantScope,
+        selectedMonth,
+        aggregate,
+        bookingFinanceMonth,
+        health,
+        degraded: true,
+        stale: isStale,
+        dataPending: false,
+        reason: dirtyReason || (isStale ? "dashboard_bookings_kpi_index_stale" : "dashboard_bookings_kpi_index_dirty"),
+        countsAuthoritative: false,
+      });
+    } else {
+      payload = {
+        ok: false,
+        error: "dashboard_bookings_kpi_index_unavailable",
+        data_pending: true,
+        degraded: true,
+        projection_health: "missing",
+        counts_are_authoritative: false,
+        tenant_id: tenantScope?.tenant_id || null,
+        company_id: tenantScope?.company_id || null,
+        generated_at: new Date().toISOString(),
+        month: selectedMonth,
+      };
+    }
+    if (debugEnabled) {
+      payload.debug_enabled = true;
+      payload.debug_note = "debug samples require /admin/dashboard/bookings-kpis/rebuild?compare=1";
+    }
+    console.log(
+      _formatKpiReadDiagnosticLocal({
+        endpoint: "bookings",
+        source: isClean ? "aggregate" : hasSnapshot ? "projection_degraded" : "data_pending",
+        reconcile: "skipped",
+        elapsedMs: Date.now() - startedAt,
+        status: 200,
+      }),
+    );
+    return json(payload, 200);
+  } catch (err) {
+    if (err instanceof KvBudgetExceededError) {
+      logKvPass("HTTP_KV_BUDGET", {
+        route: "bookings_kpis",
+        reason: safeStr(err.kind, 32) || "budget",
+        reads: Number(bookingKv.counts?.read || 0),
+        lists: Number(bookingKv.counts?.list || 0),
+        writes: Number(bookingKv.counts?.write || 0),
+        deletes: Number(bookingKv.counts?.delete || 0),
+      });
+      if (lastSafePayload && typeof lastSafePayload === "object") {
+        return json({ ...lastSafePayload, degraded: true, data_pending: true }, 200);
+      }
+      return json(
+        {
+          ok: false,
+          error: "dashboard_bookings_kpi_budget_exceeded",
+          data_pending: true,
+          degraded: true,
+          projection_health: "degraded",
+          counts_are_authoritative: false,
+          tenant_id: tenantScope?.tenant_id || null,
+          company_id: tenantScope?.company_id || null,
+          generated_at: new Date().toISOString(),
+          month: selectedMonth,
+        },
+        200,
+      );
+    }
+    throw err;
+  }
 }
 
 async function computeDashboardBookingsKpis(

@@ -4,17 +4,15 @@
 // (`/admin/dashboard/bookings-kpis`) and the tracking worker
 // (`/admin/dashboard/trip-kpis`).
 //
-// Design contract:
+// Design contract (HTTP-KV-AMPLIFIERS-P0):
 //
 //   1. On a normal GET the endpoint reads the authoritative aggregate from
 //      KV. If the aggregate is present and structurally valid, the endpoint
 //      returns it directly — NO reconciliation scan, NO write-back.
 //
-//   2. If the aggregate is absent or malformed, the endpoint MAY invoke a
-//      bounded reconciliation as a fallback. The reconciliation must be
-//      bounded (`maxScannedContribs` upper cap) and must never grow with
-//      complete tenant history. If it exceeds the read budget, the endpoint
-//      returns a bounded `data_pending` response.
+//   2. If the aggregate is absent or malformed, the GET returns a bounded
+//      `data_pending` / last-known snapshot. It must NEVER reconcile, list
+//      `booking:`, or scan historical trips.
 //
 //   3. Expensive repair/materialization work belongs to write/finalization
 //      paths or explicit `/rebuild` endpoints, not to the dashboard GET.
@@ -153,15 +151,9 @@ export function formatKpiReadDiagnostic({
  */
 export function chooseBookingsKpiReadStrategy({
   aggregate,
-  debugReconcileRequested,
 } = {}) {
-  if (debugReconcileRequested === true) {
-    return {
-      shouldReconcile: true,
-      source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-      reconcile: KPI_READ_RECONCILE_BOUNDED,
-    };
-  }
+  // HTTP-KV-AMPLIFIERS-P0: an ordinary GET never reconciles or rebuilds.
+  // Explicit /rebuild and /reconcile routes own historical repair.
   if (bookingFinanceAggregateStructurallyValid(aggregate)) {
     return {
       shouldReconcile: false,
@@ -170,9 +162,9 @@ export function chooseBookingsKpiReadStrategy({
     };
   }
   return {
-    shouldReconcile: true,
-    source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-    reconcile: KPI_READ_RECONCILE_BOUNDED,
+    shouldReconcile: false,
+    source: KPI_READ_SOURCE_DATA_PENDING,
+    reconcile: KPI_READ_RECONCILE_SKIPPED,
   };
 }
 
@@ -182,15 +174,9 @@ export function chooseBookingsKpiReadStrategy({
 export function chooseTripKpiReadStrategy({
   global,
   month,
-  debugReconcileRequested,
 } = {}) {
-  if (debugReconcileRequested === true) {
-    return {
-      shouldReconcile: true,
-      source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-      reconcile: KPI_READ_RECONCILE_BOUNDED,
-    };
-  }
+  // HTTP-KV-AMPLIFIERS-P0: an ordinary GET never reconciles, never scans
+  // unpaid/completed history, and never schedules a diagnostic refresh.
   if (tripKpiAggregatesStructurallyValid({ global, month })) {
     return {
       shouldReconcile: false,
@@ -199,9 +185,9 @@ export function chooseTripKpiReadStrategy({
     };
   }
   return {
-    shouldReconcile: true,
-    source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-    reconcile: KPI_READ_RECONCILE_BOUNDED,
+    shouldReconcile: false,
+    source: KPI_READ_SOURCE_DATA_PENDING,
+    reconcile: KPI_READ_RECONCILE_SKIPPED,
   };
 }
 

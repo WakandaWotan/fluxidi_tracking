@@ -7,10 +7,9 @@
 //     debug) plus the diagnostics-cache blob are fetched in a single
 //     parallel batch instead of five sequential awaits.
 //   * The expensive `_collectTripKpiPendingDiagnostics` and
-//     `_collectActionableUnpaidCompletedStats` scans (up to 5000 keys +
-//     sequential per-key gets each) NO LONGER run on the request-serving
-//     path. A background `ctx.waitUntil(...)` refresh keeps a per-scope
-//     cache warm; the GET picks up the cached values.
+//     `_collectActionableUnpaidCompletedStats` scans NO LONGER run on the
+//     request-serving path, and ordinary GET never schedules a
+//     `ctx.waitUntil` diagnostic refresh.
 //   * The visible KPI card is truthful: when the diagnostics cache is
 //     unavailable, `unpaid_completed_rides_count` falls back to the
 //     primary aggregate raw count instead of silently reporting `0`.
@@ -29,7 +28,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import worker from "./fluxidi_tracking_api_worker_V2_1_with_route_index.js";
+import worker, {
+  materializeTripDashboardKpisBestEffort,
+} from "./fluxidi_tracking_api_worker_V2_1_with_route_index.js";
 
 const ADMIN = "test-admin-token";
 const SCOPE = { tenant_id: "T1", company_id: "C1" };
@@ -272,15 +273,16 @@ test("Part B / T4: absent diagnostics cache falls back to raw unpaid count (neve
   assert.equal(body.diagnostics.completed_but_unpaid, 14);
   assert.equal(body.diagnostics_source, "unavailable");
   assert.equal(body.diagnostics_computed_at_utc, null);
-  // Missing cache should schedule a bounded background refresh.
-  assert.equal(ctx.scheduled.length, 1);
+  // HTTP-KV-AMPLIFIERS-P0: ordinary GET never schedules a diagnostic scan.
+  assert.equal(ctx.scheduled.length, 0);
+  assert.deepEqual(kv._state.listPrefixes, [], "no diagnostic list scans");
 });
 
 // ---------------------------------------------------------------------------
 // T5 — stale cache is still returned; background refresh scheduled.
 // ---------------------------------------------------------------------------
 
-test("Part B / T5: stale cache is returned as authoritative; refresh scheduled via ctx.waitUntil", async () => {
+test("Part B / T5: stale cache is returned as authoritative; ordinary GET never refreshes", async () => {
   const seed = seedDiagnosticsCache({
     seed: seedValidAggregates({}),
     ageMs: 2 * 60_000, // 2 min > fresh threshold (60 s) but < max age (15 min)
@@ -292,53 +294,51 @@ test("Part B / T5: stale cache is returned as authoritative; refresh scheduled v
   const body = await res.json();
   assert.equal(body.unpaid_completed_rides_count, 5, "stale cache still trusted");
   assert.equal(body.diagnostics_source, "cached_stale");
-  assert.equal(ctx.scheduled.length, 1, "stale cache triggers background refresh");
+  assert.equal(ctx.scheduled.length, 0, "ordinary GET must not refresh diagnostics");
   await ctx.flush();
-  // Background task should have run at least one scan (list scan) and
-  // written back a fresh cache blob.
-  assert.ok(kv._state.listPrefixes.length >= 1);
-  assert.ok(kv._state.putKeys.includes(KEY_DIAG_CACHE));
+  assert.deepEqual(kv._state.listPrefixes, [], "no diagnostic list scans");
+  assert.equal(kv._state.putKeys.includes(KEY_DIAG_CACHE), false);
 });
 
 // ---------------------------------------------------------------------------
 // T6 — background refresh recomputes correctly.
 // ---------------------------------------------------------------------------
 
-test("Part B / T6: background refresh persists a fresh cache blob visible to the next GET", async () => {
+test("Part B / T6: repeated GETs stay projection-only and never refresh diagnostics", async () => {
   const seed = seedValidAggregates({});
   const kv = makeKV({ seed });
   const ctx = makeCtx();
-  // First GET: no cache → falls back + schedules refresh.
   const res1 = await worker.fetch(kpisReq(), makeEnv(kv), ctx);
   const body1 = await res1.json();
   assert.equal(body1.diagnostics_source, "unavailable");
   await ctx.flush();
-  // Second GET: cache is now warm.
   const ctx2 = makeCtx();
   const res2 = await worker.fetch(kpisReq(), makeEnv(kv), ctx2);
   const body2 = await res2.json();
-  assert.equal(body2.diagnostics_source, "cached_fresh");
-  assert.equal(body2.diagnostics_age_ms >= 0, true);
+  assert.equal(body2.diagnostics_source, "unavailable");
+  assert.equal(ctx.scheduled.length, 0);
+  assert.equal(ctx2.scheduled.length, 0);
+  assert.deepEqual(kv._state.listPrefixes, [], "no diagnostic list scans");
 });
 
 // ---------------------------------------------------------------------------
 // T7 — invalid aggregate still triggers bounded reconcile (78c0ade contract).
 // ---------------------------------------------------------------------------
 
-test("Part B / T7: absent primary aggregate still triggers bounded reconcile (78c0ade contract)", async () => {
-  // NO aggregates seeded — pure cold path.
+test("Part B / T7: absent primary aggregate is data_pending and never reconciles", async () => {
   const kv = makeKV({ seed: {} });
   const ctx = makeCtx();
   const res = await worker.fetch(kpisReq(), makeEnv(kv), ctx);
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.ok, true);
-  // Reconciliation path taken → source is bounded_fallback (not aggregate).
-  assert.notEqual(body.selected_monthly_income_source, undefined);
-  // With no contributions in KV, the reconcile-produced counters are 0
-  // (this is a legitimate zero derived from a full bounded scan, not a
-  // silent 0 fabricated on the read path).
+  assert.equal(body.data_pending, true);
+  assert.equal(body.degraded, true);
+  assert.equal(body.projection_health, "missing");
+  assert.equal(body.counts_are_authoritative, false);
   assert.equal(body.completed_rides_count, 0);
+  assert.deepEqual(kv._state.listPrefixes, [], "missing projection must not scan history");
+  assert.equal(ctx.scheduled.length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -470,4 +470,80 @@ test("Part B / T10: [TRIP_KPI_TIMING] emitted with integer counters only (no IDs
   ]) {
     assert.ok(timingLine.includes(expected), `missing "${expected}"`);
   }
+});
+
+test("HTTP-KV / 10k historical trips: GET cost stays constant and never scans them", async () => {
+  const seed = seedDiagnosticsCache({
+    seed: seedValidAggregates({}),
+    ageMs: 5_000,
+  });
+  for (let i = 0; i < 10_000; i += 1) {
+    seed[`${CONTRIB_PREFIX}hist${i}:v1`] = JSON.stringify({ trip_id: `hist${i}` });
+  }
+  const kv = makeKV({ seed });
+  const ctx = makeCtx();
+  const res = await worker.fetch(kpisReq(), makeEnv(kv), ctx);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.completed_rides_count, 137);
+  assert.equal(kv._state.getKeys.length, 5);
+  assert.deepEqual(kv._state.listPrefixes, []);
+  assert.equal(
+    kv._state.getKeys.some((key) => String(key).startsWith(CONTRIB_PREFIX)),
+    false,
+  );
+  assert.equal(ctx.scheduled.length, 0);
+});
+
+test("HTTP-KV / three concurrent trip-kpis GETs: no diagnostic refresh, constant projection reads", async () => {
+  const seed = seedDiagnosticsCache({
+    seed: seedValidAggregates({}),
+    ageMs: 90_000,
+    actionable: 5,
+  });
+  const kv = makeKV({ seed });
+  const ctxs = [makeCtx(), makeCtx(), makeCtx()];
+  const env = makeEnv(kv);
+  const results = await Promise.all(
+    ctxs.map((ctx) => worker.fetch(kpisReq(), env, ctx)),
+  );
+  for (const res of results) {
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.unpaid_completed_rides_count, 5);
+    assert.equal(body.diagnostics_source, "cached_stale");
+  }
+  assert.equal(kv._state.getKeys.length, 15);
+  assert.deepEqual(kv._state.listPrefixes, []);
+  assert.equal(ctxs.reduce((n, ctx) => n + ctx.scheduled.length, 0), 0);
+});
+
+test("HTTP-KV / trip payment mutation keeps the projection correct without a GET scan", async () => {
+  const kv = makeKV({ seed: {} });
+  const env = makeEnv(kv);
+  const scope = { tenant_id: "T1", company_id: "C1" };
+  const unpaidTrip = {
+    trip_id: "trip-1",
+    tenant_id: "T1",
+    company_id: "C1",
+    status: "completed",
+    payment_status: "unpaid",
+  };
+  await materializeTripDashboardKpisBestEffort(env, scope, unpaidTrip, "test_unpaid");
+  const paidTrip = {
+    ...unpaidTrip,
+    payment_status: "paid",
+    paid_at: "2026-07-15T12:00:00.000Z",
+    payment_amount: 42,
+  };
+  await materializeTripDashboardKpisBestEffort(env, scope, paidTrip, "test_paid");
+  await materializeTripDashboardKpisBestEffort(env, scope, paidTrip, "test_paid_retry");
+  const res = await worker.fetch(kpisReq(), env, makeCtx());
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.completed_rides_count, 1);
+  assert.equal(body.unpaid_completed_rides_count, 0);
+  assert.equal(body.monthly_paid_rides_count, 1);
+  assert.deepEqual(kv._state.listPrefixes, []);
 });

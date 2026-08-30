@@ -14,6 +14,11 @@
 // - KV binding named: FLUXIDI_TRACKING
 //
 import { resolvePlannedStopOrigin } from "./modules/planned_stop_origin.mjs";
+import {
+  wrapKvBudget,
+  KvBudgetExceededError,
+  logKvPass,
+} from "../booking/modules/kv_op_budget.js";
 
 // -------------------------------
 // Helpers
@@ -4477,79 +4482,84 @@ async function handleDashboardTripKpis(req, url, env, origin, ctx) {
     );
   }
   const normalizedScope = normalizeScopedKeyScope(scope);
-  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): fetch the four independent
-  // aggregate documents + the diagnostics cache blob in a single parallel
-  // batch. Pre-repair this was five serial `await kvGetJson(...)` calls
-  // (~200 ms wall time even on a warm namespace); the parallel batch
-  // collapses to a single round-trip class (~40–60 ms). Order of writes and
-  // read isolation is unchanged — the four aggregates already lived on
-  // independent keys, and the diagnostics cache is read-only here (writes
-  // happen exclusively in the background task).
+  const trackingKv = wrapKvBudget(env.FLUXIDI_TRACKING, {
+    maxReads: 5,
+    maxLists: 0,
+    maxWrites: 1,
+    maxDeletes: 0,
+  });
+  const gatedEnv = { ...env, FLUXIDI_TRACKING: trackingKv };
+  // HTTP-KV-AMPLIFIERS-P0: ordinary GET is projection-first. Five parallel
+  // aggregate/cache reads, no history scan, no reconcile, no waitUntil
+  // diagnostic refresh. Historical repair belongs on /trip-kpis/reconcile.
   const kpiReadStartedAt = Date.now();
-  const [
-    globalPrimary,
-    monthPrimary,
-    financeMonthPrimary,
-    debugCountersPrimary,
-    diagnosticsCachePrimary,
-  ] = await Promise.all([
-    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripKpisKey(normalizedScope)).catch(() => null),
-    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth)).catch(() => null),
-    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth)).catch(() => null),
-    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripDebugKey(normalizedScope)).catch(() => null),
-    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardKpiDiagnosticsCacheKey(normalizedScope)).catch(() => null),
-  ]);
+  let globalPrimary;
+  let monthPrimary;
+  let financeMonthPrimary;
+  let debugCountersPrimary;
+  let diagnosticsCachePrimary;
+  try {
+    [
+      globalPrimary,
+      monthPrimary,
+      financeMonthPrimary,
+      debugCountersPrimary,
+      diagnosticsCachePrimary,
+    ] = await Promise.all([
+      kvGetJson(gatedEnv.FLUXIDI_TRACKING, scopedDashboardTripKpisKey(normalizedScope)).catch(() => null),
+      kvGetJson(gatedEnv.FLUXIDI_TRACKING, scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth)).catch(() => null),
+      kvGetJson(gatedEnv.FLUXIDI_TRACKING, scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth)).catch(() => null),
+      kvGetJson(gatedEnv.FLUXIDI_TRACKING, scopedDashboardTripDebugKey(normalizedScope)).catch(() => null),
+      kvGetJson(gatedEnv.FLUXIDI_TRACKING, scopedDashboardKpiDiagnosticsCacheKey(normalizedScope)).catch(() => null),
+    ]);
+  } catch (err) {
+    if (err instanceof KvBudgetExceededError) {
+      logKvPass("HTTP_KV_BUDGET", {
+        route: "trip_kpis",
+        reason: String(err.kind || "budget"),
+        reads: Number(trackingKv.counts?.read || 0),
+        lists: Number(trackingKv.counts?.list || 0),
+        writes: Number(trackingKv.counts?.write || 0),
+        deletes: Number(trackingKv.counts?.delete || 0),
+      });
+      return withCors(
+        json(
+          {
+            ok: false,
+            error: "trip_kpi_budget_exceeded",
+            data_pending: true,
+            degraded: true,
+            projection_health: "degraded",
+            counts_are_authoritative: false,
+            tenant_id: normalizedScope.tenant_id,
+            company_id: normalizedScope.company_id,
+            month: selectedMonth,
+            generated_at: nowIso(),
+            currency: "EUR",
+          },
+          { status: 200 },
+        ),
+        origin,
+      );
+    }
+    throw err;
+  }
   const globalAggregate = globalPrimary ?? {};
   const monthAggregate = monthPrimary ?? {};
   const financeMonthEarly = financeMonthPrimary ?? {};
   const debugCountersEarly = debugCountersPrimary ?? {};
   const parallelReadMs = Date.now() - kpiReadStartedAt;
-  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: normal GET reads the authoritative
-  // aggregates directly. Reconciliation only runs when aggregates are
-  // absent/malformed OR when the caller explicitly asks for the debug
-  // contributor rows. Bounded fallback cap keeps a cold tenant response
-  // well below the client 12 s timeout; expensive repair belongs to
-  // `/admin/dashboard/trip-kpis/reconcile`.
   const aggregatesReady = _tripKpiAggregatesStructurallyValidLocal(
     globalAggregate,
     monthAggregate,
   );
-  const shouldReconcile = debugPaidContributorsEnabled || !aggregatesReady;
-  const reconcileStart = Date.now();
-  const reconcileResult = shouldReconcile
-    ? await _reconcileTripKpiMissingAmountForMonthBestEffort(
-        env,
-        normalizedScope,
-        selectedMonth,
-        {
-          includeDebugRows: debugPaidContributorsEnabled,
-          debugRowLimit: 50,
-          maxScanned: debugPaidContributorsEnabled
-            ? 0
-            : _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS,
-        },
-      )
-    : null;
-  const reconcileMs = shouldReconcile ? Date.now() - reconcileStart : 0;
-  const kpiReadSource = aggregatesReady
-    ? 'aggregate'
-    : reconcileResult?.trip_kpi_reconcile_budget_exceeded
-      ? 'data_pending'
-      : 'bounded_fallback';
-  const kpiReadReconcile = shouldReconcile ? 'bounded' : 'skipped';
-  // Re-read the month aggregate only when a reconciliation MAY have written
-  // new values (`shouldReconcile === true`). The pre-repair code
-  // unconditionally re-read `global` when the primary was empty — that
-  // masked missing aggregates as `{}` again and cost an extra KV round-trip
-  // per request. Post-repair we trust the parallel primary read and only
-  // re-fetch the month key when the reconcile step could have populated it.
+  const shouldReconcile = false;
+  const reconcileResult = null;
+  const reconcileMs = 0;
+  const kpiReadSource = aggregatesReady ? "aggregate" : "data_pending";
+  const kpiReadReconcile = "skipped";
   const global = globalAggregate;
-  const month = shouldReconcile
-    ? ((await kvGetJson(
-        env.FLUXIDI_TRACKING,
-        scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
-      )) ?? monthAggregate ?? {})
-    : monthAggregate;
+  const month = monthAggregate;
   const financeMonth = financeMonthEarly;
   const debugCounters = debugCountersEarly;
   // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): the pending-booking scan and
@@ -4573,15 +4583,6 @@ async function handleDashboardTripKpis(req, url, env, origin, ctx) {
     ? diagnosticsCachePrimary
     : null;
   const diagnosticsSource = diagnosticsCacheInfo.freshness;
-  const shouldRefreshCacheBackground =
-    diagnosticsSource === "cached_stale" || diagnosticsSource === "unavailable";
-  if (
-    shouldRefreshCacheBackground &&
-    ctx &&
-    typeof ctx.waitUntil === "function"
-  ) {
-    ctx.waitUntil(_refreshKpiDiagnosticsCache(env, normalizedScope));
-  }
   const pendingDiagnostics = diagnosticsCache
     ? {
         trip_missing: Math.max(0, Math.round(Number(diagnosticsCache.trip_missing) || 0)),
@@ -4874,24 +4875,24 @@ async function handleDashboardTripKpis(req, url, env, origin, ctx) {
         "Historical retained trips may require a rebuild/backfill endpoint.",
       ],
     },
+    counts_are_authoritative: aggregatesReady === true,
+    projection_health: aggregatesReady ? "ok" : "missing",
   };
+  if (!aggregatesReady) {
+    payload.data_pending = true;
+    payload.degraded = true;
+  } else if (diagnosticsSource === "cached_stale" || diagnosticsSource === "unavailable") {
+    payload.stale = diagnosticsSource === "cached_stale";
+    payload.degraded = diagnosticsSource === "unavailable";
+  }
   if (debugEnabled) {
     payload.debug_enabled = true;
     payload.debug_limit = debugLimit;
-    payload.debug_details = await _collectTripKpiDebugDetails(
-      env,
-      normalizedScope,
-      selectedMonth,
-      debugLimit,
-    );
+    payload.debug_note = "debug samples require /admin/dashboard/trip-kpis/reconcile";
   }
   if (debugPaidContributorsEnabled) {
-    payload.trip_paid_contributor_debug_rows = Array.isArray(reconcileResult?.rows)
-      ? reconcileResult.rows
-      : [];
-    payload.trip_paid_contributor_debug_included = payload.trip_paid_contributor_debug_rows.filter(
-      (row) => row?.included === true,
-    ).length;
+    payload.trip_paid_contributor_debug_rows = [];
+    payload.trip_paid_contributor_debug_included = 0;
   }
   console.log(
     _formatKpiReadDiagnosticLocal({
@@ -9210,6 +9211,8 @@ async function handlePurgeOrphans(req, url, env, origin) {
 // -------------------------------
 // Router
 // -------------------------------
+export { materializeTripDashboardKpisBestEffort };
+
 export default {
   async fetch(req, env, ctx) {
     const origin = getOrigin(req);

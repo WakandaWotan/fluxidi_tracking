@@ -1,9 +1,10 @@
-// KV-CRON-AMPLIFIERS-P0 — per-invocation operation budget.
+// KV-CRON-AMPLIFIERS-P0 / HTTP-KV-AMPLIFIERS-P0 — per-invocation operation budget.
 //
 // Wraps a Workers KV namespace and counts billable ops. Throws
-// KvBudgetExceededError when a cap is crossed so a scheduled job cannot
-// silently resume the 3,280-read amplifier. HTTP fetch paths must NOT use
-// this wrapper.
+// KvBudgetExceededError when a cap is crossed so a scheduled job or a
+// targeted HTTP handler cannot silently resume an unbounded scan.
+// Scheduled and HTTP wrappers are independent instances: wrapping one
+// request never shares counters with cron, and cron never wraps fetch.
 
 export class KvBudgetExceededError extends Error {
   constructor(kind, used, max) {
@@ -90,6 +91,8 @@ export function wrapKvBudget(ns, options = {}) {
   const maxReads = Math.max(0, Number(options.maxReads) || 0);
   const maxLists = Math.max(0, Number(options.maxLists) || 0);
   const maxWrites = Math.max(0, Number(options.maxWrites) || 0);
+  const maxDeletes =
+    options.maxDeletes == null ? Infinity : Math.max(0, Number(options.maxDeletes) || 0);
   const counts = { read: 0, list: 0, write: 0, delete: 0 };
   if (!ns || typeof ns !== "object") {
     return { counts, namespace: ns };
@@ -123,6 +126,9 @@ export function wrapKvBudget(ns, options = {}) {
     },
     delete: async (...args) => {
       counts.delete += 1;
+      if (counts.delete > maxDeletes) {
+        throw new KvBudgetExceededError("delete", counts.delete, maxDeletes);
+      }
       charge("write", maxWrites);
       return ns.delete(...args);
     },

@@ -87,7 +87,7 @@ test('2b. trip month aggregate with zero paid rides is authoritative', () => {
 });
 
 // Test 3 — missing aggregate uses bounded fallback only.
-test('3. missing bookings aggregate → strategy chooses bounded fallback', () => {
+test('3. missing bookings aggregate → strategy returns data_pending, no reconcile', () => {
   assert.equal(bookingFinanceAggregateStructurallyValid({}), false);
   assert.equal(bookingFinanceAggregateStructurallyValid(null), false);
   assert.equal(bookingFinanceAggregateStructurallyValid(undefined), false);
@@ -97,34 +97,35 @@ test('3. missing bookings aggregate → strategy chooses bounded fallback', () =
     debugReconcileRequested: false,
   });
   assert.deepEqual(strategy, {
-    shouldReconcile: true,
-    source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-    reconcile: KPI_READ_RECONCILE_BOUNDED,
+    shouldReconcile: false,
+    source: KPI_READ_SOURCE_DATA_PENDING,
+    reconcile: KPI_READ_RECONCILE_SKIPPED,
   });
 });
 
-test('3b. missing trip global → strategy chooses bounded fallback', () => {
+test('3b. missing trip global → strategy returns data_pending, no reconcile', () => {
   const strategy = chooseTripKpiReadStrategy({
     global: null,
     month: { monthly_paid_rides_count: 0, monthly_income_cents: 0 },
     debugReconcileRequested: false,
   });
   assert.deepEqual(strategy, {
-    shouldReconcile: true,
-    source: KPI_READ_SOURCE_BOUNDED_FALLBACK,
-    reconcile: KPI_READ_RECONCILE_BOUNDED,
+    shouldReconcile: false,
+    source: KPI_READ_SOURCE_DATA_PENDING,
+    reconcile: KPI_READ_RECONCILE_SKIPPED,
   });
 });
 
-test('3c. malformed trip month (NaN) → strategy chooses bounded fallback',
+test('3c. malformed trip month (NaN) → strategy returns data_pending, no reconcile',
     () => {
   const strategy = chooseTripKpiReadStrategy({
     global: { completed_rides_count: 5, unpaid_completed_rides_count: 0 },
     month: { monthly_paid_rides_count: NaN, monthly_income_cents: 0 },
     debugReconcileRequested: false,
   });
-  assert.equal(strategy.shouldReconcile, true);
-  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_BOUNDED);
+  assert.equal(strategy.shouldReconcile, false);
+  assert.equal(strategy.source, KPI_READ_SOURCE_DATA_PENDING);
+  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_SKIPPED);
 });
 
 test('3d. negative counters are treated as invalid', () => {
@@ -202,18 +203,19 @@ test('10. strategy is a pure function — repeated calls with the same aggregate
 
 // Test 11 — cold request does not require a full historical reconciliation
 // (bounded fallback path).
-test('11. cold aggregate (absent) uses bounded fallback, not unbounded scan',
+test('11. cold aggregate (absent) is data_pending and never reconciles',
     () => {
   const strategy = chooseBookingsKpiReadStrategy({
     aggregate: null,
     debugReconcileRequested: false,
   });
-  assert.equal(strategy.shouldReconcile, true);
-  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_BOUNDED);
+  assert.equal(strategy.shouldReconcile, false);
+  assert.equal(strategy.source, KPI_READ_SOURCE_DATA_PENDING);
+  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_SKIPPED);
 });
 
-// Test 12 — worker tests prove bounded call counts.
-test('12. explicit debug reconcile is honored (bounded fallback path)', () => {
+// Test 12 — HTTP GET never honors debug reconcile (belongs on /rebuild).
+test('12. explicit debug reconcile is ignored on the ordinary GET strategy', () => {
   const validAggregate = {
     monthly_paid_bookings_income_cents: 0,
     monthly_paid_bookings_count: 0,
@@ -223,11 +225,11 @@ test('12. explicit debug reconcile is honored (bounded fallback path)', () => {
     aggregate: validAggregate,
     debugReconcileRequested: true,
   });
-  assert.equal(strategy.shouldReconcile, true);
-  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_BOUNDED);
+  assert.equal(strategy.shouldReconcile, false);
+  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_SKIPPED);
 });
 
-test('12b. trip endpoint debug reconcile is honored (bounded fallback path)',
+test('12b. trip GET strategy never reconciles even when debug is requested',
     () => {
   const global = { completed_rides_count: 1, unpaid_completed_rides_count: 0 };
   const month = { monthly_paid_rides_count: 1, monthly_income_cents: 100 };
@@ -236,8 +238,8 @@ test('12b. trip endpoint debug reconcile is honored (bounded fallback path)',
     month,
     debugReconcileRequested: true,
   });
-  assert.equal(strategy.shouldReconcile, true);
-  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_BOUNDED);
+  assert.equal(strategy.shouldReconcile, false);
+  assert.equal(strategy.reconcile, KPI_READ_RECONCILE_SKIPPED);
 });
 
 test('diagnostic line is bounded and PII-free', () => {
