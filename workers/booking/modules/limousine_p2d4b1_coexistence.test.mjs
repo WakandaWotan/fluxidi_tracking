@@ -261,6 +261,9 @@ test("20) limousine request traffic adds no scheduled KV reads while gates are O
   assert.ok(!scheduled.includes("_loadLimousineInboxIndex"));
   assert.ok(!scheduled.includes("_loadLimousineQuoteRecord"));
   assert.ok(!scheduled.includes("LIMOUSINE_"));
+  // SUBSCRIPTION-ADDON-TEST-GATE-P0: wrangler pin refreshed after adding the
+  // empty fail-closed FLUXIDI_SUBSCRIPTION_ADDON_TEST_COMPANY_ALLOWLIST var.
+  // Crons stay empty; no limousine gates or secrets were added.
   assert.equal(createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "F504C56EBC59EE9BD11554CA8074A268022071F5499FFCF7A75AAC2B2A4FCD3D");
+    "FC6745142839C36E02FA86DE39D4F1BDEBC39FBCDC82E1B396FB33F215A7B0C2");
 });

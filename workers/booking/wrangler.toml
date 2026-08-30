@@ -47,7 +47,12 @@ BOOKING_KV_DAILY_READ_BUDGET = "20000"
 # never read FLUXIDI_SUBSCRIPTION_*:
 # FLUXIDI_SUBSCRIPTION_MOLLIE_API_KEY   — Fluxidi-owned Mollie API key (test_… or live_…)
 # FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET   — path-secret used in /webhooks/subscription/mollie/{secret}
-# FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — optional, "test" or "live", for logging only
+# FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — required for add-on checkout/activation.
+#   Must be "test" or "live" and MUST match the API key prefix. Mismatch fails closed.
+# FLUXIDI_SUBSCRIPTION_ADDON_TEST_COMPANY_ALLOWLIST — public company codes and/or
+#   company IDs allowed to receive test-mode add-on entitlements. Empty = deny all.
+#   Do not infer test permission from display names.
+FLUXIDI_SUBSCRIPTION_ADDON_TEST_COMPANY_ALLOWLIST = ""
 #
 # RateHawk credentials, host allowlist, Hotelpage transport and offer
 # references live on the Hotels Workers. This Booking Worker must not hold

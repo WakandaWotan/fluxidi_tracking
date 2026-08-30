@@ -362,15 +362,16 @@ test("28) Billit and RateHawk coexistence unchanged", () => {
   assert.ok(!wrangler.includes("LIMOUSINE_MANUAL_QUOTE_ENABLED"));
   assert.match(wrangler, /# MOLLIE_CONNECT_CLIENT_ID/);
   assert.match(wrangler, /never commit values/);
-  // KV-CRON-AMPLIFIERS-P0: wrangler now fail-closes the Billit cron and
-  // keeps RateHawk/Billit bindings unchanged. Pin refreshed to the repaired
-  // wrangler.toml; due-index module hash is unchanged.
+  // KV-CRON-AMPLIFIERS-P0: wrangler fail-closes the Billit cron and keeps
+  // RateHawk/Billit bindings unchanged. SUBSCRIPTION-ADDON-TEST-GATE-P0
+  // refreshed the pin after adding the empty test-company allowlist var.
+  // Due-index module hash is unchanged.
   assert.ok(wrangler.includes("crons = []"));
   assert.ok(wrangler.includes('BILLIT_RECOVERY_CRON_ENABLED = "0"'));
   assert.ok(!wrangler.includes('crons = ["*/2 * * * *"]'));
   assert.equal(
     createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "F504C56EBC59EE9BD11554CA8074A268022071F5499FFCF7A75AAC2B2A4FCD3D",
+    "FC6745142839C36E02FA86DE39D4F1BDEBC39FBCDC82E1B396FB33F215A7B0C2",
   );
   assert.equal(
     createHash("sha256").update(dueIndex, "utf8").digest("hex").toUpperCase(),
