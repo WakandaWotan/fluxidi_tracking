@@ -32,8 +32,10 @@ test("idempotent upsert keeps one membership slot", async () => {
   assert.equal(second.manifest.total, 1);
   const stored = JSON.parse(kv.map.get(registryCodeKey("FLX-00001")));
   assert.equal(stored.display_name, "Fluxidi");
+  assert.equal(stored.environment_class, "unknown");
   assert.equal(Object.hasOwn(stored, "email"), false);
   assert.equal(Object.hasOwn(stored, "vat_number"), false);
+  assert.equal(publicRegistryFields({ company_code: "FLX-00001" }).environment_class, "unknown");
 });
 
 test("pages grow without silent truncation at 100 and 101", async () => {

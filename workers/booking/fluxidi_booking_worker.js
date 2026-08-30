@@ -21091,10 +21091,14 @@ async function _upsertCompanyCodeIndexesForScope(
     }),
   );
   try {
+    const playReviewCode = _playReviewConfiguredCompanyCode(env);
     await upsertCompanyRegistryEntry(env.BOOKING_KV, {
       company_code: normalizedCode,
       display_name: displayName || currentDisplayName || null,
       lifecycle_status: linkedRecord.linking_enabled === false ? "inactive" : "active",
+      environment_class: playReviewCode && normalizedCode === playReviewCode
+        ? "review"
+        : "unknown",
       created_at: createdAt,
       updated_at: nowIso,
     }, { nowIso });

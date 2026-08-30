@@ -13,6 +13,13 @@ export const COMPANY_REGISTRY_SCHEMA = 1;
 export const COMPANY_REGISTRY_PAGE_SIZE = 100;
 export const COMPANY_REGISTRY_MANIFEST_KEY = "company_registry:manifest:v1";
 export const REGISTRY_LIFECYCLE = Object.freeze(["active", "inactive", "deleted"]);
+export const REGISTRY_ENVIRONMENT = Object.freeze([
+  "production",
+  "test",
+  "review",
+  "local_qa",
+  "unknown",
+]);
 
 export function registryPageKey(page) {
   const n = Number(page);
@@ -40,11 +47,14 @@ export function publicRegistryFields(input = {}) {
   const lifecycle = REGISTRY_LIFECYCLE.includes(input.lifecycle_status)
     ? input.lifecycle_status
     : "active";
+  const environment = REGISTRY_ENVIRONMENT.includes(input.environment_class)
+    ? input.environment_class
+    : "unknown";
   return {
     company_code: input.company_code,
     display_name: input.display_name || null,
     lifecycle_status: lifecycle,
-    environment_class: input.environment_class || null,
+    environment_class: environment,
     created_at: input.created_at || null,
     updated_at: input.updated_at || null,
   };
