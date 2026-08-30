@@ -9988,6 +9988,7 @@ export { runPaidBookingAfterLifecycle };
 export {
   upsertDashboardBookingsKpiProjectionBestEffort,
   removeDashboardBookingsKpiProjectionBestEffort,
+  _applyDashboardBookingsKpiContributionDelta,
   _loadScopedActiveDemandWithRepair,
   rebuildBookingDemandIndexForScope,
   computeDashboardBookingKpiContribution,
@@ -88559,7 +88560,92 @@ function _dashboardKpiEmptyAggregate(scope, nowIso) {
     counters: _dashboardProjectionBaseCounters(),
     open_identities: {},
     applied_mutations: {},
+    revision: 0,
   };
+}
+
+function _dashboardKpiNewWriteToken() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch (_) {}
+  return `kpi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function _dashboardKpiIncomingDirty(aggregate) {
+  return (
+    safeStr(aggregate?.projection_health, 40).toLowerCase() === "dirty" ||
+    aggregate?.projection_complete === false ||
+    !!safeStr(aggregate?.projection_dirty_reason, 80)
+  );
+}
+
+function _dashboardKpiMemberIsNewer(existingMember, incomingContribution) {
+  if (!existingMember || !incomingContribution) return false;
+  const existingMs = Number(existingMember.record_updated_ms) || 0;
+  const incomingMs = Number(incomingContribution.record_updated_ms) || 0;
+  return existingMs > 0 && incomingMs > 0 && incomingMs < existingMs;
+}
+
+const DASHBOARD_KPI_RMW_ATTEMPTS = 3;
+const DASHBOARD_KPI_MEMBER_REFRESH_CAP = 48;
+
+function _dashboardKpiKnownBookingIds(aggregate, extraIds = []) {
+  const ids = new Set();
+  for (const extra of extraIds || []) {
+    const bookingId = safeStr(extra, 160);
+    if (bookingId) ids.add(bookingId);
+  }
+  for (const identity of Object.values(aggregate?.open_identities || {})) {
+    for (const bookingId of Object.keys(identity?.members || {})) {
+      const safeId = safeStr(bookingId, 160);
+      if (safeId) ids.add(safeId);
+    }
+  }
+  for (const bookingId of Object.keys(aggregate?.applied_mutations || {})) {
+    const safeId = safeStr(bookingId, 160);
+    if (safeId) ids.add(safeId);
+  }
+  return [...ids];
+}
+
+async function _loadKnownDashboardKpiContributions(env, scope, bookingIds) {
+  const ids = (bookingIds || []).map((id) => safeStr(id, 160)).filter(Boolean);
+  if (ids.length > DASHBOARD_KPI_MEMBER_REFRESH_CAP) {
+    return { ok: false, overflow: true, contributions: [] };
+  }
+  const contributions = [];
+  for (const bookingId of ids) {
+    const loaded = await loadDashboardBookingKpiContribution(env, scope, bookingId);
+    if (loaded?.contribution) contributions.push(loaded.contribution);
+  }
+  return { ok: true, overflow: false, contributions };
+}
+
+function _dashboardKpiAggregateFromKnownContributions(contributions, base = null) {
+  const nowIso = new Date().toISOString();
+  let next = _dashboardKpiEmptyAggregate(
+    {
+      tenant_id: base?.tenant_id,
+      company_id: base?.company_id,
+    },
+    nowIso,
+  );
+  if (base && typeof base === "object") {
+    next.tenant_id = safeStr(base.tenant_id, 80) || next.tenant_id;
+    next.company_id = safeStr(base.company_id, 80) || next.company_id;
+  }
+  for (const contribution of contributions || []) {
+    const applied = _applyDashboardBookingsKpiContributionDelta(next, null, contribution);
+    next = applied.aggregate;
+  }
+  if (_dashboardKpiIncomingDirty(base)) {
+    next.projection_complete = false;
+    next.projection_health = "dirty";
+    next.projection_dirty_reason = safeStr(base?.projection_dirty_reason, 80) || "kept_dirty";
+  }
+  return next;
 }
 
 function _dashboardKpiLegacyIdentitiesMissing(aggregate) {
@@ -88627,10 +88713,20 @@ function _applyDashboardBookingsKpiContributionDelta(aggregate, oldContribution,
     return { aggregate: next, unchanged: false, kept_dirty: true };
   }
   if (
+    newContribution &&
+    bookingId &&
+    members[bookingId] &&
+    _dashboardKpiMemberIsNewer(members[bookingId], newContribution)
+  ) {
+    return { aggregate: next, unchanged: true, ignored_out_of_order: true };
+  }
+  if (
     _dashboardKpiLegacyIdentitiesMissing(next) &&
     oldContribution &&
     bookingId &&
-    !members[bookingId]
+    !members[bookingId] &&
+    ((Number(next.counters?.considered_open) || 0) > 0 ||
+      (Number(next.counters?.excluded_terminal) || 0) > 0)
   ) {
     members[bookingId] = _dashboardKpiIdentityMemberFromContribution(oldContribution);
   }
@@ -88650,9 +88746,6 @@ function _applyDashboardBookingsKpiContributionDelta(aggregate, oldContribution,
   if (bookingId) next.applied_mutations[bookingId] = fingerprint;
   next.version = 1;
   next.source = "projection";
-  next.projection_complete = true;
-  next.projection_health = "ok";
-  next.projection_dirty_reason = undefined;
   next.updated_at = nowIso;
   next.evaluated_at = nowIso;
   next.stale_sensitive = Object.values(next.open_identities || {}).some((identity) =>
@@ -88662,7 +88755,180 @@ function _applyDashboardBookingsKpiContributionDelta(aggregate, oldContribution,
         member?.open_reason === "excluded_stale_past_pickup",
     ),
   );
+  if (_dashboardKpiIncomingDirty(aggregate)) {
+    next.projection_complete = false;
+    next.projection_health = "dirty";
+    next.projection_dirty_reason =
+      safeStr(aggregate?.projection_dirty_reason, 80) || "kept_dirty";
+    return { aggregate: next, unchanged: false, kept_dirty: true };
+  }
+  next.projection_complete = true;
+  next.projection_health = "ok";
+  next.projection_dirty_reason = undefined;
   return { aggregate: next, unchanged: false };
+}
+
+async function _commitDashboardBookingsKpiDeltaBestEffort(
+  env,
+  scope,
+  oldContribution,
+  newContribution,
+) {
+  const bookingId = safeStr(
+    newContribution?.booking_id || oldContribution?.booking_id,
+    160,
+  );
+  const fingerprint = _dashboardKpiContributionFingerprint(newContribution);
+  let lastAggregate = null;
+  for (let attempt = 0; attempt < DASHBOARD_KPI_RMW_ATTEMPTS; attempt += 1) {
+    const loadedAggregate = await loadDashboardBookingsKpiAggregate(env, scope);
+    const current = loadedAggregate?.aggregate;
+    if (bookingId && current?.applied_mutations?.[bookingId] === fingerprint) {
+      return {
+        ok: true,
+        unchanged: true,
+        kept_dirty: _dashboardKpiIncomingDirty(current),
+        conflict: false,
+        attempts: attempt + 1,
+        aggregate: current,
+      };
+    }
+    if (current && _dashboardKpiIncomingDirty(current) && _dashboardKpiLegacyIdentitiesMissing(current)) {
+      const applied = _applyDashboardBookingsKpiContributionDelta(
+        current,
+        oldContribution,
+        newContribution,
+      );
+      lastAggregate = applied.aggregate;
+      const writeToken = _dashboardKpiNewWriteToken();
+      const next = {
+        ...applied.aggregate,
+        revision: (Number(current?.revision) || 0) + 1,
+        write_token: writeToken,
+      };
+      await saveDashboardBookingsKpiAggregate(env, scope, next);
+      const verify = await loadDashboardBookingsKpiAggregate(env, scope);
+      if (safeStr(verify?.aggregate?.write_token, 120) === writeToken) {
+        return {
+          ok: true,
+          unchanged: false,
+          kept_dirty: true,
+          conflict: false,
+          attempts: attempt + 1,
+          aggregate: next,
+        };
+      }
+      continue;
+    }
+    const knownIds = _dashboardKpiKnownBookingIds(current, [bookingId]);
+    const loadedKnown = await _loadKnownDashboardKpiContributions(env, scope, knownIds);
+    if (loadedKnown.overflow) {
+      await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, {
+        reason: "concurrent_rmw_overflow",
+      });
+      return {
+        ok: false,
+        unchanged: false,
+        kept_dirty: true,
+        conflict: true,
+        attempts: attempt + 1,
+        aggregate: current || null,
+      };
+    }
+    let contributions = [...(loadedKnown.contributions || [])];
+    if (newContribution) {
+      const hasSelf = contributions.some(
+        (entry) => safeStr(entry?.booking_id, 160) === bookingId,
+      );
+      if (!hasSelf) contributions.push(newContribution);
+    } else if (bookingId) {
+      contributions = contributions.filter(
+        (entry) => safeStr(entry?.booking_id, 160) !== bookingId,
+      );
+    }
+    const rebuilt = _dashboardKpiAggregateFromKnownContributions(contributions, current);
+    if (!newContribution && bookingId) {
+      rebuilt.applied_mutations = {
+        ...(rebuilt.applied_mutations || {}),
+        [bookingId]: "removed",
+      };
+    }
+    lastAggregate = rebuilt;
+    const writeToken = _dashboardKpiNewWriteToken();
+    const next = {
+      ...rebuilt,
+      revision: (Number(current?.revision) || 0) + 1,
+      write_token: writeToken,
+    };
+    await saveDashboardBookingsKpiAggregate(env, scope, next);
+    const verify = await loadDashboardBookingsKpiAggregate(env, scope);
+    if (safeStr(verify?.aggregate?.write_token, 120) !== writeToken) continue;
+    await Promise.resolve();
+    await Promise.resolve();
+    const confirm = await loadDashboardBookingsKpiAggregate(env, scope);
+    if (safeStr(confirm?.aggregate?.write_token, 120) !== writeToken) continue;
+    const confirmIds = _dashboardKpiKnownBookingIds(confirm?.aggregate, [bookingId]);
+    const confirmKnown = await _loadKnownDashboardKpiContributions(env, scope, confirmIds);
+    if (confirmKnown.overflow) {
+      await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, {
+        reason: "concurrent_rmw_overflow",
+      });
+      return {
+        ok: false,
+        unchanged: false,
+        kept_dirty: true,
+        conflict: true,
+        attempts: attempt + 1,
+        aggregate: confirm?.aggregate || next,
+      };
+    }
+    let confirmContribs = [...(confirmKnown.contributions || [])];
+    if (newContribution) {
+      const hasSelf = confirmContribs.some(
+        (entry) => safeStr(entry?.booking_id, 160) === bookingId,
+      );
+      if (!hasSelf) confirmContribs.push(newContribution);
+    } else if (bookingId) {
+      confirmContribs = confirmContribs.filter(
+        (entry) => safeStr(entry?.booking_id, 160) !== bookingId,
+      );
+    }
+    const confirmRebuilt = _dashboardKpiAggregateFromKnownContributions(
+      confirmContribs,
+      confirm?.aggregate,
+    );
+    if (
+      Number(confirmRebuilt?.counters?.considered_open || 0) !==
+      Number(confirm?.aggregate?.counters?.considered_open || 0)
+    ) {
+      continue;
+    }
+    if (
+      bookingId &&
+      safeStr(confirm?.aggregate?.applied_mutations?.[bookingId], 240) !== fingerprint
+    ) {
+      continue;
+    }
+    return {
+      ok: true,
+      unchanged: false,
+      kept_dirty: _dashboardKpiIncomingDirty(confirm?.aggregate),
+      conflict: false,
+      attempts: attempt + 1,
+      aggregate: confirm?.aggregate || next,
+    };
+  }
+  await _markDashboardBookingsKpiAggregateDirtyBestEffort(env, scope, {
+    reason: "concurrent_rmw_unresolved",
+  });
+  return {
+    ok: false,
+    unchanged: false,
+    kept_dirty: true,
+    conflict: true,
+    attempts: DASHBOARD_KPI_RMW_ATTEMPTS,
+    aggregate: lastAggregate,
+  };
 }
 
 async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, rec, scopeHint = null) {
@@ -88680,23 +88946,37 @@ async function upsertDashboardBookingsKpiProjectionBestEffort(env, bookingId, re
     const contribution = computeDashboardBookingKpiContribution(bookingId, rec, scope);
     if (!contribution) return { ok: false, skipped: true, reason: "invalid_contribution" };
     const loadedContrib = await loadDashboardBookingKpiContribution(env, scope, bookingId);
-    const loadedAggregate = await loadDashboardBookingsKpiAggregate(env, scope);
-    const applied = _applyDashboardBookingsKpiContributionDelta(
-      loadedAggregate?.aggregate,
+    if (
+      loadedContrib?.contribution &&
+      _dashboardKpiMemberIsNewer(
+        _dashboardKpiIdentityMemberFromContribution(loadedContrib.contribution),
+        contribution,
+      )
+    ) {
+      return {
+        ok: true,
+        booking_id: safeStr(bookingId, 160),
+        contribution_updated: false,
+        aggregate_dirty: false,
+        unchanged: true,
+        ignored_out_of_order: true,
+      };
+    }
+    const saved = await saveDashboardBookingKpiContribution(env, scope, bookingId, contribution);
+    const committed = await _commitDashboardBookingsKpiDeltaBestEffort(
+      env,
+      scope,
       loadedContrib?.contribution,
       contribution,
     );
-    const saved = await saveDashboardBookingKpiContribution(env, scope, bookingId, contribution);
-    if (applied.unchanged !== true) {
-      await saveDashboardBookingsKpiAggregate(env, scope, applied.aggregate);
-    }
     return {
       ok: true,
       booking_id: safeStr(bookingId, 160),
       contribution_key: safeStr(saved?.key, 320) || "",
       contribution_updated: true,
-      aggregate_dirty: applied.kept_dirty === true,
-      unchanged: applied.unchanged === true,
+      aggregate_dirty: committed.kept_dirty === true || committed.conflict === true,
+      unchanged: committed.unchanged === true,
+      conflict: committed.conflict === true,
     };
   } catch (_) {
     try {
@@ -88725,23 +89005,21 @@ async function removeDashboardBookingsKpiProjectionBestEffort(env, bookingId, re
     );
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
     const loadedContrib = await loadDashboardBookingKpiContribution(env, scope, bookingId);
-    const loadedAggregate = await loadDashboardBookingsKpiAggregate(env, scope);
-    const applied = _applyDashboardBookingsKpiContributionDelta(
-      loadedAggregate?.aggregate,
+    const removed = await removeDashboardBookingKpiContribution(env, scope, bookingId);
+    const committed = await _commitDashboardBookingsKpiDeltaBestEffort(
+      env,
+      scope,
       loadedContrib?.contribution,
       null,
     );
-    const removed = await removeDashboardBookingKpiContribution(env, scope, bookingId);
-    if (applied.unchanged !== true) {
-      await saveDashboardBookingsKpiAggregate(env, scope, applied.aggregate);
-    }
     return {
       ok: true,
       booking_id: safeStr(bookingId, 160),
       contribution_key: safeStr(removed?.key, 320) || "",
       contribution_removed: true,
-      aggregate_dirty: false,
-      unchanged: applied.unchanged === true,
+      aggregate_dirty: committed.kept_dirty === true || committed.conflict === true,
+      unchanged: committed.unchanged === true,
+      conflict: committed.conflict === true,
     };
   } catch (_) {
     try {

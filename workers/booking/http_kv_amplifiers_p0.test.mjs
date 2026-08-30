@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import worker, {
   upsertDashboardBookingsKpiProjectionBestEffort,
   removeDashboardBookingsKpiProjectionBestEffort,
+  _applyDashboardBookingsKpiContributionDelta,
+  computeDashboardBookingKpiContribution,
   _loadScopedActiveDemandWithRepair,
   dashboardBookingsKpiAggregateKey,
 } from "./fluxidi_booking_worker.js";
@@ -395,4 +397,235 @@ test("legacy dirty snapshot keeps last counters and never double-counts", async 
 
 test("exported aggregate key stays company-scoped", () => {
   assert.equal(dashboardBookingsKpiAggregateKey(SCOPE), AGG_KEY);
+});
+
+function concurrentReadKV(seed, { staleGets = 2, key = AGG_KEY } = {}) {
+  const kv = countingKV(seed);
+  const snapshot = seed[key]
+    ? typeof seed[key] === "string"
+      ? seed[key]
+      : JSON.stringify(seed[key])
+    : null;
+  let staleLeft = staleGets;
+  const origGet = kv.get.bind(kv);
+  kv.get = async (k, opts) => {
+    if (k === key && staleLeft > 0) {
+      staleLeft -= 1;
+      if (snapshot == null) return null;
+      const asJson = opts === "json" || (opts && opts.type === "json");
+      return asJson ? JSON.parse(snapshot) : snapshot;
+    }
+    return origGet(k, opts);
+  };
+  return kv;
+}
+
+function lostPutKV(seed, { lostPuts = 3, targetKey = AGG_KEY } = {}) {
+  const kv = countingKV(seed);
+  const origPut = kv.put.bind(kv);
+  kv.remainingLostPuts = lostPuts;
+  kv.put = async (key, val, opts) => {
+    if (key === targetKey && kv.remainingLostPuts > 0) {
+      kv.remainingLostPuts -= 1;
+      kv.counts.put += 1;
+      return;
+    }
+    return origPut(key, val, opts);
+  };
+  return kv;
+}
+
+function financeSeed() {
+  return {
+    monthly_paid_bookings_income_cents: 12000,
+    monthly_paid_bookings_count: 3,
+    updated_at: "2026-07-24T18:00:00.000Z",
+  };
+}
+
+function assertNoIncorrectAuthoritative(body, expectedOpen, incomeCents = 12000) {
+  assert.equal(body.monthly_income_cents, incomeCents);
+  if (body.counts_are_authoritative === true) {
+    assert.equal(body.ok, true);
+    assert.equal(body.projection_health, "ok");
+    assert.equal(body.degraded, undefined);
+    assert.equal(body.open_bookings_count, expectedOpen);
+    return "authoritative";
+  }
+  assert.equal(body.counts_are_authoritative, false);
+  assert.notEqual(body.projection_health, "ok");
+  return "degraded";
+}
+
+test("plain same-snapshot LWW of two deltas loses a booking count", () => {
+  const a = computeDashboardBookingKpiContribution("B-lww-a", openBooking("B-lww-a"), SCOPE);
+  const b = computeDashboardBookingKpiContribution("B-lww-b", openBooking("B-lww-b"), SCOPE);
+  const fromA = _applyDashboardBookingsKpiContributionDelta(null, null, a).aggregate;
+  const fromB = _applyDashboardBookingsKpiContributionDelta(null, null, b).aggregate;
+  assert.equal(fromA.counters.considered_open, 1);
+  assert.equal(fromB.counters.considered_open, 1);
+  const merged = _applyDashboardBookingsKpiContributionDelta(fromA, null, b).aggregate;
+  assert.equal(merged.counters.considered_open, 2);
+});
+
+test("two concurrent creates for the same company keep a correct or degraded projection", async () => {
+  const bookingKv = concurrentReadKV({}, { staleGets: 4 });
+  const trackingKv = countingKV({ [FINANCE_KEY]: financeSeed() });
+  const env = { BOOKING_KV: bookingKv };
+  const [first, second] = await Promise.all([
+    upsertDashboardBookingsKpiProjectionBestEffort(env, "B-c1", openBooking("B-c1"), SCOPE),
+    upsertDashboardBookingsKpiProjectionBestEffort(env, "B-c2", openBooking("B-c2"), SCOPE),
+  ]);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  const agg = JSON.parse(bookingKv.store.get(AGG_KEY));
+  const res = await worker.fetch(kpisReq(), makeEnv(bookingKv, trackingKv));
+  const body = await res.json();
+  const mode = assertNoIncorrectAuthoritative(body, 2);
+  if (mode === "authoritative") {
+    assert.equal(agg.counters.considered_open, 2);
+    assert.equal(agg.projection_health, "ok");
+  } else {
+    assert.equal(body.degraded, true);
+    assert.notEqual(agg.projection_health, "ok");
+  }
+  assertNoBookingHistoryScan(bookingKv);
+});
+
+test("create plus cancel/update concurrently leaves a correct or degraded projection", async () => {
+  const bookingKv = countingKV({});
+  const trackingKv = countingKV({ [FINANCE_KEY]: financeSeed() });
+  const env = { BOOKING_KV: bookingKv };
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    "B-keep",
+    openBooking("B-keep", { updated_at: "2026-07-24T18:00:00.000Z" }),
+    SCOPE,
+  );
+  const racing = concurrentReadKV(Object.fromEntries(bookingKv.store.entries()), {
+    staleGets: 4,
+  });
+  const racingEnv = { BOOKING_KV: racing };
+  const createdAt = "2026-07-24T18:02:00.000Z";
+  const cancelledAt = "2026-07-24T18:03:00.000Z";
+  await Promise.all([
+    upsertDashboardBookingsKpiProjectionBestEffort(
+      racingEnv,
+      "B-new",
+      openBooking("B-new", { updated_at: createdAt }),
+      SCOPE,
+    ),
+    upsertDashboardBookingsKpiProjectionBestEffort(
+      racingEnv,
+      "B-keep",
+      openBooking("B-keep", { status: "CANCELLED", updated_at: cancelledAt }),
+      SCOPE,
+    ),
+  ]);
+  const res = await worker.fetch(kpisReq(), makeEnv(racing, trackingKv));
+  const body = await res.json();
+  const mode = assertNoIncorrectAuthoritative(body, 1);
+  if (mode === "authoritative") {
+    assert.equal(JSON.parse(racing.store.get(AGG_KEY)).counters.considered_open, 1);
+  } else {
+    assert.equal(body.degraded, true);
+  }
+  assertNoBookingHistoryScan(racing);
+});
+
+test("duplicate retry of one transition while another booking changes stays correct or degraded", async () => {
+  const bookingKv = countingKV({});
+  const trackingKv = countingKV({ [FINANCE_KEY]: financeSeed() });
+  const env = { BOOKING_KV: bookingKv };
+  const firstRec = openBooking("B-dup", { updated_at: "2026-07-24T18:00:00.000Z" });
+  await upsertDashboardBookingsKpiProjectionBestEffort(env, "B-dup", firstRec, SCOPE);
+  const racing = concurrentReadKV(Object.fromEntries(bookingKv.store.entries()), {
+    staleGets: 4,
+  });
+  const racingEnv = { BOOKING_KV: racing };
+  const [retry, other] = await Promise.all([
+    upsertDashboardBookingsKpiProjectionBestEffort(racingEnv, "B-dup", firstRec, SCOPE),
+    upsertDashboardBookingsKpiProjectionBestEffort(
+      racingEnv,
+      "B-other",
+      openBooking("B-other", { updated_at: "2026-07-24T18:02:00.000Z" }),
+      SCOPE,
+    ),
+  ]);
+  assert.equal(retry.ok, true);
+  assert.equal(other.ok, true);
+  const res = await worker.fetch(kpisReq(), makeEnv(racing, trackingKv));
+  const body = await res.json();
+  const mode = assertNoIncorrectAuthoritative(body, 2);
+  if (mode === "authoritative") {
+    assert.equal(JSON.parse(racing.store.get(AGG_KEY)).counters.considered_open, 2);
+  } else {
+    assert.equal(body.degraded, true);
+  }
+  assertNoBookingHistoryScan(racing);
+});
+
+test("out-of-order cancel then stale create does not reopen the booking", async () => {
+  const bookingKv = countingKV({});
+  const trackingKv = countingKV({ [FINANCE_KEY]: financeSeed() });
+  const env = { BOOKING_KV: bookingKv };
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    "B-ooo",
+    openBooking("B-ooo", { updated_at: "2026-07-24T18:00:00.000Z" }),
+    SCOPE,
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    "B-ooo",
+    openBooking("B-ooo", { status: "CANCELLED", updated_at: "2026-07-24T18:05:00.000Z" }),
+    SCOPE,
+  );
+  await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    "B-ooo",
+    openBooking("B-ooo", { updated_at: "2026-07-24T18:01:00.000Z" }),
+    SCOPE,
+  );
+  const agg = JSON.parse(bookingKv.store.get(AGG_KEY));
+  assert.equal(agg.counters.considered_open, 0);
+  const res = await worker.fetch(kpisReq(), makeEnv(bookingKv, trackingKv));
+  const body = await res.json();
+  const mode = assertNoIncorrectAuthoritative(body, 0);
+  if (mode === "authoritative") {
+    assert.equal(body.open_bookings_count, 0);
+  }
+  assertNoBookingHistoryScan(bookingKv);
+});
+
+test("unresolved KV race marks dirty and never returns an authoritative KPI", async () => {
+  const bookingKv = lostPutKV({}, { lostPuts: 3 });
+  const trackingKv = countingKV({ [FINANCE_KEY]: financeSeed() });
+  const env = { BOOKING_KV: bookingKv };
+  const out = await upsertDashboardBookingsKpiProjectionBestEffort(
+    env,
+    "B-race",
+    openBooking("B-race"),
+    SCOPE,
+  );
+  assert.equal(out.ok, true);
+  assert.equal(out.conflict, true);
+  assert.equal(out.aggregate_dirty, true);
+  const raw = bookingKv.store.get(AGG_KEY);
+  if (raw) {
+    const agg = JSON.parse(raw);
+    assert.equal(agg.projection_health, "dirty");
+    assert.equal(agg.projection_dirty_reason, "concurrent_rmw_unresolved");
+  }
+  const res = await worker.fetch(kpisReq(), makeEnv(bookingKv, trackingKv));
+  const body = await res.json();
+  assert.equal(body.counts_are_authoritative, false);
+  assert.notEqual(body.projection_health, "ok");
+  if (body.ok === true) {
+    assert.equal(body.degraded, true);
+    assert.equal(body.monthly_income_cents, 12000);
+  } else {
+    assert.equal(body.data_pending, true);
+  }
+  assertNoBookingHistoryScan(bookingKv);
 });
