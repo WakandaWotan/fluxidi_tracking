@@ -362,13 +362,15 @@ test("28) Billit and RateHawk coexistence unchanged", () => {
   assert.ok(!wrangler.includes("LIMOUSINE_MANUAL_QUOTE_ENABLED"));
   assert.match(wrangler, /# MOLLIE_CONNECT_CLIENT_ID/);
   assert.match(wrangler, /never commit values/);
-  // Provenance: pin 4EDD8061… was the wrangler at 0cd1d00 (RateHawk test
-  // prebook off). 361ce81 added fail-closed RATEHAWK_BOOKING_* = "0" vars
-  // without refreshing this pin. Current file is that intended integrated
-  // config — not a secret/gate/route change.
+  // KV-CRON-AMPLIFIERS-P0: wrangler now fail-closes the Billit cron and
+  // keeps RateHawk/Billit bindings unchanged. Pin refreshed to the repaired
+  // wrangler.toml; due-index module hash is unchanged.
+  assert.ok(wrangler.includes("crons = []"));
+  assert.ok(wrangler.includes('BILLIT_RECOVERY_CRON_ENABLED = "0"'));
+  assert.ok(!wrangler.includes('crons = ["*/2 * * * *"]'));
   assert.equal(
     createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "4D74FEB94E28E57442BCAD80268B906F151BFE5FE4B30B2480CDFB5B70FC9FD3",
+    "F504C56EBC59EE9BD11554CA8074A268022071F5499FFCF7A75AAC2B2A4FCD3D",
   );
   assert.equal(
     createHash("sha256").update(dueIndex, "utf8").digest("hex").toUpperCase(),

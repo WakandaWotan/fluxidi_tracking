@@ -773,7 +773,10 @@ test("handleAppend + ctx.waitUntil: auto-submit is scheduled via ctx", async () 
 // =====================================================================
 test("config-status GET: schedules reconcile when auto-submit enabled and throttle elapsed", async () => {
   const kv = makeKV();
-  const env = baseEnv(kv);
+  const env = {
+    ...baseEnv(kv),
+    CHIRON_STATUS_POLL_RECONCILE_ENABLED: "1",
+  };
   await seedConnectionStatus(kv, goodStatusDoc({ testflow_auto_reconcile_last_at: null }));
   const scheduled = [];
   const ctx = {

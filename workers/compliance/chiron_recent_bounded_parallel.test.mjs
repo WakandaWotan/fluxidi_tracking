@@ -277,7 +277,10 @@ test("Part A / T5: concurrency ceiling respected — no more than 16 reads in fl
     kv._state.maxInFlight >= 4,
     `reads did not parallelize: max in-flight was only ${kv._state.maxInFlight}`,
   );
-  assert.equal(kv._state.totalGets, 100);
+  assert.ok(
+    kv._state.totalGets === 100 || kv._state.totalGets === 101,
+    `expected 100 event reads plus optional recent-index probe, got ${kv._state.totalGets}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

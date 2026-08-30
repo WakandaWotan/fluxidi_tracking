@@ -27,6 +27,12 @@ LEGACY_SCOPE_MIGRATION_ENABLED = "0"
 # credential hash MUST be set via: wrangler secret put PLAY_REVIEW_ACCESS_CODE_HASH
 # Worker hard-gates FLX-00020 and fails closed if this var disagrees.
 PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
+# KV-CRON-AMPLIFIERS-P0 — keep "0" until counting tests pass and Christophe
+# approves a re-enable. Live 2026-08-29: */2 cron burned ~3,280 reads/tick.
+BILLIT_RECOVERY_CRON_ENABLED = "0"
+INVOICE_LOGO_REPAIR_CRON_ENABLED = "0"
+BOOKING_KV_HOURLY_READ_BUDGET = "2000"
+BOOKING_KV_DAILY_READ_BUDGET = "20000"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)
@@ -86,13 +92,10 @@ service = "fluxidi-ratehawk-hotels-api-test"
 [observability.logs]
 enabled = true
 
-# BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: cron-triggered sweep of the durable
-# Billit export outbox. Every 2 minutes the scheduled handler retries due
-# outbox entries (state=pending / retryable_error / stalled in_progress).
-# Idempotency is guaranteed by the deterministic Billit Idempotent-Key header
-# and stored order_id short-circuit; the sweep bounds work per invocation.
+# KV-CRON-AMPLIFIERS-P0: cron paused after 2026-08-29 cost forensics.
+# Do not restore */2 until counting tests prove idle tick ≤3 reads / 1 list / 0 writes.
 [triggers]
-crons = ["*/2 * * * *"]
+crons = []
 
 [[durable_objects.bindings]]
 name = "FLEET_ALLOCATOR"

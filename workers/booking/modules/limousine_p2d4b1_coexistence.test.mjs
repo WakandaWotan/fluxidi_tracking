@@ -188,8 +188,10 @@ test("14) RateHawk bindings and routing remain unchanged", () => {
   assert.ok(worker.includes('url.pathname === "/public/hotels/ratehawk/hotelpage"'));
 });
 
-test("15) cron and binding matrix remain unchanged", () => {
-  assert.ok(wrangler.includes('crons = ["*/2 * * * *"]') || wrangler.includes("*/2 * * * *"));
+test("15) cron remains paused and bindings remain unchanged", () => {
+  assert.ok(wrangler.includes("crons = []"));
+  assert.ok(wrangler.includes('BILLIT_RECOVERY_CRON_ENABLED = "0"'));
+  assert.ok(!wrangler.includes('crons = ["*/2 * * * *"]'));
   assert.ok(wrangler.includes('binding = "BOOKING_KV"'));
   assert.ok(wrangler.includes("FLUXIDI_TRACKING"));
   assert.ok(wrangler.includes("INVOICE_KV"));
@@ -260,5 +262,5 @@ test("20) limousine request traffic adds no scheduled KV reads while gates are O
   assert.ok(!scheduled.includes("_loadLimousineQuoteRecord"));
   assert.ok(!scheduled.includes("LIMOUSINE_"));
   assert.equal(createHash("sha256").update(wrangler, "utf8").digest("hex").toUpperCase(),
-    "4D74FEB94E28E57442BCAD80268B906F151BFE5FE4B30B2480CDFB5B70FC9FD3");
+    "F504C56EBC59EE9BD11554CA8074A268022071F5499FFCF7A75AAC2B2A4FCD3D");
 });

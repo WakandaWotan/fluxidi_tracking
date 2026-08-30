@@ -21,6 +21,12 @@ import {
   sha256Hex,
 } from "./modules/crypto_utils.js";
 import { corsHeaders, json, html } from "./modules/http_response.js";
+import {
+  envFlagOn,
+  wrapKvBudget,
+  noteIsolateReads,
+  logKvPass,
+} from "./modules/kv_op_budget.js";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
   scheduleBaseCancellation,
@@ -3231,6 +3237,9 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
 async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
   const opts = options && typeof options === "object" ? options : {};
   const source = safeStr(opts.source, 64) || "durable_recovery_sweep";
+  if (opts.allowFullScan !== true && !envFlagOn(env?.BILLIT_SWEEP_EXPLICIT_ALLOW)) {
+    return { ok: false, error: "sweep_hard_gated", processed: 0, retried: 0 };
+  }
   const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
   // Tests may inject a fixed clock; production uses the real current time.
   const now = opts.now instanceof Date ? opts.now : new Date();
@@ -3414,6 +3423,18 @@ async function processBillitDueOutboxIndex(env, options = {}) {
     const documentId = normalized.document_id;
     const bookingId = normalized.booking_id;
     if (!scope.tenant_id || !scope.company_id || !documentId || !bookingId) {
+      skipped += 1;
+      continue;
+    }
+    const billitConfig =
+      typeof resolveBillitOAuthConfig === "function"
+        ? resolveBillitOAuthConfig(env)
+        : null;
+    if (
+      !billitConfig ||
+      billitConfig.environment !== "sandbox" ||
+      billitConfig.configured !== true
+    ) {
       skipped += 1;
       continue;
     }
@@ -36946,44 +36967,78 @@ async function repairOpaqueRgbInvoiceLogosOnce(env) {
 }
 
 export default {
-  // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: cron-triggered sweep of the durable
-  // Billit export outbox. Runs bounded work per invocation. Failure of the
-  // sweep never affects live request handling.
+  // KV-CRON-AMPLIFIERS-P0: scheduled Billit recovery is fail-closed.
+  // Live 2026-08-29 evidence: even the due-index pass still burned ~3,280
+  // BOOKING_KV reads every 2 minutes. Cron stays off in wrangler.toml and
+  // BILLIT_RECOVERY_CRON_ENABLED must be "1" before any scheduled work runs.
+  // When enabled, BOOKING_KV is budget-wrapped so a regression cannot resume
+  // the amplifier. HTTP fetch is unchanged and does not use the wrapper.
   async scheduled(event, env, ctx) {
     try {
+      if (!envFlagOn(env?.BILLIT_RECOVERY_CRON_ENABLED)) {
+        console.log("[BILLIT_DURABLE_RECOVERY][SCHEDULED_SKIP] reason=cron_disabled");
+        return;
+      }
       const source =
         event && typeof event.cron === "string" && event.cron
           ? `cron:${event.cron}`
           : "cron";
+      const bookingKv = wrapKvBudget(env.BOOKING_KV, {
+        maxReads: 40,
+        maxLists: 2,
+        maxWrites: 40,
+      });
+      const gated = { ...env, BOOKING_KV: bookingKv };
       ctx.waitUntil(
-        runBillitDurableRecoveryScheduledPass(env, {
+        runBillitDurableRecoveryScheduledPass(gated, {
           source,
           limit: 20,
-        }).catch((err) => {
-          try {
-            console.log(
-              `[BILLIT_DURABLE_RECOVERY][SCHEDULED_ERROR] ${String(
-                err?.message || err,
-              )}`,
-            );
-          } catch (_) {
-            // best-effort logging
-          }
-        }),
+        })
+          .then((summary) => {
+            const reads = Number(bookingKv.counts?.read || 0);
+            logKvPass("BILLIT_DURABLE_RECOVERY_PASS", {
+              source,
+              reason: "scheduled_billit_due_index",
+              due: summary?.processed?.due || 0,
+              processed: summary?.processed?.retried || 0,
+              succeeded: summary?.processed?.succeeded || 0,
+              retried: summary?.processed?.retried || 0,
+              migration_completed: summary?.migration?.completed === true,
+              reads,
+              lists: Number(bookingKv.counts?.list || 0),
+              writes: Number(bookingKv.counts?.write || 0),
+            });
+            noteIsolateReads(reads, {
+              hourlyLimit: Number(env?.BOOKING_KV_HOURLY_READ_BUDGET) || 2000,
+              dailyLimit: Number(env?.BOOKING_KV_DAILY_READ_BUDGET) || 20000,
+            });
+            return summary;
+          })
+          .catch((err) => {
+            try {
+              console.log(
+                `[BILLIT_DURABLE_RECOVERY][SCHEDULED_ERROR] ${String(
+                  err?.message || err,
+                )}`,
+              );
+            } catch (_) {
+              // best-effort logging
+            }
+          }),
       );
-      // INVOICE-LOGO-BLACK-RECTANGLE P0: one-shot opaque-RGB repair for
-      // INV-039 / INV-040. Idempotent after opaque_rgb_logo=1 is stamped.
-      ctx.waitUntil(
-        repairOpaqueRgbInvoiceLogosOnce(env).catch((err) => {
-          try {
-            console.log(
-              `[INVOICE_LOGO][OPAQUE_RGB_REPAIR_ERROR] ${String(
-                err?.message || err,
-              )}`,
-            );
-          } catch (_) {}
-        }),
-      );
+      if (envFlagOn(env?.INVOICE_LOGO_REPAIR_CRON_ENABLED)) {
+        ctx.waitUntil(
+          repairOpaqueRgbInvoiceLogosOnce(gated).catch((err) => {
+            try {
+              console.log(
+                `[INVOICE_LOGO][OPAQUE_RGB_REPAIR_ERROR] ${String(
+                  err?.message || err,
+                )}`,
+              );
+            } catch (_) {}
+          }),
+        );
+      }
     } catch (err) {
       try {
         console.log(

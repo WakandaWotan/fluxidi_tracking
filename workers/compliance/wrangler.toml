@@ -7,11 +7,10 @@ preview_urls = false
 [observability.logs]
 enabled = true
 
-# CHIRON-OFFLINE-ARRIVAL-P0: scheduled Chiron drain. A ride stopped while the
-# phone was offline must reach Chiron as Aankomst after connectivity recovery
-# without the app, the Chiron screen, a status poll or an admin action.
+# KV-CRON-AMPLIFIERS-P0: cron paused after 2026-08-29 cost forensics.
+# Do not restore */5 until a 1,400-event reconcile stays ≤50 KV reads.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = []
 
 # RELEASE-P0-CHIRON-TEST-RUNTIME-GATE-2026-07-31: non-sensitive test-runtime
 # configuration for the official Chiron ACC path. These are the ONLY two
@@ -26,6 +25,11 @@ crons = ["*/5 * * * *"]
 [vars]
 CHIRON_EXPORT_MODE = "test"
 CHIRON_EXPORT_BASE_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit"
+# KV-CRON-AMPLIFIERS-P0 — keep "0" until counting tests pass.
+CHIRON_CRON_ENABLED = "0"
+CHIRON_STATUS_POLL_RECONCILE_ENABLED = "0"
+COMPLIANCE_KV_HOURLY_READ_BUDGET = "800"
+COMPLIANCE_KV_DAILY_READ_BUDGET = "8000"
 
 # CHIRON-OFFLINE-ARRIVAL-P0: intentionally NOT set. CH1303 is an *update*
 # conflict ("Vertrektijdstip kreeg een nieuwe waarde"), not an already-exists

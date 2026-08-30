@@ -244,6 +244,7 @@ test("sweep filters: skips synced, permanent_error, and not-yet-due entries", as
   });
 
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "unit_test",
     limit: 20,
     now,
@@ -288,6 +289,7 @@ test("cross-tenant: sweep with bookingId filter only touches that booking's outb
     },
   });
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "documents_refresh_nudge",
     bookingId: BOOKING_A,
     limit: 20,
@@ -328,6 +330,7 @@ test("legacy outbox (no next_attempt_at) is treated as due and normalized", asyn
   const normalized = normalizeLegacyOutboxRecord(legacy, { now });
   assert.equal(isBillitOutboxDue(normalized, { now }), true);
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "unit_test",
     limit: 20,
   });
@@ -384,6 +387,7 @@ test("already synced retry is a no-op: sweep skips synced outboxes", async () =>
     seed: { [outboxKey(SCOPE_A, DOC_SYNCED)]: syncedRec },
   });
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "unit_test",
     limit: 20,
   });
@@ -407,6 +411,7 @@ test("permanent 4xx does not loop indefinitely: sweep skips permanent_error outb
     seed: { [outboxKey(SCOPE_A, DOC_PERMANENT)]: permRec },
   });
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "unit_test",
     limit: 20,
   });
@@ -443,6 +448,7 @@ test("existing issued invoice with missing Billit export enters recovery via leg
     },
   });
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "documents_refresh_nudge",
     bookingId: BOOKING_A,
     limit: 20,
@@ -500,6 +506,7 @@ test("paid_refresh does not mutate payment/VAT/invoice identity: sweep never tou
   });
 
   const summary = await sweepBillitDurableRecoveryOutbox(env, null, {
+    allowFullScan: true,
     source: "unit_test",
     limit: 20,
     now,

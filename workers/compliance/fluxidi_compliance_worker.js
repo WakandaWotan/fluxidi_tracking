@@ -1,3 +1,10 @@
+import {
+  envFlagOn,
+  wrapKvBudget,
+  noteIsolateReads,
+  logKvPass,
+} from "./modules/kv_op_budget.js";
+
 const ALLOWED_EVENT_TYPES = new Set([
   "ride_start",
   "ride_stop",
@@ -233,6 +240,9 @@ const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
 const CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS = 3;
 const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
+// KV-CRON-AMPLIFIERS-P0: hard cap on reconcile value-GETs / listed event keys.
+// Full-history list+get was ~1,400 reads every 5 minutes with no customers.
+const CHIRON_RECONCILE_MAX_KV_READS = 50;
 
 // Chiron-6A-light: optional official ride payload draft (additive, opt-in).
 const CHIRON_OFFICIAL_DRAFT_SCHEMA_VERSION = "chiron_official_draft_v1";
@@ -711,6 +721,7 @@ async function handleAppend(request, env, origin, ctx) {
     await env.COMPLIANCE_KV.put(canonicalKey, JSON.stringify(event));
     const dateKey = buildDateIndexKeyForTimestamp(event, event.created_at_utc);
     await env.COMPLIANCE_KV.put(dateKey, JSON.stringify(event));
+    await _rememberRecentComplianceEventKey(env, event, dateKey);
     console.log(
       `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
     );
@@ -736,6 +747,7 @@ async function handleAppend(request, env, origin, ctx) {
   // Legacy path (no client-supplied event_id): single date-indexed write.
   const key = buildEventStorageKey(event);
   await env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  await _rememberRecentComplianceEventKey(env, event, key);
   console.log(
     `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
   );
@@ -1462,14 +1474,29 @@ async function handleRecent(request, url, env, origin) {
   ].join("/");
 
   const pageSize = 250;
-  const maxScanKeys = 5000;
-  const scannedKeyNames = [];
+  // KV-CRON-AMPLIFIERS-P0: HTTP recent must not full-scan history.
+  const maxScanKeys = 100;
+  let scannedKeyNames = [];
   const seenKeys = new Set();
   let cursor = undefined;
   let listComplete = false;
   let hitScanCap = false;
 
   const listStart = Date.now();
+  try {
+    const recent = await _readRecentComplianceIndexKeys(env, tenantId, companyId);
+    if (recent.length > 0) {
+      for (const keyName of recent) {
+        if (!keyName || seenKeys.has(keyName)) continue;
+        seenKeys.add(keyName);
+        scannedKeyNames.push(keyName);
+        if (scannedKeyNames.length >= maxScanKeys) break;
+      }
+      listComplete = true;
+    }
+  } catch (_) {
+    // fall through to bounded prefix list
+  }
   while (!listComplete && scannedKeyNames.length < maxScanKeys) {
     let listed;
     try {
@@ -1502,6 +1529,11 @@ async function handleRecent(request, url, env, origin) {
     }
   }
   const listMs = Date.now() - listStart;
+  if (scannedKeyNames.length > requestedLimit) {
+    scannedKeyNames.sort((a, b) => b.localeCompare(a));
+    hitScanCap = true;
+    scannedKeyNames = scannedKeyNames.slice(0, requestedLimit);
+  }
 
   // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part A): read events with bounded
   // parallelism. The prior sequential `for (const key of scannedKeyNames) {
@@ -1632,9 +1664,12 @@ async function handleRecent(request, url, env, origin) {
   );
 }
 
-async function listScopedComplianceEventKeys(env, prefix) {
-  const pageSize = 500;
-  const maxScanKeys = 10000;
+async function listScopedComplianceEventKeys(env, prefix, options = {}) {
+  const pageSize = Math.max(1, Math.min(500, Number(options.pageSize) || 100));
+  const maxScanKeys = Math.max(
+    1,
+    Math.min(200, Number(options.maxScanKeys) || 100),
+  );
   const keyNames = [];
   const seen = new Set();
   let cursor = undefined;
@@ -1660,6 +1695,153 @@ async function listScopedComplianceEventKeys(env, prefix) {
   }
 
   return keyNames;
+}
+
+const COMPLIANCE_RECENT_INDEX_MAX = 50;
+
+function buildComplianceRecentIndexKey(tenantSegment, companySegment) {
+  return [
+    "compliance_recent_index_v1",
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+  ].join("/");
+}
+
+async function _rememberRecentComplianceEventKey(env, event, eventKey) {
+  const tenantSegment = safeSegment(event?.tenant_id, "");
+  const companySegment = safeSegment(event?.company_id, "");
+  const key = cleanText(eventKey, 1024);
+  if (!env?.COMPLIANCE_KV || !tenantSegment || !companySegment || !key) return;
+  const indexKey = buildComplianceRecentIndexKey(tenantSegment, companySegment);
+  let current = [];
+  try {
+    const raw = await env.COMPLIANCE_KV.get(indexKey, { type: "json" });
+    if (Array.isArray(raw)) current = raw.map((v) => cleanText(v, 1024)).filter(Boolean);
+  } catch (_) {
+    current = [];
+  }
+  const next = [key, ...current.filter((item) => item !== key)].slice(
+    0,
+    COMPLIANCE_RECENT_INDEX_MAX,
+  );
+  try {
+    await env.COMPLIANCE_KV.put(indexKey, JSON.stringify(next));
+  } catch (_) {
+    // best-effort checkpoint; reconcile stays bounded even if this fails
+  }
+}
+
+function buildComplianceReconcileCursorKey(tenantSegment, companySegment) {
+  return [
+    "chiron_reconcile_cursor_v1",
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+  ].join("/");
+}
+
+async function _readRecentComplianceIndexKeys(env, tenantSegment, companySegment) {
+  const indexKey = buildComplianceRecentIndexKey(tenantSegment, companySegment);
+  try {
+    const raw = await env.COMPLIANCE_KV.get(indexKey, { type: "json" });
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => cleanText(v, 1024)).filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+}
+
+async function _loadReconcileCandidateKeys(
+  env,
+  tenantSegment,
+  companySegment,
+  options = {},
+) {
+  const maxKeys = Math.max(
+    1,
+    Math.min(CHIRON_RECONCILE_MAX_KV_READS, Number(options.maxKeys) || CHIRON_RECONCILE_MAX_KV_READS),
+  );
+  const source = cleanText(options.source, 32) || "reconcile";
+  const cursorKey = buildComplianceReconcileCursorKey(tenantSegment, companySegment);
+  let cursor = null;
+  try {
+    const raw = await env.COMPLIANCE_KV.get(cursorKey, { type: "json" });
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) cursor = raw;
+  } catch (_) {
+    cursor = null;
+  }
+  const lastKey = cleanText(cursor?.last_key, 1024);
+  const recent = await _readRecentComplianceIndexKeys(env, tenantSegment, companySegment);
+  if (recent.length > 0) {
+    const keys = recent.filter((key) => !lastKey || key > lastKey).slice(0, maxKeys);
+    return { keys, source: "recent_index", cursorKey, cursor };
+  }
+  const cronLike = source === "cron" || source === "status_poll";
+  if (cronLike) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const collected = [];
+    for (let dayOffset = 0; dayOffset < 2 && collected.length < maxKeys; dayOffset += 1) {
+      const iso = new Date(nowMs - dayOffset * 86400000).toISOString().slice(0, 10);
+      const [y, m, d] = iso.split("-");
+      const dayPrefix = [
+        "compliance_event_v1",
+        "tenant",
+        tenantSegment,
+        "company",
+        companySegment,
+        y,
+        m,
+        d,
+        "",
+      ].join("/");
+      const listed = await listScopedComplianceEventKeys(env, dayPrefix, {
+        maxScanKeys: maxKeys - collected.length,
+        pageSize: maxKeys,
+      });
+      collected.push(...listed);
+    }
+    return {
+      keys: collected.filter((key) => !lastKey || key > lastKey).slice(0, maxKeys),
+      source: "cron_day_prefix",
+      cursorKey,
+      cursor,
+    };
+  }
+  const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+  const listed = await listScopedComplianceEventKeys(env, prefix, {
+    maxScanKeys: maxKeys,
+    pageSize: maxKeys,
+  });
+  return {
+    keys: listed.filter((key) => !lastKey || key > lastKey).slice(0, maxKeys),
+    source: "capped_prefix",
+    cursorKey,
+    cursor,
+  };
+}
+
+async function _persistReconcileCursor(env, cursorKey, processedKeys, nowMs) {
+  if (!env?.COMPLIANCE_KV || !cursorKey) return;
+  const keys = (Array.isArray(processedKeys) ? processedKeys : [])
+    .map((v) => cleanText(v, 1024))
+    .filter(Boolean)
+    .sort();
+  if (keys.length === 0) return;
+  try {
+    await env.COMPLIANCE_KV.put(
+      cursorKey,
+      JSON.stringify({
+        v: 1,
+        last_key: keys[keys.length - 1],
+        last_at: new Date(nowMs).toISOString(),
+      }),
+    );
+  } catch (_) {
+    // best-effort; next pass still bounded
+  }
 }
 
 function buildCompliancePrefixForScope(tenantSegment, companySegment) {
@@ -1703,7 +1885,10 @@ async function handleAdminResetComplianceEvents(request, url, env, origin, dryRu
 
   let keys;
   try {
-    keys = await listScopedComplianceEventKeys(env, prefix);
+    keys = await listScopedComplianceEventKeys(env, prefix, {
+      maxScanKeys: 200,
+      pageSize: 100,
+    });
   } catch (_) {
     return jsonResponse(
       { ok: false, error: "Failed to list scoped compliance event keys." },
@@ -2231,8 +2416,8 @@ async function _chironLookupComplianceEventById(env, tenantSegment, companySegme
   const suffixSafe = safeSegment(eventId, "");
   if (!suffixSafe) return { ok: false, reason: "invalid_event_id" };
   const suffix = `_${suffixSafe}`;
-  const pageSize = 500;
-  const maxScan = 5000;
+  const pageSize = 100;
+  const maxScan = 100;
   let cursor = undefined;
   let listComplete = false;
   let scanned = 0;
@@ -2465,7 +2650,7 @@ async function handleChironDryrunRecent(request, url, env, origin) {
   const prefix = buildChironDryRunPrefixForScope(tenantSegment, companySegment);
 
   const pageSize = 250;
-  const maxScanKeys = 5000;
+  const maxScanKeys = Math.min(100, Math.max(requestedLimit, 25));
   const keyNames = [];
   const seenKeys = new Set();
   let cursor = undefined;
@@ -2633,15 +2818,17 @@ async function handleChironScoreSummary(request, url, env, origin) {
   const untilMs = untilParsed.value;
 
   const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
-  const listScopedMaxScanKeys = 10000;
   let keyNames;
   try {
-    keyNames = await listScopedComplianceEventKeys(env, prefix);
+    keyNames = await listScopedComplianceEventKeys(env, prefix, {
+      maxScanKeys: 100,
+      pageSize: 100,
+    });
   } catch (_) {
     return jsonResponse({ ok: false, error: "Failed to list compliance events." }, 500, origin);
   }
 
-  const hitScanCap = keyNames.length >= listScopedMaxScanKeys;
+  const hitScanCap = keyNames.length >= 100;
   let malformedCount = 0;
   const parsedEvents = [];
 
@@ -6181,12 +6368,15 @@ async function _chironCollectScopedComplianceEventsForExport(
   const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
   let keyNames;
   try {
-    keyNames = await listScopedComplianceEventKeys(env, prefix);
+    keyNames = await listScopedComplianceEventKeys(env, prefix, {
+      maxScanKeys: 100,
+      pageSize: 100,
+    });
   } catch (_) {
     return { error: "Failed to list compliance events." };
   }
 
-  const hitScanCap = keyNames.length >= CHIRON_EXPORT_LIST_SCAN_CAP;
+  const hitScanCap = keyNames.length >= 100;
   let malformedCount = 0;
   const parsedEvents = [];
 
@@ -7688,21 +7878,64 @@ async function _chironFindSingleScopedComplianceEvent(env, parsedInput) {
   }
 
   const prefix = buildCompliancePrefixForScope(parsedInput.tenantSegment, parsedInput.companySegment);
-  let keyNames;
-  try {
-    keyNames = await listScopedComplianceEventKeys(env, prefix);
-  } catch (_) {
-    return { error: "Failed to list compliance events." };
-  }
-
-  const contextEntries = [];
-  const matches = [];
   const wantedKey = cleanText(parsedInput.complianceEventKey, 1024);
   const wantedId = cleanText(parsedInput.eventId, 200);
 
   if (wantedKey && !wantedKey.startsWith(prefix)) {
     return { error: "event_scope_mismatch" };
   }
+
+  if (wantedKey) {
+    let raw = null;
+    try {
+      raw = await env.COMPLIANCE_KV.get(wantedKey);
+    } catch (_) {
+      raw = null;
+    }
+    if (!raw) return { error: "event_not_found", contextEntries: [] };
+    let event;
+    try {
+      event = JSON.parse(raw);
+    } catch (_) {
+      return { error: "event_not_found", contextEntries: [] };
+    }
+    const recentKeys = await _readRecentComplianceIndexKeys(
+      env,
+      parsedInput.tenantSegment,
+      parsedInput.companySegment,
+    );
+    const contextEntries = [{ key: wantedKey, event }];
+    for (const key of recentKeys.slice(0, 50)) {
+      if (key === wantedKey) continue;
+      let sibling = null;
+      try {
+        sibling = await env.COMPLIANCE_KV.get(key);
+      } catch (_) {
+        continue;
+      }
+      if (!sibling) continue;
+      try {
+        const parsed = JSON.parse(sibling);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          contextEntries.push({ key, event: parsed });
+        }
+      } catch (_) {}
+    }
+    return { entry: { key: wantedKey, event }, contextEntries };
+  }
+
+  let keyNames;
+  try {
+    keyNames = await listScopedComplianceEventKeys(env, prefix, {
+      maxScanKeys: 100,
+      pageSize: 100,
+    });
+  } catch (_) {
+    return { error: "Failed to list compliance events." };
+  }
+
+  const contextEntries = [];
+  const matches = [];
 
   for (const key of keyNames) {
     let raw;
@@ -10411,7 +10644,13 @@ async function handleChironConfigStatusGet(request, url, env, origin, ctx) {
   // a bounded reconcile pass via ctx.waitUntil. The response is returned
   // immediately with whatever counters are currently in KV — the reconcile
   // then updates them for the NEXT poll.
-  if (ctx && _chironShouldRunReconcileFromStatusPoll(readResult.doc)) {
+  // KV-CRON-AMPLIFIERS-P0: status/config polling must never start a
+  // full-history reconcile. Off unless CHIRON_STATUS_POLL_RECONCILE_ENABLED=1.
+  if (
+    ctx &&
+    envFlagOn(env?.CHIRON_STATUS_POLL_RECONCILE_ENABLED) &&
+    _chironShouldRunReconcileFromStatusPoll(readResult.doc)
+  ) {
     _chironScheduleAutoReconcileFromStatusPoll(ctx, env, tenantId, companyId);
   }
 
@@ -11754,7 +11993,17 @@ async function _chironBuildOfficialDraftForSingleEvent(
     const companySegment = safeSegment(scope.company_id, "");
     const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
     try {
-      const keyNames = await listScopedComplianceEventKeys(env, prefix);
+      const recentKeys = await _readRecentComplianceIndexKeys(
+        env,
+        tenantSegment,
+        companySegment,
+      );
+      const keyNames = recentKeys.length
+        ? recentKeys.slice(0, CHIRON_RECONCILE_MAX_KV_READS)
+        : await listScopedComplianceEventKeys(env, prefix, {
+            maxScanKeys: 50,
+            pageSize: 50,
+          });
       const loaded = [];
       for (const key of keyNames) {
         let raw;
@@ -12643,25 +12892,27 @@ async function _chironAutoReconcileScopeBestEffort(
 
     const tenantSegment = safeSegment(tenantId, "");
     const companySegment = safeSegment(companyId, "");
-    const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
 
-    // Walk the FULL scoped key set (bounded by CHIRON_EXPORT_LIST_SCAN_CAP =
-    // 10,000). Naively taking the first `CHIRON_AUTO_RECONCILE_MAX_EVENTS`
-    // lexicographic keys never sees the newest events (KV list returns keys
-    // ascending, and our date-indexed keys are lexicographic == chronological
-    // ascending). Instead we scan everything, filter for auto-submittable
-    // event types after `effectiveFloorMs`, then process at most
-    // `CHIRON_AUTO_RECONCILE_MAX_PROCESS` in chronological order so a
-    // departure is always attempted before its paired arrival.
-    let allKeyNames;
+    // KV-CRON-AMPLIFIERS-P0: never list+GET complete event history.
+    // Prefer the recent-index, otherwise a capped incremental window.
+    let loaded;
     try {
-      allKeyNames = await listScopedComplianceEventKeys(env, prefix);
+      loaded = await _loadReconcileCandidateKeys(env, tenantSegment, companySegment, {
+        maxKeys: CHIRON_RECONCILE_MAX_KV_READS,
+        source,
+        nowMs,
+      });
     } catch (_) {
       outcome.ok = false;
       outcome.reason = "kv_list_failed";
       return outcome;
     }
+    let allKeyNames = Array.isArray(loaded?.keys) ? loaded.keys : [];
+    if (allKeyNames.length > CHIRON_RECONCILE_MAX_KV_READS) {
+      allKeyNames = allKeyNames.slice(0, CHIRON_RECONCILE_MAX_KV_READS);
+    }
     outcome.scanned = allKeyNames.length;
+    outcome.scan_source = loaded?.source || "unknown";
 
     // Fetch, parse, and filter down to the candidate set. Bounded by the
     // total list-scan cap so a very old namespace can't blow up CPU.
@@ -12800,9 +13051,17 @@ async function _chironAutoReconcileScopeBestEffort(
       await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
     }
 
-    console.log(
-      `[CHIRON_AUTO_RECONCILE] tenant=${logMask(tenantId)} company=${logMask(companyId)} scanned=${outcome.scanned} considered=${outcome.considered} submitted=${outcome.submitted} waiting=${outcome.waiting_for_departure} skipped=${outcome.skipped} failed=${outcome.failed} source=${source}`,
-    );
+    await _persistReconcileCursor(env, loaded?.cursorKey, allKeyNames, nowMs);
+    logKvPass("CHIRON_AUTO_RECONCILE", {
+      source,
+      scan_source: outcome.scan_source,
+      scanned: outcome.scanned,
+      considered: outcome.considered,
+      processed: outcome.processed,
+      submitted: outcome.submitted,
+      skipped: outcome.skipped,
+      failed: outcome.failed,
+    });
     return outcome;
   } catch (err) {
     outcome.ok = false;
@@ -12825,10 +13084,10 @@ async function _chironListConnectionScopes(env, maxScopes = CHIRON_CRON_MAX_SCOP
   }
   let cursor = undefined;
   const seen = new Set();
-  for (let page = 0; page < 20; page += 1) {
+  for (let page = 0; page < 2; page += 1) {
     let listed;
     try {
-      listed = await env.COMPLIANCE_KV.list({ prefix: "tenant:", cursor });
+      listed = await env.COMPLIANCE_KV.list({ prefix: "tenant:", limit: 100, cursor });
     } catch (_) {
       break;
     }
@@ -13011,10 +13270,14 @@ export const __testInternals = {
   _chironAutoSubmitOneEvent,
   _chironAutoSubmitAfterAppendBestEffort,
   _chironAutoReconcileScopeBestEffort,
+  _loadReconcileCandidateKeys,
+  _rememberRecentComplianceEventKey,
+  _readRecentComplianceIndexKeys,
   _chironShouldRunReconcileFromStatusPoll,
   _chironInferLegTypeForLeglessRideStarts,
   CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS,
   CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
+  CHIRON_RECONCILE_MAX_KV_READS,
   CHIRON_TESTFLOW_AUTO_RECONCILE_PATH,
   // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: fail-closed derivation +
   // config-status POST validation + response projection. Exposed only so
@@ -13067,9 +13330,37 @@ export default {
   // reaches Chiron as Aankomst after connectivity recovery without any user
   // action. Bounded, tenant-isolated, throttled per scope; never throws.
   async scheduled(event, env, ctx) {
-    const run = _chironCronReconcileAllScopesBestEffort(env, { source: "cron" });
+    if (!envFlagOn(env?.CHIRON_CRON_ENABLED)) {
+      console.log("[CHIRON_CRON_RECONCILE] skipped cron_disabled");
+      return;
+    }
+    const complianceKv = wrapKvBudget(env.COMPLIANCE_KV, {
+      maxReads: 80,
+      maxLists: 4,
+      maxWrites: 40,
+    });
+    const gated = { ...env, COMPLIANCE_KV: complianceKv };
+    const run = _chironCronReconcileAllScopesBestEffort(gated, { source: "cron" });
     if (ctx && typeof ctx.waitUntil === "function") {
-      ctx.waitUntil(run);
+      ctx.waitUntil(
+        run.then((summary) => {
+          const reads = Number(complianceKv.counts?.read || 0);
+          logKvPass("CHIRON_CRON_RECONCILE_PASS", {
+            source: "cron",
+            reason: "scheduled_chiron_incremental",
+            scopes: summary?.scopes || 0,
+            ran: summary?.ran || 0,
+            reads,
+            lists: Number(complianceKv.counts?.list || 0),
+            writes: Number(complianceKv.counts?.write || 0),
+          });
+          noteIsolateReads(reads, {
+            hourlyLimit: Number(env?.COMPLIANCE_KV_HOURLY_READ_BUDGET) || 800,
+            dailyLimit: Number(env?.COMPLIANCE_KV_DAILY_READ_BUDGET) || 8000,
+          });
+          return summary;
+        }),
+      );
       return;
     }
     await run;
