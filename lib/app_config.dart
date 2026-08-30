@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
+import 'package:fluxidi_tracking/company/company_subscription_profile_repository.dart';
 import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
@@ -6699,7 +6700,10 @@ Future<BackendSubscriptionProfile> fetchBackendSubscriptionProfile({
 /// [resolveCompanyOwnerAuthHeaders] (admin token when available, otherwise the
 /// company session bearer) so the business UI no longer needs the global admin
 /// token. The backend lazily creates a 14-day trial profile on first call.
-Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
+///
+/// Network-only. Callers must go through [fetchCompanySubscriptionProfile]
+/// so tenant/company single-flight and the 45 s TTL apply.
+Future<BackendSubscriptionProfile> loadCompanySubscriptionProfileUncached({
   String? tenantId,
   String? companyId,
 }) async {
@@ -6722,6 +6726,47 @@ Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
   return BackendSubscriptionProfile.fromJson(
     Map<String, dynamic>.from(profile),
   );
+}
+
+/// Company-facing subscription profile read. Coalesces identical in-flight
+/// requests and reuses a successful result for [kCompanySubscriptionProfileTtl]
+/// (45 s). Failed loads are not cached. Pass [forceRefresh] to bypass TTL
+/// while still sharing one concurrent network request.
+Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
+  String? tenantId,
+  String? companyId,
+  bool forceRefresh = false,
+}) {
+  return companySubscriptionProfileRepository.fetch(
+    tenantId: tenantId,
+    companyId: companyId,
+    forceRefresh: forceRefresh,
+  );
+}
+
+void invalidateCompanySubscriptionProfileCache({
+  String? tenantId,
+  String? companyId,
+}) {
+  companySubscriptionProfileRepository.invalidate(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+}
+
+BackendSubscriptionProfile _commitCompanySubscriptionMutation({
+  required Map<dynamic, dynamic> profileJson,
+  String? tenantId,
+  String? companyId,
+}) {
+  final parsed = BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profileJson),
+  );
+  invalidateCompanySubscriptionProfileCache(
+    tenantId: tenantId ?? parsed.tenantId,
+    companyId: companyId ?? parsed.companyId,
+  );
+  return parsed;
 }
 
 /// POST /company/subscription/cancel (Patch 2.5, minimal cancel-at-period-end).
@@ -6760,8 +6805,10 @@ Future<BackendSubscriptionProfile> cancelCompanySubscription({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -6798,8 +6845,10 @@ Future<BackendSubscriptionProfile> undoCancelCompanySubscription({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -6844,8 +6893,10 @@ Future<BackendSubscriptionProfile> cancelOneExtraVehicleAddon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -6883,8 +6934,10 @@ Future<BackendSubscriptionProfile> undoCancelOneExtraVehicleAddon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -6926,8 +6979,10 @@ Future<BackendSubscriptionProfile> cancelOneExtraDriverAddon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -6965,8 +7020,10 @@ Future<BackendSubscriptionProfile> undoCancelOneExtraDriverAddon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -7008,8 +7065,10 @@ Future<BackendSubscriptionProfile> cancelOnePdf500Addon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -7047,8 +7106,10 @@ Future<BackendSubscriptionProfile> cancelOnePdf1000Addon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -7086,8 +7147,10 @@ Future<BackendSubscriptionProfile> cancelOnePdf5000Addon({
   if (decoded is! Map) throw Exception('Invalid response');
   final profile = decoded['subscription_profile'];
   if (profile is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(
-    Map<String, dynamic>.from(profile),
+  return _commitCompanySubscriptionMutation(
+    profileJson: profile,
+    tenantId: tenantId,
+    companyId: companyId,
   );
 }
 
@@ -7640,6 +7703,10 @@ startCompanySubscriptionCheckout({
         error: parsed.error.isEmpty ? 'http_${res.statusCode}' : parsed.error,
       );
     }
+    invalidateCompanySubscriptionProfileCache(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
     return BackendSubscriptionCheckoutStartResult.fromJson(
       decodedMap,
       statusCode: res.statusCode,
@@ -7749,6 +7816,10 @@ startCompanySubscriptionAddonCheckout({
         error: parsed.error.isEmpty ? 'http_${res.statusCode}' : parsed.error,
       );
     }
+    invalidateCompanySubscriptionProfileCache(
+      tenantId: tenantId,
+      companyId: companyId,
+    );
     return BackendSubscriptionCheckoutStartResult.fromJson(
       decodedMap,
       statusCode: res.statusCode,
@@ -7794,7 +7865,11 @@ Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
   if (decoded is! Map) throw Exception('Invalid response');
   final saved = decoded['subscription_profile'];
   if (saved is! Map) throw Exception('Missing subscription_profile');
-  return BackendSubscriptionProfile.fromJson(Map<String, dynamic>.from(saved));
+  return _commitCompanySubscriptionMutation(
+    profileJson: saved,
+    tenantId: tenantId,
+    companyId: companyId,
+  );
 }
 
 String _adminApiErrorMessageFromResponse(
@@ -9048,8 +9123,10 @@ Future<PublicHotelSearchResult> fetchPublicHotelSearchResult({
   final normalizedSearchText = (searchText ?? '').trim();
   if (normalizedCity.isNotEmpty) qp['city'] = normalizedCity;
   if (normalizedCountry.isNotEmpty) qp['country'] = normalizedCountry;
-  if (normalizedCountryCode.isNotEmpty) qp['country_code'] = normalizedCountryCode;
-  if (normalizedDestination.isNotEmpty) qp['destination'] = normalizedDestination;
+  if (normalizedCountryCode.isNotEmpty)
+    qp['country_code'] = normalizedCountryCode;
+  if (normalizedDestination.isNotEmpty)
+    qp['destination'] = normalizedDestination;
   if (normalizedRegion.isNotEmpty) qp['region'] = normalizedRegion;
   if (normalizedSearchText.isNotEmpty) qp['q'] = normalizedSearchText;
   if (!isRatehawkSource) {
@@ -11257,7 +11334,10 @@ Future<Map<String, dynamic>> registerDocumentInBillit({
 }) async {
   final docId = documentId.trim();
   if (docId.isEmpty) {
-    throw BillitIntegrationApiException(error: 'missing_document_id', statusCode: 400);
+    throw BillitIntegrationApiException(
+      error: 'missing_document_id',
+      statusCode: 400,
+    );
   }
   final endpoint = _withAdminTenantCompanyScope(
     Uri.parse(
@@ -11287,7 +11367,10 @@ Future<Map<String, dynamic>> registerDocumentInBillit({
   if (decoded is! Map) throw Exception('Invalid response');
   final map = Map<String, dynamic>.from(decoded);
   if (res.statusCode == 401 || res.statusCode == 403) {
-    throw BillitIntegrationApiException(error: 'forbidden', statusCode: res.statusCode);
+    throw BillitIntegrationApiException(
+      error: 'forbidden',
+      statusCode: res.statusCode,
+    );
   }
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw BillitIntegrationApiException(

@@ -15,6 +15,7 @@ class _CompanySubscriptionBillingPageState
     extends State<CompanySubscriptionBillingPage>
     with WidgetsBindingObserver {
   late Future<BackendSubscriptionProfile> _future;
+  bool _subscriptionProfileForceRefresh = false;
   // Soft warn/danger derived from the current business palette so we never
   // hard-code Corporate Blue tones or amber; blends danger toward accent so
   // scheduled-cancel / cancel CTAs read legibly on both dark and light
@@ -481,6 +482,7 @@ class _CompanySubscriptionBillingPageState
   void _refresh() {
     if (!mounted) return;
     setState(() {
+      _subscriptionProfileForceRefresh = true;
       _future = _fetch();
     });
   }
@@ -509,9 +511,12 @@ class _CompanySubscriptionBillingPageState
       );
       return BackendSubscriptionProfile.defaults();
     }
+    final forceRefresh = _subscriptionProfileForceRefresh;
+    _subscriptionProfileForceRefresh = false;
     final profile = await fetchCompanySubscriptionProfile(
       tenantId: scopeId,
       companyId: scopeId,
+      forceRefresh: forceRefresh,
     );
     _displayQuotes = await fetchCompanySubscriptionDisplayQuotes(
       tenantId: scopeId,
@@ -726,7 +731,8 @@ class _CompanySubscriptionBillingPageState
       capacity: profile.maxVehicles > 0 ? profile.maxVehicles : 1,
       catalogExtraVehicleExclCents: catalog.extraVehiclePriceCents,
       profileRecurringAmountCents: profile.recurringAmountCents,
-      quoteRecurringExclVatCents: _displayQuotes?.current?.recurringExclVatCents,
+      quoteRecurringExclVatCents:
+          _displayQuotes?.current?.recurringExclVatCents,
       baseExclCents: lockedCents ?? catalog.normalPriceCents,
       extraDriverUnitExclCents: catalog.extraDriverPriceCents,
       extraVehicleActiveQuantity: _extraVehicleActiveQuantity(profile),
@@ -798,7 +804,12 @@ class _CompanySubscriptionBillingPageState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(extraVehicleCapacityLine(languageCode: language, preview: preview)),
+            Text(
+              extraVehicleCapacityLine(
+                languageCode: language,
+                preview: preview,
+              ),
+            ),
             const SizedBox(height: 6),
             Text(
               extraVehicleAdditionalSlotLine(
@@ -808,7 +819,10 @@ class _CompanySubscriptionBillingPageState
             ),
             const SizedBox(height: 6),
             Text(
-              extraVehicleUnitPriceLine(languageCode: language, preview: preview),
+              extraVehicleUnitPriceLine(
+                languageCode: language,
+                preview: preview,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -826,16 +840,18 @@ class _CompanySubscriptionBillingPageState
               ),
             ),
             const SizedBox(height: 10),
-            Text(_quoteLineLabel(
-              quote.lineItems.isEmpty
-                  ? SubscriptionQuoteLineItem(
-                      code: 'extra_vehicle',
-                      quantity: 1,
-                      unitExclVatCents: preview.unitExclCents,
-                      subtotalExclVatCents: preview.unitExclCents,
-                    )
-                  : quote.lineItems.first,
-            )),
+            Text(
+              _quoteLineLabel(
+                quote.lineItems.isEmpty
+                    ? SubscriptionQuoteLineItem(
+                        code: 'extra_vehicle',
+                        quantity: 1,
+                        unitExclVatCents: preview.unitExclCents,
+                        subtotalExclVatCents: preview.unitExclCents,
+                      )
+                    : quote.lineItems.first,
+              ),
+            ),
           ],
         ),
         actions: [

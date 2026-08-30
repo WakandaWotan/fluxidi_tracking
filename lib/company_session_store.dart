@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business/business_dashboard_kpi_loading.dart';
+import 'package:fluxidi_tracking/company/company_subscription_profile_repository.dart';
 
 /// Values persisted in [CompanyProfile.verificationStatus] (JSON string).
 ///
@@ -1685,6 +1687,9 @@ class CompanySessionStore {
     _sessionMemory = null;
     companyProfileNotifier.value = null;
     activeCompanySessionNotifier.value = null;
+    businessDashboardKpiCache.clearAll();
+    businessDashboardKpiRefreshCoordinator.invalidateAll();
+    companySubscriptionProfileRepository.invalidateAll();
   }
 }
 

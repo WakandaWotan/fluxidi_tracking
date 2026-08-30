@@ -28,10 +28,7 @@ class BusinessDashboardKpiSnapshot {
   /// card values always belong to the same generation.
   final int responseGeneration;
 
-  bool matchesScope({
-    required String tenantId,
-    required String companyId,
-  }) {
+  bool matchesScope({required String tenantId, required String companyId}) {
     return this.tenantId == tenantId && this.companyId == companyId;
   }
 }
@@ -102,10 +99,7 @@ class BusinessDashboardKpiCache {
     _byScope[scopeKey(t, c)] = snapshot;
   }
 
-  void clearScope({
-    required String tenantId,
-    required String companyId,
-  }) {
+  void clearScope({required String tenantId, required String companyId}) {
     _byScope.remove(scopeKey(tenantId.trim(), companyId.trim()));
   }
 
@@ -168,9 +162,7 @@ String businessDashboardKpiCountText({
 }
 
 /// Income display helper (currency formatting stays at the call site).
-int? businessDashboardKpiIncomeCents(
-  BusinessDashboardKpiSnapshot? snapshot,
-) {
+int? businessDashboardKpiIncomeCents(BusinessDashboardKpiSnapshot? snapshot) {
   return snapshot?.monthlyIncomeCents;
 }
 
@@ -462,6 +454,7 @@ abstract final class BusinessKpiCombinedStatus {
   static const stale = 'stale';
   static const skippedScopeNotReady = 'skipped_scope_not_ready';
   static const coalesced = 'coalesced';
+  static const skippedFresh = 'skipped_fresh';
 }
 
 /// Bounded PII-free auth-mode label. Mirrors `CompanyOwnerAuthMode` values
@@ -541,3 +534,268 @@ bool businessDashboardKpiScopeIsReady({
   if (scopeCompany != profile) return false;
   return true;
 }
+
+// FLUTTER-REQUEST-DEDUPE-P0
+//
+// Scope-aware dashboard KPI refresh policy. Extends the existing process-wide
+// [businessDashboardKpiCache] pattern: one coordinator, keyed by
+// tenant_id|company_id, no extra global singleton family.
+//
+// Freshness window: 30 seconds. Short enough for a dashboard (a return after
+// real work still refreshes) and long enough to absorb the init + profile/
+// session listener + first-frame burst that previously launched 2–3 sequential
+// cycles after `finally`.
+
+/// Opportunistic dashboard KPI freshness window (init / listener / resume /
+/// route-return). Manual refresh and a real tenant/company change bypass it.
+const Duration kBusinessDashboardKpiFreshness = Duration(seconds: 30);
+
+/// Additive Worker KPI health fields. Missing keys are treated as absent so
+/// older payloads keep working. A pending or non-authoritative projection
+/// must never be applied as healthy zeros.
+class BusinessDashboardKpiWorkerHealth {
+  const BusinessDashboardKpiWorkerHealth({
+    required this.dataPending,
+    required this.degraded,
+    required this.stale,
+    required this.projectionHealth,
+    required this.countsAreAuthoritative,
+  });
+
+  final bool dataPending;
+  final bool degraded;
+  final bool stale;
+  final String projectionHealth;
+  final bool? countsAreAuthoritative;
+
+  /// True only when the payload may replace the on-screen snapshot.
+  bool get isAuthoritative {
+    if (dataPending) return false;
+    if (countsAreAuthoritative == false) return false;
+    final health = projectionHealth.trim().toLowerCase();
+    if (health == 'pending' || health == 'data_pending') return false;
+    return true;
+  }
+}
+
+/// Parses additive Worker KPI fields without requiring them.
+BusinessDashboardKpiWorkerHealth parseBusinessDashboardKpiWorkerHealth(
+  Map<dynamic, dynamic> decoded,
+) {
+  bool flag(Object? raw) {
+    if (raw == true) return true;
+    if (raw == false) return false;
+    final text = raw?.toString().trim().toLowerCase() ?? '';
+    return text == 'true' || text == '1';
+  }
+
+  bool? optionalFlag(Object? raw) {
+    if (raw == null) return null;
+    if (raw == true) return true;
+    if (raw == false) return false;
+    final text = raw.toString().trim().toLowerCase();
+    if (text.isEmpty) return null;
+    if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
+    return null;
+  }
+
+  return BusinessDashboardKpiWorkerHealth(
+    dataPending: flag(decoded['data_pending']),
+    degraded: flag(decoded['degraded']),
+    stale: flag(decoded['stale']),
+    projectionHealth: (decoded['projection_health'] ?? '').toString(),
+    countsAreAuthoritative: optionalFlag(decoded['counts_are_authoritative']),
+  );
+}
+
+/// True when an `ok:true` KPI map is safe to apply as a complete leg.
+bool businessDashboardKpiPayloadIsAuthoritative(Map<dynamic, dynamic> decoded) {
+  if (decoded['ok'] != true) return false;
+  return parseBusinessDashboardKpiWorkerHealth(decoded).isAuthoritative;
+}
+
+/// Whether [reason] is an opportunistic trigger that must not start a second
+/// cycle for a still-fresh successful scope.
+bool businessDashboardKpiReasonIsOpportunistic(String reason) {
+  return reason == BusinessKpiCycleReason.init ||
+      reason == BusinessKpiCycleReason.scopeReady ||
+      reason == BusinessKpiCycleReason.resume ||
+      reason == BusinessKpiCycleReason.routeReturn;
+}
+
+/// Whether [reason] must start a cycle even when the scope is still fresh.
+bool businessDashboardKpiReasonForcesRefresh(String reason) {
+  return reason == BusinessKpiCycleReason.manualRetry ||
+      reason == BusinessKpiCycleReason.autoRetry;
+}
+
+/// Decision for one dashboard KPI refresh attempt.
+enum BusinessDashboardKpiRefreshDecision {
+  /// Run a new bookings+trip cycle.
+  start,
+
+  /// Await the in-flight cycle for this exact scope.
+  shareInFlight,
+
+  /// Same scope completed successfully inside the freshness window.
+  skipFresh,
+}
+
+/// Process-wide coordinator: one in-flight Future per scope, short freshness,
+/// and explicit invalidation. Never shares across tenant/company.
+class BusinessDashboardKpiRefreshCoordinator {
+  BusinessDashboardKpiRefreshCoordinator({
+    this.freshness = kBusinessDashboardKpiFreshness,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  final Duration freshness;
+  final DateTime Function() _clock;
+
+  final Map<String, Future<void>> _inFlight = <String, Future<void>>{};
+  final Map<String, DateTime> _lastSuccessAt = <String, DateTime>{};
+  final Set<String> _invalidated = <String>{};
+
+  static String scopeKey(String tenantId, String companyId) =>
+      BusinessDashboardKpiCache.scopeKey(tenantId, companyId);
+
+  DateTime now() => _clock();
+
+  bool isInFlight({required String tenantId, required String companyId}) {
+    return _inFlight.containsKey(scopeKey(tenantId, companyId));
+  }
+
+  Future<void>? inFlightFuture({
+    required String tenantId,
+    required String companyId,
+  }) {
+    return _inFlight[scopeKey(tenantId, companyId)];
+  }
+
+  void attachInFlight({
+    required String tenantId,
+    required String companyId,
+    required Future<void> future,
+  }) {
+    _inFlight[scopeKey(tenantId, companyId)] = future;
+  }
+
+  void detachInFlight({
+    required String tenantId,
+    required String companyId,
+    required Future<void> future,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (identical(_inFlight[key], future)) {
+      _inFlight.remove(key);
+    }
+  }
+
+  bool isFresh({
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|' || tenantId.trim().isEmpty || companyId.trim().isEmpty) {
+      return false;
+    }
+    if (_invalidated.contains(key)) return false;
+    final at = _lastSuccessAt[key];
+    if (at == null) return false;
+    return (now ?? this.now()).difference(at) < freshness;
+  }
+
+  BusinessDashboardKpiRefreshDecision decide({
+    required String reason,
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|' || tenantId.trim().isEmpty || companyId.trim().isEmpty) {
+      return BusinessDashboardKpiRefreshDecision.start;
+    }
+    if (_inFlight.containsKey(key)) {
+      return BusinessDashboardKpiRefreshDecision.shareInFlight;
+    }
+    if (businessDashboardKpiReasonForcesRefresh(reason)) {
+      return BusinessDashboardKpiRefreshDecision.start;
+    }
+    if (isFresh(tenantId: tenantId, companyId: companyId, now: now) &&
+        businessDashboardKpiReasonIsOpportunistic(reason)) {
+      return BusinessDashboardKpiRefreshDecision.skipFresh;
+    }
+    return BusinessDashboardKpiRefreshDecision.start;
+  }
+
+  /// Shares one [cycle] Future across concurrent callers for [tenantId] +
+  /// [companyId]. Sequential opportunistic calls after success reuse freshness.
+  Future<void> runOrShare({
+    required String reason,
+    required String tenantId,
+    required String companyId,
+    required Future<void> Function() cycle,
+    DateTime? now,
+  }) async {
+    final key = scopeKey(tenantId, companyId);
+    final decision = decide(
+      reason: reason,
+      tenantId: tenantId,
+      companyId: companyId,
+      now: now,
+    );
+    if (decision == BusinessDashboardKpiRefreshDecision.skipFresh) {
+      return;
+    }
+    final existing = _inFlight[key];
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    late final Future<void> future;
+    future = Future<void>(() async {
+      try {
+        await cycle();
+      } finally {
+        if (identical(_inFlight[key], future)) {
+          _inFlight.remove(key);
+        }
+      }
+    });
+    _inFlight[key] = future;
+    await future;
+  }
+
+  void markSuccess({
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|') return;
+    _lastSuccessAt[key] = now ?? this.now();
+    _invalidated.remove(key);
+  }
+
+  void invalidate({required String tenantId, required String companyId}) {
+    final key = scopeKey(tenantId, companyId);
+    _lastSuccessAt.remove(key);
+    _invalidated.add(key);
+  }
+
+  void invalidateAll() {
+    _lastSuccessAt.clear();
+    _invalidated.clear();
+    _inFlight.clear();
+  }
+
+  void resetForTest() => invalidateAll();
+}
+
+/// Process-wide dashboard KPI refresh coordinator (same lifetime as
+/// [businessDashboardKpiCache]).
+final BusinessDashboardKpiRefreshCoordinator
+businessDashboardKpiRefreshCoordinator =
+    BusinessDashboardKpiRefreshCoordinator();

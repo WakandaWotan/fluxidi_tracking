@@ -69,19 +69,21 @@ void main() {
       );
     });
 
-    test('3b. profile/session mismatch → gate is false even with matching scope',
-        () {
-      expect(
-        businessDashboardKpiScopeIsReady(
-          profileCompanyId: 'company-abc',
-          sessionCompanyId: 'company-xyz',
-          scopeTenantId: 'company-abc',
-          scopeCompanyId: 'company-abc',
-          hasAdminAuthShortcut: false,
-        ),
-        isFalse,
-      );
-    });
+    test(
+      '3b. profile/session mismatch → gate is false even with matching scope',
+      () {
+        expect(
+          businessDashboardKpiScopeIsReady(
+            profileCompanyId: 'company-abc',
+            sessionCompanyId: 'company-xyz',
+            scopeTenantId: 'company-abc',
+            scopeCompanyId: 'company-abc',
+            hasAdminAuthShortcut: false,
+          ),
+          isFalse,
+        );
+      },
+    );
 
     test('3c. admin token bypass requires non-empty scope but skips session '
         'checks (dev/ops)', () {
@@ -146,8 +148,11 @@ void main() {
           statusCode: status,
           decodedOk: false,
         );
-        expect(businessKpiLegOutcomeIsPermanentFailure(outcome), isTrue,
-            reason: 'status=$status must classify as permanent');
+        expect(
+          businessKpiLegOutcomeIsPermanentFailure(outcome),
+          isTrue,
+          reason: 'status=$status must classify as permanent',
+        );
         expect(businessKpiLegOutcomeIsTransient(outcome), isFalse);
       }
     });
@@ -168,8 +173,11 @@ void main() {
           statusCode: status,
           decodedOk: false,
         );
-        expect(outcome, BusinessKpiLegOutcome.http5xx,
-            reason: 'status=$status must classify as http5xx');
+        expect(
+          outcome,
+          BusinessKpiLegOutcome.http5xx,
+          reason: 'status=$status must classify as http5xx',
+        );
         expect(businessKpiLegOutcomeIsTransient(outcome), isTrue);
       }
     });
@@ -180,8 +188,11 @@ void main() {
           statusCode: status,
           decodedOk: false,
         );
-        expect(outcome, BusinessKpiLegOutcome.httpOther,
-            reason: 'status=$status must classify as httpOther');
+        expect(
+          outcome,
+          BusinessKpiLegOutcome.httpOther,
+          reason: 'status=$status must classify as httpOther',
+        );
         expect(businessKpiLegOutcomeIsPermanentFailure(outcome), isTrue);
       }
     });
@@ -208,8 +219,11 @@ void main() {
       final labels = <String>{};
       for (final outcome in BusinessKpiLegOutcome.values) {
         final label = businessKpiLegOutcomeStatusLabel(outcome);
-        expect(label, matches(RegExp(r'^[a-z0-9_]{1,32}$')),
-            reason: 'label "$label" is not bounded PII-free lowercase');
+        expect(
+          label,
+          matches(RegExp(r'^[a-z0-9_]{1,32}$')),
+          reason: 'label "$label" is not bounded PII-free lowercase',
+        );
         labels.add(label);
       }
       // Distinct labels (no accidental collisions).
@@ -219,29 +233,33 @@ void main() {
 
   group('BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1 retry decision', () {
     // Test 5 — one leg timeout → exactly one automatic retry.
-    test('5. bookings timeout, trip success, attempt 1 → autoRetryTransient',
-        () {
-      expect(
-        resolveBusinessKpiRetryDecision(
-          bookingsOutcome: BusinessKpiLegOutcome.timeout,
-          tripOutcome: BusinessKpiLegOutcome.success,
-          attempt: 1,
-        ),
-        BusinessKpiRetryDecision.autoRetryTransient,
-      );
-    });
+    test(
+      '5. bookings timeout, trip success, attempt 1 → autoRetryTransient',
+      () {
+        expect(
+          resolveBusinessKpiRetryDecision(
+            bookingsOutcome: BusinessKpiLegOutcome.timeout,
+            tripOutcome: BusinessKpiLegOutcome.success,
+            attempt: 1,
+          ),
+          BusinessKpiRetryDecision.autoRetryTransient,
+        );
+      },
+    );
 
-    test('5b. bookings success, trip timeout, attempt 1 → autoRetryTransient',
-        () {
-      expect(
-        resolveBusinessKpiRetryDecision(
-          bookingsOutcome: BusinessKpiLegOutcome.success,
-          tripOutcome: BusinessKpiLegOutcome.timeout,
-          attempt: 1,
-        ),
-        BusinessKpiRetryDecision.autoRetryTransient,
-      );
-    });
+    test(
+      '5b. bookings success, trip timeout, attempt 1 → autoRetryTransient',
+      () {
+        expect(
+          resolveBusinessKpiRetryDecision(
+            bookingsOutcome: BusinessKpiLegOutcome.success,
+            tripOutcome: BusinessKpiLegOutcome.timeout,
+            attempt: 1,
+          ),
+          BusinessKpiRetryDecision.autoRetryTransient,
+        );
+      },
+    );
 
     // Test 6 — HTTP 500 → exactly one automatic retry.
     test('6. bookings 5xx, trip success, attempt 1 → autoRetryTransient', () {
@@ -402,10 +420,7 @@ void main() {
       expect(BusinessKpiCycleReason.manualRetry, 'manual_retry');
       expect(BusinessKpiCycleReason.resume, 'resume');
       expect(BusinessKpiCycleReason.routeReturn, 'route_return');
-      expect(
-        BusinessKpiCycleReason.scopeChangedRerun,
-        'scope_changed_rerun',
-      );
+      expect(BusinessKpiCycleReason.scopeChangedRerun, 'scope_changed_rerun');
     });
 
     test('leg labels are the documented bounded set', () {
@@ -417,28 +432,27 @@ void main() {
 
     test('combined-status tokens are the documented bounded set', () {
       expect(BusinessKpiCombinedStatus.success, 'success');
-      expect(BusinessKpiCombinedStatus.transientWillRetry,
-          'transient_will_retry');
+      expect(
+        BusinessKpiCombinedStatus.transientWillRetry,
+        'transient_will_retry',
+      );
       expect(BusinessKpiCombinedStatus.terminal, 'terminal');
       expect(BusinessKpiCombinedStatus.stale, 'stale');
-      expect(BusinessKpiCombinedStatus.skippedScopeNotReady,
-          'skipped_scope_not_ready');
+      expect(
+        BusinessKpiCombinedStatus.skippedScopeNotReady,
+        'skipped_scope_not_ready',
+      );
       expect(BusinessKpiCombinedStatus.coalesced, 'coalesced');
+      expect(BusinessKpiCombinedStatus.skippedFresh, 'skipped_fresh');
     });
 
     test('auth-mode label maps to admin | company_session | none', () {
       expect(
-        businessKpiAuthModeLabel(
-          hasAdminToken: true,
-          hasCompanySession: true,
-        ),
+        businessKpiAuthModeLabel(hasAdminToken: true, hasCompanySession: true),
         'admin',
       );
       expect(
-        businessKpiAuthModeLabel(
-          hasAdminToken: false,
-          hasCompanySession: true,
-        ),
+        businessKpiAuthModeLabel(hasAdminToken: false, hasCompanySession: true),
         'company_session',
       );
       expect(
@@ -551,16 +565,18 @@ void main() {
     // Test 16 — cache remains scope-safe.
     test('16. cache never returns a snapshot for another scope', () {
       final cache = BusinessDashboardKpiCache();
-      cache.put(BusinessDashboardKpiSnapshot(
-        tenantId: 't1',
-        companyId: 'c1',
-        openBookingsCount: 99,
-        completedRidesCount: 0,
-        unpaidCompletedRidesCount: 0,
-        monthlyIncomeCents: 0,
-        currency: 'EUR',
-        responseGeneration: 1,
-      ));
+      cache.put(
+        BusinessDashboardKpiSnapshot(
+          tenantId: 't1',
+          companyId: 'c1',
+          openBookingsCount: 99,
+          completedRidesCount: 0,
+          unpaidCompletedRidesCount: 0,
+          monthlyIncomeCents: 0,
+          currency: 'EUR',
+          responseGeneration: 1,
+        ),
+      );
       expect(cache.get(tenantId: 't1', companyId: 'c2'), isNull);
       expect(cache.get(tenantId: 't9', companyId: 'c1'), isNull);
       expect(cache.get(tenantId: 't1', companyId: 'c1')!.openBookingsCount, 99);

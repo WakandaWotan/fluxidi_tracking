@@ -420,9 +420,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final scope = _activeDashboardKpiScope();
     final nextTenant = scope?.tenantId;
     final nextCompany = scope?.companyId;
+    final hadBoundScope =
+        (_dashboardKpiTenantId ?? '').trim().isNotEmpty &&
+        (_dashboardKpiCompanyId ?? '').trim().isNotEmpty;
+    final nextBound =
+        (nextTenant ?? '').trim().isNotEmpty &&
+        (nextCompany ?? '').trim().isNotEmpty;
+    // First assignment of a ready scope is not a company switch. Treating
+    // null → company as a change was launching a second full KPI cycle
+    // after init/`finally`.
     final scopeChanged =
-        nextTenant != _dashboardKpiTenantId ||
-        nextCompany != _dashboardKpiCompanyId;
+        hadBoundScope &&
+        nextBound &&
+        (nextTenant != _dashboardKpiTenantId ||
+            nextCompany != _dashboardKpiCompanyId);
     if (scopeChanged) {
       _clearDashboardKpisForScopeChange(reason: 'session_or_profile');
       return;
@@ -448,6 +459,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   void _clearDashboardKpisForScopeChange({required String reason}) {
+    final previousTenant = _dashboardKpiTenantId;
+    final previousCompany = _dashboardKpiCompanyId;
+    if ((previousTenant ?? '').trim().isNotEmpty &&
+        (previousCompany ?? '').trim().isNotEmpty) {
+      businessDashboardKpiRefreshCoordinator.invalidate(
+        tenantId: previousTenant!,
+        companyId: previousCompany!,
+      );
+    }
     final scope = _activeDashboardKpiScope();
     _dashboardKpiRefreshGeneration += 1;
     debugPrint(
@@ -626,13 +646,60 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final capturedTenantId = requestScope.tenantId;
     final capturedCompanyId = requestScope.companyId;
 
-    // Latest-wins single-flight coalescing. If a cycle is already active
-    // (any scope), queue exactly one rerun with the incoming reason so the
-    // coordinator picks it up in `finally`. Auto-retry cycles ignore this
-    // path — they are scheduled internally and always run to completion.
+    final refreshDecision = businessDashboardKpiRefreshCoordinator.decide(
+      reason: reason,
+      tenantId: capturedTenantId,
+      companyId: capturedCompanyId,
+    );
+    if (refreshDecision == BusinessDashboardKpiRefreshDecision.skipFresh) {
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: _kpiCycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.skippedFresh,
+          elapsedMs: 0,
+          scopeReady: true,
+          authMode: 'none',
+        ),
+      );
+      return;
+    }
+
+    // Same-scope in-flight: share the Future. Do not queue another full
+    // cycle for opportunistic init/listener/resume/return triggers.
+    if (refreshDecision == BusinessDashboardKpiRefreshDecision.shareInFlight) {
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: _kpiCycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.coalesced,
+          elapsedMs: 0,
+          scopeReady: true,
+          authMode: 'none',
+        ),
+      );
+      final shared = businessDashboardKpiRefreshCoordinator.inFlightFuture(
+        tenantId: capturedTenantId,
+        companyId: capturedCompanyId,
+      );
+      if (shared != null) {
+        await shared;
+      }
+      return;
+    }
+
+    // Latest-wins single-flight coalescing for a real force/scope change
+    // that arrives while another cycle is still running.
     if (_kpiRefreshInFlight && reason != BusinessKpiCycleReason.autoRetry) {
-      _kpiPendingRerunQueued = true;
-      _kpiPendingRerunReason = reason;
+      if (businessDashboardKpiReasonForcesRefresh(reason) ||
+          reason == BusinessKpiCycleReason.scopeChangedRerun) {
+        _kpiPendingRerunQueued = true;
+        _kpiPendingRerunReason = reason;
+      }
       debugPrint(
         formatBusinessKpiLoadDiagnostic(
           cycleGeneration: _kpiCycleGeneration,
@@ -656,6 +723,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     _kpiRefreshInFlight = true;
     _kpiRequestTenantId = capturedTenantId;
     _kpiRequestCompanyId = capturedCompanyId;
+    final inFlightCompleter = Completer<void>();
+    businessDashboardKpiRefreshCoordinator.attachInFlight(
+      tenantId: capturedTenantId,
+      companyId: capturedCompanyId,
+      future: inFlightCompleter.future,
+    );
     if (attempt == 1) {
       _kpiCycleGeneration += 1;
     }
@@ -730,22 +803,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         final bookingsRes = await http
             .get(bookingsUri, headers: headers)
             .timeout(const Duration(seconds: 12));
-        final bookingsBodyIsOkMap = () {
+        final bookingsBodyIsAuthoritative = () {
           if (bookingsRes.statusCode != 200) return false;
           try {
             final decoded = jsonDecode(bookingsRes.body);
-            return decoded is Map && decoded['ok'] == true;
+            return decoded is Map &&
+                businessDashboardKpiPayloadIsAuthoritative(decoded);
           } catch (_) {
             return false;
           }
         }();
         bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
           statusCode: bookingsRes.statusCode,
-          decodedOk: bookingsBodyIsOkMap,
+          decodedOk: bookingsBodyIsAuthoritative,
         );
         if (bookingsRes.statusCode == 200) {
           final decoded = jsonDecode(bookingsRes.body);
-          if (decoded is Map && decoded['ok'] == true) {
+          if (decoded is Map &&
+              businessDashboardKpiPayloadIsAuthoritative(decoded)) {
             bookingsKpisOk = true;
             nextOpenBookings = _asInt(decoded['open_bookings_count']) ?? 0;
           } else {
@@ -823,22 +898,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         final tripRes = await http
             .get(tripKpisUri, headers: headers)
             .timeout(const Duration(seconds: 12));
-        final tripBodyIsOkMap = () {
+        final tripBodyIsAuthoritative = () {
           if (tripRes.statusCode != 200) return false;
           try {
             final decoded = jsonDecode(tripRes.body);
-            return decoded is Map && decoded['ok'] == true;
+            return decoded is Map &&
+                businessDashboardKpiPayloadIsAuthoritative(decoded);
           } catch (_) {
             return false;
           }
         }();
         tripOutcome = classifyBusinessKpiLegHttpOutcome(
           statusCode: tripRes.statusCode,
-          decodedOk: tripBodyIsOkMap,
+          decodedOk: tripBodyIsAuthoritative,
         );
         if (tripRes.statusCode == 200) {
           final decoded = jsonDecode(tripRes.body);
-          if (decoded is Map && decoded['ok'] == true) {
+          if (decoded is Map &&
+              businessDashboardKpiPayloadIsAuthoritative(decoded)) {
             tripKpisOk = true;
             nextCompletedRides = _asInt(decoded['completed_rides_count']) ?? 0;
             nextUnpaidCompleted =
@@ -1013,6 +1090,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       setState(() {
         _applyDashboardKpiSnapshot(snapshot);
       });
+      businessDashboardKpiRefreshCoordinator.markSuccess(
+        tenantId: capturedTenantId,
+        companyId: capturedCompanyId,
+      );
       _logBusinessKpiLoad(
         event: BusinessKpiLoadEvent.snapshotApplied,
         scopeGeneration: requestGeneration,
@@ -1092,6 +1173,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         _kpiRefreshInFlight = false;
         _kpiRequestTenantId = null;
         _kpiRequestCompanyId = null;
+      }
+      businessDashboardKpiRefreshCoordinator.detachInFlight(
+        tenantId: capturedTenantId,
+        companyId: capturedCompanyId,
+        future: inFlightCompleter.future,
+      );
+      if (!inFlightCompleter.isCompleted) {
+        inFlightCompleter.complete();
       }
       if (mounted) setState(() {});
       // Dequeue at most one latest-wins rerun. This runs OUTSIDE the
@@ -5429,45 +5518,45 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                               ),
                               if (companyShouldShowTaxiBookingQr())
-                              SizedBox(
-                                width: cardWidth,
-                                height: businessQuickActionCardHeight,
-                                child: _quickActionCard(
-                                  icon: Icons.qr_code_2_outlined,
-                                  title: _t(
-                                    nl: 'Deel boekingslink',
-                                    en: 'Share booking link',
-                                    fr: 'Partager le lien de réservation',
-                                    es: 'Compartir enlace de reserva',
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.qr_code_2_outlined,
+                                    title: _t(
+                                      nl: 'Deel boekingslink',
+                                      en: 'Share booking link',
+                                      fr: 'Partager le lien de réservation',
+                                      es: 'Compartir enlace de reserva',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Link + QR',
+                                      en: 'Link + QR',
+                                      fr: 'Lien + QR',
+                                      es: 'Enlace + QR',
+                                    ),
+                                    onTap: () =>
+                                        _showPublicBookingShareQuickAccess(
+                                          context,
+                                        ),
+                                    backgroundAsset: _businessImageAsset(
+                                      executiveGoldAsset:
+                                          'assets/fluxidi/share_booking_link_background_company.webp',
+                                      corporateBlueAsset:
+                                          'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.webp',
+                                      cleanProfessionalAsset:
+                                          'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.webp',
+                                      emeraldIvoryAsset:
+                                          'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.webp',
+                                      fluxidiNeonRushAsset:
+                                          'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.webp',
+                                    ),
+                                    useImageBackground:
+                                        useTabletVisualMode ||
+                                        useVisualMobileMode,
+                                    compact: compactQuickAction,
                                   ),
-                                  subtitle: _t(
-                                    nl: 'Link + QR',
-                                    en: 'Link + QR',
-                                    fr: 'Lien + QR',
-                                    es: 'Enlace + QR',
-                                  ),
-                                  onTap: () =>
-                                      _showPublicBookingShareQuickAccess(
-                                        context,
-                                      ),
-                                  backgroundAsset: _businessImageAsset(
-                                    executiveGoldAsset:
-                                        'assets/fluxidi/share_booking_link_background_company.webp',
-                                    corporateBlueAsset:
-                                        'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.webp',
-                                    cleanProfessionalAsset:
-                                        'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.webp',
-                                    emeraldIvoryAsset:
-                                        'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.webp',
-                                    fluxidiNeonRushAsset:
-                                        'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.webp',
-                                  ),
-                                  useImageBackground:
-                                      useTabletVisualMode ||
-                                      useVisualMobileMode,
-                                  compact: compactQuickAction,
                                 ),
-                              ),
                               if (!isTabletLandscape)
                                 SizedBox(
                                   width: cardWidth,

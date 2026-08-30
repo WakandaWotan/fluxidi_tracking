@@ -835,20 +835,30 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  Future<BackendSubscriptionProfile>? _limousineReadinessProfileFuture;
+  String? _limousineReadinessScopeId;
+
   Widget _limousineReadinessSummary() {
     final scopeId = _strictSettingsScopeForAction(
       action: 'limousine_readiness',
     )?.companyId;
     if (scopeId == null || scopeId.trim().isEmpty) {
+      _limousineReadinessProfileFuture = null;
+      _limousineReadinessScopeId = null;
       return _limousineReadinessRow(
         LimousinePublicAvailabilityState.suspendedOrBlocked,
       );
     }
-    return FutureBuilder<BackendSubscriptionProfile>(
-      future: fetchCompanySubscriptionProfile(
+    if (_limousineReadinessScopeId != scopeId ||
+        _limousineReadinessProfileFuture == null) {
+      _limousineReadinessScopeId = scopeId;
+      _limousineReadinessProfileFuture = fetchCompanySubscriptionProfile(
         tenantId: scopeId,
         companyId: scopeId,
-      ),
+      );
+    }
+    return FutureBuilder<BackendSubscriptionProfile>(
+      future: _limousineReadinessProfileFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return _limousineReadinessRow(
