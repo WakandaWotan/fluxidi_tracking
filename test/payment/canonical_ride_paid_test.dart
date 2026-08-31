@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/driver/trip_history_booking_detail_repository.dart';
 import 'package:fluxidi_tracking/payment/canonical_ride_paid.dart';
 
 void main() {
@@ -138,7 +139,8 @@ void main() {
       'lib/main_parts/ride_receipt_body_state.dart',
     ).readAsStringSync();
     expect(history.contains('resolveCanonicalRidePaidDisplay('), isTrue);
-    expect(history.contains('_refreshCanonicalPaymentForItems'), isTrue);
+    expect(history.contains('_refreshCanonicalPaymentForItems'), isFalse);
+    expect(tripHistoryAllowsAutomaticDetailHydration(), isFalse);
     expect(receipt.contains('isCanonicalPaidStatusValue(value)'), isTrue);
     expect(receipt.contains('resolveCanonicalRideIsPaid('), isTrue);
     expect(

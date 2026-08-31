@@ -831,6 +831,13 @@ StreetInvoicePdfAvailability resolveStreetInvoicePdfAvailability({
       documentReference: ref.isEmpty ? null : ref,
     );
   }
+  if (pdfProbeStatusCode == 202) {
+    return StreetInvoicePdfAvailability(
+      state: StreetInvoicePdfAvailabilityState.preparing,
+      reason: 'pdf_pending',
+      documentReference: ref.isEmpty ? null : ref,
+    );
+  }
   if (pdfProbeStatusCode == 401 || pdfProbeStatusCode == 403) {
     return StreetInvoicePdfAvailability(
       state: StreetInvoicePdfAvailabilityState.unavailable,
@@ -1280,6 +1287,7 @@ class StreetInvoiceLocalIssuedSnapshot {
   final String billitPaymentSyncStatus;
   final bool peppolSent;
   final bool? billitPaid;
+  final String saleKind;
 
   const StreetInvoiceLocalIssuedSnapshot({
     required this.documentId,
@@ -1289,6 +1297,7 @@ class StreetInvoiceLocalIssuedSnapshot {
     this.billitPaymentSyncStatus = '',
     this.peppolSent = false,
     this.billitPaid,
+    this.saleKind = 'business_invoice',
   });
 
   factory StreetInvoiceLocalIssuedSnapshot.fromIssueResponse(
@@ -1302,6 +1311,7 @@ class StreetInvoiceLocalIssuedSnapshot {
       billitPaymentSyncStatus: response.billitPaymentSyncStatus,
       peppolSent: response.peppolSent,
       billitPaid: response.isPaid ? true : null,
+      saleKind: 'business_invoice',
     );
   }
 
@@ -1316,6 +1326,9 @@ class StreetInvoiceLocalIssuedSnapshot {
       billitPaymentSyncStatus: summary.billitPaymentSyncStatus,
       peppolSent: summary.peppolSent,
       billitPaid: summary.billitPaid,
+      saleKind: summary.saleKind.isEmpty
+          ? 'business_invoice'
+          : summary.saleKind,
     );
   }
 
@@ -1714,6 +1727,7 @@ class StreetInvoiceDocSummary {
   final bool peppolSent;
   final bool? billitPaid;
   final String billitPaymentSyncStatus;
+  final String saleKind;
 
   const StreetInvoiceDocSummary({
     required this.documentId,
@@ -1724,6 +1738,7 @@ class StreetInvoiceDocSummary {
     required this.peppolSent,
     required this.billitPaid,
     this.billitPaymentSyncStatus = '',
+    this.saleKind = 'business_invoice',
   });
 }
 
@@ -1770,10 +1785,6 @@ bool documentRecordIsConsumerSale(Map doc) {
   if (role == 'system_consumer_sale' || role.contains('consumer_sale')) {
     return true;
   }
-  if (doc['peppol_applicable'] == false || doc['peppolApplicable'] == false) {
-    // Historical consumer marker — only when not explicitly business.
-    if (saleKind.isEmpty) return true;
-  }
   return false;
 }
 
@@ -1796,8 +1807,14 @@ bool documentRecordIsBusinessInvoice(Map doc) {
   if (saleKind == 'business_invoice' || saleKind == 'zakelijke_factuur') {
     return true;
   }
-  // Legacy business invoices: document_type invoice without consumer markers.
-  return type == 'invoice';
+  final intent = _lower(doc['invoice_intent'] ?? doc['invoiceIntent']);
+  if (intent == 'business_invoice') return true;
+  if (doc['explicit_business_invoice'] == true) return true;
+  if (doc['peppol_applicable'] == true || doc['peppolApplicable'] == true) {
+    return true;
+  }
+  // Bare document_type=invoice is not business evidence.
+  return false;
 }
 
 /// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1 /
@@ -1923,6 +1940,12 @@ StreetInvoiceDocSummary? extractInvoiceFromDocuments(
     billitPaymentSyncStatus: _norm(
       billitMap['billit_payment_sync_status'] ??
           billitMap['billitPaymentSyncStatus'],
+    ),
+    saleKind: _lower(
+      chosen['fluxidi_sale_kind'] ??
+          chosen['fluxidiSaleKind'] ??
+          chosen['sale_kind'] ??
+          'business_invoice',
     ),
   );
 }

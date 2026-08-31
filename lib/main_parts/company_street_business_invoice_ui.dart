@@ -144,76 +144,50 @@ class _CompanyLateBusinessInvoicePlacementState
       case CompanyLateInvoicePlacementKind.streetCanonicalSlot:
         _probeDone = true;
         _showAction = true;
-        // Best-effort: detect consumer sale for credit-first form copy.
-        unawaited(_probeConsumerSaleFlagOnly());
         break;
       case CompanyLateInvoicePlacementKind.consumerSaleProbeSlot:
-        unawaited(_probeForConvertibleConsumerSale());
+        _probeDone = false;
+        _showAction = false;
         break;
     }
+    bookingDocumentsPageRepository.addListener(_syncFromCachedDocuments);
+    _syncFromCachedDocuments();
   }
 
-  Future<void> _probeConsumerSaleFlagOnly() async {
-    try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
-      );
-      final auth = await resolveCompanyOwnerAuthHeaders();
-      final res = await http
-          .get(uri, headers: auth.headers)
-          .timeout(const Duration(seconds: 12));
-      if (!mounted || res.statusCode != 200) return;
-      Object? decoded;
-      try {
-        decoded = jsonDecode(res.body);
-      } catch (_) {
-        return;
-      }
-      final convertible = documentsEnvelopeHasConvertibleConsumerSale(
-        decoded,
-        sourceLegId: widget.sourceLegId,
-        sourceLegType: widget.sourceLegType,
-      );
-      if (!mounted) return;
-      setState(() => _convertFromConsumerSale = convertible);
-    } catch (_) {
-      // Non-fatal: street slot stays visible; form uses non-conversion copy.
-    }
+  @override
+  void dispose() {
+    bookingDocumentsPageRepository.removeListener(_syncFromCachedDocuments);
+    super.dispose();
   }
 
-  Future<void> _probeForConvertibleConsumerSale() async {
-    var show = false;
-    try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
-      );
-      final auth = await resolveCompanyOwnerAuthHeaders();
-      final res = await http
-          .get(uri, headers: auth.headers)
-          .timeout(const Duration(seconds: 12));
-      if (res.statusCode == 200) {
-        Object? decoded;
-        try {
-          decoded = jsonDecode(res.body);
-        } catch (_) {
-          decoded = null;
-        }
-        show = documentsEnvelopeHasConvertibleConsumerSale(
-          decoded,
-          sourceLegId: widget.sourceLegId,
-          sourceLegType: widget.sourceLegType,
-        );
-      }
-    } catch (_) {
-      show = false;
-    }
+  BookingDocumentsPageRequest _documentsRequest() {
+    final scope = _activeBookingScopeQuery();
+    return BookingDocumentsPageRequest(
+      tenantId: scope['tenant_id'] ?? '',
+      companyId: scope['company_id'] ?? '',
+      bookingId: widget.bookingId,
+      scopeQuery: scope,
+    );
+  }
+
+  void _syncFromCachedDocuments() {
+    final cached = bookingDocumentsPageRepository.cachedResult(
+      _documentsRequest(),
+    );
+    if (cached == null) return;
+    final convertible = documentsEnvelopeHasConvertibleConsumerSale(
+      cached.raw,
+      sourceLegId: widget.sourceLegId,
+      sourceLegType: widget.sourceLegType,
+    );
     if (!mounted) return;
     setState(() {
-      _probeDone = true;
-      _showAction = show;
-      _convertFromConsumerSale = show;
+      _convertFromConsumerSale = convertible;
+      if (widget.placementKind ==
+          CompanyLateInvoicePlacementKind.consumerSaleProbeSlot) {
+        _probeDone = true;
+        _showAction = convertible;
+      }
     });
   }
 
@@ -274,8 +248,8 @@ class _StreetBusinessInvoiceActionState
       pollTimeout: kStreetInvoicePollTimeout,
     );
     _controller.addListener(_onControllerChanged);
-    // On (re)open: detect an already-issued invoice and render "view".
-    unawaited(_controller.loadExisting());
+    bookingDocumentsPageRepository.addListener(_syncIssuedFromCache);
+    _syncIssuedFromCache();
   }
 
   @override
@@ -291,9 +265,24 @@ class _StreetBusinessInvoiceActionState
 
   @override
   void dispose() {
+    bookingDocumentsPageRepository.removeListener(_syncIssuedFromCache);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _syncIssuedFromCache() {
+    final scope = _activeBookingScopeQuery();
+    final cached = bookingDocumentsPageRepository.cachedResult(
+      BookingDocumentsPageRequest(
+        tenantId: scope['tenant_id'] ?? '',
+        companyId: scope['company_id'] ?? '',
+        bookingId: widget.bookingId,
+        scopeQuery: scope,
+      ),
+    );
+    if (cached == null) return;
+    unawaited(_controller.loadExisting());
   }
 
   void _onControllerChanged() {
@@ -367,23 +356,18 @@ class _StreetBusinessInvoiceActionState
 
   Future<StreetInvoiceDocsResult> _fetchDocuments() async {
     try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
+      final scope = _activeBookingScopeQuery();
+      final result = await bookingDocumentsPageRepository.fetch(
+        request: BookingDocumentsPageRequest(
+          tenantId: scope['tenant_id'] ?? '',
+          companyId: scope['company_id'] ?? '',
+          bookingId: widget.bookingId,
+          scopeQuery: scope,
+        ),
+        headers: () async => (await resolveCompanyOwnerAuthHeaders()).headers,
+        reason: BookingDocumentsPageReason.detail,
       );
-      final auth = await resolveCompanyOwnerAuthHeaders();
-      final res = await http
-          .get(uri, headers: auth.headers)
-          .timeout(const Duration(seconds: 12));
-      if (res.statusCode != 200) {
-        return StreetInvoiceDocsResult(statusCode: res.statusCode);
-      }
-      Object? decoded;
-      try {
-        decoded = jsonDecode(res.body);
-      } catch (_) {
-        decoded = null;
-      }
+      final decoded = result.raw;
       if (documentsEnvelopeOk(decoded)) {
         _docsIndicateConvertibleConsumerSale =
             documentsEnvelopeHasConvertibleConsumerSale(
@@ -407,6 +391,8 @@ class _StreetBusinessInvoiceActionState
   }
 
   Future<void> _openForm() async {
+    await _controller.loadExisting();
+    if (!mounted || _controller.hasIssuedInvoice) return;
     final input = await showStreetBusinessInvoiceForm(
       context: context,
       theme: _streetInvoiceThemeFromCompanyTokens(widget.tokens),

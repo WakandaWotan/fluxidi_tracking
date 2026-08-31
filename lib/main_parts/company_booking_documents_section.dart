@@ -214,6 +214,10 @@ class _BookingDocumentMetadata {
   final String invoiceIntent;
   final String createdByRole;
   final bool superseded;
+  final String presentationLabelKey;
+  final String fiscalKind;
+  final String fiscalIdentity;
+  final bool? activePayableRevenue;
   // B10c: safe read-only Billit export projection (null when the document has no
   // meaningful Billit export). Existing documents without it render unchanged.
   final _BillitExportMetadata? billitExport;
@@ -236,6 +240,10 @@ class _BookingDocumentMetadata {
     this.invoiceIntent = '',
     this.createdByRole = '',
     this.superseded = false,
+    this.presentationLabelKey = '',
+    this.fiscalKind = '',
+    this.fiscalIdentity = '',
+    this.activePayableRevenue,
     this.billitExport,
   });
 
@@ -314,6 +322,15 @@ class _BookingDocumentMetadata {
       invoiceIntent: readAny(const ['invoice_intent', 'invoiceIntent']),
       createdByRole: readAny(const ['created_by_role', 'createdByRole']),
       superseded: json['superseded'] == true,
+      presentationLabelKey: readAny(const [
+        'presentation_label_key',
+        'presentationLabelKey',
+      ]),
+      fiscalKind: readAny(const ['fiscal_kind', 'fiscalKind']),
+      fiscalIdentity: readAny(const ['fiscal_identity', 'fiscalIdentity']),
+      activePayableRevenue: json['active_payable_revenue'] == true
+          ? true
+          : (json['active_payable_revenue'] == false ? false : null),
       billitExport: billitExport,
     );
   }
@@ -340,6 +357,10 @@ class _BookingDocumentMetadata {
       invoiceIntent: invoiceIntent,
       createdByRole: createdByRole,
       superseded: superseded,
+      presentationLabelKey: presentationLabelKey,
+      fiscalKind: fiscalKind,
+      fiscalIdentity: fiscalIdentity,
+      activePayableRevenue: activePayableRevenue,
       billitExport: export,
     );
   }
@@ -352,6 +373,8 @@ class _BookingDocumentMetadata {
         createdByRole: createdByRole,
         peppolApplicable: peppolApplicable,
         consumerSaleSuperseded: superseded,
+        presentationLabelKey: presentationLabelKey,
+        fiscalKind: fiscalKind,
       );
 
   bool get isConsumerSale =>
@@ -407,11 +430,20 @@ _BookingDocumentMetadata _bookingDocumentFromLocalIssuedSnapshot(
     sourceBookingId: bookingId,
     sourceLegId: '',
     sourceLegType: '',
-    fluxidiSaleKind: 'business_invoice',
-    peppolApplicable: true,
-    invoiceIntent: 'business_invoice',
+    fluxidiSaleKind: snap.saleKind.isNotEmpty
+        ? snap.saleKind
+        : 'business_invoice',
+    peppolApplicable: snap.saleKind == 'consumer_sale' ? false : true,
+    invoiceIntent: snap.saleKind == 'consumer_sale' ? '' : 'business_invoice',
     createdByRole: '',
     superseded: false,
+    presentationLabelKey: snap.saleKind == 'consumer_sale'
+        ? 'consumerSale'
+        : 'invoice',
+    fiscalKind: snap.saleKind == 'consumer_sale'
+        ? 'consumer_sale'
+        : 'business_invoice',
+    fiscalIdentity: snap.documentId,
     billitExport: hasBillit
         ? _BillitExportMetadata(
             status: snap.billitOrderId.isNotEmpty ? 'created' : '',
@@ -531,20 +563,37 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final snap = _StreetInvoiceLocalIndex.instance.snapshotFor(
       widget.bookingId,
     );
-    if (snap == null) return base;
-    if (!shouldInjectLocalIssuedInvoiceDocument(
-      localDocumentId: snap.documentId,
-      visibleBackendDocumentIds: base.map((d) => d.documentId),
-    )) {
-      return base;
+    var rows = List<_BookingDocumentMetadata>.from(base);
+    if (snap != null &&
+        !_hasLegFilter &&
+        shouldInjectLocalIssuedDocument(
+          localDocumentId: snap.documentId,
+          localSaleKind: snap.saleKind.isEmpty
+              ? 'business_invoice'
+              : snap.saleKind,
+          visibleDocuments: base.map(
+            (d) => <String, dynamic>{
+              'document_id': d.documentId,
+              'fiscal_identity': d.fiscalIdentity,
+              'fluxidi_sale_kind': d.fluxidiSaleKind,
+              'superseded': d.superseded,
+            },
+          ),
+        )) {
+      rows = <_BookingDocumentMetadata>[
+        ...rows,
+        _bookingDocumentFromLocalIssuedSnapshot(snap, widget.bookingId),
+      ];
     }
-    // Leg-filtered cards hide booking-level invoices without leg meta; do not
-    // inject a synthetic row there (keeps count/list semantics aligned).
-    if (_hasLegFilter) return base;
-    return <_BookingDocumentMetadata>[
-      ...base,
-      _bookingDocumentFromLocalIssuedSnapshot(snap, widget.bookingId),
-    ];
+    final merged = <String, _BookingDocumentMetadata>{};
+    for (final doc in rows) {
+      final key = doc.fiscalIdentity.isNotEmpty
+          ? doc.fiscalIdentity
+          : doc.documentId;
+      if (key.isEmpty || merged.containsKey(key)) continue;
+      merged[key] = doc;
+    }
+    return merged.values.toList(growable: false);
   }
 
   /// Display-only count that includes a locally-successful invoice until the
@@ -647,73 +696,54 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
   /// 2G-S-B2: an external producer (credit-note issue) asked us to reload.
   /// Expand and force a fresh fetch so the newly issued document appears.
-  void _handleExternalRefresh() {
-    if (!mounted) return;
-    setState(() {
-      _expanded = true;
-      _loaded = false;
-      _error = false;
-    });
-    _loadDocuments();
+  BookingDocumentsPageRequest _documentsRequest() {
+    final scope = _activeBookingScopeQuery();
+    return BookingDocumentsPageRequest(
+      tenantId: scope['tenant_id'] ?? '',
+      companyId: scope['company_id'] ?? '',
+      bookingId: widget.bookingId,
+      scopeQuery: scope,
+    );
   }
 
-  Future<void> _loadDocuments() async {
+  void _handleExternalRefresh() {
+    if (!mounted) return;
+    final request = _documentsRequest();
+    bookingDocumentsPageRepository.invalidateBookingDocuments(
+      tenantId: request.tenantId,
+      companyId: request.companyId,
+      bookingId: request.bookingId,
+    );
+    setState(() {
+      _expanded = true;
+      _error = false;
+    });
+    _loadDocuments(forceRefresh: true);
+  }
+
+  Future<void> _loadDocuments({bool forceRefresh = false}) async {
     if (_loading) return;
-    // Capture the scope this request belongs to. If the section is handed a
-    // different booking before the response returns, the guards below discard
-    // the stale response instead of showing another booking's documents.
+    if (bookingDocumentsFetchOnListMount() && !_expanded) return;
     final requestScopeKey = _documentsScopeKey;
+    final request = _documentsRequest();
     setState(() {
       _loading = true;
       _error = false;
     });
     try {
-      // 2G-S-B2 hardening: temporary safe diagnostic. Masked booking id only;
-      // no tokens, no PII, no response body contents.
-      debugPrint(
-        '[COMPANY_BOOKINGS][DOCUMENTS][FETCH] '
-        'booking=${_bookingRefMaskForCreditIssueLog(widget.bookingId)}',
+      final result = await bookingDocumentsPageRepository.fetch(
+        request: request,
+        headers: () async => (await resolveCompanyOwnerAuthHeaders()).headers,
+        forceRefresh: forceRefresh,
+        reason: forceRefresh
+            ? BookingDocumentsPageReason.mutation
+            : BookingDocumentsPageReason.expand,
       );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
-      );
-      final auth = await resolveCompanyOwnerAuthHeaders();
-      final res = await http
-          .get(uri, headers: auth.headers)
-          .timeout(const Duration(seconds: 12));
       if (!mounted || requestScopeKey != _activeScopeKey) return;
-      if (res.statusCode != 200) {
-        setState(() {
-          _error = true;
-          _loading = false;
-          _loaded = true;
-        });
-        return;
-      }
-      final decoded = jsonDecode(res.body);
-      if (decoded is! Map || decoded['ok'] != true) {
-        setState(() {
-          _error = true;
-          _loading = false;
-          _loaded = true;
-        });
-        return;
-      }
-      final rawDocs = decoded['documents'];
-      final parsed = <_BookingDocumentMetadata>[];
-      if (rawDocs is List) {
-        for (final entry in rawDocs) {
-          if (entry is Map) {
-            parsed.add(
-              _BookingDocumentMetadata.fromJson(
-                entry.map((k, v) => MapEntry(k.toString(), v)),
-              ),
-            );
-          }
-        }
-      }
-      if (!mounted || requestScopeKey != _activeScopeKey) return;
+      final parsed = <_BookingDocumentMetadata>[
+        for (final entry in result.documents)
+          _BookingDocumentMetadata.fromJson(entry),
+      ];
       setState(() {
         _documents = parsed;
         _loaded = true;
@@ -726,7 +756,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       setState(() {
         _error = true;
         _loading = false;
-        _loaded = true;
+        _loaded = _documents.isNotEmpty || _loaded;
       });
     }
   }
@@ -734,7 +764,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   void _toggle() {
     final next = !_expanded;
     setState(() => _expanded = next);
-    if (next && !_loaded && !_loading) {
+    if (next) {
       _loadDocuments();
     }
   }
@@ -1541,7 +1571,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             es: 'El envío Peppol se está confirmando. Actualice el estado de Billit.',
           ),
         );
-        _loadDocuments();
+        _loadDocuments(forceRefresh: true);
         return;
       }
 
@@ -1555,7 +1585,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             es: 'Factura enviada por Peppol.',
           ),
         );
-        _loadDocuments();
+        _loadDocuments(forceRefresh: true);
         return;
       }
 
@@ -1648,7 +1678,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                   es: 'Factura registrada en Billit.',
                 ),
         );
-        _loadDocuments();
+        _loadDocuments(forceRefresh: true);
         return;
       }
 
@@ -1732,6 +1762,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       invoiceIntent: doc.invoiceIntent,
       createdByRole: doc.createdByRole,
       peppolApplicable: doc.peppolApplicable,
+      presentationLabelKey: doc.presentationLabelKey,
+      fiscalKind: doc.fiscalKind,
     );
     switch (key) {
       case 'consumerSale':
@@ -1740,6 +1772,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           en: 'Private sale',
           fr: 'Vente particulière',
           es: 'Venta particular',
+        );
+      case 'invoiceNeutral':
+        return _tr(
+          nl: 'Factuur',
+          en: 'Invoice',
+          fr: 'Facture',
+          es: 'Factura',
         );
       case 'invoice':
         return _tr(

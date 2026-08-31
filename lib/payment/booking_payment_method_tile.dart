@@ -32,10 +32,10 @@ String paymentMethodDisplayLabel(String methodId, PaymentCopyResolver t) {
   switch (normalizePaymentMethodId(methodId)) {
     case PaymentMethodIds.inVehicleCard:
       return t(
-        nl: 'Betalen in de auto',
-        en: 'Pay in the car',
-        fr: 'Payer dans la voiture',
-        es: 'Pagar en el coche',
+        nl: 'Betalen in het voertuig',
+        en: 'Pay in the vehicle',
+        fr: 'Payer dans le véhicule',
+        es: 'Pagar en el vehículo',
       );
     case PaymentMethodIds.bancontact:
       return 'Bancontact';
@@ -138,10 +138,10 @@ String paymentMethodShortDescription(
   final id = normalizePaymentMethodId(methodId);
   if (id == PaymentMethodIds.inVehicleCard || id == PaymentMethodIds.cash) {
     return t(
-      nl: 'Boeking wordt meteen aangemaakt, betaling volgt tijdens de rit.',
-      en: 'Booking is created immediately, payment follows during the ride.',
-      fr: 'La réservation est créée immédiatement, paiement pendant le trajet.',
-      es: 'La reserva se crea al instante, el pago se realiza durante el trayecto.',
+      nl: 'Boeking wordt meteen aangemaakt. In het voertuig kan de chauffeur contant, QR of kaart aanbieden — alleen als die methode voor dit bedrijf is ingeschakeld.',
+      en: 'Booking is created immediately. In the vehicle the driver may offer cash, QR or card — only if that method is enabled for this company.',
+      fr: 'La réservation est créée immédiatement. Dans le véhicule, le chauffeur peut proposer espèces, QR ou carte — uniquement si ce moyen est activé pour cette entreprise.',
+      es: 'La reserva se crea al instante. En el vehículo el conductor puede ofrecer efectivo, QR o tarjeta, solo si ese método está activado para esta empresa.',
     );
   }
   if (id == PaymentMethodIds.qrCode) {

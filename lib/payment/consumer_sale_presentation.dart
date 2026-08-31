@@ -19,6 +19,7 @@ enum FluxidiDocumentPresentationKind {
   consumerSale,
   businessInvoice,
   creditNote,
+  invoiceNeutral,
 }
 
 bool isConsumerSaleKind(Object? raw) {
@@ -68,11 +69,41 @@ bool hasHistoricalConsumerSaleSignals({
   if (role == 'system_consumer_sale' || role.contains('consumer_sale')) {
     return true;
   }
-  if (peppolApplicable == false) return true;
+  // peppol_applicable=false alone is not consumer evidence.
   final customerType =
       (billingCustomerType ?? '').toString().trim().toLowerCase();
   if (customerType == 'private' || customerType == 'consumer') return true;
   return false;
+}
+
+FluxidiDocumentPresentationKind? presentationKindFromWorkerMetadata({
+  Object? presentationLabelKey,
+  Object? fiscalKind,
+}) {
+  switch ((presentationLabelKey ?? '').toString().trim()) {
+    case 'consumerSale':
+    case 'refundProof':
+      return FluxidiDocumentPresentationKind.consumerSale;
+    case 'invoice':
+      return FluxidiDocumentPresentationKind.businessInvoice;
+    case 'creditNote':
+      return FluxidiDocumentPresentationKind.creditNote;
+    case 'invoiceNeutral':
+      return FluxidiDocumentPresentationKind.invoiceNeutral;
+  }
+  switch ((fiscalKind ?? '').toString().trim().toLowerCase()) {
+    case 'consumer_sale':
+    case 'private_sale':
+      return FluxidiDocumentPresentationKind.consumerSale;
+    case 'business_invoice':
+      return FluxidiDocumentPresentationKind.businessInvoice;
+    case 'credit_note':
+    case 'creditnote':
+      return FluxidiDocumentPresentationKind.creditNote;
+    case 'unspecified':
+      return FluxidiDocumentPresentationKind.invoiceNeutral;
+  }
+  return null;
 }
 
 /// Canonical presentation kind. Never infer business from OrderType/INV/billing.
@@ -87,6 +118,8 @@ FluxidiDocumentPresentationKind resolveDocumentPresentationKind({
   bool businessInvoiceIntent = false,
   bool conversionToBusinessSucceeded = false,
   bool consumerSaleSuperseded = false,
+  Object? presentationLabelKey,
+  Object? fiscalKind,
 }) {
   final type = (documentType ?? '').toString().trim().toLowerCase();
   if (isCreditNoteKind(saleKind) ||
@@ -100,11 +133,18 @@ FluxidiDocumentPresentationKind resolveDocumentPresentationKind({
     return FluxidiDocumentPresentationKind.businessInvoice;
   }
 
+  final fromWorker = presentationKindFromWorkerMetadata(
+    presentationLabelKey: presentationLabelKey,
+    fiscalKind: fiscalKind,
+  );
+  if (fromWorker != null) return fromWorker;
+
   if (hasExplicitBusinessInvoiceIntent(
         invoiceIntent: invoiceIntent,
         businessInvoiceIntent: businessInvoiceIntent,
       ) ||
-      isBusinessInvoiceKind(saleKind)) {
+      isBusinessInvoiceKind(saleKind) ||
+      peppolApplicable == true) {
     return FluxidiDocumentPresentationKind.businessInvoice;
   }
 
@@ -118,20 +158,15 @@ FluxidiDocumentPresentationKind resolveDocumentPresentationKind({
     return FluxidiDocumentPresentationKind.consumerSale;
   }
 
-  // Bare OrderType/INV/documentType=invoice alone is NOT enough to force
-  // business presentation when consumer signals exist (handled above).
-  // Legacy business invoices without sale-kind still resolve here as business
-  // only when there is no consumer/private signal.
   if (type == 'credit_note' || type == 'creditnote') {
     return FluxidiDocumentPresentationKind.creditNote;
   }
   if (type == 'refund_proof') {
     return FluxidiDocumentPresentationKind.consumerSale;
   }
-  if (type == 'invoice') {
-    return FluxidiDocumentPresentationKind.businessInvoice;
-  }
-  return FluxidiDocumentPresentationKind.consumerSale;
+  // Bare document_type=invoice without business evidence is never automatically
+  // "Zakelijke factuur".
+  return FluxidiDocumentPresentationKind.invoiceNeutral;
 }
 
 bool documentForbidsInvoiceLabel({
@@ -143,6 +178,8 @@ bool documentForbidsInvoiceLabel({
   bool? peppolApplicable,
   bool businessInvoiceIntent = false,
   bool conversionToBusinessSucceeded = false,
+  Object? presentationLabelKey,
+  Object? fiscalKind,
 }) {
   final kind = resolveDocumentPresentationKind(
     saleKind: saleKind,
@@ -153,6 +190,8 @@ bool documentForbidsInvoiceLabel({
     peppolApplicable: peppolApplicable,
     businessInvoiceIntent: businessInvoiceIntent,
     conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+    presentationLabelKey: presentationLabelKey,
+    fiscalKind: fiscalKind,
   );
   return kind == FluxidiDocumentPresentationKind.consumerSale;
 }
@@ -167,6 +206,8 @@ String consumerOrBusinessDocumentLabelKey({
   bool? peppolApplicable,
   bool businessInvoiceIntent = false,
   bool conversionToBusinessSucceeded = false,
+  Object? presentationLabelKey,
+  Object? fiscalKind,
 }) {
   final kind = resolveDocumentPresentationKind(
     saleKind: saleKind,
@@ -177,12 +218,16 @@ String consumerOrBusinessDocumentLabelKey({
     peppolApplicable: peppolApplicable,
     businessInvoiceIntent: businessInvoiceIntent,
     conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+    presentationLabelKey: presentationLabelKey,
+    fiscalKind: fiscalKind,
   );
   switch (kind) {
     case FluxidiDocumentPresentationKind.businessInvoice:
       return 'invoice';
     case FluxidiDocumentPresentationKind.creditNote:
       return 'creditNote';
+    case FluxidiDocumentPresentationKind.invoiceNeutral:
+      return 'invoiceNeutral';
     case FluxidiDocumentPresentationKind.consumerSale:
       final type = (documentType ?? '').toString().trim().toLowerCase();
       if (type == 'refund_proof') return 'refundProof';
@@ -237,6 +282,8 @@ PeppolUiPolicy resolvePeppolUiPolicy({
   bool? peppolApplicable,
   bool businessInvoiceIntent = false,
   bool conversionToBusinessSucceeded = false,
+  Object? presentationLabelKey,
+  Object? fiscalKind,
 }) {
   final kind = resolveDocumentPresentationKind(
     saleKind: saleKind,
@@ -247,6 +294,8 @@ PeppolUiPolicy resolvePeppolUiPolicy({
     peppolApplicable: peppolApplicable,
     businessInvoiceIntent: businessInvoiceIntent,
     conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+    presentationLabelKey: presentationLabelKey,
+    fiscalKind: fiscalKind,
   );
   if (kind != FluxidiDocumentPresentationKind.businessInvoice ||
       peppolApplicable == false) {
@@ -365,6 +414,8 @@ String consumerOrBusinessPdfTitleKey({
       return 'invoice';
     case FluxidiDocumentPresentationKind.creditNote:
       return 'creditNote';
+    case FluxidiDocumentPresentationKind.invoiceNeutral:
+      return 'invoiceNeutral';
     case FluxidiDocumentPresentationKind.consumerSale:
       return 'ritbon';
   }

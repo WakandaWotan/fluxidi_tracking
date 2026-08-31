@@ -20,6 +20,8 @@ void main() {
     expect(docs, contains('consumerOrBusinessDocumentLabelKey'));
     expect(docs, contains('resolvePeppolUiPolicy'));
     expect(docs, contains('Particuliere verkoop'));
+    expect(docs, contains('Factuur'));
+    expect(docs, contains('invoiceNeutral'));
     expect(docs, contains('Geregistreerd in Billit'));
     expect(docs, contains('Peppol niet van toepassing'));
     expect(docs, contains('fluxidiSaleKind'));

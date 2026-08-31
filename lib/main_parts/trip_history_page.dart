@@ -457,27 +457,22 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     }
 
     try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(bookingId)}',
+      tripHistoryBookingDetailRepository.applyScope(
+        tenantId: widget.tenantId,
+        companyId: widget.companyId,
+        driverId: widget.driverId,
       );
-      final res = await http
-          .get(uri, headers: widget.headers)
-          .timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) {
-        debugPrint(
-          '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
-        );
-        return enriched;
-      }
-      final decodedRaw = jsonDecode(utf8.decode(res.bodyBytes));
-      if (decodedRaw is! Map || decodedRaw['ok'] != true) {
-        debugPrint(
-          '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
-        );
-        return enriched;
-      }
-      final decoded = Map<String, dynamic>.from(decodedRaw);
+      final result = await tripHistoryBookingDetailRepository.fetch(
+        request: TripHistoryBookingDetailRequest(
+          tenantId: widget.tenantId,
+          companyId: widget.companyId,
+          driverId: widget.driverId,
+          bookingId: bookingId,
+          scopeQuery: _activeBookingScopeQuery(),
+        ),
+        headers: () async => widget.headers,
+      );
+      final decoded = Map<String, dynamic>.from(result.payload);
       final record = decoded['record'];
       final booking = record is Map ? record['booking'] : null;
       final authoritative = <String, dynamic>{
@@ -538,6 +533,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
   void initState() {
     super.initState();
     _scopeSignature = _computeScopeSignature();
+    tripHistoryBookingDetailRepository.applyScope(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+      driverId: widget.driverId,
+    );
     _startLoad(reason: 'initState');
   }
 
@@ -552,6 +552,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     final nextSignature = _computeScopeSignature();
     if (nextSignature != _scopeSignature) {
       _scopeSignature = nextSignature;
+      tripHistoryBookingDetailRepository.applyScope(
+        tenantId: widget.tenantId,
+        companyId: widget.companyId,
+        driverId: widget.driverId,
+      );
       setState(() {
         _items = const <_TripHistoryItem>[];
         _localReadCompleted = false;
@@ -883,7 +888,8 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       _summaryNeutralWhileSyncing = false;
       _authoritativeSummary = nextSummary;
     });
-    unawaited(_refreshCanonicalPaymentForItems(overlaid, generation));
+    // Payment/document hydration is explicit-open only. History sync never
+    // fans out GET /bookings/:id.
 
     // Drop superseded offline-STOP pending projections so the next cold
     // start cannot re-flash "Lokaal opgeslagen — niet bevestigd".
@@ -1048,59 +1054,6 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         fields,
       ),
     );
-  }
-
-  Future<void> _refreshCanonicalPaymentForItems(
-    List<_TripHistoryItem> items,
-    int generation,
-  ) async {
-    final ids = <String>[];
-    for (final item in items) {
-      final bookingId = _canonicalBookingIdFromItem(item);
-      if (bookingId.isEmpty) continue;
-      if (_paymentByBookingId.containsKey(bookingId)) continue;
-      if (resolveCanonicalRideIsPaid(
-        historyRaw: item.rawSource,
-        historyDetails: item.bookingDetails,
-        bookingRecord:
-            widget.bookingDetailsById[bookingId] ??
-            _paymentByBookingId[bookingId],
-      )) {
-        continue;
-      }
-      ids.add(bookingId);
-      if (ids.length >= 12) break;
-    }
-    var changed = false;
-    for (final bookingId in ids) {
-      if (!mounted || generation != _fetchGeneration) return;
-      try {
-        final uri = _withActiveBookingScope(
-          kBookingBaseUrl,
-          '/bookings/${Uri.encodeComponent(bookingId)}',
-        );
-        final res = await http
-            .get(uri, headers: widget.headers)
-            .timeout(const Duration(seconds: 8));
-        if (res.statusCode < 200 || res.statusCode >= 300) continue;
-        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-        if (decoded is! Map) continue;
-        final fields = extractCanonicalPaymentFields(
-          Map<String, dynamic>.from(decoded),
-        );
-        if (fields.isEmpty) continue;
-        _paymentByBookingId[bookingId] = fields;
-        changed = true;
-      } catch (_) {
-        continue;
-      }
-    }
-    if (!changed || !mounted || generation != _fetchGeneration) return;
-    setState(() {
-      _items = _items
-          .map(_overlayCanonicalPaymentOnItem)
-          .toList(growable: false);
-    });
   }
 
   String _normalizePaymentStatus(_TripHistoryItem item) {

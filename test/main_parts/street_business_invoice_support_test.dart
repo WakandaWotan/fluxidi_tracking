@@ -377,6 +377,7 @@ void main() {
             'document_id': 'doc-a',
             'document_type': 'Invoice',
             'document_number': 'INV-1',
+            'fluxidi_sale_kind': 'business_invoice',
             'lifecycle_state': 'issued',
             'billit_export': {
               'environment': 'sandbox',

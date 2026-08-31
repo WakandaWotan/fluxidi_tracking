@@ -3037,10 +3037,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 es: 'Pago online pendiente',
                               )
                             : _t(
-                                nl: 'Te betalen in de wagen',
+                                nl: 'Te betalen in het voertuig',
                                 en: 'To pay in the vehicle',
-                                fr: 'A payer dans le vehicule',
-                                es: 'A pagar en el vehiculo',
+                                fr: 'À payer dans le véhicule',
+                                es: 'A pagar en el vehículo',
                               )));
             final paymentStatusDescription = paid
                 ? _t(
@@ -3064,10 +3064,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 es: 'Completa el pago online o cancela la solicitud si esta permitido.',
                               )
                             : _t(
-                                nl: 'Voldoe het bedrag bij de chauffeur.',
-                                en: 'Pay the driver during your ride.',
-                                fr: 'Reglez le chauffeur pendant la course.',
-                                es: 'Paga al conductor durante el viaje.',
+                                nl: 'Voldoe het bedrag bij de chauffeur. In het voertuig kan dit contant, via QR of met kaart zijn, afhankelijk van wat het bedrijf heeft ingeschakeld.',
+                                en: 'Pay the driver during your ride. In the vehicle this may be cash, QR or card, depending on what the company has enabled.',
+                                fr: 'Réglez le chauffeur pendant la course. Dans le véhicule, cela peut être espèces, QR ou carte, selon ce que l’entreprise a activé.',
+                                es: 'Paga al conductor durante el viaje. En el vehículo puede ser efectivo, QR o tarjeta, según lo que la empresa haya activado.',
                               )));
             final business = v.businessCustomer;
             final isRoundtrip = v.isRoundtrip;

@@ -12,6 +12,17 @@ class _ReceiptPdfBundle {
 }
 
 class _ReceiptPdfActionRunner {
+  static InvoicePdfFetchState lastBackendPdfState = InvoicePdfFetchState.missing;
+
+  static String _localizedPdfPreparingMessage() {
+    return _tr(
+      nl: 'Document wordt voorbereid',
+      en: 'Document is being prepared',
+      fr: 'Le document est en cours de préparation',
+      es: 'El documento se está preparando',
+    );
+  }
+
   static String _resolveBookingIdForInvoicePdf(_TripHistoryItem item) {
     final direct = (item.bookingId ?? '').trim();
     if (direct.isNotEmpty) return direct;
@@ -70,6 +81,7 @@ class _ReceiptPdfActionRunner {
   static Future<_ReceiptPdfBundle?> _tryFetchBackendInvoicePdfBundle({
     required _TripHistoryItem item,
     required String source,
+    bool Function()? isCancelled,
   }) async {
     final uri = _buildBackendInvoicePdfUri(item);
     if (uri == null) {
@@ -78,11 +90,46 @@ class _ReceiptPdfActionRunner {
     }
     debugPrint('[PDF][BACKEND_FETCH][START] source=$source');
     try {
-      final response = await http
-          .get(uri, headers: _backendInvoicePdfHeaders())
-          .timeout(const Duration(seconds: 18));
-      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+      var pendingAttempts = 0;
+      late http.Response response;
+      while (true) {
+        if (isCancelled?.call() == true) {
+          lastBackendPdfState = InvoicePdfFetchState.missing;
+          return null;
+        }
+        response = await http
+            .get(uri, headers: _backendInvoicePdfHeaders())
+            .timeout(const Duration(seconds: 18));
+        String? errorToken;
+        if (response.statusCode != 200) {
+          try {
+            final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+            if (decoded is Map) {
+              errorToken = decoded['error']?.toString();
+            }
+          } catch (_) {}
+        }
+        final state = classifyInvoicePdfHttpStatus(
+          response.statusCode,
+          error: errorToken,
+        );
+        lastBackendPdfState = state;
+        if (state == InvoicePdfFetchState.ready &&
+            response.bodyBytes.isNotEmpty) {
+          break;
+        }
+        if (shouldRetryInvoicePdf(
+          state: state,
+          pendingAttempts: pendingAttempts,
+        )) {
+          pendingAttempts += 1;
+          await Future<void>.delayed(parseInvoicePdfRetryAfter(response.headers));
+          continue;
+        }
         debugPrint('[PDF][BACKEND_FETCH][MISS] status=${response.statusCode}');
+        return null;
+      }
+      if (response.bodyBytes.isEmpty) {
         return null;
       }
       final bytes = response.bodyBytes;
@@ -190,15 +237,19 @@ class _ReceiptPdfActionRunner {
     );
     if (bundle == null) {
       if (!context.mounted) return;
+      final pending =
+          lastBackendPdfState == InvoicePdfFetchState.pending;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _tr(
-              nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
-              en: 'No invoice PDF available for this ride.',
-              fr: 'Aucun PDF de facture disponible pour ce trajet.',
-              es: 'No hay PDF de factura disponible para este viaje.',
-            ),
+            pending
+                ? _localizedPdfPreparingMessage()
+                : _tr(
+                    nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
+                    en: 'No invoice PDF available for this ride.',
+                    fr: 'Aucun PDF de facture disponible pour ce trajet.',
+                    es: 'No hay PDF de factura disponible para este viaje.',
+                  ),
           ),
         ),
       );
@@ -228,15 +279,19 @@ class _ReceiptPdfActionRunner {
     );
     if (bundle == null) {
       if (!context.mounted) return;
+      final pending =
+          lastBackendPdfState == InvoicePdfFetchState.pending;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _tr(
-              nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
-              en: 'No invoice PDF available for this ride.',
-              fr: 'Aucun PDF de facture disponible pour ce trajet.',
-              es: 'No hay PDF de factura disponible para este viaje.',
-            ),
+            pending
+                ? _localizedPdfPreparingMessage()
+                : _tr(
+                    nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
+                    en: 'No invoice PDF available for this ride.',
+                    fr: 'Aucun PDF de facture disponible pour ce trajet.',
+                    es: 'No hay PDF de factura disponible para este viaje.',
+                  ),
           ),
         ),
       );
@@ -262,6 +317,12 @@ class _ReceiptPdfActionRunner {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
       if (!context.mounted) return;
+      if (lastBackendPdfState == InvoicePdfFetchState.pending) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_localizedPdfPreparingMessage())),
+        );
+        return;
+      }
       await _fallbackCopyText(context: context, item: item);
       return;
     }
@@ -284,6 +345,12 @@ class _ReceiptPdfActionRunner {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
       if (!context.mounted) return;
+      if (lastBackendPdfState == InvoicePdfFetchState.pending) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_localizedPdfPreparingMessage())),
+        );
+        return;
+      }
       await _fallbackCopyText(context: context, item: item);
       return;
     }
@@ -825,6 +892,9 @@ class _ReceiptPdfActionRunner {
         source: 'receipt_pdf_bundle_static_layout',
       );
       if (backendBundle != null) return backendBundle;
+      if (lastBackendPdfState == InvoicePdfFetchState.pending) {
+        return null;
+      }
     }
     try {
       final smartRef = _businessReferenceDisplayForItem(

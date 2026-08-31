@@ -163,6 +163,32 @@ void main() {
       );
     });
 
+    test('bare invoice without business evidence is neutral Factuur', () {
+      expect(
+        resolveDocumentPresentationKind(documentType: 'invoice'),
+        FluxidiDocumentPresentationKind.invoiceNeutral,
+      );
+      expect(
+        consumerOrBusinessDocumentLabelKey(documentType: 'invoice'),
+        'invoiceNeutral',
+      );
+      expect(
+        isBusinessDocumentForPresentation(documentType: 'invoice'),
+        isFalse,
+      );
+    });
+
+    test('worker presentation metadata wins over document_type', () {
+      expect(
+        resolveDocumentPresentationKind(
+          documentType: 'invoice',
+          presentationLabelKey: 'consumerSale',
+          fiscalKind: 'consumer_sale',
+        ),
+        FluxidiDocumentPresentationKind.consumerSale,
+      );
+    });
+
     test('historical consumer via created_by_role / peppol_applicable', () {
       expect(
         resolveDocumentPresentationKind(

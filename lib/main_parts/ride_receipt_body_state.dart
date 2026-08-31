@@ -3298,8 +3298,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         await _ReceiptPdfActionRunner._tryFetchBackendInvoicePdfBundle(
           item: item,
           source: 'receipt_pdf_bundle_stateful_layout',
+          isCancelled: () => !mounted,
         );
     if (backendBundle != null) return backendBundle;
+    if (_ReceiptPdfActionRunner.lastBackendPdfState ==
+        InvoicePdfFetchState.pending) {
+      return null;
+    }
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,

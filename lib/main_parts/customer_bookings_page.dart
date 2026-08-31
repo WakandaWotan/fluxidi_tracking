@@ -519,17 +519,17 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         p == 'pending' ||
         p == 'pay_in_car') {
       return _t(
-        nl: 'Te betalen in de wagen',
-        en: 'Pay in the car',
+        nl: 'Te betalen in het voertuig',
+        en: 'To pay in the vehicle',
         fr: 'À payer dans le véhicule',
-        es: 'Pagar en el vehículo',
+        es: 'A pagar en el vehículo',
       );
     }
     return _t(
-      nl: 'Te betalen in de wagen',
-      en: 'Pay in the car',
+      nl: 'Te betalen in het voertuig',
+      en: 'To pay in the vehicle',
       fr: 'À payer dans le véhicule',
-      es: 'Pagar en el vehículo',
+      es: 'A pagar en el vehículo',
     );
   }
 
