@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -2257,6 +2258,7 @@ class DriverSessionStore {
     _cache = null;
     _cacheScopeKey = '';
     activeDriverSessionNotifier.value = null;
+    bookingListPageRepository.invalidateAll();
   }
 
   String _maskPhotoForLog(String? raw) {

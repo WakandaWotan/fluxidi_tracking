@@ -478,6 +478,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         tenantId: previousTenant!,
         companyId: previousCompany!,
       );
+      bookingListPageRepository.invalidate(
+        tenantId: previousTenant,
+        companyId: previousCompany,
+      );
     }
     final scope = _activeDashboardKpiScope();
     _dashboardKpiRefreshGeneration += 1;

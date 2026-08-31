@@ -35,6 +35,16 @@ class _CompanyBookingsOverviewPageState
   bool _quoteRequestsVisible = false;
   LimousineBookingsSection _bookingsSection = LimousineBookingsSection.bookings;
   int? _quoteUnreadCount;
+  bool _loadingMore = false;
+  String? _pageErrorCode;
+  String? _failedBookingCursor;
+  String? _bookingPageCursor;
+  bool _bookingPageHasMore = false;
+  bool _bookingLoadedExtraPages = false;
+  BookingListContractKind _bookingPageContract =
+      BookingListContractKind.legacy;
+  int _bookingsLoadGeneration = 0;
+  String? _loadedBookingScopeKey;
 
   String _t({
     required String nl,
@@ -564,7 +574,7 @@ class _CompanyBookingsOverviewPageState
       _refundingBookingIds.remove(bookingId);
     });
     if (out.ok) {
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       final isRefunded =
           _CompanyBookingOverviewItem.isRefundStatusRefundedOrComplete(
@@ -624,7 +634,7 @@ class _CompanyBookingsOverviewPageState
       );
       return;
     }
-    await _loadBookings();
+    await _reloadBookingsAfterMutation();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -662,7 +672,7 @@ class _CompanyBookingsOverviewPageState
       _refundingBookingIds.remove(target.bookingId);
     });
     if (out.ok) {
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -709,7 +719,7 @@ class _CompanyBookingsOverviewPageState
       _refundingBookingIds.remove(target.bookingId);
     });
     if (out.ok && out.auditResync) {
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1125,7 +1135,7 @@ class _CompanyBookingsOverviewPageState
         '[CREDIT_DECISION][STATE] booking=$bookingId leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
         'decision=$creditDecision ok=true',
       );
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -1144,7 +1154,7 @@ class _CompanyBookingsOverviewPageState
         'leg=${item.legId.trim().isEmpty ? "-" : item.legId.trim()} '
         'attempted_decision=$creditDecision existing_decision=${item.creditDecision.trim().isEmpty ? "-" : item.creditDecision.trim()}',
       );
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1532,7 +1542,7 @@ class _CompanyBookingsOverviewPageState
         );
         return;
       }
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1803,7 +1813,7 @@ class _CompanyBookingsOverviewPageState
       _cancellingBookingIds.remove(busyKey);
     });
     if (cancelOut.ok) {
-      await _loadBookings();
+      await _reloadBookingsAfterMutation();
       if (!mounted) return;
       final successMessage = cancelScope == _AdminCancelPaidScope.singleLeg
           ? _t(
@@ -2145,50 +2155,111 @@ class _CompanyBookingsOverviewPageState
     });
   }
 
-  Future<void> _loadBookings() async {
+  BookingListHistoryMode get _companyBookingsHistoryMode {
+    return _filter == _CompanyBookingsFilter.open
+        ? BookingListHistoryMode.active
+        : BookingListHistoryMode.history;
+  }
+
+  String _currentCompanyBookingScopeKey() {
+    final scopeQuery = _activeBookingScopeQuery();
+    return BookingListPageRequest(
+      actor: BookingListActor.company,
+      tenantId: (scopeQuery['tenant_id'] ?? '').trim(),
+      companyId: (scopeQuery['company_id'] ?? '').trim(),
+      historyMode: _companyBookingsHistoryMode,
+    ).scopeKey;
+  }
+
+  BookingListPageRequest _companyBookingPageRequest({String cursor = ''}) {
+    final scopeQuery = _activeBookingScopeQuery();
+    return BookingListPageRequest(
+      actor: BookingListActor.company,
+      tenantId: (scopeQuery['tenant_id'] ?? '').trim(),
+      companyId: (scopeQuery['company_id'] ?? '').trim(),
+      historyMode: _companyBookingsHistoryMode,
+      cursor: cursor,
+      scopeQuery: scopeQuery,
+    );
+  }
+
+  void _onCompanyBookingsFilterSelected(_CompanyBookingsFilter filter) {
+    if (_filter == filter) return;
+    final previousMode = _companyBookingsHistoryMode;
+    setState(() => _filter = filter);
+    if (previousMode != _companyBookingsHistoryMode) {
+      unawaited(_loadBookings());
+    }
+  }
+
+  Future<void> _reloadBookingsAfterMutation() async {
+    final scopeQuery = _activeBookingScopeQuery();
+    bookingListPageRepository.invalidate(
+      tenantId: (scopeQuery['tenant_id'] ?? '').trim(),
+      companyId: (scopeQuery['company_id'] ?? '').trim(),
+      actor: BookingListActor.company,
+    );
+    await _loadBookings(forceRefresh: true);
+  }
+
+  Future<void> _loadMoreBookings() async {
+    if (!bookingListShowsLoadMore(
+      contract: _bookingPageContract,
+      hasMore: _bookingPageHasMore,
+      nextCursor: _bookingPageCursor,
+    )) {
+      return;
+    }
+    if (bookingListAllowsAutomaticDrain()) return;
+    await _loadBookings(cursor: _bookingPageCursor);
+  }
+
+  Future<void> _retryFailedCompanyBookingPage() async {
+    final cursor = (_failedBookingCursor ?? '').trim();
+    if (cursor.isEmpty) {
+      await _loadBookings(forceRefresh: true);
+      return;
+    }
+    await _loadBookings(cursor: cursor);
+  }
+
+  Future<void> _loadBookings({
+    bool forceRefresh = false,
+    String? cursor,
+  }) async {
     if (!mounted) return;
+    final isNextPage = (cursor ?? '').trim().isNotEmpty;
+    if (isNextPage && bookingListAllowsAutomaticDrain()) return;
+    final myGen = isNextPage
+        ? _bookingsLoadGeneration
+        : ++_bookingsLoadGeneration;
+    final request = _companyBookingPageRequest(cursor: cursor ?? '');
     setState(() {
-      _loading = true;
+      if (!isNextPage && _all.isEmpty) {
+        _loading = true;
+      }
+      if (isNextPage) {
+        _loadingMore = true;
+      }
       _errorCode = null;
+      _pageErrorCode = null;
     });
     try {
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        kListBookingsPath,
-        extraQuery: <String, String>{
-          'limit': '200',
-          'include_history': '1',
-          't': '${DateTime.now().millisecondsSinceEpoch}',
-        },
+      final page = await bookingListPageRepository.fetch(
+        request: request,
+        headers: _companyOwnerHeaders,
+        forceRefresh: forceRefresh && !isNextPage,
+        reason: isNextPage
+            ? BookingListPageReason.nextPage
+            : (forceRefresh
+                  ? BookingListPageReason.manualRefresh
+                  : BookingListPageReason.opportunistic),
       );
-      final res = await http
-          .get(uri, headers: await _companyOwnerHeaders())
-          .timeout(const Duration(seconds: 12));
-      dynamic decoded;
-      try {
-        decoded = jsonDecode(utf8.decode(res.bodyBytes));
-      } catch (_) {
-        decoded = null;
-      }
+      if (!mounted) return;
+      if (myGen != _bookingsLoadGeneration) return;
+      if (page.scopeKey != request.scopeKey) return;
+      if (page.scopeKey != _currentCompanyBookingScopeKey()) return;
 
-      if (res.statusCode != 200) {
-        final apiError = (decoded is Map<String, dynamic>)
-            ? (decoded['error']?.toString().trim() ?? '')
-            : '';
-        if (apiError.isNotEmpty) {
-          throw _CompanyBookingsLoadException(apiError);
-        }
-        throw _CompanyBookingsLoadException('http_${res.statusCode}');
-      }
-      if (decoded is! Map<String, dynamic>) {
-        throw _CompanyBookingsLoadException('invalid_payload');
-      }
-      if (decoded['ok'] != true) {
-        final apiError = (decoded['error']?.toString().trim() ?? '').isNotEmpty
-            ? decoded['error'].toString().trim()
-            : 'bookings_not_ok';
-        throw _CompanyBookingsLoadException(apiError);
-      }
       final scopeQuery = _activeBookingScopeQuery();
       final overlayTrips = await _fetchTrackingOverlayTrips(
         scopeQuery: scopeQuery,
@@ -2196,14 +2267,9 @@ class _CompanyBookingsOverviewPageState
         limit: 200,
       );
       final overlayMatcher = _TrackingPaymentOverlayMatcher(overlayTrips);
-      final rawItems = (decoded['items'] is List)
-          ? (decoded['items'] as List)
-          : const <dynamic>[];
       var overlayMatched = 0;
       var overlayPaid = 0;
-      final mappedItems = rawItems
-          .whereType<Map>()
-          .map((entry) => entry.cast<String, dynamic>())
+      final mappedItems = page.items
           .map((entry) => Map<String, dynamic>.from(entry))
           .toList(growable: false);
       for (final entry in mappedItems) {
@@ -2290,24 +2356,97 @@ class _CompanyBookingsOverviewPageState
         }
       }
       if (!mounted) return;
+      if (myGen != _bookingsLoadGeneration) return;
+      if (page.scopeKey != _currentCompanyBookingScopeKey()) return;
+      final replaceList =
+          !isNextPage &&
+          (forceRefresh || _all.isEmpty || !_bookingLoadedExtraPages);
       setState(() {
-        _all = parsed;
+        if (isNextPage) {
+          _all = _mergeCompanyBookingItems(_all, parsed);
+          _bookingLoadedExtraPages = true;
+          _bookingPageHasMore = page.hasMore;
+          _bookingPageCursor = page.nextCursor;
+        } else if (replaceList) {
+          _all = parsed;
+          _bookingLoadedExtraPages = false;
+          _bookingPageHasMore = page.hasMore;
+          _bookingPageCursor = page.nextCursor;
+        }
+        _bookingPageContract = page.contract;
+        _failedBookingCursor = null;
+        _loadedBookingScopeKey = page.scopeKey;
+        assert(_loadedBookingScopeKey == page.scopeKey);
         _loading = false;
+        _loadingMore = false;
       });
       unawaited(_refreshCreditAuthState());
+    } on BookingListPageException catch (e) {
+      if (!mounted) return;
+      if (myGen != _bookingsLoadGeneration) return;
+      setState(() {
+        if (_all.isEmpty) {
+          _errorCode = e.code;
+        } else {
+          _pageErrorCode = e.code;
+          _failedBookingCursor = isNextPage ? request.cursor : '';
+        }
+        _loading = false;
+        _loadingMore = false;
+      });
     } on _CompanyBookingsLoadException catch (e) {
       if (!mounted) return;
+      if (myGen != _bookingsLoadGeneration) return;
       setState(() {
-        _errorCode = e.code;
+        if (_all.isEmpty) {
+          _errorCode = e.code;
+        } else {
+          _pageErrorCode = e.code;
+          _failedBookingCursor = isNextPage ? request.cursor : '';
+        }
         _loading = false;
+        _loadingMore = false;
       });
     } catch (_) {
       if (!mounted) return;
+      if (myGen != _bookingsLoadGeneration) return;
       setState(() {
-        _errorCode = 'load_failed';
+        if (_all.isEmpty) {
+          _errorCode = 'load_failed';
+        } else {
+          _pageErrorCode = 'load_failed';
+          _failedBookingCursor = isNextPage ? request.cursor : '';
+        }
         _loading = false;
+        _loadingMore = false;
       });
     }
+  }
+
+  List<_CompanyBookingOverviewItem> _mergeCompanyBookingItems(
+    List<_CompanyBookingOverviewItem> previous,
+    List<_CompanyBookingOverviewItem> incoming,
+  ) {
+    final seen = <String>{};
+    final out = <_CompanyBookingOverviewItem>[];
+    for (final item in <_CompanyBookingOverviewItem>[
+      ...previous,
+      ...incoming,
+    ]) {
+      final key = item.legId.trim().isEmpty
+          ? item.bookingId.trim()
+          : '${item.bookingId.trim()}:${item.legId.trim()}';
+      if (key.isEmpty || !seen.add(key)) continue;
+      out.add(item);
+    }
+    return sortCompanyBookingsNewestCreatedFirst(
+      out,
+      (item) => CompanyBookingCreatedSortFields(
+        bookingId: item.bookingId,
+        createdAtIso: item.createdAtIso,
+        legId: item.legId,
+      ),
+    );
   }
 
   String _friendlyError(String? code) {
@@ -3844,7 +3983,7 @@ class _CompanyBookingsOverviewPageState
     return ChoiceChip(
       label: Text('$label (${_countText(filter)})'),
       selected: selected,
-      onSelected: (_) => setState(() => _filter = filter),
+      onSelected: (_) => _onCompanyBookingsFilterSelected(filter),
       selectedColor: tokens.chipSelectedBg,
       backgroundColor: tokens.chipUnselectedBg,
       side: BorderSide(
@@ -3875,7 +4014,7 @@ class _CompanyBookingsOverviewPageState
     return ChoiceChip(
       label: Text('$label (${_countText(filter)})'),
       selected: selected,
-      onSelected: (_) => setState(() => _filter = filter),
+      onSelected: (_) => _onCompanyBookingsFilterSelected(filter),
       selectedColor: tokens.chipSelectedBg,
       backgroundColor: tokens.chipUnselectedBg,
       side: BorderSide(
@@ -3931,7 +4070,7 @@ class _CompanyBookingsOverviewPageState
                       fr: 'Actualiser',
                       es: 'Actualizar',
                     ),
-                    onPressed: _loadBookings,
+                    onPressed: () => _loadBookings(forceRefresh: true),
                     icon: Icon(
                       Icons.refresh_rounded,
                       color: tokens.accent.withOpacity(0.96),
@@ -4231,7 +4370,7 @@ class _CompanyBookingsOverviewPageState
                         ),
                         const SizedBox(height: 10),
                         Expanded(
-                          child: _loading
+                          child: _loading && _all.isEmpty
                               ? Center(
                                   child: CircularProgressIndicator(
                                     valueColor: AlwaysStoppedAnimation<Color>(
@@ -4239,7 +4378,7 @@ class _CompanyBookingsOverviewPageState
                                     ),
                                   ),
                                 )
-                              : (_errorCode != null)
+                              : (_errorCode != null && _all.isEmpty)
                               ? Center(
                                   child: Container(
                                     width: double.infinity,
@@ -4264,7 +4403,8 @@ class _CompanyBookingsOverviewPageState
                                         ),
                                         const SizedBox(height: 10),
                                         OutlinedButton.icon(
-                                          onPressed: _loadBookings,
+                                          onPressed: () =>
+                                              _loadBookings(forceRefresh: true),
                                           style: OutlinedButton.styleFrom(
                                             foregroundColor: tokens.accent
                                                 .withOpacity(0.95),
@@ -4284,10 +4424,10 @@ class _CompanyBookingsOverviewPageState
                                           ),
                                           label: Text(
                                             _t(
-                                              nl: 'Opnieuw proberen',
-                                              en: 'Try again',
-                                              fr: 'Réessayer',
-                                              es: 'Intentar de nuevo',
+                                              nl: kBookingPageRetryPageLabel.nl,
+                                              en: kBookingPageRetryPageLabel.en,
+                                              fr: kBookingPageRetryPageLabel.fr,
+                                              es: kBookingPageRetryPageLabel.es,
                                             ),
                                           ),
                                         ),
@@ -4295,7 +4435,12 @@ class _CompanyBookingsOverviewPageState
                                     ),
                                   ),
                                 )
-                              : items.isEmpty
+                              : items.isEmpty &&
+                                    !bookingListShowsLoadMore(
+                                      contract: _bookingPageContract,
+                                      hasMore: _bookingPageHasMore,
+                                      nextCursor: _bookingPageCursor,
+                                    )
                               ? Center(
                                   child: Text(
                                     _t(
@@ -4311,14 +4456,66 @@ class _CompanyBookingsOverviewPageState
                                   ),
                                 )
                               : ListView.separated(
-                                  itemCount: items.length,
+                                  itemCount: items.length + 1,
                                   separatorBuilder: (_, __) =>
                                       const SizedBox(height: 8),
-                                  itemBuilder: (context, index) =>
-                                      _buildCompanyBookingPremiumCard(
-                                        items[index],
-                                        tokens,
-                                      ),
+                                  itemBuilder: (context, index) {
+                                    if (index >= items.length) {
+                                      return BookingListLoadMoreBar(
+                                        visible: bookingListShowsLoadMore(
+                                          contract: _bookingPageContract,
+                                          hasMore: _bookingPageHasMore,
+                                          nextCursor: _bookingPageCursor,
+                                        ),
+                                        loading: _loadingMore,
+                                        enabled: !_loadingMore,
+                                        label: _t(
+                                          nl: kBookingPageLoadMoreLabel.nl,
+                                          en: kBookingPageLoadMoreLabel.en,
+                                          fr: kBookingPageLoadMoreLabel.fr,
+                                          es: kBookingPageLoadMoreLabel.es,
+                                        ),
+                                        semanticsLabel: _t(
+                                          nl: kBookingPageLoadMoreSemantics.nl,
+                                          en: kBookingPageLoadMoreSemantics.en,
+                                          fr: kBookingPageLoadMoreSemantics.fr,
+                                          es: kBookingPageLoadMoreSemantics.es,
+                                        ),
+                                        onPressed: _loadMoreBookings,
+                                        errorText: _pageErrorCode == null
+                                            ? null
+                                            : _t(
+                                                nl: kBookingPageNextPageFailedLabel
+                                                    .nl,
+                                                en: kBookingPageNextPageFailedLabel
+                                                    .en,
+                                                fr: kBookingPageNextPageFailedLabel
+                                                    .fr,
+                                                es: kBookingPageNextPageFailedLabel
+                                                    .es,
+                                              ),
+                                        retryLabel: _t(
+                                          nl: kBookingPageRetryPageLabel.nl,
+                                          en: kBookingPageRetryPageLabel.en,
+                                          fr: kBookingPageRetryPageLabel.fr,
+                                          es: kBookingPageRetryPageLabel.es,
+                                        ),
+                                        retrySemanticsLabel: _t(
+                                          nl: kBookingPageRetryPageSemantics.nl,
+                                          en: kBookingPageRetryPageSemantics.en,
+                                          fr: kBookingPageRetryPageSemantics.fr,
+                                          es: kBookingPageRetryPageSemantics.es,
+                                        ),
+                                        onRetry: _retryFailedCompanyBookingPage,
+                                        accent: tokens.accent,
+                                        foreground: tokens.textPrimary,
+                                      );
+                                    }
+                                    return _buildCompanyBookingPremiumCard(
+                                      items[index],
+                                      tokens,
+                                    );
+                                  },
                                 ),
                         ),
                       ],

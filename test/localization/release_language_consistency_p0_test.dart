@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/main_parts/planned_ride_price_presentation.dart
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_l10n.dart';
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_service.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_labels.dart';
 
 void main() {
   tearDown(() => setAppLanguage(AppLanguage.en));
@@ -71,10 +72,7 @@ void main() {
     test('ES resolves known chrome without English fallback', () {
       setAppLanguage(AppLanguage.es);
       for (final en in englishLeaks) {
-        final resolved = resolveOfflineMapsUiText(
-          nl: 'NL_$en',
-          en: en,
-        );
+        final resolved = resolveOfflineMapsUiText(nl: 'NL_$en', en: en);
         expect(
           resolved,
           isNot(equals(en)),
@@ -103,15 +101,24 @@ void main() {
     test('FR resolves known chrome without English/Dutch leakage', () {
       setAppLanguage(AppLanguage.fr);
       expect(
-        resolveOfflineMapsUiText(nl: 'Offline kaarttegels', en: 'Offline map tiles'),
+        resolveOfflineMapsUiText(
+          nl: 'Offline kaarttegels',
+          en: 'Offline map tiles',
+        ),
         'Tuiles de carte hors ligne',
       );
       expect(
-        resolveOfflineMapsUiText(nl: 'Gedownloade kaarten', en: 'Downloaded maps'),
+        resolveOfflineMapsUiText(
+          nl: 'Gedownloade kaarten',
+          en: 'Downloaded maps',
+        ),
         isNot(contains('Downloaded')),
       );
       expect(
-        resolveOfflineMapsUiText(nl: 'Gedownloade kaarten', en: 'Downloaded maps'),
+        resolveOfflineMapsUiText(
+          nl: 'Gedownloade kaarten',
+          en: 'Downloaded maps',
+        ),
         isNot(contains('Gedownloade')),
       );
     });
@@ -119,12 +126,18 @@ void main() {
     test('NL and EN stay in their own language', () {
       setAppLanguage(AppLanguage.nl);
       expect(
-        resolveOfflineMapsUiText(nl: 'Offline kaarttegels', en: 'Offline map tiles'),
+        resolveOfflineMapsUiText(
+          nl: 'Offline kaarttegels',
+          en: 'Offline map tiles',
+        ),
         'Offline kaarttegels',
       );
       setAppLanguage(AppLanguage.en);
       expect(
-        resolveOfflineMapsUiText(nl: 'Offline kaarttegels', en: 'Offline map tiles'),
+        resolveOfflineMapsUiText(
+          nl: 'Offline kaarttegels',
+          en: 'Offline map tiles',
+        ),
         'Offline map tiles',
       );
     });
@@ -213,6 +226,16 @@ void main() {
         language: AppLanguage.nl,
       );
       expect(nl.tellersLabel, 'Tarief');
+    });
+  });
+
+  group('booking list pagination chrome', () {
+    test('Meer laden exists in NL/EN/FR/ES without Dutch leak', () {
+      expect(kBookingPageLoadMoreLabel.of(AppLanguage.nl), 'Meer laden');
+      expect(kBookingPageLoadMoreLabel.of(AppLanguage.en), 'Load more');
+      expect(kBookingPageLoadMoreLabel.of(AppLanguage.fr), 'Charger plus');
+      expect(kBookingPageLoadMoreLabel.of(AppLanguage.es), 'Cargar más');
+      expect(kBookingPageLoadMoreLabel.of(AppLanguage.es), isNot('Meer laden'));
     });
   });
 

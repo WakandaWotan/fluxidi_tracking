@@ -440,6 +440,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   static const Duration _statusRefreshCooldown = Duration(seconds: 8);
   int _activeBookingRefreshTimerCount = 0;
   String? _businessPreviewDriverId;
+  bool _loadingMoreBookings = false;
+  String? _driverBookingPageCursor;
+  bool _driverBookingPageHasMore = false;
+  bool _driverLoadedExtraPages = false;
+  BookingListContractKind _driverBookingPageContract =
+      BookingListContractKind.legacy;
+  String? _driverPageError;
+  String? _driverFailedCursor;
 
   // Boot splash (logo on dark background + loader)
   bool _bootSplashVisible = true;
@@ -4070,7 +4078,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (force) {
       debugPrint('[DRIVER_RIDES][FORCE_REFRESH] trigger=$trigger');
     }
-    final task = _performRefreshBookings(trigger: trigger);
+    final task = _performRefreshBookings(
+      trigger: trigger,
+      nextPage: trigger == 'next_page',
+    );
     _bookingsRefreshInFlight = task;
     try {
       await task;
@@ -4091,17 +4102,68 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<void> _performRefreshBookings({required String trigger}) async {
+  bool _bookingRefreshShouldBypassCache(String trigger) {
+    switch (trigger) {
+      case 'list_manual':
+      case 'drawer_manual':
+      case 'status_change':
+      case 'delete_action':
+      case 'calculator_created':
+      case 'leg_status_change':
+      case 'street_stop_retry':
+      case 'street_reopen_retry':
+      case 'street_recovery_finalize_ok':
+        return true;
+      default:
+        return trigger.startsWith('street_');
+    }
+  }
+
+  Future<void> _loadNextDriverBookingPage() async {
+    if (!bookingListShowsLoadMore(
+      contract: _driverBookingPageContract,
+      hasMore: _driverBookingPageHasMore,
+      nextCursor: _driverBookingPageCursor,
+    )) {
+      return;
+    }
+    if (bookingListAllowsAutomaticDrain()) return;
+    await _refreshBookings(force: true, trigger: 'next_page');
+  }
+
+  Future<void> _retryFailedDriverBookingPage() async {
+    final cursor = (_driverFailedCursor ?? '').trim();
+    if (cursor.isEmpty) {
+      await _refreshBookings(force: true, trigger: 'list_manual');
+      return;
+    }
+    _driverBookingPageCursor = cursor;
+    await _refreshBookings(force: true, trigger: 'next_page');
+  }
+
+  Future<void> _performRefreshBookings({
+    required String trigger,
+    bool nextPage = false,
+  }) async {
     if (!mounted) return;
-    final mySeq = ++_driverBookingsRefreshSeq;
+    if (nextPage && bookingListAllowsAutomaticDrain()) return;
+    final mySeq = nextPage
+        ? _driverBookingsRefreshSeq
+        : ++_driverBookingsRefreshSeq;
     setState(() {
-      _loadingBookings = true;
-      _bookingsError = null;
+      if (nextPage) {
+        _loadingMoreBookings = true;
+        _driverPageError = null;
+      } else if (_bookings.isEmpty) {
+        _loadingBookings = true;
+        _bookingsError = null;
+      } else {
+        _bookingsError = null;
+      }
     });
     _markBookingsUiDirty();
 
     try {
-      final ts = DateTime.now().millisecondsSinceEpoch;
       final activeDriverSession = activeDriverSessionNotifier.value;
       final driverSessionToken = (activeDriverSession?.driverSessionToken ?? '')
           .trim();
@@ -4138,6 +4200,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (!mounted) return;
           setState(() {
             _loadingBookings = false;
+            _loadingMoreBookings = false;
           });
           _markBookingsUiDirty();
           return;
@@ -4193,19 +4256,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         debugPrint(
           '[DRIVER_RIDES][REQ_SCOPE] tenant=${_safeRefPreview(scopeTenantId)} company=${_safeRefPreview(scopeCompanyId)} driver=${_safeRefPreview(scopeDriverId)} vehicle=${_safeRefPreview(scopeVehicleId)} employee=${_safeRefPreview(scopeEmployeeNumber)}',
         );
-        primaryUri = Uri.parse('$kBookingBaseUrl$kDriverBookingsPath').replace(
-          queryParameters: <String, String>{
-            ...scopeQuery,
-            'limit': '50',
-            't': '$ts',
-          },
-        );
+        primaryUri = Uri.parse('$kBookingBaseUrl$kDriverBookingsPath');
         requestHeaders = <String, String>{
           'Accept': 'application/json',
           'Authorization': 'Bearer $driverSessionToken',
         };
         debugPrint('[RIDES][REFRESH][MODE] source=driver_bookings');
-        debugPrint('[DRIVER_RIDES][REQ_URL] $primaryUri');
+        debugPrint('[DRIVER_RIDES][REQ_PATH] ${primaryUri.path}');
       } else if (_shouldBlockCompanyBookingsListRefreshInDriverContext(
         bookingsHubVisible: _bookingsHubVisible,
         driverUiContext: inDriverUiContext,
@@ -4222,15 +4279,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (!mounted) return;
         setState(() {
           _loadingBookings = false;
+          _loadingMoreBookings = false;
         });
         _markBookingsUiDirty();
         return;
       } else {
-        primaryUri = _withActiveBookingScope(
-          kBookingBaseUrl,
-          kListBookingsPath,
-          extraQuery: <String, String>{'limit': '50', 't': '$ts'},
-        );
+        primaryUri = Uri.parse('$kBookingBaseUrl$kListBookingsPath');
         if (businessPreviewMode) {
           requestHeaders = await _companyOwnerHeaders();
           debugPrint(
@@ -4241,56 +4295,129 @@ class _DriverHomePageState extends State<DriverHomePage>
           debugPrint('[RIDES][REFRESH][MODE] source=company_bookings');
         }
       }
-      debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger GET $primaryUri');
-      final res = await http.get(primaryUri, headers: requestHeaders);
-      debugPrint(
-        '[RIDES][REFRESH][RES] code=${res.statusCode} body=${res.body}',
+      final scopeQuery = _activeBookingScopeQuery();
+      final listTenantId = useDriverEndpoint
+          ? (activeDriverSession?.tenantId ?? '').trim()
+          : (scopeQuery['tenant_id'] ?? '').trim();
+      final listCompanyId = useDriverEndpoint
+          ? (activeDriverSession?.companyId ?? '').trim()
+          : (scopeQuery['company_id'] ?? '').trim();
+      final listDriverId = useDriverEndpoint
+          ? (effectiveDriverId.isNotEmpty
+                ? effectiveDriverId
+                : (activeDriverSession?.driverId ?? '').trim())
+          : '';
+      final listScopeQuery = useDriverEndpoint
+          ? <String, String>{
+              if (listTenantId.isNotEmpty) ...<String, String>{
+                'tenant_id': listTenantId,
+                'tenantId': listTenantId,
+              },
+              if (listCompanyId.isNotEmpty) ...<String, String>{
+                'company_id': listCompanyId,
+                'companyId': listCompanyId,
+              },
+              if (listDriverId.isNotEmpty) ...<String, String>{
+                'driver_id': listDriverId,
+                'driverId': listDriverId,
+              },
+            }
+          : scopeQuery;
+      if (useDriverEndpoint) {
+        final scopeVehicleId = _effectiveActiveVehicleIdForRideScope();
+        final scopeEmployeeNumber = (activeDriverSession?.employeeNumber ?? '')
+            .trim();
+        if (scopeVehicleId.isNotEmpty) {
+          listScopeQuery['vehicle_id'] = scopeVehicleId;
+          listScopeQuery['vehicleId'] = scopeVehicleId;
+        }
+        if (scopeEmployeeNumber.isNotEmpty) {
+          listScopeQuery['employee_number'] = scopeEmployeeNumber;
+          listScopeQuery['employeeNumber'] = scopeEmployeeNumber;
+        }
+      }
+      if (_bookingRefreshShouldBypassCache(trigger) && !nextPage) {
+        bookingListPageRepository.invalidate(
+          tenantId: listTenantId,
+          companyId: listCompanyId,
+          driverId: listDriverId,
+          actor: useDriverEndpoint
+              ? BookingListActor.driver
+              : BookingListActor.company,
+        );
+      }
+      final listRequest = BookingListPageRequest(
+        actor: useDriverEndpoint
+            ? BookingListActor.driver
+            : BookingListActor.company,
+        tenantId: listTenantId,
+        companyId: listCompanyId,
+        driverId: listDriverId,
+        historyMode: BookingListHistoryMode.active,
+        cursor: nextPage ? (_driverBookingPageCursor ?? '') : '',
+        scopeQuery: listScopeQuery,
+        filterFingerprint: useDriverEndpoint
+            ? 'driver_active'
+            : 'company_active',
       );
-
-      if (useDriverEndpoint && res.statusCode == 401) {
-        debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
-        if (businessPreviewMode) {
-          debugPrint(
-            '[DRIVER_VIEW_ORIGIN][INVALID_SESSION_BLOCKED] source=business_preview',
-          );
+      debugPrint('[RIDES][REFRESH][REQ] trigger=$trigger');
+      late final BookingListPageResult bookingPage;
+      try {
+        bookingPage = await bookingListPageRepository.fetch(
+          request: listRequest,
+          headers: () async => requestHeaders,
+          forceRefresh:
+              !nextPage &&
+              (_bookingRefreshShouldBypassCache(trigger) ||
+                  trigger == 'list_manual' ||
+                  trigger == 'drawer_manual'),
+          reason: nextPage
+              ? BookingListPageReason.nextPage
+              : (_bookingRefreshShouldBypassCache(trigger)
+                    ? BookingListPageReason.manualRefresh
+                    : BookingListPageReason.opportunistic),
+        );
+      } on BookingListPageException catch (e) {
+        if (useDriverEndpoint && e.code == 'http_401') {
+          debugPrint('[RIDES][REFRESH][AUTH_EXPIRED]');
+          if (businessPreviewMode) {
+            debugPrint(
+              '[DRIVER_VIEW_ORIGIN][INVALID_SESSION_BLOCKED] source=business_preview',
+            );
+            if (!mounted) return;
+            setState(() {
+              _loadingBookings = false;
+              _loadingMoreBookings = false;
+            });
+            _markBookingsUiDirty();
+            return;
+          }
+          _stopBookingPolling(reason: 'driver_token_auth_expired');
           if (!mounted) return;
           setState(() {
+            _bookingsError = _tr(
+              nl: 'Je chauffeurssessie is verlopen. Log opnieuw in.',
+              en: 'Your driver session expired. Please log in again.',
+              fr: 'Votre session chauffeur a expire. Reconnectez-vous.',
+              es: 'Tu sesion de conductor ha caducado. Inicia sesion de nuevo.',
+            );
             _loadingBookings = false;
+            _loadingMoreBookings = false;
           });
           _markBookingsUiDirty();
           return;
         }
-        _stopBookingPolling(reason: 'driver_token_auth_expired');
-        if (!mounted) return;
-        setState(() {
-          _bookingsError = _tr(
-            nl: 'Je chauffeurssessie is verlopen. Log opnieuw in.',
-            en: 'Your driver session expired. Please log in again.',
-            fr: 'Votre session chauffeur a expire. Reconnectez-vous.',
-            es: 'Tu sesion de conductor ha caducado. Inicia sesion de nuevo.',
-          );
-          _loadingBookings = false;
-        });
-        _markBookingsUiDirty();
+        rethrow;
+      }
+      if (bookingPage.scopeKey != listRequest.scopeKey) {
+        debugPrint('[RIDES][REFRESH][STALE_IGNORED] reason=scope_mismatch');
         return;
-      }
-
-      if (res.statusCode != 200) {
-        throw Exception('HTTP ${res.statusCode}: ${res.body}');
-      }
-
-      final decoded = jsonDecode(res.body);
-      if (decoded is! Map<String, dynamic>) {
-        throw Exception('Invalid response');
       }
 
       // Worker variants:
       // - tracking-api V2: { ok, count, bookings:[...] }
       // - booking-worker tracking bridge: { ok, items:[...] }
-      final raw =
-          (decoded['bookings'] as List<dynamic>? ??
-          decoded['items'] as List<dynamic>? ??
-          const []);
+      final raw = bookingPage.items;
       final prevStatusByRowKey = <String, String?>{
         for (final b in _bookings) b.rowKey: _effectiveStatusFor(b),
       };
@@ -4350,7 +4477,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // driver endpoint, only when the response is empty, and only for rows
       // that are not contradicted by an explicit terminal update in the same
       // response (vacuous here because items is empty).
-      if (useDriverEndpoint && items.isEmpty) {
+      if (useDriverEndpoint && items.isEmpty && !nextPage) {
         final preservedAvailable = _bookings
             .where(_bookingItemIsBackendAvailableUnassigned)
             .toList(growable: false);
@@ -4369,6 +4496,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             if (!mounted) return;
             setState(() {
               _loadingBookings = false;
+              _loadingMoreBookings = false;
             });
             _markBookingsUiDirty();
             return;
@@ -4411,9 +4539,33 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
 
       if (!mounted) return;
+      final replaceList =
+          !nextPage &&
+          (_bookingRefreshShouldBypassCache(trigger) ||
+              _bookings.isEmpty ||
+              !_driverLoadedExtraPages);
       setState(() {
-        _bookings = items;
+        if (nextPage) {
+          final seen = <String>{for (final b in _bookings) b.rowKey};
+          final appended = <BookingItem>[
+            ..._bookings,
+            ...items.where((b) => seen.add(b.rowKey)),
+          ];
+          _bookings = appended;
+          _driverLoadedExtraPages = true;
+          _driverBookingPageHasMore = bookingPage.hasMore;
+          _driverBookingPageCursor = bookingPage.nextCursor;
+        } else if (replaceList) {
+          _bookings = items;
+          _driverLoadedExtraPages = false;
+          _driverBookingPageHasMore = bookingPage.hasMore;
+          _driverBookingPageCursor = bookingPage.nextCursor;
+        }
+        _driverBookingPageContract = bookingPage.contract;
+        _driverFailedCursor = null;
+        _driverPageError = null;
         _loadingBookings = false;
+        _loadingMoreBookings = false;
       });
       _markBookingsUiDirty();
       _syncDriverRideScopeContext(reason: 'refresh_complete');
@@ -4428,8 +4580,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
       setState(() {
-        _bookingsError = e.toString();
+        if (nextPage && _bookings.isNotEmpty) {
+          _driverPageError = e.toString();
+          _driverFailedCursor = _driverBookingPageCursor;
+        } else if (_bookings.isEmpty) {
+          _bookingsError = e.toString();
+        } else {
+          _driverPageError = e.toString();
+        }
         _loadingBookings = false;
+        _loadingMoreBookings = false;
       });
       _markBookingsUiDirty();
     } finally {
@@ -35963,7 +36123,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
         const SizedBox(height: 10),
-        if (_loadingBookings)
+        if (_loadingBookings && _bookings.isEmpty)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 18),
@@ -36033,7 +36193,12 @@ class _DriverHomePageState extends State<DriverHomePage>
               ],
             ),
           )
-        else if (visibleBookings.isEmpty)
+        else if (visibleBookings.isEmpty &&
+            !bookingListShowsLoadMore(
+              contract: _driverBookingPageContract,
+              hasMore: _driverBookingPageHasMore,
+              nextCursor: _driverBookingPageCursor,
+            ))
           Column(
             children: [
               Container(
@@ -36114,9 +36279,56 @@ class _DriverHomePageState extends State<DriverHomePage>
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).padding.bottom + 12,
               ),
-              itemCount: visibleBookings.length,
+              itemCount: visibleBookings.length + 1,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (context, i) {
+                if (i >= visibleBookings.length) {
+                  return BookingListLoadMoreBar(
+                    visible: bookingListShowsLoadMore(
+                      contract: _driverBookingPageContract,
+                      hasMore: _driverBookingPageHasMore,
+                      nextCursor: _driverBookingPageCursor,
+                    ),
+                    loading: _loadingMoreBookings,
+                    enabled: !_loadingMoreBookings,
+                    label: _tr(
+                      nl: kBookingPageLoadMoreLabel.nl,
+                      en: kBookingPageLoadMoreLabel.en,
+                      fr: kBookingPageLoadMoreLabel.fr,
+                      es: kBookingPageLoadMoreLabel.es,
+                    ),
+                    semanticsLabel: _tr(
+                      nl: kBookingPageLoadMoreSemantics.nl,
+                      en: kBookingPageLoadMoreSemantics.en,
+                      fr: kBookingPageLoadMoreSemantics.fr,
+                      es: kBookingPageLoadMoreSemantics.es,
+                    ),
+                    onPressed: _loadNextDriverBookingPage,
+                    errorText: (_driverPageError ?? '').trim().isEmpty
+                        ? null
+                        : _tr(
+                            nl: kBookingPageNextPageFailedLabel.nl,
+                            en: kBookingPageNextPageFailedLabel.en,
+                            fr: kBookingPageNextPageFailedLabel.fr,
+                            es: kBookingPageNextPageFailedLabel.es,
+                          ),
+                    retryLabel: _tr(
+                      nl: kBookingPageRetryPageLabel.nl,
+                      en: kBookingPageRetryPageLabel.en,
+                      fr: kBookingPageRetryPageLabel.fr,
+                      es: kBookingPageRetryPageLabel.es,
+                    ),
+                    retrySemanticsLabel: _tr(
+                      nl: kBookingPageRetryPageSemantics.nl,
+                      en: kBookingPageRetryPageSemantics.en,
+                      fr: kBookingPageRetryPageSemantics.fr,
+                      es: kBookingPageRetryPageSemantics.es,
+                    ),
+                    onRetry: _retryFailedDriverBookingPage,
+                    accent: spinnerColor,
+                    foreground: textPrimary,
+                  );
+                }
                 final booking = visibleBookings[i];
                 if (_ridesHubSegment == _DriverRidesHubSegment.available) {
                   return _buildAvailableUnassignedBookingCard(booking);

@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business/business_dashboard_kpi_loading.dart';
 import 'package:fluxidi_tracking/company/company_subscription_profile_repository.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 
 /// Values persisted in [CompanyProfile.verificationStatus] (JSON string).
 ///
@@ -1690,6 +1691,7 @@ class CompanySessionStore {
     businessDashboardKpiCache.clearAll();
     businessDashboardKpiRefreshCoordinator.invalidateAll();
     companySubscriptionProfileRepository.invalidateAll();
+    bookingListPageRepository.invalidateAll();
   }
 }
 

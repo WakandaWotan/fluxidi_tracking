@@ -121,6 +121,10 @@ import 'package:fluxidi_tracking/document_core/document_preflight.dart';
 import 'package:fluxidi_tracking/company/booking_documents_leg_filter.dart';
 import 'package:fluxidi_tracking/company/booking_peppol_readiness.dart';
 import 'package:fluxidi_tracking/company/company_booking_created_sort.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_http.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_labels.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
+import 'package:fluxidi_tracking/widgets/booking_list_load_more_bar.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/company_onboarding_page.dart';
 import 'package:fluxidi_tracking/chiron_compliance_dashboard_page.dart';
@@ -2186,6 +2190,7 @@ Future<void> _prewarmLocalRideAssignmentForEntry(
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  bindBookingListPageHttpTransport();
   assertFluxidiBookingEndpointGuards();
   _registerComplianceRegisterReceiptBridge();
   registerLocalRideAssignmentPrewarmHandler(
