@@ -82,7 +82,9 @@ class _BillitExportMetadata {
   factory _BillitExportMetadata.fromJson(Map<String, dynamic> json) {
     String readAny(List<String> keys) {
       for (final key in keys) {
-        final text = (json[key] ?? '').toString().trim();
+        final raw = json[key];
+        if (raw == null || raw is Map || raw is List) continue;
+        final text = raw.toString().trim();
         if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
       }
       return '';
@@ -250,7 +252,9 @@ class _BookingDocumentMetadata {
   factory _BookingDocumentMetadata.fromJson(Map<String, dynamic> json) {
     String readAny(List<String> keys) {
       for (final key in keys) {
-        final text = (json[key] ?? '').toString().trim();
+        final raw = json[key];
+        if (raw == null || raw is Map || raw is List) continue;
+        final text = raw.toString().trim();
         if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
       }
       return '';
@@ -275,7 +279,9 @@ class _BookingDocumentMetadata {
       final sourceMap = rawSource.map((k, v) => MapEntry(k.toString(), v));
       String readFromMap(List<String> keys) {
         for (final key in keys) {
-          final text = (sourceMap[key] ?? '').toString().trim();
+          final raw = sourceMap[key];
+          if (raw == null || raw is Map || raw is List) continue;
+          final text = raw.toString().trim();
           if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
         }
         return '';
@@ -722,10 +728,16 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       _expanded = true;
       _error = false;
     });
-    _loadDocuments(forceRefresh: true);
+    _loadDocuments(
+      forceRefresh: true,
+      reason: BookingDocumentsPageReason.mutation,
+    );
   }
 
-  Future<void> _loadDocuments({bool forceRefresh = false}) async {
+  Future<void> _loadDocuments({
+    bool forceRefresh = false,
+    BookingDocumentsPageReason? reason,
+  }) async {
     if (_loading) return;
     if (bookingDocumentsFetchOnListMount() && !_expanded) return;
     final requestScopeKey = _documentsScopeKey;
@@ -739,15 +751,24 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         request: request,
         headers: () async => (await resolveCompanyOwnerAuthHeaders()).headers,
         forceRefresh: forceRefresh,
-        reason: forceRefresh
-            ? BookingDocumentsPageReason.mutation
-            : BookingDocumentsPageReason.expand,
+        reason:
+            reason ??
+            (forceRefresh
+                ? BookingDocumentsPageReason.retry
+                : BookingDocumentsPageReason.expand),
       );
       if (!mounted || requestScopeKey != _activeScopeKey) return;
-      final parsed = <_BookingDocumentMetadata>[
-        for (final entry in result.documents)
-          _BookingDocumentMetadata.fromJson(entry),
-      ];
+      final parsed = <_BookingDocumentMetadata>[];
+      for (final entry in result.documents) {
+        try {
+          parsed.add(_BookingDocumentMetadata.fromJson(entry));
+        } catch (error) {
+          logBookingDocumentsFailure(
+            stage: 'row_materialization',
+            error: error,
+          );
+        }
+      }
       setState(() {
         _documents = parsed;
         _activePayableCount = result.activePayableCount;
@@ -756,13 +777,31 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         _loading = false;
         _error = false;
       });
-      _kickPeppolReadinessFetches(parsed, requestScopeKey);
-    } catch (_) {
+      try {
+        _kickPeppolReadinessFetches(parsed, requestScopeKey);
+      } catch (error) {
+        logBookingDocumentsFailure(stage: 'presentation', error: error);
+      }
+    } catch (error) {
+      logBookingDocumentsFailure(
+        stage:
+            error is BookingDocumentsPageException &&
+                (error.code.startsWith('http_') ||
+                    error.code == 'transport_unbound')
+            ? 'transport'
+            : 'envelope',
+        error: error,
+      );
       if (!mounted || requestScopeKey != _activeScopeKey) return;
+      final retained = bookingDocumentsUiAfterFailedRefresh(
+        existingDocuments: _documents,
+        wasLoaded: _loaded,
+      );
       setState(() {
-        _error = true;
-        _loading = false;
-        _loaded = _documents.isNotEmpty || _loaded;
+        _documents = retained.documents;
+        _error = retained.error;
+        _loading = retained.loading;
+        _loaded = retained.loaded;
       });
     }
   }
@@ -1577,7 +1616,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             es: 'El envío Peppol se está confirmando. Actualice el estado de Billit.',
           ),
         );
-        _loadDocuments(forceRefresh: true);
+        _loadDocuments(
+          forceRefresh: true,
+          reason: BookingDocumentsPageReason.mutation,
+        );
         return;
       }
 
@@ -1591,7 +1633,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             es: 'Factura enviada por Peppol.',
           ),
         );
-        _loadDocuments(forceRefresh: true);
+        _loadDocuments(
+          forceRefresh: true,
+          reason: BookingDocumentsPageReason.mutation,
+        );
         return;
       }
 
@@ -1684,7 +1729,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                   es: 'Factura registrada en Billit.',
                 ),
         );
-        _loadDocuments(forceRefresh: true);
+        _loadDocuments(
+          forceRefresh: true,
+          reason: BookingDocumentsPageReason.mutation,
+        );
         return;
       }
 
@@ -1780,12 +1828,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           es: 'Venta particular',
         );
       case 'invoiceNeutral':
-        return _tr(
-          nl: 'Factuur',
-          en: 'Invoice',
-          fr: 'Facture',
-          es: 'Factura',
-        );
+        return _tr(nl: 'Factuur', en: 'Invoice', fr: 'Facture', es: 'Factura');
       case 'invoice':
         return _tr(
           nl: 'Zakelijke factuur',
@@ -2047,7 +2090,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               ),
             ),
             TextButton(
-              onPressed: _loading ? null : _loadDocuments,
+              onPressed: _loading
+                  ? null
+                  : () => _loadDocuments(forceRefresh: true),
               style: TextButton.styleFrom(
                 foregroundColor: tokens.accent,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2466,7 +2511,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     // A local non-null binding lets Dart promote it inside the children below.
     final _BookingDocumentMetadata? registerDoc =
         (doc != null && doc.documentId.trim().isNotEmpty) ? doc : null;
-    final registering = registerDoc != null &&
+    final registering =
+        registerDoc != null &&
         _registeringBillitDocIds.contains(registerDoc.documentId.trim());
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -2488,8 +2534,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed:
-                    registering ? null : () => _registerBillitOrder(registerDoc),
+                onPressed: registering
+                    ? null
+                    : () => _registerBillitOrder(registerDoc),
                 icon: registering
                     ? const SizedBox(
                         width: 14,
