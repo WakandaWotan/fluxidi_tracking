@@ -64,6 +64,7 @@ test("one private ride yields one active consumer-sale revenue identity", () => 
   assert.notEqual(projected.presentation_label_key, "invoice");
   const list = projectIssuedDocumentsListEnvelope([projected]);
   assert.equal(list.active_payable_count, 1);
+  assert.equal(list.review_required, false);
   assert.equal(list.documents.length, 1);
 });
 
@@ -129,6 +130,7 @@ test("explicit business conversion cannot double-count active revenue", () => {
   const list = projectIssuedDocumentsListEnvelope([consumer, credit, business]);
   assert.equal(list.documents.length, 3);
   assert.equal(list.active_payable_count, 1);
+  assert.equal(list.review_required, false);
   assert.equal(consumer.active_payable_revenue, false);
   assert.equal(credit.active_payable_revenue, false);
   assert.equal(business.active_payable_revenue, true);
@@ -200,4 +202,19 @@ test("bare invoice without business evidence stays fiscally unspecified", () => 
   assert.equal(derived.presentation_label_key, "invoiceNeutral");
   assert.equal(derived.explicit_business_invoice, false);
   assert.equal(derived.peppol_applicable, null);
+});
+
+test("two active payable identities require review", () => {
+  const consumer = buildIssuedDocumentPublicMetadata({
+    document_id: "doc_a",
+    document_type: "invoice",
+    fluxidi_sale_kind: "consumer_sale",
+  });
+  const unlabeled = buildIssuedDocumentPublicMetadata({
+    document_id: "doc_b",
+    document_type: "invoice",
+  });
+  const list = projectIssuedDocumentsListEnvelope([consumer, unlabeled]);
+  assert.equal(list.active_payable_count, 2);
+  assert.equal(list.review_required, true);
 });

@@ -53,13 +53,35 @@ export function isStreetDirectBookingRecord(rec) {
   return source === "street_ride" || rideType === "direct" || id.startsWith("street_");
 }
 
-export function isBookingCompletedForConsumerSale(rec) {
+export function isBookingCompletedForConsumerSale(rec, opts = {}) {
   const record = _asObject(rec);
   const status = _lower(
     record.status ?? record.booking_status ?? record.booking?.status,
     40,
   );
-  return status === "completed" || status === "complete";
+  if (status === "completed" || status === "complete") return true;
+  const wantLeg = _str(opts?.sourceLegId ?? opts?.source_leg_id, 200);
+  if (!wantLeg) return false;
+  const lists = [
+    record.operational_legs,
+    record.operationalLegs,
+    record.booking?.operational_legs,
+    record.booking?.operationalLegs,
+  ];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const leg of list) {
+      if (!leg || typeof leg !== "object" || Array.isArray(leg)) continue;
+      const id = _str(leg.leg_id ?? leg.legId, 200);
+      if (id !== wantLeg) continue;
+      const legStatus = _lower(
+        leg.status ?? leg.lifecycle_status ?? leg.lifecycleStatus,
+        40,
+      );
+      if (legStatus === "completed" || legStatus === "complete") return true;
+    }
+  }
+  return false;
 }
 
 export function hasBusinessInvoiceIntent(rec) {
@@ -125,11 +147,46 @@ export function canIssueBusinessInvoiceFromRecord(rec) {
   return hasBusinessInvoiceIntent(rec) && hasMeaningfulBusinessBillingCustomer(rec);
 }
 
-export function isConsumerSaleEligibleRecord(rec) {
+/**
+ * PLANNED-PAYMENT-DOCUMENT-REPAIR-P0
+ * Soft invoice_intent / business_detected must not own paid lifecycle.
+ * Only an issuable business invoice (intent + billing customer) may mint
+ * inv-auto. Ordinary planned/street consumer rides stay on inv-consumer.
+ */
+export function resolvePaidLifecycleFiscalOwner(rec) {
+  if (!rec || typeof rec !== "object") {
+    return { owner: "none", reason: "booking_not_found" };
+  }
+  if (canIssueBusinessInvoiceFromRecord(rec)) {
+    return { owner: "business_invoice", reason: "explicit_business_invoice" };
+  }
+  return { owner: "consumer_sale", reason: "consumer_sale_owns_revenue" };
+}
+
+export function resolveBusinessInvoiceIssueGuard({
+  canIssueBusinessInvoice = false,
+  existingConsumerDocumentId = "",
+  consumerIntentInFlight = false,
+  explicitBusinessRequest = false,
+} = {}) {
+  const consumerId = _str(existingConsumerDocumentId, 200);
+  if (consumerId && explicitBusinessRequest !== true) {
+    return { action: "reuse_consumer", reason: "consumer_sale_owns_revenue" };
+  }
+  if (consumerIntentInFlight === true && explicitBusinessRequest !== true) {
+    return { action: "wait", reason: "consumer_sale_intent_in_progress" };
+  }
+  if (canIssueBusinessInvoice !== true) {
+    return { action: "none", reason: "not_business_invoice_intent" };
+  }
+  return { action: "create", reason: "explicit_business_invoice" };
+}
+
+export function isConsumerSaleEligibleRecord(rec, opts = {}) {
   if (!rec || typeof rec !== "object") return false;
   // Only a real, issuable business invoice owns the revenue document.
   if (canIssueBusinessInvoiceFromRecord(rec)) return false;
-  if (!isBookingCompletedForConsumerSale(rec)) return false;
+  if (!isBookingCompletedForConsumerSale(rec, opts)) return false;
   return true;
 }
 

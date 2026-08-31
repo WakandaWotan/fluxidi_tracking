@@ -128,6 +128,120 @@ export function resolveStreetCheckoutAuthoritativeAmount(rec, clientAmountRaw = 
   };
 }
 
+function _plannedPriceInclVat(rec) {
+  const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const quote =
+    (rec?.quote && typeof rec.quote === "object" && rec.quote) ||
+    (booking.quote && typeof booking.quote === "object" && booking.quote) ||
+    {};
+  const pricing = quote.pricing && typeof quote.pricing === "object" ? quote.pricing : {};
+  const pricingMain =
+    quote.pricing_main && typeof quote.pricing_main === "object"
+      ? quote.pricing_main
+      : quote.pricingMain && typeof quote.pricingMain === "object"
+        ? quote.pricingMain
+        : {};
+  return (
+    rec?.price_incl_vat ??
+    rec?.priceInclVat ??
+    booking.price_incl_vat ??
+    booking.priceInclVat ??
+    rec?.leg_price_incl_vat ??
+    rec?.legPriceInclVat ??
+    pricing.price_incl_vat ??
+    pricing.priceInclVat ??
+    pricingMain.price_incl_vat ??
+    pricingMain.priceInclVat ??
+    null
+  );
+}
+
+export function isPlannedConsumerCheckoutRecord(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const rideType = _lower(rec.ride_type ?? rec.booking?.ride_type ?? rec.kind);
+  const source = _lower(
+    rec.source ??
+      rec.booking_source ??
+      rec.bookingSource ??
+      rec.booking?.source ??
+      rec.booking?.booking_source,
+  );
+  const id = _lower(rec.booking_id ?? rec.bookingId ?? rec.public_id ?? rec.publicId);
+  const ref = _lower(
+    rec.booking_public_id ?? rec.bookingPublicId ?? rec.reference ?? rec.booking_reference,
+  );
+  if (rideType === "direct" || source === "street_ride" || id.startsWith("street_")) {
+    return false;
+  }
+  return (
+    rideType === "planned" ||
+    source === "planned" ||
+    source === "customer_app" ||
+    id.startsWith("pln-") ||
+    ref.startsWith("pln-")
+  );
+}
+
+export function resolvePlannedCheckoutAuthoritativeAmount(rec, clientAmountRaw = undefined) {
+  if (!rec || typeof rec !== "object") {
+    return { ok: false, error: "planned_fare_unavailable" };
+  }
+  const amount = _parsePositiveEur(_plannedPriceInclVat(rec));
+  if (amount == null) {
+    return { ok: false, error: "planned_fare_unavailable" };
+  }
+  const booking = rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const currency =
+    _safeStr(rec.currency ?? booking.currency ?? "EUR", 8).toUpperCase() || "EUR";
+  if (currency !== "EUR") {
+    return { ok: false, error: "street_currency_unsupported", currency };
+  }
+  const amountCents = Math.round(amount * 100);
+  if (!(amountCents > 0)) {
+    return { ok: false, error: "planned_fare_unavailable" };
+  }
+  if (
+    clientAmountRaw !== undefined &&
+    clientAmountRaw !== null &&
+    String(clientAmountRaw).trim() !== ""
+  ) {
+    const clientAmount = _parsePositiveEur(clientAmountRaw);
+    if (clientAmount == null) {
+      return { ok: false, error: "client_amount_rejected" };
+    }
+    const clientCents = Math.round(clientAmount * 100);
+    if (clientCents !== amountCents) {
+      return {
+        ok: false,
+        error: "client_amount_mismatch",
+        canonical_amount: amount,
+        canonical_amount_cents: amountCents,
+      };
+    }
+  }
+  return {
+    ok: true,
+    amount,
+    amount_cents: amountCents,
+    amount_value: amount.toFixed(2),
+    currency: "EUR",
+  };
+}
+
+export function resolveInVehicleCheckoutAuthoritativeAmount(
+  rec,
+  clientAmountRaw = undefined,
+  { isStreetDirect = false, isPlannedConsumer = false } = {},
+) {
+  if (isStreetDirect === true) {
+    return resolveStreetCheckoutAuthoritativeAmount(rec, clientAmountRaw);
+  }
+  if (isPlannedConsumer === true || isPlannedConsumerCheckoutRecord(rec)) {
+    return resolvePlannedCheckoutAuthoritativeAmount(rec, clientAmountRaw);
+  }
+  return { ok: false, error: "not_street_booking" };
+}
+
 export function streetCheckoutLifecycleToken(rec) {
   return _safeStr(
     rec?.status ??
@@ -262,11 +376,12 @@ export function readOpenStreetMollieCheckout(rec) {
   };
 }
 
-export function streetCheckoutEligibility(rec, { isStreetDirect } = {}) {
+export function streetCheckoutEligibility(rec, { isStreetDirect, isPlannedConsumer } = {}) {
   if (!rec || typeof rec !== "object") {
     return { ok: false, error: "booking_not_found" };
   }
-  if (isStreetDirect !== true) {
+  const planned = isPlannedConsumer === true;
+  if (isStreetDirect !== true && planned !== true) {
     return { ok: false, error: "not_street_booking" };
   }
   const lifecycle = streetCheckoutLifecycleToken(rec);
@@ -280,7 +395,10 @@ export function streetCheckoutEligibility(rec, { isStreetDirect } = {}) {
   if (isStreetCheckoutPaidLike(payStatus)) {
     return { ok: false, error: "payment_already_paid" };
   }
-  const amount = resolveStreetCheckoutAuthoritativeAmount(rec);
+  const amount =
+    isStreetDirect === true
+      ? resolveStreetCheckoutAuthoritativeAmount(rec)
+      : resolvePlannedCheckoutAuthoritativeAmount(rec);
   if (!amount.ok) return amount;
   return { ok: true, amount, lifecycle, payment_status: payStatus };
 }

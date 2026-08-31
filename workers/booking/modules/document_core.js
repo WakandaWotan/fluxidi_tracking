@@ -545,6 +545,7 @@ export function projectIssuedDocumentsListEnvelope(documents) {
     documents: rows,
     count: rows.length,
     active_payable_count: activePayableCount,
+    review_required: activePayableCount > 1,
   };
 }
 
@@ -722,6 +723,7 @@ export async function listIssuedDocumentsForBooking(env, scope, canonicalBooking
     documents: projected.documents,
     warnings,
     active_payable_count: projected.active_payable_count,
+    review_required: projected.review_required === true,
   };
 }
 

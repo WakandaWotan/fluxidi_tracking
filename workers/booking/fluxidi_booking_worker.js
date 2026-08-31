@@ -615,6 +615,8 @@ import {
   hasMeaningfulBusinessBillingCustomer,
   isBookingCompletedForConsumerSale,
   isConsumerSaleEligibleRecord,
+  resolveBusinessInvoiceIssueGuard,
+  resolvePaidLifecycleFiscalOwner,
   normalizeConsumerBillitSaleIntent,
   resolveConsumerSaleAmount,
   resolveConsumerSaleIssueOwnerDecision,
@@ -898,6 +900,8 @@ import {
   streetCheckoutRecoveryLockKey,
   streetCheckoutIdempotencyKey,
   resolveStreetCheckoutAuthoritativeAmount,
+  resolveInVehicleCheckoutAuthoritativeAmount,
+  isPlannedConsumerCheckoutRecord,
   streetCheckoutEligibility,
   streetCheckoutPaymentStatusToken,
   isStreetCheckoutPaidLike,
@@ -6284,7 +6288,7 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
   if (canIssueBusinessInvoiceFromRecord(rec)) {
     return { ok: true, skipped: true, reason: "not_consumer_eligible" };
   }
-  if (!isConsumerSaleEligibleRecord(rec)) {
+  if (!isConsumerSaleEligibleRecord(rec, { sourceLegId })) {
     return { ok: true, skipped: true, reason: "not_consumer_eligible" };
   }
 
@@ -6926,7 +6930,7 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
       intentProbe.intent.state === CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING);
   if (
     (!existing?.document_id || !existing?.billit_order_id) &&
-    isConsumerSaleEligibleRecord(rec)
+    isConsumerSaleEligibleRecord(rec, { sourceLegId: opts.sourceLegId || null })
   ) {
     // Complete pending registration via the sale intent (owner or waiter).
     await maybeRegisterConsumerBillitSaleAfterCompletion(env, scope, bookingId, {
@@ -7719,9 +7723,32 @@ async function ensureDocumentCoreInvoiceForPaidBusinessBooking(
   if (paymentStatus !== "paid") {
     return { ok: false, status: 409, error: "booking_not_paid", payment_status: paymentStatus || null };
   }
-  // 4. Business invoice intent gate.
-  const lifecycle = _invoiceLifecycleContextFromRecord(rec);
-  if (!lifecycle.businessInvoiceIntent) {
+  // 4. Issuable business invoice gate — soft business_detected is not enough.
+  if (!canIssueBusinessInvoiceFromRecord(rec)) {
+    return { ok: false, status: 409, error: "not_business_invoice_intent" };
+  }
+  const existingConsumerForBusiness = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    bookingId,
+    { sourceLegId },
+  );
+  const businessIssueGuard = resolveBusinessInvoiceIssueGuard({
+    canIssueBusinessInvoice: true,
+    existingConsumerDocumentId: existingConsumerForBusiness?.document_id || "",
+    explicitBusinessRequest: false,
+  });
+  if (businessIssueGuard.action === "reuse_consumer" && existingConsumerForBusiness?.document_id) {
+    return {
+      ok: true,
+      reused_existing_invoice: true,
+      document_id: existingConsumerForBusiness.document_id,
+      document_number: existingConsumerForBusiness.document_number,
+      document_record: existingConsumerForBusiness.document_record,
+      warnings,
+    };
+  }
+  if (businessIssueGuard.action !== "create") {
     return { ok: false, status: 409, error: "not_business_invoice_intent" };
   }
   // 5. Billing customer snapshot must exist + be meaningful.
@@ -8899,8 +8926,8 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       return { ok: true, skipped: true, reason: "limousine_invoice_blocked" };
     }
     if (rec) {
-      const ctx = _invoiceLifecycleContextFromRecord(rec);
-      if (!ctx.businessInvoiceIntent) {
+      const fiscalOwner = resolvePaidLifecycleFiscalOwner(rec);
+      if (fiscalOwner.owner !== "business_invoice") {
         const consumerSync = await maybeSyncConsumerBillitSaleAfterPaid(
           env,
           scope,
@@ -9484,6 +9511,13 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
     console.log(
       `[DOCUMENT_CORE_INVOICE_LIFECYCLE][START] booking=${maskedBooking} source=${source} legs_total=${operationalLegs.length} legs_eligible=${eligibleLegs.length} multi_leg=${isMultiLegRecord ? "true" : "false"}`,
     );
+
+    if (!canIssueBusinessInvoiceFromRecord(bookingRecForLegDetection)) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=not_business_invoice_intent`,
+      );
+      return { ok: true, skipped: true, reason: "not_business_invoice_intent" };
+    }
 
     if (!isMultiLegRecord) {
       // Preserve B11-K single-leg / no-leg behavior verbatim. This is the path
@@ -39939,6 +39973,7 @@ export default {
                   ? listed.active_payable_count
                   : documents.filter((row) => row?.active_payable_revenue === true)
                       .length,
+              review_required: listed.review_required === true,
               warnings,
               invoice_pdf: invoicePdf,
             });
@@ -93156,8 +93191,19 @@ async function createStreetRideCheckoutAuthoritative(
     return { ok: false, error: "booking_not_found" };
   }
 
+  const isStreetDirect = _isStreetDirectRecord(rec) === true;
+  const wantsInVehicleCheckout =
+    body?.in_vehicle_checkout === true ||
+    body?.inVehicleCheckout === true ||
+    body?.planned_checkout === true ||
+    body?.plannedCheckout === true;
+  const isPlannedConsumer =
+    wantsInVehicleCheckout === true &&
+    isStreetDirect !== true &&
+    isPlannedConsumerCheckoutRecord(rec) === true;
   const eligibility = streetCheckoutEligibility(rec, {
-    isStreetDirect: _isStreetDirectRecord(rec) === true,
+    isStreetDirect,
+    isPlannedConsumer,
   });
   if (!eligibility.ok) {
     return {
@@ -93176,7 +93222,11 @@ async function createStreetRideCheckoutAuthoritative(
     body?.priceInclVat ??
     body?.total_incl_vat ??
     body?.amount_due;
-  const amountResolution = resolveStreetCheckoutAuthoritativeAmount(rec, clientAmountRaw);
+  const amountResolution = resolveInVehicleCheckoutAuthoritativeAmount(
+    rec,
+    clientAmountRaw,
+    { isStreetDirect, isPlannedConsumer },
+  );
   if (!amountResolution.ok) {
     return {
       ok: false,

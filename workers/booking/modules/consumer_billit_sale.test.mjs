@@ -20,6 +20,9 @@ import {
   creditNoteTotalsMatchConsumerSale,
   canIssueBusinessInvoiceFromRecord,
   hasBusinessInvoiceIntent,
+  isBookingCompletedForConsumerSale,
+  resolveBusinessInvoiceIssueGuard,
+  resolvePaidLifecycleFiscalOwner,
   hasMeaningfulBusinessBillingCustomer,
   isActiveRevenueDocument,
   isConsumerSaleEligibleRecord,
@@ -533,4 +536,72 @@ test("P0 exactly-once: ambiguous timeout reconciles before CREATE", () => {
     "need_document",
   );
   assert.equal(CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING, "billit_creating");
+});
+
+test("planned completed outbound leg is consumer-sale eligible while parent is pending", () => {
+  const rec = planned({
+    status: "PENDING",
+    operational_legs: [
+      {
+        leg_id: "bk_plan_1:OUTBOUND",
+        leg_type: "outbound",
+        status: "COMPLETED",
+        price_incl_vat: 42.5,
+      },
+    ],
+  });
+  assert.equal(isBookingCompletedForConsumerSale(rec), false);
+  assert.equal(
+    isBookingCompletedForConsumerSale(rec, { sourceLegId: "bk_plan_1:OUTBOUND" }),
+    true,
+  );
+  assert.equal(
+    isConsumerSaleEligibleRecord(rec, { sourceLegId: "bk_plan_1:OUTBOUND" }),
+    true,
+  );
+});
+
+test("soft business_detected does not own paid lifecycle", () => {
+  const rec = planned({
+    business_detected: true,
+    invoice_intent: "business_invoice",
+    invoice_requested: true,
+  });
+  assert.equal(hasBusinessInvoiceIntent(rec), true);
+  assert.equal(canIssueBusinessInvoiceFromRecord(rec), false);
+  assert.equal(resolvePaidLifecycleFiscalOwner(rec).owner, "consumer_sale");
+  assert.equal(
+    resolveBusinessInvoiceIssueGuard({
+      canIssueBusinessInvoice: false,
+      existingConsumerDocumentId: "",
+    }).action,
+    "none",
+  );
+});
+
+test("existing consumer sale blocks automatic inv-auto mint", () => {
+  const guard = resolveBusinessInvoiceIssueGuard({
+    canIssueBusinessInvoice: true,
+    existingConsumerDocumentId: "doc_consumer_1",
+    explicitBusinessRequest: false,
+  });
+  assert.equal(guard.action, "reuse_consumer");
+  assert.equal(
+    resolveBusinessInvoiceIssueGuard({
+      canIssueBusinessInvoice: true,
+      existingConsumerDocumentId: "doc_consumer_1",
+      explicitBusinessRequest: true,
+    }).action,
+    "create",
+  );
+});
+
+test("in-flight consumer intent waits instead of minting a second invoice", () => {
+  const guard = resolveBusinessInvoiceIssueGuard({
+    canIssueBusinessInvoice: true,
+    consumerIntentInFlight: true,
+    explicitBusinessRequest: false,
+  });
+  assert.equal(guard.action, "wait");
+  assert.equal(guard.reason, "consumer_sale_intent_in_progress");
 });

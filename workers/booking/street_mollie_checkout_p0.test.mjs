@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import worker from "./fluxidi_booking_worker.js";
 import {
   resolveStreetCheckoutAuthoritativeAmount,
+  resolvePlannedCheckoutAuthoritativeAmount,
+  isPlannedConsumerCheckoutRecord,
   streetCheckoutEligibility,
   manualMarkPaidConflict,
   webhookAfterManualPaidConflict,
@@ -390,6 +392,38 @@ test("eligibility: non-street rejected", () => {
   assert.equal(got.error, "not_street_booking");
 });
 
+test("eligibility: planned consumer checkout uses fixed price", () => {
+  const rec = {
+    booking_id: "pln-test-1",
+    status: "COMPLETED",
+    ride_type: "planned",
+    source: "customer_app",
+    payment_status: "unpaid",
+    price_incl_vat: 9.4,
+    currency: "EUR",
+  };
+  assert.equal(isPlannedConsumerCheckoutRecord(rec), true);
+  const amount = resolvePlannedCheckoutAuthoritativeAmount(rec);
+  assert.equal(amount.ok, true);
+  assert.equal(amount.amount_cents, 940);
+  const got = streetCheckoutEligibility(rec, { isPlannedConsumer: true });
+  assert.equal(got.ok, true);
+  assert.equal(got.amount.amount_cents, 940);
+});
+
+test("eligibility: planned checkout rejects client amount mismatch", () => {
+  const rec = {
+    booking_id: "pln-test-2",
+    status: "COMPLETED",
+    ride_type: "planned",
+    price_incl_vat: 9.4,
+    currency: "EUR",
+  };
+  const got = resolvePlannedCheckoutAuthoritativeAmount(rec, 12);
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "client_amount_mismatch");
+});
+
 test("manual conflict: open Mollie blocks cash without confirm", () => {
   const rec = seedStreetBooking({
     paymentMode: "mollie",
@@ -491,6 +525,38 @@ test("3. non-street booking rejected", async () => {
     assert.equal(res.status, 409);
     const body = await res.json();
     assert.equal(body.error, "not_street_booking");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("planned in-vehicle checkout is accepted with explicit flag", async () => {
+  const planned = seedStreetBooking({
+    bookingId: "2026-08-888",
+    source: "customer_app",
+    rideType: "planned",
+  });
+  planned.record.source = "customer_app";
+  planned.record.booking_source = "customer_app";
+  planned.record.ride_type = "planned";
+  planned.record.street_ride_fare_finalized = false;
+  planned.record.price_incl_vat = 9.4;
+  planned.record.booking.price_incl_vat = 9.4;
+  const { env, kv } = await makeEnv();
+  await kv.put(planned.key, JSON.stringify(planned.record));
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      streetCheckoutRequest({
+        bookingId: "2026-08-888",
+        body: { tenant_id: "T1", company_id: "C1", in_vehicle_checkout: true },
+      }),
+      env,
+      {},
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
   } finally {
     mock.restore();
   }
