@@ -418,6 +418,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   // the next periodic poll fired. We deliberately keep just one slot so we
   // do not create duplicate timers or unbounded queues.
   String? _pendingFollowUpRefreshTrigger;
+  BookingListMutationReloadCoordinator? _bookingMutationReload;
   // G3-L: cooldown so My-rides chip-tap force refreshes from business preview
   // do not cascade into spam; rides reflect server-side dispatch within
   // seconds of the chip tap, but we should not re-fire on every rebuild.
@@ -4103,20 +4104,45 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _bookingRefreshShouldBypassCache(String trigger) {
-    switch (trigger) {
-      case 'list_manual':
-      case 'drawer_manual':
-      case 'status_change':
-      case 'delete_action':
-      case 'calculator_created':
-      case 'leg_status_change':
-      case 'street_stop_retry':
-      case 'street_reopen_retry':
-      case 'street_recovery_finalize_ok':
-        return true;
-      default:
-        return trigger.startsWith('street_');
-    }
+    return bookingListRefreshBypassesRepositoryCache(trigger);
+  }
+
+  BookingListMutationReloadCoordinator get _bookingListMutationReload {
+    return _bookingMutationReload ??= BookingListMutationReloadCoordinator(
+      repository: bookingListPageRepository,
+      onAdvanceGeneration: () {
+        _driverBookingsRefreshSeq += 1;
+      },
+    );
+  }
+
+  ({String tenantId, String companyId}) _affectedBookingListCompanyScope() {
+    final session = activeDriverSessionNotifier.value;
+    final scopeQuery = _activeBookingScopeQuery();
+    final tenant = (session?.tenantId ?? scopeQuery['tenant_id'] ?? '').trim();
+    final company = (session?.companyId ?? scopeQuery['company_id'] ?? '')
+        .trim();
+    return (tenantId: tenant, companyId: company);
+  }
+
+  /// Successful chauffeur booking/leg mutation: invalidate both actors, then
+  /// reload only the visible driver/company-preview list. Cooldown must never
+  /// skip the invalidation. Duplicate completion reasons share one GET.
+  Future<void> _reloadVisibleDriverBookingsAfterSuccessfulMutation({
+    String mutationKey = '',
+  }) {
+    final scope = _affectedBookingListCompanyScope();
+    return _bookingListMutationReload.reloadVisibleAfterSuccessfulMutation(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      mutationKey: mutationKey,
+      reloadVisibleFirstPage: () {
+        return _performRefreshBookings(
+          trigger: kBookingListMutationReloadTrigger,
+          nextPage: false,
+        );
+      },
+    );
   }
 
   Future<void> _loadNextDriverBookingPage() async {
@@ -4369,9 +4395,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   trigger == 'drawer_manual'),
           reason: nextPage
               ? BookingListPageReason.nextPage
-              : (_bookingRefreshShouldBypassCache(trigger)
-                    ? BookingListPageReason.manualRefresh
-                    : BookingListPageReason.opportunistic),
+              : (trigger == kBookingListMutationReloadTrigger
+                    ? BookingListPageReason.mutation
+                    : (_bookingRefreshShouldBypassCache(trigger)
+                          ? BookingListPageReason.manualRefresh
+                          : BookingListPageReason.opportunistic)),
         );
       } on BookingListPageException catch (e) {
         if (useDriverEndpoint && e.code == 'http_401') {
@@ -5676,7 +5704,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           }
         });
       }
-      await _refreshBookings(force: true, trigger: 'status_change');
+      await _reloadVisibleDriverBookingsAfterSuccessfulMutation(
+        mutationKey: bookingId,
+      );
     } catch (e) {
       final normalizedStatus = status.trim().toUpperCase();
       if (_isRideMutationTransportError(e)) {
@@ -5699,9 +5729,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           });
           _markBookingsUiDirty();
           _toast('✅ ${_rideStatusLabel(status)}: ${b.shortId}');
-          await _refreshBookings(
-            force: true,
-            trigger: 'status_change_verified',
+          await _reloadVisibleDriverBookingsAfterSuccessfulMutation(
+            mutationKey: bookingId,
           );
           return;
         }
@@ -5847,7 +5876,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: bookingId,
         contextLabel: 'LEG_STATUS_AFTER_WRITE',
       );
-      await _refreshBookings(force: true, trigger: 'leg_status_change');
+      await _reloadVisibleDriverBookingsAfterSuccessfulMutation(
+        mutationKey: bookingId,
+      );
     } catch (e) {
       _toast(
         _tr(
@@ -11136,9 +11167,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
       unawaited(
-        _refreshBookings(
-          force: true,
-          trigger: 'planned_stop_bridge_handled_leg',
+        _reloadVisibleDriverBookingsAfterSuccessfulMutation(
+          mutationKey: bookingId,
         ),
       );
     }

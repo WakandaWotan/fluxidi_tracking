@@ -73,6 +73,18 @@ void main() {
       isTrue,
     );
     expect(driver.contains('bookingListPageRepository.invalidate('), isFalse);
+    expect(
+      driver.contains('_reloadVisibleDriverBookingsAfterSuccessfulMutation('),
+      isTrue,
+    );
+    expect(
+      driver.contains("trigger: 'planned_stop_bridge_handled_leg'"),
+      isFalse,
+    );
+    expect(driver.contains("trigger: 'status_change_verified'"), isFalse);
+    expect(driver.contains("trigger: 'status_change'"), isFalse);
+    expect(driver.contains("trigger: 'leg_status_change'"), isFalse);
+    expect(driver.contains('kBookingListMutationReloadTrigger'), isTrue);
   });
 
   test('QA logging defaults false and never logs identifiers', () {
