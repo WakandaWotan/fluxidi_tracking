@@ -63,6 +63,62 @@ int countActivePayableBookingDocuments(Iterable<Map<String, dynamic>> docs) {
   return count;
 }
 
+bool bookingDocumentsRequireReview({
+  required Iterable<Map<String, dynamic>> documents,
+  int? activePayableCount,
+  bool reviewRequiredFlag = false,
+}) {
+  if (reviewRequiredFlag) return true;
+  final counted = activePayableCount ?? countActivePayableBookingDocuments(documents);
+  return counted > 1;
+}
+
+class BookingDocumentsDisplaySplit {
+  const BookingDocumentsDisplaySplit({
+    required this.current,
+    required this.history,
+    required this.reviewRequired,
+  });
+
+  final List<Map<String, dynamic>> current;
+  final List<Map<String, dynamic>> history;
+  final bool reviewRequired;
+}
+
+BookingDocumentsDisplaySplit splitBookingDocumentsForDisplay(
+  Iterable<Map<String, dynamic>> docs, {
+  int? activePayableCount,
+  bool reviewRequiredFlag = false,
+}) {
+  final merged = mergeBookingDocumentsByFiscalIdentity(docs);
+  final current = <Map<String, dynamic>>[];
+  final history = <Map<String, dynamic>>[];
+  for (final doc in merged) {
+    if (bookingDocumentIsActivePayable(doc)) {
+      current.add(doc);
+    } else {
+      history.add(doc);
+    }
+  }
+  final review = bookingDocumentsRequireReview(
+    documents: merged,
+    activePayableCount: activePayableCount ?? current.length,
+    reviewRequiredFlag: reviewRequiredFlag,
+  );
+  if (review) {
+    return BookingDocumentsDisplaySplit(
+      current: const <Map<String, dynamic>>[],
+      history: merged,
+      reviewRequired: true,
+    );
+  }
+  return BookingDocumentsDisplaySplit(
+    current: current,
+    history: history,
+    reviewRequired: false,
+  );
+}
+
 bool shouldInjectLocalIssuedDocument({
   required String localDocumentId,
   required String localSaleKind,

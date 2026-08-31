@@ -501,6 +501,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _error = false;
   List<_BookingDocumentMetadata> _documents =
       const <_BookingDocumentMetadata>[];
+  int? _activePayableCount;
+  bool _reviewRequired = false;
   // B10e-B: per-document Billit-status refresh in-flight set, keyed by
   // document_id (never global) so one refresh never blocks the whole section.
   Set<String> _refreshingDocIds = <String>{};
@@ -673,6 +675,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     setState(() {
       _activeScopeKey = nextScopeKey;
       _documents = const <_BookingDocumentMetadata>[];
+      _activePayableCount = null;
+      _reviewRequired = false;
       _refreshingDocIds = <String>{};
       _sendingPeppolDocIds = <String>{};
       _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{};
@@ -746,6 +750,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       ];
       setState(() {
         _documents = parsed;
+        _activePayableCount = result.activePayableCount;
+        _reviewRequired = result.reviewRequired;
         _loaded = true;
         _loading = false;
         _error = false;
@@ -2066,6 +2072,43 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       );
     }
     final visible = _documentsForDisplay;
+    final fiscalMaps = visible
+        .map(
+          (doc) => <String, dynamic>{
+            'document_id': doc.documentId,
+            'fiscal_identity': doc.fiscalIdentity,
+            'fluxidi_sale_kind': doc.fluxidiSaleKind,
+            'document_type': doc.documentType,
+            'invoice_intent': doc.invoiceIntent,
+            'created_by_role': doc.createdByRole,
+            'peppol_applicable': doc.peppolApplicable,
+            'presentation_label_key': doc.presentationLabelKey,
+            'fiscal_kind': doc.fiscalKind,
+            'superseded': doc.superseded,
+            'lifecycle_state': doc.lifecycleState,
+            'active_payable_revenue': doc.activePayableRevenue,
+          },
+        )
+        .toList(growable: false);
+    final split = splitBookingDocumentsForDisplay(
+      fiscalMaps,
+      activePayableCount: _activePayableCount,
+      reviewRequiredFlag: _reviewRequired,
+    );
+    final historyIds = split.history
+        .map((doc) => (doc['document_id'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final currentIds = split.current
+        .map((doc) => (doc['document_id'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final currentDocs = visible
+        .where((doc) => currentIds.contains(doc.documentId))
+        .toList(growable: false);
+    final historyDocs = visible
+        .where((doc) => historyIds.contains(doc.documentId))
+        .toList(growable: false);
     // Synthetic local invoice (if any) is already merged into [visible], so
     // count=1 can never coexist with the empty-state copy.
     if (shouldShowBookingDocumentsEmptyState(
@@ -2094,7 +2137,45 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [for (final doc in visible) _buildDocumentRow(tokens, doc)],
+      children: [
+        if (split.reviewRequired)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 8),
+            child: Text(
+              _tr(
+                nl: 'Controle vereist',
+                en: 'Review required',
+                fr: 'Contrôle requis',
+                es: 'Control requerido',
+              ),
+              style: TextStyle(
+                color: tokens.accent,
+                fontSize: 12.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        for (final doc in currentDocs) _buildDocumentRow(tokens, doc),
+        if (historyDocs.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Text(
+              _tr(
+                nl: 'Documenthistorie',
+                en: 'Document history',
+                fr: 'Historique des documents',
+                es: 'Historial de documentos',
+              ),
+              style: TextStyle(
+                color: tokens.textSecondary,
+                fontSize: 11.2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          for (final doc in historyDocs) _buildDocumentRow(tokens, doc),
+        ],
+      ],
     );
   }
 

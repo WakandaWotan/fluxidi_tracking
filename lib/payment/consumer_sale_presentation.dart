@@ -398,6 +398,8 @@ String consumerOrBusinessPdfTitleKey({
   bool? peppolApplicable,
   bool businessInvoiceIntent = false,
   bool conversionToBusinessSucceeded = false,
+  Object? presentationLabelKey,
+  Object? fiscalKind,
 }) {
   final kind = resolveDocumentPresentationKind(
     saleKind: saleKind,
@@ -408,6 +410,8 @@ String consumerOrBusinessPdfTitleKey({
     peppolApplicable: peppolApplicable,
     businessInvoiceIntent: businessInvoiceIntent,
     conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+    presentationLabelKey: presentationLabelKey,
+    fiscalKind: fiscalKind,
   );
   switch (kind) {
     case FluxidiDocumentPresentationKind.businessInvoice:

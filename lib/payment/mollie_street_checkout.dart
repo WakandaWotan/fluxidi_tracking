@@ -62,6 +62,31 @@ bool hasStreetOrDirectRideMarker({
   return false;
 }
 
+/// True when this receipt is an ordinary planned booking eligible for the
+/// same in-vehicle hosted checkout as a street/direct ride.
+bool hasPlannedRideMarker({
+  required String bookingId,
+  String? source,
+  String? bookingSource,
+  String? rideType,
+  String? kind,
+}) {
+  if (hasStreetOrDirectRideMarker(
+    bookingId: bookingId,
+    source: source,
+    bookingSource: bookingSource,
+    rideType: rideType,
+  )) {
+    return false;
+  }
+  if (_lower(kind) == 'planned') return true;
+  if (_lower(source) == 'planned' || _lower(bookingSource) == 'planned') {
+    return true;
+  }
+  final id = _lower(bookingId);
+  return id.startsWith('pln-');
+}
+
 /// Whether the primary "Online betalen" action may be offered on the receipt
 /// Payment section for this ride.
 ///
@@ -79,17 +104,25 @@ bool resolveMollieStreetCheckoutEligible({
   String? source,
   String? bookingSource,
   String? rideType,
+  String? kind,
 }) {
   final id = bookingId.trim();
   if (id.isEmpty) return false;
   if (isPaid || isCancelled) return false;
   if (amount == null || amount <= 0) return false;
   return hasStreetOrDirectRideMarker(
-    bookingId: id,
-    source: source,
-    bookingSource: bookingSource,
-    rideType: rideType,
-  );
+        bookingId: id,
+        source: source,
+        bookingSource: bookingSource,
+        rideType: rideType,
+      ) ||
+      hasPlannedRideMarker(
+        bookingId: id,
+        source: source,
+        bookingSource: bookingSource,
+        rideType: rideType,
+        kind: kind,
+      );
 }
 
 /// Parsed result of `POST /bookings/:id/street-checkout`.

@@ -94,6 +94,7 @@ class BookingDocumentsPageResult {
     required this.documents,
     required this.count,
     this.activePayableCount,
+    this.reviewRequired = false,
     this.warnings = const <String>[],
     this.raw = const <String, dynamic>{},
   });
@@ -102,6 +103,7 @@ class BookingDocumentsPageResult {
   final List<Map<String, dynamic>> documents;
   final int count;
   final int? activePayableCount;
+  final bool reviewRequired;
   final List<String> warnings;
   final Map<String, dynamic> raw;
 }
@@ -142,6 +144,7 @@ BookingDocumentsPageResult parseBookingDocumentsPagePayload(
     documents: List<Map<String, dynamic>>.unmodifiable(documents),
     count: count,
     activePayableCount: rawPayable is int ? rawPayable : null,
+    reviewRequired: decoded['review_required'] == true,
     warnings: decoded['warnings'] is List
         ? decoded['warnings'].map((e) => e.toString()).toList(growable: false)
         : const <String>[],

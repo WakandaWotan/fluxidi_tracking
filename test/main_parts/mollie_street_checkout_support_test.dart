@@ -111,6 +111,28 @@ void main() {
       }
     });
 
+    test('planned kind / ride_type / PLN prefix -> eligible', () {
+      expect(
+        resolveMollieStreetCheckoutEligible(
+          bookingId: 'bk_planned_1',
+          isPaid: false,
+          isCancelled: false,
+          amount: 9.4,
+          kind: 'planned',
+        ),
+        isTrue,
+      );
+      expect(
+        resolveMollieStreetCheckoutEligible(
+          bookingId: 'PLN-2026-000407',
+          isPaid: false,
+          isCancelled: false,
+          amount: 9.4,
+        ),
+        isTrue,
+      );
+    });
+
     test('missing/blank booking id -> not eligible even with markers', () {
       expect(
         resolveMollieStreetCheckoutEligible(

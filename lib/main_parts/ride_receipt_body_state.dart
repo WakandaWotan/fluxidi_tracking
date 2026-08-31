@@ -4025,6 +4025,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       final payload = <String, dynamic>{
         ...strictScope,
         'return_url': kFluxidiPaymentReturnUrl,
+        if (_isPlannedReceipt) 'in_vehicle_checkout': true,
       };
       debugPrint('[MOLLIE_STREET_CHECKOUT][START] booking=$maskedRef');
       final res = await http
@@ -6051,6 +6052,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       source: _receiptBookingSourceToken(),
       bookingSource: _receiptBookingSourceToken(),
       rideType: _receiptRideTypeToken(),
+      kind: item.kind,
     );
   }
 
@@ -6167,8 +6169,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
               ),
               const SizedBox(height: 12),
             ],
-            if (_mollieStreetCheckoutEligible() &&
-                !_openMollieBlocksFallback) ...[
+            if (resolveInVehiclePaymentMethodAvailability(
+                  alreadyPaid: alreadyPaid,
+                  qrConfigured: true,
+                  onlineCheckoutEligible:
+                      _mollieStreetCheckoutEligible() &&
+                      !_openMollieBlocksFallback,
+                  onlineBlockedMessage: inVehicleOnlineUnavailableMessage(),
+                ).online) ...[
               FilledButton.icon(
                 onPressed: (canRequestPayment && !_mollieCheckoutLoading)
                     ? () => _startMollieStreetCheckout(context)
