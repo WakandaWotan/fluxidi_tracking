@@ -147,14 +147,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       if (profileHasBusinessIdentity) {
         setIfBlank(_billingContactEmailController, profile.email);
         setIfBlank(_billingCountryController, 'BE');
-        if ((!_billingDetailsEnabled ||
-                (profileHasPeppol && !_billingPeppolExpanded)) &&
-            mounted) {
-          setState(() {
-            _billingDetailsEnabled = true;
-            if (profileHasPeppol) _billingPeppolExpanded = true;
-          });
-        }
       }
     } catch (_) {
       // Best-effort prefill only; never block airport booking flow.
@@ -1425,26 +1417,6 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           responseRequiresPayment ||
           isOnlinePaymentMode(responsePaymentMode) ||
           responsePaymentProvider == 'mollie';
-      final responseBusinessDetected =
-          boolish(body['business_detected']) ||
-          boolish(body['businessDetected']) ||
-          boolish(bookingMap['business_detected']) ||
-          boolish(bookingMap['businessDetected']);
-      final responseInvoiceRequested =
-          boolish(body['invoice_requested']) ||
-          boolish(body['invoiceRequested']) ||
-          boolish(bookingMap['invoice_requested']) ||
-          boolish(bookingMap['invoiceRequested']);
-      final requestBusinessIntent =
-          boolish(payload['business_detected']) ||
-          boolish(payload['businessDetected']) ||
-          boolish(payload['invoice_requested']) ||
-          boolish(payload['invoiceRequested']) ||
-          _billingDetailsEnabled;
-      final businessInvoiceIntent =
-          responseBusinessDetected ||
-          responseInvoiceRequested ||
-          requestBusinessIntent;
       if (explicitOnlineRequested &&
           backendRequiresOnlineCheckout &&
           !hasSafeCheckoutUrl) {
@@ -1501,11 +1473,11 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       final manualBusinessFlow =
           !explicitOnlineRequested &&
           !hasSafeCheckoutUrl &&
-          businessInvoiceIntent;
+          _billingDetailsEnabled;
       final manualPrivateFlow =
           !explicitOnlineRequested &&
           !hasSafeCheckoutUrl &&
-          !businessInvoiceIntent;
+          !_billingDetailsEnabled;
       final successMessage = manualBusinessFlow
           ? _t(
               nl: 'Boeking aangemaakt. Betaling in de wagen. Factuur volgt na betaling.',
@@ -1515,10 +1487,10 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             )
           : manualPrivateFlow
           ? _t(
-              nl: 'Boeking aangemaakt. Betaling in de wagen.',
-              en: 'Booking created. Payment in the vehicle.',
-              fr: 'Reservation creee. Paiement dans le vehicule.',
-              es: 'Reserva creada. Pago en el vehiculo.',
+              nl: 'Boeking aangemaakt. Betaling in de wagen. De ritbon wordt aangemaakt na betaling.',
+              en: 'Booking created. Payment in the vehicle. The ride receipt will be created after payment.',
+              fr: 'Reservation creee. Paiement dans le vehicule. Le recu de course sera cree apres le paiement.',
+              es: 'Reserva creada. Pago en el vehiculo. El recibo de viaje se creara despues del pago.',
             )
           : _t(
               nl: 'Luchthavenrit aangemaakt. Rond de online betaling af.',

@@ -98,6 +98,12 @@ void main() {
       expect(body, contains('return_url'));
       // No `'amount':` key anywhere in the request payload construction.
       expect(body, isNot(contains("'amount':")));
+      expect(body, isNot(contains('await _persistInCarPayment')));
+      expect(body, isNot(contains('/legs/')));
+      expect(body, isNot(contains("'paymentMarkFailed'")));
+      expect(body, contains('onlineCheckoutStartFailed'));
+      expect(body, contains('hasPlannedRideMarker('));
+      expect(body, contains("'in_vehicle_checkout': true"));
     });
 
     test('street-checkout POST uses the trusted driver/company bearer', () {
@@ -372,6 +378,7 @@ void main() {
         'paymentStillPending',
         'paymentOwnerReleased',
         'paymentRecoveryError',
+        'onlineCheckoutStartFailed',
       ];
       for (final key in keys) {
         final caseIdx = textHelpersSource.indexOf("case '$key':");

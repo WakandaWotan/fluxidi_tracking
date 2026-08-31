@@ -34,6 +34,15 @@ void main() {
       isTrue,
     );
     expect(
+      hasPlannedRideMarker(
+        bookingId: '2026-08-199',
+        rideType: 'business',
+        source: 'flutter_app',
+        planningReference: 'PLN-2026-000499',
+      ),
+      isTrue,
+    );
+    expect(
       resolveMollieStreetCheckoutEligible(
         bookingId: 'bk_planned',
         isPaid: false,

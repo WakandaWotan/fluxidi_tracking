@@ -56,6 +56,7 @@ bool resolveInVehicleOnlineCheckoutEligible({
   String? bookingSource,
   String? rideType,
   String? kind,
+  String? planningReference,
 }) {
   return resolveMollieStreetCheckoutEligible(
     bookingId: bookingId,
@@ -66,6 +67,7 @@ bool resolveInVehicleOnlineCheckoutEligible({
     bookingSource: bookingSource,
     rideType: rideType,
     kind: kind,
+    planningReference: planningReference,
   );
 }
 

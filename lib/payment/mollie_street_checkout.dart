@@ -70,6 +70,7 @@ bool hasPlannedRideMarker({
   String? bookingSource,
   String? rideType,
   String? kind,
+  String? planningReference,
 }) {
   if (hasStreetOrDirectRideMarker(
     bookingId: bookingId,
@@ -80,11 +81,13 @@ bool hasPlannedRideMarker({
     return false;
   }
   if (_lower(kind) == 'planned') return true;
+  if (_lower(rideType) == 'planned') return true;
   if (_lower(source) == 'planned' || _lower(bookingSource) == 'planned') {
     return true;
   }
   final id = _lower(bookingId);
-  return id.startsWith('pln-');
+  if (id.startsWith('pln-')) return true;
+  return _lower(planningReference).startsWith('pln-');
 }
 
 /// Whether the primary "Online betalen" action may be offered on the receipt
@@ -105,6 +108,7 @@ bool resolveMollieStreetCheckoutEligible({
   String? bookingSource,
   String? rideType,
   String? kind,
+  String? planningReference,
 }) {
   final id = bookingId.trim();
   if (id.isEmpty) return false;
@@ -122,6 +126,7 @@ bool resolveMollieStreetCheckoutEligible({
         bookingSource: bookingSource,
         rideType: rideType,
         kind: kind,
+        planningReference: planningReference,
       );
 }
 
@@ -291,8 +296,12 @@ MollieStreetCheckoutErrorKind classifyMollieStreetCheckoutStartError({
   }
   if (err.contains('not_a_street') ||
       err.contains('not_street_ride') ||
+      err.contains('not_street_booking') ||
       err.contains('not_eligible') ||
-      err.contains('booking_not_completed')) {
+      err.contains('booking_not_completed') ||
+      err.contains('street_not_completed') ||
+      err.contains('planned_fare') ||
+      err.contains('street_fare')) {
     return MollieStreetCheckoutErrorKind.notEligible;
   }
   if (err == 'open_pos_payment_exists' || err.contains('open_pos_payment')) {

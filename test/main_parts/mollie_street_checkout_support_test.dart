@@ -58,15 +58,15 @@ void main() {
       );
     });
 
-    test('no street/direct marker at all -> not eligible', () {
+    test('no street/direct or planned marker at all -> not eligible', () {
       expect(
         resolveMollieStreetCheckoutEligible(
-          bookingId: 'bk_planned_1',
+          bookingId: 'bk_other_1',
           isPaid: false,
           isCancelled: false,
           amount: 10,
           source: 'customer',
-          rideType: 'planned',
+          rideType: 'airport',
         ),
         isFalse,
       );
@@ -124,10 +124,32 @@ void main() {
       );
       expect(
         resolveMollieStreetCheckoutEligible(
+          bookingId: 'bk_planned_2',
+          isPaid: false,
+          isCancelled: false,
+          amount: 9.4,
+          rideType: 'planned',
+        ),
+        isTrue,
+      );
+      expect(
+        resolveMollieStreetCheckoutEligible(
           bookingId: 'PLN-2026-000407',
           isPaid: false,
           isCancelled: false,
           amount: 9.4,
+        ),
+        isTrue,
+      );
+      expect(
+        resolveMollieStreetCheckoutEligible(
+          bookingId: '2026-08-199',
+          isPaid: false,
+          isCancelled: false,
+          amount: 9.4,
+          rideType: 'business',
+          source: 'flutter_app',
+          planningReference: 'PLN-2026-000499',
         ),
         isTrue,
       );
@@ -244,6 +266,24 @@ void main() {
         ),
         MollieStreetCheckoutErrorKind.notEligible,
       );
+    });
+
+    test('planned 409 eligibility tokens -> notEligible', () {
+      for (final token in [
+        'not_street_booking',
+        'street_not_completed',
+        'planned_fare_unavailable',
+        'street_fare_unavailable',
+      ]) {
+        expect(
+          classifyMollieStreetCheckoutStartError(
+            httpCode: 409,
+            decoded: {'error': token},
+          ),
+          MollieStreetCheckoutErrorKind.notEligible,
+          reason: token,
+        );
+      }
     });
 
     test('unrecognised error -> unknown', () {

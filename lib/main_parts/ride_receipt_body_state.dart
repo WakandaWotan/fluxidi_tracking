@@ -3977,12 +3977,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       case MollieStreetCheckoutErrorKind.notEligible:
       case MollieStreetCheckoutErrorKind.network:
       case MollieStreetCheckoutErrorKind.unknown:
-        return _receiptText('paymentMarkFailed');
+        return _receiptText('onlineCheckoutStartFailed');
     }
   }
 
   /// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: starts (or reopens) the Mollie
-  /// online checkout for this completed street/direct ride.
+  /// online checkout for this completed street/direct or planned ride.
+  ///
+  /// Planned Online betalen uses this same street-checkout start, return,
+  /// cancel and idempotency path. It never calls [_persistInCarPayment] and
+  /// never posts a leg-payment "save" before Mollie checkout.
   ///
   /// Never sends `amount` as an authority in the request body — the
   /// booking-worker derives the payable amount server-side from the
@@ -4022,10 +4026,19 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       final uri = Uri.parse(
         '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/street-checkout',
       ).replace(queryParameters: strictScope);
+      final plannedCheckout = _isPlannedReceipt ||
+          hasPlannedRideMarker(
+            bookingId: bookingId,
+            source: _receiptBookingSourceToken(),
+            bookingSource: _receiptBookingSourceToken(),
+            rideType: _receiptRideTypeToken(),
+            kind: item.kind,
+            planningReference: _receiptPlanningReferenceToken(),
+          );
       final payload = <String, dynamic>{
         ...strictScope,
         'return_url': kFluxidiPaymentReturnUrl,
-        if (_isPlannedReceipt) 'in_vehicle_checkout': true,
+        if (plannedCheckout) 'in_vehicle_checkout': true,
       };
       debugPrint('[MOLLIE_STREET_CHECKOUT][START] booking=$maskedRef');
       final res = await http
@@ -4099,7 +4112,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           content: Text(
             isAuthFailure
                 ? _receiptText('paymentAuthRequired')
-                : _receiptText('paymentMarkFailed'),
+                : _receiptText('onlineCheckoutStartFailed'),
           ),
         ),
       );
@@ -6053,6 +6066,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       bookingSource: _receiptBookingSourceToken(),
       rideType: _receiptRideTypeToken(),
       kind: item.kind,
+      planningReference: _receiptPlanningReferenceToken(),
     );
   }
 
@@ -6386,6 +6400,23 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       if (signals.rideType.isNotEmpty) return signals.rideType;
     }
     return item.kind;
+  }
+
+  String _receiptPlanningReferenceToken() {
+    for (final src in [item.bookingDetails, item.rawSource]) {
+      for (final k in const ['planning_reference', 'planningReference']) {
+        final v = (src[k] ?? '').toString().trim();
+        if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+      final refs = src['references'];
+      if (refs is Map) {
+        for (final k in const ['planning_reference', 'planningReference']) {
+          final v = (refs[k] ?? '').toString().trim();
+          if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+        }
+      }
+    }
+    return '';
   }
 
   String _receiptDirectRideKey() {

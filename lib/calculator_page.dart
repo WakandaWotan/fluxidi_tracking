@@ -3456,7 +3456,11 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         // identity exists; both are still set-if-blank so manual edits stay.
         setIfBlank(_billingContactEmailCtrl, profile.email);
         setIfBlank(_billingCountryCtrl, 'BE');
-        if ((!_billingDetailsEnabled ||
+        // A private pay-in-vehicle booking must stay private. Leftover company
+        // data on the profile may be prefilled, but it must not silently turn
+        // the invoice toggle on or promise "Factuur volgt na betaling".
+        if (!explicitPrivateIntent &&
+            (!_billingDetailsEnabled ||
                 (profileHasPeppol && !_billingPeppolExpanded)) &&
             mounted) {
           setState(() {
@@ -4676,8 +4680,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         'Online betaling kon niet worden gestart. Probeer opnieuw.',
       );
     }
+    final userRequestedBusinessInvoice = _billingDetailsEnabled;
     final invoiceManualFlow =
-        (responseBusinessIntent || requestBusinessIntent) &&
+        userRequestedBusinessInvoice &&
         !onlineCheckoutRequired &&
         safeCheckoutUrl.isEmpty &&
         (paymentProvider == 'manual' ||
@@ -4688,8 +4693,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             !backendRequiresOnlineCheckout);
     final paymentFlow = onlineCheckoutRequired || safeCheckoutUrl.isNotEmpty;
     final privateManualFlow =
-        !responseBusinessIntent &&
-        !requestBusinessIntent &&
+        !userRequestedBusinessInvoice &&
         !onlineCheckoutRequired &&
         safeCheckoutUrl.isEmpty &&
         !paymentFlow;
@@ -4809,10 +4813,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             )
           : privateManualFlow
           ? _localizedText(
-              nl: 'Boeking aangemaakt. Betaling in de wagen.',
-              en: 'Booking created. Payment in the vehicle.',
-              fr: 'Reservation creee. Paiement dans le vehicule.',
-              es: 'Reserva creada. Pago en el vehiculo.',
+              nl: 'Boeking aangemaakt. Betaling in de wagen. De ritbon wordt aangemaakt na betaling.',
+              en: 'Booking created. Payment in the vehicle. The ride receipt will be created after payment.',
+              fr: 'Reservation creee. Paiement dans le vehicule. Le recu de course sera cree apres le paiement.',
+              es: 'Reserva creada. Pago en el vehiculo. El recibo de viaje se creara despues del pago.',
             )
           : paymentFlow
           ? widget.strings.bookingSuccessPaymentRequiredMessage.of(
@@ -5084,12 +5088,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     // every existing backend payload key stays populated exactly as before.
     final billingLegalName = _billingLegalNameCtrl.text.trim();
     final billingVat = _billingVatCtrl.text.trim();
-    final companyName = (_billingDetailsEnabled && billingLegalName.isNotEmpty)
-        ? billingLegalName
-        : _companyNameCtrl.text.trim();
-    final vatNumber = (_billingDetailsEnabled && billingVat.isNotEmpty)
-        ? billingVat
-        : _vatNumberCtrl.text.trim();
+    final companyName = _billingDetailsEnabled
+        ? (billingLegalName.isNotEmpty
+              ? billingLegalName
+              : _companyNameCtrl.text.trim())
+        : '';
+    final vatNumber = _billingDetailsEnabled
+        ? (billingVat.isNotEmpty ? billingVat : _vatNumberCtrl.text.trim())
+        : '';
     final invoiceAddressFromQuote = _calcBusinessText(
       widget.payload['invoice_address'] ??
           widget.payload['invoiceAddress'] ??

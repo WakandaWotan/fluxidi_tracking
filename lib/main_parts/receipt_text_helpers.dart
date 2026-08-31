@@ -864,6 +864,13 @@ String _receiptText(String key) {
         fr: 'Impossible denregistrer le paiement. Reessayez.',
         es: 'No se pudo guardar el pago. Intentalo de nuevo.',
       );
+    case 'onlineCheckoutStartFailed':
+      return _tr(
+        nl: 'Online betalen kon niet worden gestart. Probeer opnieuw.',
+        en: 'Online payment could not be started. Please try again.',
+        fr: 'Le paiement en ligne n’a pas pu être lancé. Réessayez.',
+        es: 'No se pudo iniciar el pago en línea. Inténtalo de nuevo.',
+      );
     case 'bookingIdMissing':
       return _tr(
         nl: 'Boekings-ID ontbreekt.',
