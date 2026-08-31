@@ -762,6 +762,7 @@ import {
 import {
   tryListCompanyBookingsProjected,
   tryListDriverBookingsProjected,
+  publicProjectedListBody,
   onBookingIndexMutation,
   rebuildCompanyBookingsListProjectionForScope,
   LIST_PROJ_GET_MAX_READS,
@@ -45462,17 +45463,7 @@ export default {
                 503,
               );
             }
-            const items = Array.isArray(projected.items) ? projected.items : [];
-            return json(
-              {
-                ok: true,
-                items,
-                count: items.length,
-                next_cursor: projected.next_cursor || null,
-                has_more: projected.has_more === true,
-              },
-              200,
-            );
+            return json(publicProjectedListBody(projected), 200);
           }
         } catch (err) {
           if (err instanceof KvBudgetExceededError) {
@@ -45662,18 +45653,7 @@ export default {
                 503,
               );
             }
-            const items = Array.isArray(projected.items) ? projected.items : [];
-            return json(
-              {
-                ok: true,
-                items,
-                count: items.length,
-                next_cursor: projected.next_cursor || null,
-                has_more: projected.has_more === true,
-                ...(projected.degraded === true ? { degraded: true } : {}),
-              },
-              200,
-            );
+            return json(publicProjectedListBody(projected), 200);
           }
         } catch (err) {
           if (err instanceof KvBudgetExceededError) {
@@ -45763,16 +45743,8 @@ export default {
                 503,
               );
             }
-            const items = Array.isArray(projected.items) ? projected.items : [];
             return json(
-              {
-                ok: true,
-                items,
-                count: items.length,
-                source: "admin_driver_bookings_preview",
-                next_cursor: projected.next_cursor || null,
-                has_more: projected.has_more === true,
-              },
+              publicProjectedListBody(projected, { source: "admin_driver_bookings_preview" }),
               200,
             );
           }
@@ -51269,17 +51241,7 @@ export default {
                 503,
               );
             }
-            const items = Array.isArray(projected.items) ? projected.items : [];
-            return json(
-              {
-                ok: true,
-                items,
-                count: items.length,
-                next_cursor: projected.next_cursor || null,
-                has_more: projected.has_more === true,
-              },
-              200,
-            );
+            return json(publicProjectedListBody(projected), 200);
           }
         } catch (err) {
           if (err instanceof KvBudgetExceededError) {

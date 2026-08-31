@@ -424,6 +424,10 @@ function refreshViewDescriptors(marker, view, pageStore, compareFn) {
   const viewState = marker.views[view] || emptyView();
   const nextPages = [];
   for (const desc of viewState.pages || []) {
+    if (!pageStore.has(desc.id)) {
+      nextPages.push(desc);
+      continue;
+    }
     const page = pageStore.get(desc.id);
     const rows = Array.isArray(page?.rows) ? page.rows : [];
     if (!rows.length) continue;
@@ -447,7 +451,7 @@ function afterCursor(row, cursor, compareFn) {
   return compareFn(row, probe) > 0;
 }
 
-function lastCursorPayload({ generation, scopeKind, view, pageId, row, actorKind, actorId }) {
+function lastCursorPayload({ generation, scopeKind, view, pageId, row, actorKind, actorId, scope }) {
   return {
     v: LIST_PROJ_VERSION,
     g: generation,
@@ -456,12 +460,83 @@ function lastCursorPayload({ generation, scopeKind, view, pageId, row, actorKind
     page_id: pageId,
     actor_kind: actorKind || "",
     actor_id: actorId || "",
+    t: scope?.tenant_id || "",
+    c: scope?.company_id || "",
     after: {
       sort_ms: Number(row?._proj?.sort_ms || 0),
       pickup_ms: Number(row?._proj?.pickup_ms || 0),
       booking_id: safeStr(row?._proj?.booking_id, 160),
       leg_id: safeStr(row?._proj?.leg_id, 200),
     },
+  };
+}
+
+function exactMarkerViewCount(marker, view) {
+  if (!marker || marker.complete !== true) return null;
+  const raw = marker?.views?.[view]?.row_count;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  const n = Math.trunc(raw);
+  if (n < 0 || n !== raw) return null;
+  return n;
+}
+
+function attachExactTotal(result, marker, view) {
+  const total = exactMarkerViewCount(marker, view);
+  if (total !== null) result.total_count = total;
+  return result;
+}
+
+export function publicProjectedListBody(projected, extra = {}) {
+  const items = Array.isArray(projected?.items) ? projected.items : [];
+  const cursor = safeStr(projected?.next_cursor, 4000);
+  const hasMore = projected?.has_more === true && !!cursor;
+  const body = {
+    ok: true,
+    items,
+    count: items.length,
+    next_cursor: hasMore ? cursor : null,
+    has_more: hasMore,
+    ...extra,
+  };
+  if (Number.isInteger(projected?.total_count) && projected.total_count >= 0) {
+    body.total_count = projected.total_count;
+  }
+  if (projected?.degraded === true) body.degraded = true;
+  return body;
+}
+
+function cursorInvalidResult() {
+  return { ok: false, error: "bookings_list_projection_unavailable", cursor_invalid: true };
+}
+
+function validateSingleStreamCursor(parsed, { marker, view, scope, actorId = "" }) {
+  if (!parsed || typeof parsed !== "object") return cursorInvalidResult();
+  if (parsed.kind === "driver_merge") return cursorInvalidResult();
+  if (Number(parsed.g) !== Number(marker.generation)) return cursorInvalidResult();
+  if (parsed.view && parsed.view !== view) return cursorInvalidResult();
+  if (parsed.t && parsed.t !== scope.tenant_id) return cursorInvalidResult();
+  if (parsed.c && parsed.c !== scope.company_id) return cursorInvalidResult();
+  if (actorId && parsed.actor_id && parsed.actor_id !== actorId) return cursorInvalidResult();
+  return { ok: true, cursor: parsed };
+}
+
+function validateMergeCursor(parsed, { marker, scope, actorKind, actorId }) {
+  if (!parsed || typeof parsed !== "object") return cursorInvalidResult();
+  if (parsed.kind !== "driver_merge") return cursorInvalidResult();
+  if (Number(parsed.g) !== Number(marker.generation)) return cursorInvalidResult();
+  if (parsed.t && parsed.t !== scope.tenant_id) return cursorInvalidResult();
+  if (parsed.c && parsed.c !== scope.company_id) return cursorInvalidResult();
+  if (parsed.actor_kind && parsed.actor_kind !== actorKind) return cursorInvalidResult();
+  if (parsed.actor_id && parsed.actor_id !== actorId) return cursorInvalidResult();
+  return { ok: true, cursor: parsed };
+}
+
+function rowAfterProbe(row) {
+  return {
+    sort_ms: Number(row?._proj?.sort_ms || 0),
+    pickup_ms: Number(row?._proj?.pickup_ms || 0),
+    booking_id: safeStr(row?._proj?.booking_id, 160),
+    leg_id: safeStr(row?._proj?.leg_id, 200),
   };
 }
 
@@ -1023,6 +1098,7 @@ async function listFromMarker({
   limit,
   cursor,
   scopeKind,
+  scope = null,
   actorKind = "",
   actorId = "",
   nowMs = Date.now(),
@@ -1033,14 +1109,18 @@ async function listFromMarker({
   const viewState = marker?.views?.[view] || emptyView();
   const pages = Array.isArray(viewState.pages) ? viewState.pages : [];
   if (!pages.length) {
-    return {
-      ok: true,
-      items: [],
-      count: 0,
-      next_cursor: null,
-      has_more: false,
-      source: "projection",
-    };
+    return attachExactTotal(
+      {
+        ok: true,
+        items: [],
+        count: 0,
+        next_cursor: null,
+        has_more: false,
+        source: "projection",
+      },
+      marker,
+      view,
+    );
   }
   let startIdx = 0;
   if (cursor?.page_id) {
@@ -1083,31 +1163,38 @@ async function listFromMarker({
     }
     if (items.length > lim) break;
   }
-  const hasMore = items.length > lim || startIdx + pagesRead < pages.length;
+  const hasMoreRaw = items.length > lim || startIdx + pagesRead < pages.length;
   const sliced = items.slice(0, lim);
   const tail = sliced[sliced.length - 1] || lastRow;
-  return {
-    ok: true,
-    items: sliced.map(publicRow),
-    count: sliced.length,
-    next_cursor:
-      hasMore && tail
-        ? encodeListCursor(
-            lastCursorPayload({
-              generation: marker.generation,
-              scopeKind,
-              view,
-              pageId: lastPageId,
-              row: tail,
-              actorKind,
-              actorId,
-            }),
-          )
-        : null,
-    has_more: hasMore,
-    source: "projection",
-    degraded: marker.health === "dirty",
-  };
+  const encoded =
+    hasMoreRaw && tail
+      ? encodeListCursor(
+          lastCursorPayload({
+            generation: marker.generation,
+            scopeKind,
+            view,
+            pageId: lastPageId,
+            row: tail,
+            actorKind,
+            actorId,
+            scope,
+          }),
+        )
+      : "";
+  const hasMore = !!(hasMoreRaw && encoded);
+  return attachExactTotal(
+    {
+      ok: true,
+      items: sliced.map(publicRow),
+      count: sliced.length,
+      next_cursor: hasMore ? encoded : null,
+      has_more: hasMore,
+      source: "projection",
+      degraded: marker.health === "dirty",
+    },
+    marker,
+    view,
+  );
 }
 
 export async function tryListCompanyBookingsProjected(
@@ -1129,16 +1216,28 @@ export async function tryListCompanyBookingsProjected(
     logProjectionIssue("corrupt", { health: "corrupt" });
     return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
   }
-  const parsedCursor = decodeListCursor(cursor);
   const view = includeHistory ? "all" : "active";
+  const rawCursor = safeStr(cursor, 4000);
+  let parsedCursor = null;
+  if (rawCursor) {
+    const decoded = decodeListCursor(rawCursor);
+    const validated = validateSingleStreamCursor(decoded, {
+      marker: read.marker,
+      view,
+      scope,
+    });
+    if (validated.ok === false) return validated;
+    parsedCursor = validated.cursor;
+  }
   const listed = await listFromMarker({
     env,
     marker: read.marker,
     keyBuilder: companyKeyBuilder(scope, read.marker.generation),
     view,
     limit,
-    cursor: parsedCursor && parsedCursor.view === view ? parsedCursor : null,
+    cursor: parsedCursor,
     scopeKind: "company",
+    scope,
     expireActive: !includeHistory,
   });
   if (listed.ok === false && listed.corrupt) {
@@ -1146,6 +1245,254 @@ export async function tryListCompanyBookingsProjected(
     return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
   }
   return listed;
+}
+
+function streamFromCursor(branch, pages) {
+  if (!Array.isArray(pages) || !pages.length) {
+    return { done: true, pageIdx: 0, pageId: "", after: null, rows: [] };
+  }
+  if (branch?.done === true) {
+    return { done: true, pageIdx: pages.length, pageId: "", after: null, rows: [] };
+  }
+  let pageIdx = 0;
+  if (branch?.page_id) {
+    const found = pages.findIndex((desc) => desc.id === safeStr(branch.page_id, 32));
+    if (found < 0) return { invalid: true };
+    pageIdx = found;
+  }
+  return {
+    done: false,
+    pageIdx,
+    pageId: pages[pageIdx]?.id || "",
+    after: branch?.after || null,
+    rows: null,
+  };
+}
+
+function streamHasMore(state, pages) {
+  if (!state || state.done) return false;
+  if (Array.isArray(state.rows) && state.rows.length > 0) return true;
+  if (state.pageIdx >= 0 && state.pageIdx < pages.length) {
+    if (state.rows == null) return true;
+    if (state.pageIdx + 1 < pages.length) return true;
+  }
+  return false;
+}
+
+function remainingEligibleRows(rows, after, compareFn, nowMs) {
+  const decorated = [...(rows || [])].sort(compareFn);
+  const out = [];
+  for (const row of decorated) {
+    if (after && !afterCursor(row, { after }, compareFn)) continue;
+    if (!isDriverActiveListRow(row, nowMs)) continue;
+    out.push(row);
+  }
+  return out;
+}
+
+async function listMergedDriverActiveDispatch({
+  env,
+  companyMarker,
+  actorMarker,
+  companyBuilder,
+  actorBuilder,
+  scope,
+  actorKind,
+  actorId,
+  limit,
+  parsedCursor,
+  nowMs = Date.now(),
+}) {
+  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const assignedPages = Array.isArray(actorMarker?.views?.active?.pages)
+    ? actorMarker.views.active.pages
+    : [];
+  const dispatchPages = Array.isArray(companyMarker?.views?.dispatch?.pages)
+    ? companyMarker.views.dispatch.pages
+    : [];
+  const assignedState = streamFromCursor(parsedCursor?.assigned, assignedPages);
+  const dispatchState = streamFromCursor(parsedCursor?.dispatch, dispatchPages);
+  if (assignedState.invalid || dispatchState.invalid) return cursorInvalidResult();
+
+  const pageCache = new Map();
+  const compareFn = compareDriverActiveSort;
+  let pageReads = 0;
+  const maxPageReads = 3;
+
+  async function loadPageRows(keyBuilder, view, pageId) {
+    const cacheKey = `${keyBuilder.kind}:${keyBuilder.actorId || "_"}:${view}:${pageId}`;
+    if (pageCache.has(cacheKey)) return pageCache.get(cacheKey);
+    if (pageReads >= maxPageReads) return { deferred: true };
+    pageReads += 1;
+    const raw = await kvGetJson(env, keyBuilder.pageKey(view, pageId));
+    if (!raw || !Array.isArray(raw.rows)) return { corrupt: true };
+    const loaded = { rows: raw.rows.map((row) => decorateRow(row)).filter(Boolean) };
+    pageCache.set(cacheKey, loaded);
+    return loaded;
+  }
+
+  async function ensureStream(state, keyBuilder, view, pages) {
+    if (state.done) return { ok: true };
+    if (Array.isArray(state.rows)) return { ok: true };
+    if (state.pageIdx < 0 || state.pageIdx >= pages.length) {
+      state.done = true;
+      state.rows = [];
+      return { ok: true };
+    }
+    const pageId = pages[state.pageIdx].id;
+    const loaded = await loadPageRows(keyBuilder, view, pageId);
+    if (loaded.corrupt) return { corrupt: true };
+    if (loaded.deferred) return { deferred: true };
+    state.pageId = pageId;
+    state.rows = remainingEligibleRows(loaded.rows, state.after, compareFn, nowMs);
+    return { ok: true };
+  }
+
+  function advanceStream(state, pages, last) {
+    state.after = null;
+    state.rows = null;
+    state.pageIdx += 1;
+    if (state.pageIdx >= pages.length) {
+      state.done = true;
+      state.pageId = "";
+      state.rows = [];
+      last.after = null;
+      last.pageId = "";
+      return;
+    }
+    state.pageId = pages[state.pageIdx].id;
+    last.after = null;
+    last.pageId = state.pageId;
+  }
+
+  function markConsumed(state, row, last) {
+    const after = rowAfterProbe(row);
+    state.after = after;
+    last.after = after;
+    last.pageId = state.pageId;
+    if (Array.isArray(state.rows)) {
+      state.rows = state.rows.filter((entry) => rowKey(entry) !== rowKey(row));
+    }
+  }
+
+  const lastAssigned = {
+    after: assignedState.after,
+    pageId: assignedState.pageId || assignedPages[0]?.id || "",
+  };
+  const lastDispatch = {
+    after: dispatchState.after,
+    pageId: dispatchState.pageId || dispatchPages[0]?.id || "",
+  };
+  const items = [];
+  const seen = new Set();
+
+  while (items.length < lim) {
+    const assignedLoad = await ensureStream(assignedState, actorBuilder, "active", assignedPages);
+    if (assignedLoad.corrupt) {
+      return { ok: false, error: "bookings_list_projection_unavailable", corrupt: true };
+    }
+    const dispatchLoad = await ensureStream(dispatchState, companyBuilder, "dispatch", dispatchPages);
+    if (dispatchLoad.corrupt) {
+      return { ok: false, error: "bookings_list_projection_unavailable", corrupt: true };
+    }
+    if (
+      !assignedState.done &&
+      Array.isArray(assignedState.rows) &&
+      assignedState.rows.length === 0 &&
+      assignedState.pageIdx + 1 < assignedPages.length
+    ) {
+      if (pageReads >= maxPageReads) break;
+      advanceStream(assignedState, assignedPages, lastAssigned);
+      continue;
+    }
+    if (
+      !dispatchState.done &&
+      Array.isArray(dispatchState.rows) &&
+      dispatchState.rows.length === 0 &&
+      dispatchState.pageIdx + 1 < dispatchPages.length
+    ) {
+      if (pageReads >= maxPageReads) break;
+      advanceStream(dispatchState, dispatchPages, lastDispatch);
+      continue;
+    }
+    if (assignedLoad.deferred || dispatchLoad.deferred) break;
+    if (
+      !assignedState.done &&
+      Array.isArray(assignedState.rows) &&
+      assignedState.rows.length === 0
+    ) {
+      assignedState.done = true;
+    }
+    if (
+      !dispatchState.done &&
+      Array.isArray(dispatchState.rows) &&
+      dispatchState.rows.length === 0
+    ) {
+      dispatchState.done = true;
+    }
+    const nextAssigned = assignedState.rows?.[0] || null;
+    const nextDispatch = dispatchState.rows?.[0] || null;
+    if (!nextAssigned && !nextDispatch) break;
+    if (nextAssigned && nextDispatch && rowKey(nextAssigned) === rowKey(nextDispatch)) {
+      if (seen.has(rowKey(nextAssigned))) {
+        markConsumed(assignedState, nextAssigned, lastAssigned);
+        markConsumed(dispatchState, nextDispatch, lastDispatch);
+        continue;
+      }
+      seen.add(rowKey(nextAssigned));
+      items.push(nextAssigned);
+      markConsumed(assignedState, nextAssigned, lastAssigned);
+      markConsumed(dispatchState, nextDispatch, lastDispatch);
+      continue;
+    }
+    const pickAssigned = !nextDispatch || (nextAssigned && compareFn(nextAssigned, nextDispatch) <= 0);
+    const chosen = pickAssigned ? nextAssigned : nextDispatch;
+    const key = rowKey(chosen);
+    if (seen.has(key)) {
+      if (pickAssigned) markConsumed(assignedState, chosen, lastAssigned);
+      else markConsumed(dispatchState, chosen, lastDispatch);
+      continue;
+    }
+    seen.add(key);
+    items.push(chosen);
+    if (pickAssigned) markConsumed(assignedState, chosen, lastAssigned);
+    else markConsumed(dispatchState, chosen, lastDispatch);
+  }
+
+  function encodeStreamCursor(state, pages, last) {
+    if (state.done || !pages.length) return { done: true };
+    if (Array.isArray(state.rows) && state.rows.length === 0 && state.pageIdx + 1 < pages.length) {
+      return { page_id: pages[state.pageIdx + 1].id, after: null };
+    }
+    return { page_id: last.pageId || pages[state.pageIdx]?.id || "", after: last.after || null };
+  }
+
+  const hasMoreRaw = streamHasMore(assignedState, assignedPages) || streamHasMore(dispatchState, dispatchPages);
+  const nextPayload = {
+    v: LIST_PROJ_VERSION,
+    kind: "driver_merge",
+    g: companyMarker.generation,
+    scope: "driver",
+    view: "active+dispatch",
+    actor_kind: actorKind,
+    actor_id: actorId,
+    t: scope.tenant_id,
+    c: scope.company_id,
+    assigned: encodeStreamCursor(assignedState, assignedPages, lastAssigned),
+    dispatch: encodeStreamCursor(dispatchState, dispatchPages, lastDispatch),
+  };
+  const encoded = hasMoreRaw ? encodeListCursor(nextPayload) : "";
+  const hasMore = !!(hasMoreRaw && encoded);
+  return {
+    ok: true,
+    items: items.map(publicRow),
+    count: items.length,
+    next_cursor: hasMore ? encoded : null,
+    has_more: hasMore,
+    source: "projection",
+    assigned: Number(actorMarker?.views?.active?.row_count || 0),
+    available: Number(companyMarker?.views?.dispatch?.row_count || 0),
+  };
 }
 
 export async function tryListDriverBookingsProjected(
@@ -1172,8 +1519,8 @@ export async function tryListDriverBookingsProjected(
     return { useLegacy: true };
   }
   const generation = companyRead.marker.generation;
-  const parsedCursor = decodeListCursor(cursor);
   const view = includeHistory ? "all" : "active";
+  const rawCursor = safeStr(cursor, 4000);
   const actorKind = sanitizeTenantString(driverId, 96)
     ? "driver"
     : sanitizeTenantString(vehicleId, 128)
@@ -1182,6 +1529,7 @@ export async function tryListDriverBookingsProjected(
   const actorId = actorKind === "driver"
     ? sanitizeTenantString(driverId, 96)
     : sanitizeTenantString(vehicleId, 128);
+  const mergeActive = includeDispatch === true && includeHistory !== true;
   if (!actorId) {
     if (!includeDispatch) {
       return {
@@ -1193,14 +1541,26 @@ export async function tryListDriverBookingsProjected(
         source: "projection",
       };
     }
+    let dispatchCursor = null;
+    if (rawCursor) {
+      const decoded = decodeListCursor(rawCursor);
+      const validated = validateSingleStreamCursor(decoded, {
+        marker: companyRead.marker,
+        view: "dispatch",
+        scope,
+      });
+      if (validated.ok === false) return validated;
+      dispatchCursor = validated.cursor;
+    }
     return listFromMarker({
       env,
       marker: companyRead.marker,
       keyBuilder: companyKeyBuilder(scope, generation),
       view: "dispatch",
       limit,
-      cursor: parsedCursor && parsedCursor.view === "dispatch" ? parsedCursor : null,
+      cursor: dispatchCursor,
       scopeKind: "company",
+      scope,
       expireActive: true,
     });
   }
@@ -1211,14 +1571,60 @@ export async function tryListDriverBookingsProjected(
     : emptyMarker(generation);
   actorMarker.generation = generation;
   actorMarker.complete = true;
+  if (mergeActive) {
+    let mergeCursor = null;
+    if (rawCursor) {
+      const decoded = decodeListCursor(rawCursor);
+      const validated = validateMergeCursor(decoded, {
+        marker: companyRead.marker,
+        scope,
+        actorKind,
+        actorId,
+      });
+      if (validated.ok === false) return validated;
+      mergeCursor = validated.cursor;
+    }
+    const merged = await listMergedDriverActiveDispatch({
+      env,
+      companyMarker: companyRead.marker,
+      actorMarker,
+      companyBuilder: companyKeyBuilder(scope, generation),
+      actorBuilder: actorKeyBuilder(scope, actorKind, actorId, generation),
+      scope,
+      actorKind,
+      actorId,
+      limit,
+      parsedCursor: mergeCursor,
+      nowMs: Date.now(),
+    });
+    if (merged.ok === false && merged.corrupt) {
+      logProjectionIssue("corrupt", { health: "missing_merge_page" });
+      return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
+    }
+    if (companyRead.marker.health === "dirty") merged.degraded = true;
+    return merged;
+  }
+  let listedCursor = null;
+  if (rawCursor) {
+    const decoded = decodeListCursor(rawCursor);
+    const validated = validateSingleStreamCursor(decoded, {
+      marker: actorMarker,
+      view,
+      scope,
+      actorId,
+    });
+    if (validated.ok === false) return validated;
+    listedCursor = validated.cursor;
+  }
   const listed = await listFromMarker({
     env,
     marker: actorMarker,
     keyBuilder: actorKeyBuilder(scope, actorKind, actorId, generation),
     view,
     limit,
-    cursor: parsedCursor && parsedCursor.actor_id === actorId ? parsedCursor : null,
+    cursor: listedCursor,
     scopeKind: "driver",
+    scope,
     actorKind,
     actorId,
     expireActive: !includeHistory,
@@ -1227,42 +1633,7 @@ export async function tryListDriverBookingsProjected(
     logProjectionIssue("corrupt", { health: "missing_page" });
     return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
   }
-  if (includeHistory || includeDispatch !== true) return listed;
-  const dispatch = await listFromMarker({
-    env,
-    marker: companyRead.marker,
-    keyBuilder: companyKeyBuilder(scope, generation),
-    view: "dispatch",
-    limit: Math.min(200, Number(limit) || 50),
-    cursor: null,
-    scopeKind: "company",
-    expireActive: true,
-  });
-  if (dispatch.ok === false && dispatch.corrupt) {
-    logProjectionIssue("corrupt", { health: "missing_dispatch_page" });
-    return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
-  }
-  const seen = new Set((listed.items || []).map((row) => rowKey(row)));
-  const merged = [...(listed.items || [])];
-  for (const row of dispatch.items || []) {
-    const key = rowKey(row);
-    if (seen.has(key)) continue;
-    merged.push(row);
-    seen.add(key);
-  }
-  merged.sort(compareDriverActiveSort);
-  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
-  const sliced = merged.slice(0, lim);
-  return {
-    ok: true,
-    items: sliced.map(publicRow),
-    count: sliced.length,
-    next_cursor: listed.next_cursor,
-    has_more: listed.has_more === true || merged.length > lim,
-    source: "projection",
-    assigned: (listed.items || []).length,
-    available: (dispatch.items || []).length,
-  };
+  return listed;
 }
 
 export async function rebuildCompanyBookingsListProjectionForScope(
@@ -1458,7 +1829,28 @@ export async function rebuildCompanyBookingsListProjectionForScope(
   };
 }
 
-export function seedProjectedCompanyPages(scope, rows, { includeHistory = true } = {}) {
+function seedViewPages(seed, marker, pageKeyFn, view, rows, compareFn, generation) {
+  const decorated = rows.map((row) => decorateRow(row)).filter(Boolean);
+  decorated.sort(compareFn);
+  const viewState = emptyView();
+  for (let i = 0; i < decorated.length; i += LIST_PROJ_PAGE_SIZE) {
+    const pageRows = decorated.slice(i, i + LIST_PROJ_PAGE_SIZE);
+    const pageId = String(viewState.next_page_id++);
+    viewState.pages.push(pageDescriptor(pageId, pageRows, compareFn));
+    seed[pageKeyFn(view, pageId)] = {
+      version: LIST_PROJ_VERSION,
+      generation,
+      view,
+      page_id: pageId,
+      rows: pageRows.map(publicRow),
+    };
+  }
+  viewState.row_count = decorated.length;
+  marker.views[view] = viewState;
+  return decorated;
+}
+
+export function seedProjectedCompanyPages(scope, rows, { includeHistory = true, dispatchRows = [] } = {}) {
   const normalized = normalizeListProjectionScope(scope);
   const generation = 1;
   const view = includeHistory ? "all" : "active";
@@ -1511,11 +1903,26 @@ export function seedProjectedCompanyPages(scope, rows, { includeHistory = true }
     activeState.row_count = activeRows.length;
     marker.views.active = activeState;
   }
+  if (Array.isArray(dispatchRows) && dispatchRows.length) {
+    seedViewPages(
+      seed,
+      marker,
+      (viewName, pageId) => companyListProjectionPageKey(normalized, generation, viewName, pageId),
+      "dispatch",
+      dispatchRows.map((row) => ({
+        ...row,
+        available_unassigned: true,
+        availableUnassigned: true,
+      })),
+      compareDriverActiveSort,
+      generation,
+    );
+  }
   seed[companyListProjectionMarkerKey(normalized)] = marker;
   return seed;
 }
 
-export function seedProjectedDriverPages(scope, driverId, rows, { includeHistory = false } = {}) {
+export function seedProjectedDriverPages(scope, driverId, rows, { includeHistory = false, dispatchRows = [] } = {}) {
   const normalized = normalizeListProjectionScope(scope);
   const generation = 1;
   const view = includeHistory ? "all" : "active";
@@ -1526,7 +1933,7 @@ export function seedProjectedDriverPages(scope, driverId, rows, { includeHistory
   marker.complete = true;
   marker.health = "ok";
   marker.updated_at = new Date().toISOString();
-  const seed = seedProjectedCompanyPages(normalized, rows, { includeHistory: true });
+  const seed = seedProjectedCompanyPages(normalized, rows, { includeHistory: true, dispatchRows });
   const viewState = emptyView();
   const pages = [];
   for (let i = 0; i < decorated.length; i += LIST_PROJ_PAGE_SIZE) {

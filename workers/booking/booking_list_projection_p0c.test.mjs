@@ -18,6 +18,7 @@ import {
 import {
   ACTIONABLE_GRACE_MS,
   companyListProjectionMarkerKey,
+  encodeListCursor,
   seedProjectedCompanyPages,
   seedProjectedDriverPages,
   tryListCompanyBookingsProjected,
@@ -259,6 +260,7 @@ test("legacy path: 0 / 3 / 83 bookings hydrate the company index (before counts)
     // Marker probe (1) + company index (1) + one get per indexed booking.
     assert.equal(kv.counts.get, 2 + n, `legacy reads at n=${n}`);
     assert.equal(kv.counts.list, 0);
+    assert.equal("total_count" in body, false);
   }
 });
 
@@ -280,6 +282,7 @@ test("projected path: 0 / 3 / 83 bookings stay inside the hard GET budget", asyn
     assert.equal(body.ok, true);
     assert.equal(body.items.length, Math.min(50, n));
     assert.ok(body.count === body.items.length);
+    assert.equal(body.total_count, n);
     assert.equal("next_cursor" in body, true);
     assert.equal("has_more" in body, true);
     assert.ok(kv.counts.get <= 5, `reads=${kv.counts.get} n=${n}`);
@@ -338,6 +341,7 @@ test("company first and next pages plus old-client limit 50/200 compatibility", 
   assert.equal(firstBody.ok, true);
   assert.equal(firstBody.items.length, 50);
   assert.equal(firstBody.count, 50);
+  assert.equal(firstBody.total_count, 83);
   assert.ok(firstBody.items[0].booking_id);
   assert.ok(firstBody.items[0].from);
   assert.ok(firstBody.items[0].to);
@@ -349,6 +353,8 @@ test("company first and next pages plus old-client limit 50/200 compatibility", 
   });
   const nextBody = await next.json();
   assert.equal(nextBody.items.length, 33);
+  assert.equal(nextBody.count, 33);
+  assert.equal(nextBody.total_count, 83);
   const ids = new Set([
     ...firstBody.items.map((r) => r.booking_id),
     ...nextBody.items.map((r) => r.booking_id),
@@ -380,7 +386,9 @@ test("active-only vs include-history filter combinations", async () => {
   assert.ok(historyIds.includes("2026-08-501"));
   assert.ok(historyIds.includes("2026-08-502"));
   assert.ok(historyIds.includes("2026-08-503"));
+  assert.equal(history.total_count, 4);
   assert.deepEqual(activeIds, ["2026-08-501"]);
+  assert.equal(active.total_count, 1);
 });
 
 test("company/tenant isolation: foreign company rows never appear", async () => {
@@ -791,4 +799,356 @@ test("tryListDriverBookingsProjected first/next pages stay bounded", async () =>
   );
   assert.ok(next.items.length >= 1);
   assert.ok(kv.counts.get <= 5, `next reads=${kv.counts.get}`);
+});
+
+function rowDedupeKey(row) {
+  return `${row.booking_id || row.id || ""}::${row.leg_id || row.legId || ""}`;
+}
+
+function assertPickupSoonest(rows) {
+  for (let i = 1; i < rows.length; i += 1) {
+    const prev = Date.parse(rows[i - 1].pickup_iso);
+    const cur = Date.parse(rows[i].pickup_iso);
+    if (prev !== cur) {
+      assert.ok(prev <= cur, `order broke at ${rows[i - 1].booking_id} -> ${rows[i].booking_id}`);
+      continue;
+    }
+    const idCmp = String(rows[i - 1].booking_id).localeCompare(String(rows[i].booking_id));
+    assert.ok(idCmp <= 0);
+  }
+}
+
+async function walkDriverProjectedPages(env, token, { limit = 25 } = {}) {
+  const collected = [];
+  const seen = new Set();
+  let cursor = "";
+  for (let page = 0; page < 80; page += 1) {
+    env.BOOKING_KV.counts.get = 0;
+    env.BOOKING_KV.counts.list = 0;
+    env.BOOKING_KV.counts.put = 0;
+    env.BOOKING_KV.counts.delete = 0;
+    env.BOOKING_KV.counts.got = [];
+    env.BOOKING_KV.counts.listed = [];
+    const res = await driverGet(env, token, { limit, cursor });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.count, body.items.length);
+    const sessionReads = env.BOOKING_KV.counts.got.filter((key) =>
+      String(key).includes(":session:"),
+    ).length;
+    const projectionReads = env.BOOKING_KV.counts.get - sessionReads;
+    assert.ok(
+      projectionReads <= 5,
+      `projection reads=${projectionReads} total=${env.BOOKING_KV.counts.get} page=${page}`,
+    );
+    assert.ok(env.BOOKING_KV.counts.list <= 2);
+    assert.equal(env.BOOKING_KV.counts.put, 0);
+    assert.equal(env.BOOKING_KV.counts.delete, 0);
+    assertNoBookingHydration(env.BOOKING_KV);
+    if (body.has_more === true) {
+      assert.ok(String(body.next_cursor || "").trim(), "has_more requires a cursor");
+    } else {
+      assert.equal(body.next_cursor, null);
+    }
+    for (const item of body.items) {
+      const key = rowDedupeKey(item);
+      assert.equal(seen.has(key), false, `duplicate ${key}`);
+      seen.add(key);
+      collected.push(item);
+    }
+    if (body.has_more !== true) return collected;
+    cursor = body.next_cursor;
+  }
+  assert.fail("driver pagination did not terminate");
+}
+
+async function rebuildUntilComplete(env) {
+  let cursor;
+  let last;
+  for (let i = 0; i < 20; i += 1) {
+    last = await rebuildCompanyBookingsListProjectionForScope(env, SCOPE, {
+      dryRun: false,
+      cursor,
+    });
+    assert.equal(last.ok, true);
+    if (last.complete === true) return last;
+    cursor = last.cursor;
+  }
+  assert.fail("company rebuild did not complete");
+}
+
+test("projected company limit=25 exposes exact total_count=83", async () => {
+  const rows = [];
+  for (let i = 0; i < 83; i += 1) {
+    rows.push(
+      listRow(`2026-08-${String(1100 + i).padStart(4, "0")}`, {
+        created_at: `2026-08-10T00:${String(i).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+  }
+  const kv = countingKV(seedProjectedCompanyPages(SCOPE, rows, { includeHistory: true }));
+  const env = envWith(kv);
+  const first = await (await companyGet(env, { limit: 25, includeHistory: true })).json();
+  assert.equal(first.count, 25);
+  assert.equal(first.items.length, 25);
+  assert.equal(first.total_count, 83);
+  assert.equal(first.has_more, true);
+  assert.ok(String(first.next_cursor || "").trim());
+  const next = await (
+    await companyGet(env, { limit: 25, includeHistory: true, cursor: first.next_cursor })
+  ).json();
+  assert.equal(next.total_count, 83);
+  assert.equal(next.count, 25);
+  assert.equal(next.has_more, true);
+});
+
+test("hide and status transition update exact company totals", async () => {
+  const seed = seedProjectedCompanyPages(SCOPE, [], { includeHistory: true });
+  const kv = countingKV(seed);
+  const env = envWith(kv);
+  const now = Date.now();
+  const rec = bookingRec({
+    id: "2026-08-1201",
+    createdAt: "2026-08-11T00:00:01.000Z",
+    updatedAt: "2026-08-11T00:00:01.000Z",
+    pickupIso: new Date(now + 3600_000).toISOString(),
+  });
+  await upsertCompanyBookingsListIndexBestEffort(env, "2026-08-1201", rec, SCOPE);
+  const history = await (await companyGet(env, { includeHistory: true })).json();
+  const active = await (await companyGet(env, { includeHistory: false })).json();
+  assert.equal(history.total_count, 1);
+  assert.equal(active.total_count, 1);
+  const cancelled = {
+    ...rec,
+    status: "CANCELLED",
+    updated_at: "2026-08-11T00:00:02.000Z",
+  };
+  await upsertCompanyBookingsListIndexBestEffort(env, "2026-08-1201", cancelled, SCOPE);
+  const afterCancelHistory = await (await companyGet(env, { includeHistory: true })).json();
+  const afterCancelActive = await (await companyGet(env, { includeHistory: false })).json();
+  assert.equal(afterCancelHistory.total_count, 1);
+  assert.equal(afterCancelActive.total_count, 0);
+  const hidden = {
+    ...cancelled,
+    company_bookings_hidden: true,
+    hidden_from_company_bookings: true,
+    updated_at: "2026-08-11T00:00:03.000Z",
+  };
+  await upsertCompanyBookingsListIndexBestEffort(env, "2026-08-1201", hidden, SCOPE);
+  const afterHide = await (await companyGet(env, { includeHistory: true })).json();
+  assert.equal(afterHide.total_count, 0);
+  assert.equal(afterHide.items.length, 0);
+});
+
+test("driver merge cursor walks assigned+dispatch without duplicates or skips", async () => {
+  const now = Date.now();
+  const assigned = [];
+  const dispatch = [];
+  const expected = [];
+  for (let i = 0; i < 210; i += 1) {
+    const assignedId = `2026-08-A${String(i).padStart(3, "0")}`;
+    const assignedRow = listRow(assignedId, {
+      assigned_driver_id: "drv-merge",
+      pickup_iso: new Date(now + (i * 2 + 1) * 1000).toISOString(),
+    });
+    assigned.push(assignedRow);
+    expected.push(assignedRow);
+  }
+  for (let i = 0; i < 210; i += 1) {
+    const dispatchId = i < 8 ? `2026-08-A${String(i).padStart(3, "0")}` : `2026-08-D${String(i).padStart(3, "0")}`;
+    const dispatchRow = listRow(dispatchId, {
+      pickup_iso: new Date(now + (i * 2 + 2) * 1000).toISOString(),
+    });
+    dispatch.push(dispatchRow);
+    if (i >= 8) expected.push(dispatchRow);
+  }
+  expected.sort((a, b) => {
+    const pa = Date.parse(a.pickup_iso);
+    const pb = Date.parse(b.pickup_iso);
+    if (pa !== pb) return pa - pb;
+    return String(a.booking_id).localeCompare(String(b.booking_id));
+  });
+  const seed = seedProjectedDriverPages(SCOPE, "drv-merge", assigned, {
+    includeHistory: false,
+    dispatchRows: dispatch,
+  });
+  const session = await seedDriverSession({
+    tokenValue: "drv-merge-tok",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: "drv-merge",
+  });
+  seed[session.key] = session.record;
+  for (let i = 0; i < 40; i += 1) {
+    seed[`booking:unrelated-merge-${i}`] = bookingRec({ id: `unrelated-merge-${i}` });
+  }
+  const kv = countingKV(seed);
+  const env = envWith(kv);
+  const collected = await walkDriverProjectedPages(env, "drv-merge-tok", { limit: 25 });
+  assert.equal(collected.length, expected.length);
+  assert.deepEqual(
+    collected.map((row) => row.booking_id),
+    expected.map((row) => row.booking_id),
+  );
+  assertPickupSoonest(collected);
+  const wide = await driverGet(env, "drv-merge-tok", { limit: 50 });
+  const wideBody = await wide.json();
+  assert.equal(wideBody.ok, true);
+  assert.equal(wideBody.count, wideBody.items.length);
+  assert.equal(wideBody.items.length, 50);
+  assert.equal(wideBody.has_more, true);
+  assert.ok(wideBody.next_cursor);
+});
+
+test("driver merge corrupt and cross-scope cursors fail closed", async () => {
+  const now = Date.now();
+  const assigned = [
+    listRow("2026-08-1301", {
+      assigned_driver_id: "drv-safe",
+      pickup_iso: new Date(now + 3600_000).toISOString(),
+    }),
+  ];
+  const dispatch = [
+    listRow("2026-08-1302", { pickup_iso: new Date(now + 7200_000).toISOString() }),
+  ];
+  const seed = seedProjectedDriverPages(SCOPE, "drv-safe", assigned, {
+    includeHistory: false,
+    dispatchRows: dispatch,
+  });
+  const session = await seedDriverSession({
+    tokenValue: "drv-safe-tok",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: "drv-safe",
+  });
+  seed[session.key] = session.record;
+  seed["booking:hidden-safe"] = bookingRec({ id: "hidden-safe" });
+  const kv = countingKV(seed);
+  const env = envWith(kv);
+  const corrupt = await driverGet(env, "drv-safe-tok", { cursor: "not-a-cursor" });
+  assert.equal(corrupt.status, 503);
+  assert.equal((await corrupt.json()).ok, false);
+  assertNoBookingHydration(kv);
+  const foreign = encodeListCursor({
+    v: 1,
+    kind: "driver_merge",
+    g: 1,
+    t: TENANT,
+    c: OTHER,
+    actor_kind: "driver",
+    actor_id: "drv-safe",
+    assigned: { done: true },
+    dispatch: { done: true },
+  });
+  kv.counts.got = [];
+  const cross = await driverGet(env, "drv-safe-tok", { cursor: foreign });
+  assert.equal(cross.status, 503);
+  assert.equal(
+    kv.counts.got.some((key) => String(key).startsWith("booking:")),
+    false,
+  );
+  const stale = encodeListCursor({
+    v: 1,
+    kind: "driver_merge",
+    g: 99,
+    t: TENANT,
+    c: COMPANY,
+    actor_kind: "driver",
+    actor_id: "drv-safe",
+    assigned: { page_id: "1" },
+    dispatch: { page_id: "1" },
+  });
+  const staleRes = await driverGet(env, "drv-safe-tok", { cursor: stale });
+  assert.equal(staleRes.status, 503);
+});
+
+test("rebuild then GET /driver/bookings serves assigned and dispatch without hydrate", async () => {
+  const now = Date.now();
+  const assigned = bookingRec({
+    id: "2026-08-1401",
+    driverId: "drv-rb",
+    pickupIso: new Date(now + 3600_000).toISOString(),
+    extra: { payment_mode: "cash" },
+  });
+  const dispatch = bookingRec({
+    id: "2026-08-1402",
+    pickupIso: new Date(now + 7200_000).toISOString(),
+    extra: { payment_mode: "cash" },
+  });
+  const hidden = bookingRec({
+    id: "2026-08-1403",
+    pickupIso: new Date(now + 5400_000).toISOString(),
+    extra: { payment_mode: "cash", company_bookings_hidden: true },
+  });
+  const inactive = bookingRec({
+    id: "2026-08-1404",
+    status: "COMPLETED",
+    pickupIso: new Date(now + 1800_000).toISOString(),
+    driverId: "drv-rb",
+    extra: { payment_mode: "cash" },
+  });
+  const seed = {
+    "booking:2026-08-1401": assigned,
+    "booking:2026-08-1402": dispatch,
+    "booking:2026-08-1403": hidden,
+    "booking:2026-08-1404": inactive,
+  };
+  const session = await seedDriverSession({
+    tokenValue: "drv-rb-tok",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: "drv-rb",
+  });
+  seed[session.key] = session.record;
+  const kv = countingKV(seed);
+  const env = envWith(kv);
+  const rebuilt = await rebuildUntilComplete(env);
+  assert.equal(rebuilt.complete, true);
+  kv.counts.get = 0;
+  kv.counts.list = 0;
+  kv.counts.put = 0;
+  kv.counts.delete = 0;
+  kv.counts.got = [];
+  kv.counts.listed = [];
+  const body = await (await driverGet(env, "drv-rb-tok", { limit: 25 })).json();
+  const ids = body.items.map((row) => row.booking_id);
+  assert.ok(ids.includes("2026-08-1401"));
+  assert.ok(ids.includes("2026-08-1402"));
+  assert.equal(ids.includes("2026-08-1403"), false);
+  assert.equal(ids.includes("2026-08-1404"), false);
+  assert.ok(kv.counts.get <= 5);
+  assert.ok(kv.counts.list <= 2);
+  assert.equal(kv.counts.put, 0);
+  assert.equal(kv.counts.delete, 0);
+  assertNoBookingHydration(kv);
+});
+
+test("rebuild dispatch is visible to a driver with no assignment marker", async () => {
+  const now = Date.now();
+  const dispatch = bookingRec({
+    id: "2026-08-1411",
+    pickupIso: new Date(now + 3600_000).toISOString(),
+    extra: { payment_mode: "cash" },
+  });
+  const seed = { "booking:2026-08-1411": dispatch };
+  const session = await seedDriverSession({
+    tokenValue: "drv-empty-tok",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: "drv-empty",
+  });
+  seed[session.key] = session.record;
+  const kv = countingKV(seed);
+  const env = envWith(kv);
+  const rebuilt = await rebuildUntilComplete(env);
+  assert.equal(rebuilt.complete, true);
+  kv.counts.get = 0;
+  kv.counts.got = [];
+  kv.counts.listed = [];
+  const body = await (await driverGet(env, "drv-empty-tok", { limit: 25 })).json();
+  assert.equal(body.ok, true);
+  assert.equal(body.items.some((row) => row.booking_id === "2026-08-1411"), true);
+  assertNoBookingHydration(kv);
+  assert.ok(kv.counts.get <= 5);
 });

@@ -148,6 +148,8 @@ test("seeded company first/next pages stay within two page reads", async () => {
   );
   assert.equal(first.ok, true);
   assert.equal(first.items.length, 50);
+  assert.equal(first.count, 50);
+  assert.equal(first.total_count, 83);
   assert.equal(first.has_more, true);
   assert.ok(first.next_cursor);
   const next = await tryListCompanyBookingsProjected(
@@ -156,6 +158,7 @@ test("seeded company first/next pages stay within two page reads", async () => {
   );
   assert.equal(next.ok, true);
   assert.equal(next.items.length, 33);
+  assert.equal(next.total_count, 83);
   assert.equal(next.has_more, false);
   assert.equal(
     kv.counts.got.some((key) => String(key).startsWith("booking:")),
