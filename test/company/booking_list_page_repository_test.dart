@@ -15,13 +15,16 @@ void main() {
     String tenant = 'co-a',
     String company = 'co-a',
     String cursor = '',
+    BookingListHistoryMode historyMode = BookingListHistoryMode.history,
+    String filterFingerprint = '',
   }) {
     return BookingListPageRequest(
       actor: BookingListActor.company,
       tenantId: tenant,
       companyId: company,
-      historyMode: BookingListHistoryMode.history,
+      historyMode: historyMode,
       cursor: cursor,
+      filterFingerprint: filterFingerprint,
     );
   }
 
@@ -45,6 +48,7 @@ void main() {
     required List<String> ids,
     bool hasMore = false,
     String? nextCursor,
+    int? totalCount,
   }) {
     return <String, dynamic>{
       'ok': true,
@@ -54,6 +58,7 @@ void main() {
       'count': ids.length,
       'has_more': hasMore,
       'next_cursor': nextCursor,
+      if (totalCount != null) 'total_count': totalCount,
     };
   }
 
@@ -107,6 +112,8 @@ void main() {
     expect(networkCalls, 1);
     expect(limits, <String>['25']);
     expect(page.items.length, 2);
+    expect(page.count, 2);
+    expect(page.totalCount, isNull);
     expect(page.hasMore, isTrue);
     expect(page.nextCursor, 'cursor-2');
     expect(page.contract, BookingListContractKind.projected);
@@ -504,6 +511,225 @@ void main() {
 
   test('no automatic drain-all loop', () {
     expect(bookingListAllowsAutomaticDrain(), isFalse);
+  });
+
+  test('25 loaded + total_count 83 stays exact 83 after page 2', () {
+    final first = parseBookingListPagePayload(
+      projectedPage(
+        ids: List<String>.generate(25, (i) => 'b$i'),
+        hasMore: true,
+        nextCursor: 'cursor-2',
+        totalCount: 83,
+      ),
+      request: companyFirst(),
+      limitUsed: 25,
+    );
+    expect(first.count, 25);
+    expect(first.totalCount, 83);
+    expect(
+      companyBookingFilterDisplayedCount(
+        selected: true,
+        scopeMatches: true,
+        contract: first.contract,
+        exactTotal: first.totalCount,
+        loadedCount: 25,
+      ),
+      83,
+    );
+    final next = parseBookingListPagePayload(
+      projectedPage(ids: <String>['b25'], totalCount: 83),
+      request: companyFirst(cursor: 'cursor-2'),
+      limitUsed: 25,
+    );
+    expect(
+      resolveBookingListExactTotal(
+        replaceExactTotal: false,
+        incoming: next.totalCount,
+        previous: first.totalCount,
+      ),
+      83,
+    );
+  });
+
+  test('active total differs from history total and is not reused', () {
+    final history = parseBookingListPagePayload(
+      projectedPage(ids: <String>['h1'], totalCount: 83),
+      request: companyFirst(),
+      limitUsed: 25,
+    );
+    final active = parseBookingListPagePayload(
+      projectedPage(ids: <String>['a1'], totalCount: 12),
+      request: companyFirst(historyMode: BookingListHistoryMode.active),
+      limitUsed: 25,
+    );
+    expect(history.totalCount, 83);
+    expect(active.totalCount, 12);
+    expect(history.scopeKey == active.scopeKey, isFalse);
+    expect(
+      companyBookingFilterDisplayedCount(
+        selected: false,
+        scopeMatches: true,
+        contract: BookingListContractKind.projected,
+        exactTotal: 83,
+        loadedCount: 4,
+      ),
+      4,
+    );
+  });
+
+  test('refresh replaces exact total 83 with 82', () {
+    expect(
+      resolveBookingListExactTotal(
+        replaceExactTotal: true,
+        incoming: 82,
+        previous: 83,
+      ),
+      82,
+    );
+  });
+
+  test('legacy response has no total_count and stays compatible', () {
+    final parsed = parseBookingListPagePayload(
+      legacyPage(List<String>.generate(40, (i) => 'L$i')),
+      request: companyFirst(),
+      limitUsed: 200,
+    );
+    expect(parsed.contract, BookingListContractKind.legacy);
+    expect(parsed.totalCount, isNull);
+    expect(parsed.count, 40);
+    expect(
+      companyBookingFilterDisplayedCount(
+        selected: true,
+        scopeMatches: true,
+        contract: parsed.contract,
+        exactTotal: parsed.totalCount,
+        loadedCount: 40,
+      ),
+      40,
+    );
+  });
+
+  test('invalid and negative total_count are ignored', () {
+    expect(parseBookingListExactTotal(null), isNull);
+    expect(parseBookingListExactTotal(-1), isNull);
+    expect(parseBookingListExactTotal(1.5), isNull);
+    expect(parseBookingListExactTotal('nope'), isNull);
+    expect(parseBookingListExactTotal(true), isNull);
+    expect(parseBookingListExactTotal(83), 83);
+    expect(parseBookingListExactTotal('83'), 83);
+  });
+
+  test('driver projected page does not invent an exact total', () {
+    final parsed = parseBookingListPagePayload(
+      projectedPage(ids: <String>['d1', 'd2']),
+      request: driverFirst(),
+      limitUsed: 25,
+    );
+    expect(parsed.contract, BookingListContractKind.projected);
+    expect(parsed.count, 2);
+    expect(parsed.totalCount, isNull);
+  });
+
+  test(
+    'company mutation invalidates company and driver keys, not company B',
+    () async {
+      final companyA = companyFirst();
+      final companyACursor = companyFirst(cursor: 'cursor-2');
+      final companyAActive = companyFirst(
+        historyMode: BookingListHistoryMode.active,
+      );
+      final driverA = driverFirst();
+      final companyB = companyFirst(tenant: 'co-b', company: 'co-b');
+      responses[companyA.cacheKey] = projectedPage(
+        ids: <String>['hidden'],
+        totalCount: 83,
+      );
+      responses[companyACursor.cacheKey] = projectedPage(ids: <String>['p2']);
+      responses[companyAActive.cacheKey] = projectedPage(ids: <String>['a1']);
+      responses[driverA.cacheKey] = projectedPage(ids: <String>['drv']);
+      responses[companyB.cacheKey] = projectedPage(ids: <String>['keep']);
+      await repo.fetch(request: companyA, headers: headers);
+      await repo.fetch(request: companyACursor, headers: headers);
+      await repo.fetch(request: companyAActive, headers: headers);
+      await repo.fetch(request: driverA, headers: headers);
+      await repo.fetch(request: companyB, headers: headers);
+      expect(networkCalls, 5);
+      repo.invalidateBookingListsForAffectedCompany(
+        tenantId: 'co-a',
+        companyId: 'co-a',
+      );
+      expect(repo.hasFreshCache(companyA), isFalse);
+      expect(repo.hasFreshCache(companyACursor), isFalse);
+      expect(repo.hasFreshCache(companyAActive), isFalse);
+      expect(repo.hasFreshCache(driverA), isFalse);
+      expect(repo.hasFreshCache(companyB), isTrue);
+      responses[companyA.cacheKey] = projectedPage(ids: <String>['fresh']);
+      final afterHide = await repo.fetch(request: companyA, headers: headers);
+      expect(afterHide.items.single['booking_id'], 'fresh');
+      expect(
+        afterHide.items.any((row) => row['booking_id'] == 'hidden'),
+        isFalse,
+      );
+      await repo.fetch(request: companyB, headers: headers);
+      expect(networkCalls, 6);
+    },
+  );
+
+  test('cross-actor invalidate does not prefetch the other actor', () async {
+    responses[companyFirst().cacheKey] = projectedPage(ids: <String>['c']);
+    responses[driverFirst().cacheKey] = projectedPage(ids: <String>['d']);
+    await repo.fetch(request: companyFirst(), headers: headers);
+    await repo.fetch(request: driverFirst(), headers: headers);
+    repo.invalidateBookingListsForAffectedCompany(
+      tenantId: 'co-a',
+      companyId: 'co-a',
+    );
+    expect(networkCalls, 2);
+    await repo.fetch(request: companyFirst(), headers: headers);
+    expect(networkCalls, 3);
+    expect(repo.hasFreshCache(driverFirst()), isFalse);
+  });
+
+  test('late success after invalidate does not restore the old page', () async {
+    final started = Completer<void>();
+    final release = Completer<void>();
+    repo = BookingListPageRepository(
+      clock: () => now,
+      transport:
+          ({
+            required BookingListPageRequest request,
+            required int limit,
+            required Future<Map<String, String>> Function() headers,
+          }) async {
+            networkCalls += 1;
+            if (!started.isCompleted) started.complete();
+            await release.future;
+            return projectedPage(ids: <String>['stale']);
+          },
+    );
+    final pending = repo.fetch(request: companyFirst(), headers: headers);
+    await started.future;
+    repo.invalidateBookingListsForAffectedCompany(
+      tenantId: 'co-a',
+      companyId: 'co-a',
+    );
+    release.complete();
+    await pending;
+    expect(repo.hasFreshCache(companyFirst()), isFalse);
+  });
+
+  test('empty tenant/company helper does not wipe another company', () async {
+    responses[companyFirst(tenant: 'co-b', company: 'co-b').cacheKey] =
+        projectedPage(ids: <String>['keep']);
+    await repo.fetch(
+      request: companyFirst(tenant: 'co-b', company: 'co-b'),
+      headers: headers,
+    );
+    repo.invalidateBookingListsForAffectedCompany(tenantId: '', companyId: '');
+    expect(
+      repo.hasFreshCache(companyFirst(tenant: 'co-b', company: 'co-b')),
+      isTrue,
+    );
   });
 
   test('QA events stay identifier-free', () {

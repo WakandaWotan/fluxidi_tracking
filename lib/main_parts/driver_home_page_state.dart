@@ -4337,13 +4337,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
       }
       if (_bookingRefreshShouldBypassCache(trigger) && !nextPage) {
-        bookingListPageRepository.invalidate(
+        bookingListPageRepository.invalidateBookingListsForAffectedCompany(
           tenantId: listTenantId,
           companyId: listCompanyId,
-          driverId: listDriverId,
-          actor: useDriverEndpoint
-              ? BookingListActor.driver
-              : BookingListActor.company,
         );
       }
       final listRequest = BookingListPageRequest(

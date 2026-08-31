@@ -43,9 +43,36 @@ void main() {
       isTrue,
     );
     expect(
-      businessHome.contains('bookingListPageRepository.invalidate('),
+      businessHome.contains('invalidateBookingListsForAffectedCompany('),
       isTrue,
     );
+  });
+
+  test('successful mutations invalidate both actors without prefetch', () {
+    final company = File(
+      'lib/main_parts/company_bookings_overview_page.dart',
+    ).readAsStringSync();
+    final driver = File(
+      'lib/main_parts/driver_home_page_state.dart',
+    ).readAsStringSync();
+    expect(
+      company.contains('invalidateBookingListsForAffectedCompany('),
+      isTrue,
+    );
+    expect(
+      driver.contains('invalidateBookingListsForAffectedCompany('),
+      isTrue,
+    );
+    expect(company.contains('_reloadBookingsAfterMutation()'), isTrue);
+    expect(company.contains('_hideSingleBooking'), isTrue);
+    expect(company.contains('_hideAllVisiblePageBookings'), isTrue);
+    expect(company.contains('bookingListPageRepository.invalidate('), isFalse);
+    expect(company.contains('companyBookingFilterDisplayedCount('), isTrue);
+    expect(
+      driver.contains('invalidateBookingListsForAffectedCompany('),
+      isTrue,
+    );
+    expect(driver.contains('bookingListPageRepository.invalidate('), isFalse);
   });
 
   test('QA logging defaults false and never logs identifiers', () {

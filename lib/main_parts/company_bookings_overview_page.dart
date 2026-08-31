@@ -41,10 +41,10 @@ class _CompanyBookingsOverviewPageState
   String? _bookingPageCursor;
   bool _bookingPageHasMore = false;
   bool _bookingLoadedExtraPages = false;
-  BookingListContractKind _bookingPageContract =
-      BookingListContractKind.legacy;
+  BookingListContractKind _bookingPageContract = BookingListContractKind.legacy;
   int _bookingsLoadGeneration = 0;
   String? _loadedBookingScopeKey;
+  int? _bookingExactTotal;
 
   String _t({
     required String nl,
@@ -1976,6 +1976,10 @@ class _CompanyBookingsOverviewPageState
             .toList(growable: false);
       }
     });
+    if (ok) {
+      await _reloadBookingsAfterMutation();
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -2109,6 +2113,10 @@ class _CompanyBookingsOverviewPageState
             fr: '$success masquées, $failed échecs.',
             es: '$success ocultadas, $failed fallaron.',
           );
+    if (successfulIds.isNotEmpty) {
+      await _reloadBookingsAfterMutation();
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
@@ -2194,10 +2202,9 @@ class _CompanyBookingsOverviewPageState
 
   Future<void> _reloadBookingsAfterMutation() async {
     final scopeQuery = _activeBookingScopeQuery();
-    bookingListPageRepository.invalidate(
+    bookingListPageRepository.invalidateBookingListsForAffectedCompany(
       tenantId: (scopeQuery['tenant_id'] ?? '').trim(),
       companyId: (scopeQuery['company_id'] ?? '').trim(),
-      actor: BookingListActor.company,
     );
     await _loadBookings(forceRefresh: true);
   }
@@ -2367,11 +2374,21 @@ class _CompanyBookingsOverviewPageState
           _bookingLoadedExtraPages = true;
           _bookingPageHasMore = page.hasMore;
           _bookingPageCursor = page.nextCursor;
+          _bookingExactTotal = resolveBookingListExactTotal(
+            replaceExactTotal: false,
+            incoming: page.totalCount,
+            previous: _bookingExactTotal,
+          );
         } else if (replaceList) {
           _all = parsed;
           _bookingLoadedExtraPages = false;
           _bookingPageHasMore = page.hasMore;
           _bookingPageCursor = page.nextCursor;
+          _bookingExactTotal = resolveBookingListExactTotal(
+            replaceExactTotal: true,
+            incoming: page.totalCount,
+            previous: _bookingExactTotal,
+          );
         }
         _bookingPageContract = page.contract;
         _failedBookingCursor = null;
@@ -2508,36 +2525,42 @@ class _CompanyBookingsOverviewPageState
     }
   }
 
-  String _countText(_CompanyBookingsFilter filter) {
+  int _loadedCountForFilter(_CompanyBookingsFilter filter) {
     switch (filter) {
       case _CompanyBookingsFilter.cancelled:
         return _all
             .where(_CompanyBookingOverviewItem.isCancelledBucketVisible)
-            .length
-            .toString();
+            .length;
       case _CompanyBookingsFilter.toCredit:
         return _all
             .where(_CompanyBookingOverviewItem.isToCreditBucketVisible)
-            .length
-            .toString();
+            .length;
       case _CompanyBookingsFilter.refundPending:
         return _all
             .where(_CompanyBookingOverviewItem.isRefundLifecyclePending)
-            .length
-            .toString();
+            .length;
       case _CompanyBookingsFilter.refunded:
         return _all
             .where(_CompanyBookingOverviewItem.isRefundLifecycleRefunded)
-            .length
-            .toString();
+            .length;
       case _CompanyBookingsFilter.refundFailed:
         return _all
             .where(_CompanyBookingOverviewItem.isRefundLifecycleFailed)
-            .length
-            .toString();
+            .length;
       default:
-        return _all.where((item) => item.bucket == filter).length.toString();
+        return _all.where((item) => item.bucket == filter).length;
     }
+  }
+
+  String _countText(_CompanyBookingsFilter filter) {
+    return companyBookingFilterDisplayedCount(
+      selected: filter == _filter,
+      scopeMatches:
+          (_loadedBookingScopeKey ?? '') == _currentCompanyBookingScopeKey(),
+      contract: _bookingPageContract,
+      exactTotal: _bookingExactTotal,
+      loadedCount: _loadedCountForFilter(filter),
+    ).toString();
   }
 
   String _formatPickup(String raw) {
@@ -3193,22 +3216,34 @@ class _CompanyBookingsOverviewPageState
                       fr: 'Limousine',
                       es: 'Limusina',
                     ),
-                    style: TextStyle(color: tokens.textSecondary, fontSize: 11.4),
+                    style: TextStyle(
+                      color: tokens.textSecondary,
+                      fontSize: 11.4,
+                    ),
                   ),
                 if (item.occasion.trim().isNotEmpty)
                   Text(
                     '${_t(nl: 'Gelegenheid', en: 'Occasion', fr: 'Occasion', es: 'Ocasión')}: ${item.occasion}',
-                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    style: TextStyle(
+                      color: tokens.textTertiary,
+                      fontSize: 11.4,
+                    ),
                   ),
                 if (item.pricingMode.trim().isNotEmpty)
                   Text(
                     '${_t(nl: 'Prijsmode', en: 'Pricing mode', fr: 'Mode de tarif', es: 'Modo de precio')}: ${item.pricingMode}',
-                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    style: TextStyle(
+                      color: tokens.textTertiary,
+                      fontSize: 11.4,
+                    ),
                   ),
                 if (item.requestedDurationMinutes != null)
                   Text(
                     '${_t(nl: 'Duur', en: 'Duration', fr: 'Durée', es: 'Duración')}: ${item.requestedDurationMinutes}m',
-                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    style: TextStyle(
+                      color: tokens.textTertiary,
+                      fontSize: 11.4,
+                    ),
                   ),
                 if (item.companyConfirmationRequired)
                   Text(
@@ -3229,22 +3264,34 @@ class _CompanyBookingsOverviewPageState
                   if (item.pricingSnapshot['amount_cents'] is num)
                     Text(
                       '${_t(nl: 'Onveranderlijke prijssnapshot', en: 'Immutable pricing snapshot', fr: 'Snapshot de prix immuable', es: 'Snapshot de precio inmutable')}: €${((item.pricingSnapshot['amount_cents'] as num) / 100).toStringAsFixed(2).replaceAll('.', ',')}',
-                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                      style: TextStyle(
+                        color: tokens.textTertiary,
+                        fontSize: 11.4,
+                      ),
                     ),
                   if (item.pricingSnapshot['from_price_cents'] is num)
                     Text(
                       '${_t(nl: 'Vanafprijs (informatief)', en: 'From-price (informational)', fr: 'Prix à partir de (indicatif)', es: 'Precio desde (informativo)')}: €${((item.pricingSnapshot['from_price_cents'] as num) / 100).toStringAsFixed(2).replaceAll('.', ',')}',
-                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                      style: TextStyle(
+                        color: tokens.textTertiary,
+                        fontSize: 11.4,
+                      ),
                     ),
                   if (item.pricingSnapshot['billable_duration_minutes'] is num)
                     Text(
                       '${_t(nl: 'Factureerbare duur', en: 'Billable duration', fr: 'Durée facturable', es: 'Duración facturable')}: ${item.pricingSnapshot['billable_duration_minutes']}m',
-                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                      style: TextStyle(
+                        color: tokens.textTertiary,
+                        fontSize: 11.4,
+                      ),
                     ),
                   if (item.pricingSnapshot['included_duration_minutes'] is num)
                     Text(
                       '${_t(nl: 'Inbegrepen duur', en: 'Included duration', fr: 'Durée incluse', es: 'Duración incluida')}: ${item.pricingSnapshot['included_duration_minutes']}m',
-                      style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                      style: TextStyle(
+                        color: tokens.textTertiary,
+                        fontSize: 11.4,
+                      ),
                     ),
                 ],
               ],

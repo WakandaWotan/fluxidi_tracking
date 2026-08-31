@@ -163,6 +163,7 @@ class BookingListPageResult {
     required this.count,
     required this.hasMore,
     this.nextCursor,
+    this.totalCount,
     this.degraded = false,
     this.limitUsed = kBookingListProjectedPageSize,
   });
@@ -174,6 +175,9 @@ class BookingListPageResult {
   final int count;
   final bool hasMore;
   final String? nextCursor;
+
+  /// Marker-backed exact total. Never inferred from [count] or [items].
+  final int? totalCount;
   final bool degraded;
   final int limitUsed;
 
@@ -194,8 +198,61 @@ bool bookingListPayloadAdvertisesPagination(Map<dynamic, dynamic> decoded) {
   return decoded.containsKey('next_cursor') && decoded.containsKey('has_more');
 }
 
+/// Exact Worker `total_count` only. Absent, null, negative or non-integer
+/// values stay unknown. Never uses [count] or `items.length`.
+int? parseBookingListExactTotal(Object? raw) {
+  if (raw == null) return null;
+  if (raw is bool) return null;
+  int? parsed;
+  if (raw is int) {
+    parsed = raw;
+  } else if (raw is num) {
+    if (raw != raw.roundToDouble() && raw != raw.toInt()) {
+      return null;
+    }
+    parsed = raw.toInt();
+    if (raw != parsed) return null;
+  } else if (raw is String) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    parsed = int.tryParse(text);
+  }
+  if (parsed == null || parsed < 0) return null;
+  return parsed;
+}
+
+/// First-page / refresh adopts the Worker value (including unknown).
+/// Appended pages keep the already-stored exact total.
+int? resolveBookingListExactTotal({
+  required bool replaceExactTotal,
+  required int? incoming,
+  required int? previous,
+}) {
+  if (replaceExactTotal) return incoming;
+  return previous ?? incoming;
+}
+
+/// Selected filter may show the exact Worker total. Other chips keep the
+/// loaded subset so a history total is never reused as a bucket estimate.
+int companyBookingFilterDisplayedCount({
+  required bool selected,
+  required bool scopeMatches,
+  required BookingListContractKind contract,
+  required int? exactTotal,
+  required int loadedCount,
+}) {
+  if (selected &&
+      scopeMatches &&
+      contract == BookingListContractKind.projected &&
+      exactTotal != null) {
+    return exactTotal;
+  }
+  return loadedCount;
+}
+
 /// Parses `{ ok, items, count }` plus optional P0C fields.
 ///
+/// [count] is the current page length. [totalCount] is optional and exact.
 /// [hasMore] is true only when the Worker sent `has_more: true` together with
 /// a non-empty opaque `next_cursor`. A missing cursor disables further
 /// loading instead of inventing one.
@@ -243,6 +300,7 @@ BookingListPageResult parseBookingListPagePayload(
     count: count,
     hasMore: hasMore,
     nextCursor: nextCursor,
+    totalCount: parseBookingListExactTotal(decoded['total_count']),
     degraded: advertised && decoded['degraded'] == true,
     limitUsed: limitUsed,
   );
@@ -480,6 +538,21 @@ class BookingListPageRepository {
     _cache.removeWhere((key, _) => matches(key));
     _inFlight.removeWhere((key, _) => matches(key));
     _contractByScope.removeWhere((key, _) => matches(key));
+  }
+
+  /// Successful booking mutations can change company, driver and dispatch
+  /// projections together. Clears every cached page and contract for this
+  /// tenant/company across both actors, every driver id, both history modes,
+  /// every filter fingerprint and every cursor. Does not touch another
+  /// tenant/company and does not fetch either surface.
+  void invalidateBookingListsForAffectedCompany({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final tenant = tenantId.trim();
+    final company = companyId.trim();
+    if (tenant.isEmpty || company.isEmpty) return;
+    invalidate(tenantId: tenant, companyId: company);
   }
 
   void invalidateAll({bool emitQa = true}) {

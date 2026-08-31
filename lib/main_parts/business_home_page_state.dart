@@ -478,7 +478,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         tenantId: previousTenant!,
         companyId: previousCompany!,
       );
-      bookingListPageRepository.invalidate(
+      bookingListPageRepository.invalidateBookingListsForAffectedCompany(
         tenantId: previousTenant,
         companyId: previousCompany,
       );
@@ -782,8 +782,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               );
               if (businessDashboardKpiKindIsUsable(bookingsKind)) {
                 bookingsKpisOk = true;
-                nextOpenBookings =
-                    _asInt(decoded['open_bookings_count']) ?? 0;
+                nextOpenBookings = _asInt(decoded['open_bookings_count']) ?? 0;
               } else if (bookingsKind ==
                   BusinessDashboardKpiPayloadKind.pending) {
                 debugPrint(
@@ -868,8 +867,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 nextUnpaidCompleted =
                     _asInt(decoded['unpaid_completed_rides_count']) ?? 0;
                 nextCurrency =
-                    (decoded['currency']?.toString().trim().isNotEmpty ??
-                        false)
+                    (decoded['currency']?.toString().trim().isNotEmpty ?? false)
                     ? decoded['currency'].toString().trim().toUpperCase()
                     : 'EUR';
                 nextMonthlyIncomeCents =
