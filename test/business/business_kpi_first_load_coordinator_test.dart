@@ -418,6 +418,7 @@ void main() {
       expect(BusinessKpiCycleReason.scopeReady, 'scope_ready');
       expect(BusinessKpiCycleReason.autoRetry, 'auto_retry');
       expect(BusinessKpiCycleReason.manualRetry, 'manual_retry');
+      expect(BusinessKpiCycleReason.manualRefresh, 'manual_refresh');
       expect(BusinessKpiCycleReason.resume, 'resume');
       expect(BusinessKpiCycleReason.routeReturn, 'route_return');
       expect(BusinessKpiCycleReason.scopeChangedRerun, 'scope_changed_rerun');
@@ -444,6 +445,7 @@ void main() {
       );
       expect(BusinessKpiCombinedStatus.coalesced, 'coalesced');
       expect(BusinessKpiCombinedStatus.skippedFresh, 'skipped_fresh');
+      expect(BusinessKpiCombinedStatus.degraded, 'degraded');
     });
 
     test('auth-mode label maps to admin | company_session | none', () {

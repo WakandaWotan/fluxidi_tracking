@@ -179,6 +179,44 @@ void main() {
     },
   );
 
+  test('QA logging contains no identifiers or profile contents', () async {
+    final events = <String>[];
+    repo = CompanySubscriptionProfileRepository(
+      clock: () => now,
+      qaLogEnabled: true,
+      qaLog: events.add,
+      loader: ({String? tenantId, String? companyId}) async {
+        networkCalls += 1;
+        return profileFor(tenantId ?? '', companyId ?? '');
+      },
+    );
+    await repo.fetch(tenantId: 'tenant-secret', companyId: 'company-secret');
+    await repo.fetch(tenantId: 'tenant-secret', companyId: 'company-secret');
+    final first = repo.fetch(
+      tenantId: 'tenant-secret',
+      companyId: 'company-secret',
+      forceRefresh: true,
+    );
+    final second = repo.fetch(
+      tenantId: 'tenant-secret',
+      companyId: 'company-secret',
+      forceRefresh: true,
+    );
+    await Future.wait(<Future<BackendSubscriptionProfile>>[first, second]);
+    repo.invalidate(tenantId: 'tenant-secret', companyId: 'company-secret');
+    expect(events, contains(SubscriptionProfileQaEvent.networkFetch));
+    expect(events, contains(SubscriptionProfileQaEvent.cacheHit));
+    expect(events, contains(SubscriptionProfileQaEvent.coalesced));
+    expect(events, contains(SubscriptionProfileQaEvent.invalidated));
+    final lines = events.map(formatSubscriptionProfileQaLog).join('\n');
+    expect(lines.contains('tenant-secret'), isFalse);
+    expect(lines.contains('company-secret'), isFalse);
+    expect(lines.contains('fluxidi_pro'), isFalse);
+    expect(lines.contains('Bearer'), isFalse);
+    expect(lines.contains('http'), isFalse);
+    expect(kFluxidiQaRequestLogging, isFalse);
+  });
+
   test('concurrent manual refresh still shares one network request', () async {
     await repo.fetch(tenantId: 'co-a', companyId: 'co-a');
     final a = repo.fetch(

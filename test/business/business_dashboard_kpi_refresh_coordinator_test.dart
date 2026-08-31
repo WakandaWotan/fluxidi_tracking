@@ -77,14 +77,52 @@ void main() {
     },
   );
 
-  test('5. stale data → one new cycle', () async {
+  test('5. stale data after 120s → one new cycle', () async {
     await trigger(reason: BusinessKpiCycleReason.init);
     coordinator.markSuccess(tenantId: 'tenant-a', companyId: 'company-a');
-    now = now.add(const Duration(seconds: 31));
+    now = now.add(const Duration(seconds: 120));
     await trigger(reason: BusinessKpiCycleReason.resume);
     coordinator.markSuccess(tenantId: 'tenant-a', companyId: 'company-a');
     expect(bookingsGets, 2);
     expect(tripGets, 2);
+  });
+
+  test(
+    '8b. route-return at 27, 31, 44 and 119 seconds → no extra cycle',
+    () async {
+      await trigger(reason: BusinessKpiCycleReason.init);
+      coordinator.markSuccess(tenantId: 'tenant-a', companyId: 'company-a');
+      for (final seconds in <int>[27, 31, 44, 119]) {
+        now = DateTime.utc(2026, 8, 30, 12, 0, 0).add(Duration(seconds: seconds));
+        await trigger(reason: BusinessKpiCycleReason.routeReturn);
+      }
+      expect(bookingsGets, 1);
+      expect(tripGets, 1);
+    },
+  );
+
+  test('8c. State recreation for the same scope inside 120s → no new cycle', () async {
+    await trigger(reason: BusinessKpiCycleReason.init);
+    coordinator.markSuccess(tenantId: 'tenant-a', companyId: 'company-a');
+    now = now.add(const Duration(seconds: 15));
+    // A new BusinessHomePageState calls init again; coordinator is process-wide.
+    await trigger(reason: BusinessKpiCycleReason.init);
+    await trigger(reason: BusinessKpiCycleReason.scopeReady);
+    expect(bookingsGets, 1);
+    expect(tripGets, 1);
+  });
+
+  test('8d. cold coordinator/process equivalent → one cycle', () async {
+    final cold = BusinessDashboardKpiRefreshCoordinator(clock: () => now);
+    await cold.runOrShare(
+      reason: BusinessKpiCycleReason.init,
+      tenantId: 'tenant-a',
+      companyId: 'company-a',
+      cycle: runCycle,
+      now: now,
+    );
+    expect(bookingsGets, 1);
+    expect(tripGets, 1);
   });
 
   test('6. manual refresh → one new cycle', () async {
@@ -200,7 +238,17 @@ void main() {
         'stale': true,
         'projection_health': 'ok',
       }),
-      isTrue,
+      isFalse,
+    );
+    expect(
+      classifyBusinessDashboardKpiBookingsPayload(<String, dynamic>{
+        'ok': true,
+        'open_bookings_count': 4,
+        'projection_health': 'dirty',
+        'counts_are_authoritative': false,
+        'source': 'projection_degraded',
+      }),
+      BusinessDashboardKpiPayloadKind.degraded,
     );
     final previous = BusinessDashboardKpiSnapshot(
       tenantId: 't1',
@@ -258,8 +306,25 @@ void main() {
     );
   });
 
-  test('freshness window is the documented 30s dashboard TTL', () {
-    expect(kBusinessDashboardKpiFreshness, const Duration(seconds: 30));
+  test('freshness window is the documented 120s dashboard TTL', () {
+    expect(kBusinessDashboardKpiFreshness, const Duration(seconds: 120));
+  });
+
+  test('manual refresh has a distinct sanitized log marker', () {
+    expect(BusinessKpiLoadEvent.manualRefresh, 'manual_refresh');
+    expect(BusinessKpiCycleReason.manualRefresh, 'manual_refresh');
+    expect(
+      businessDashboardKpiReasonIsManualRefresh(
+        BusinessKpiCycleReason.manualRefresh,
+      ),
+      isTrue,
+    );
+    expect(
+      businessDashboardKpiReasonForcesRefresh(
+        BusinessKpiCycleReason.manualRefresh,
+      ),
+      isTrue,
+    );
   });
 
   test('never shares in-flight or freshness across another company', () async {

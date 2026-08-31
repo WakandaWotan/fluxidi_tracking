@@ -55,8 +55,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   int? _unpaidCompletedRidesCount;
   int? _monthlyIncomeCents;
   String _kpiCurrency = 'EUR';
+  BusinessDashboardKpiWorkerHealth _kpiHealth =
+      kBusinessDashboardKpiCleanHealth;
   bool _kpiRefreshInFlight = false;
   bool _kpiLastRequestFailed = false;
+  bool _kpiProjectionPending = false;
   String? _dashboardKpiTenantId;
   String? _dashboardKpiCompanyId;
   String? _kpiRequestTenantId;
@@ -99,12 +102,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         monthlyIncomeCents: _monthlyIncomeCents!,
         currency: _kpiCurrency,
         responseGeneration: _kpiSnapshotGeneration,
+        health: _kpiHealth,
       );
     }
     return resolveBusinessDashboardKpiView(
       lastSuccessfulForActiveScope: scoped,
       requestInFlight: _kpiRefreshInFlight,
       lastRequestFailed: _kpiLastRequestFailed,
+      projectionPending: _kpiProjectionPending,
     );
   }
 
@@ -255,7 +260,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     _monthlyIncomeCents = cached.monthlyIncomeCents;
     _kpiCurrency = cached.currency;
     _kpiSnapshotGeneration = cached.responseGeneration;
+    _kpiHealth = cached.health;
     _kpiLastRequestFailed = false;
+    _kpiProjectionPending = false;
     _logBusinessKpiLoad(
       event: BusinessKpiLoadEvent.cacheHit,
       scopeGeneration: _dashboardKpiRefreshGeneration,
@@ -270,6 +277,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     _monthlyIncomeCents = null;
     _kpiCurrency = 'EUR';
     _kpiSnapshotGeneration = 0;
+    _kpiHealth = kBusinessDashboardKpiCleanHealth;
+    _kpiProjectionPending = false;
   }
 
   void _applyDashboardKpiSnapshot(BusinessDashboardKpiSnapshot snapshot) {
@@ -281,7 +290,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     _monthlyIncomeCents = snapshot.monthlyIncomeCents;
     _kpiCurrency = snapshot.currency;
     _kpiSnapshotGeneration = snapshot.responseGeneration;
+    _kpiHealth = snapshot.health;
     _kpiLastRequestFailed = false;
+    _kpiProjectionPending = false;
     businessDashboardKpiCache.put(snapshot);
   }
 
@@ -506,67 +517,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     }
   }
 
-  Future<int?> _loadOpenBookingsFallbackCount({
-    required Map<String, String> headers,
-    required String reason,
-  }) async {
-    // Keep fallback lightweight: company list index-backed endpoint only.
-    final listUri = _withActiveBookingScope(
-      kBookingBaseUrl,
-      kListBookingsPath,
-      extraQuery: <String, String>{
-        'limit': '200',
-        'include_history': '1',
-        't': '${DateTime.now().millisecondsSinceEpoch}',
-      },
-    );
-    try {
-      final res = await http
-          .get(listUri, headers: headers)
-          .timeout(const Duration(seconds: 12));
-      if (res.statusCode != 200) {
-        debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list status=${res.statusCode} trigger=$reason',
-        );
-        return null;
-      }
-      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-      if (decoded is! Map<String, dynamic>) {
-        debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=invalid_payload trigger=$reason',
-        );
-        return null;
-      }
-      final rawItems = (decoded['items'] is List)
-          ? (decoded['items'] as List)
-          : ((decoded['bookings'] is List)
-                ? (decoded['bookings'] as List)
-                : null);
-      if (rawItems == null) {
-        debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=missing_items trigger=$reason',
-        );
-        return null;
-      }
-      var openCount = 0;
-      for (final raw in rawItems) {
-        if (raw is! Map) continue;
-        final item = _CompanyBookingOverviewItem.fromMap(
-          raw.map((k, v) => MapEntry(k.toString(), v)),
-        );
-        if (item.bucket == _CompanyBookingsFilter.open) {
-          openCount += 1;
-        }
-      }
-      return openCount;
-    } catch (e) {
-      debugPrint(
-        '[BUSINESS_DASHBOARD][KPI][FALLBACK][WARN] source=company_list reason=fetch_failed trigger=$reason error=$e',
-      );
-      return null;
-    }
-  }
-
   // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: scope-ready gate. The initial
   // request never fires while the resolved scope is null OR while a valid
   // company-session bearer would be paired with the `fluxidi` fallback
@@ -735,6 +685,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final cycleGeneration = _kpiCycleGeneration;
     if (mounted) setState(() {});
     final startedAt = DateTime.now();
+    if (businessDashboardKpiReasonIsManualRefresh(reason)) {
+      _logBusinessKpiLoad(
+        event: BusinessKpiLoadEvent.manualRefresh,
+        scopeGeneration: requestGeneration,
+        detail: 'trigger=$reason cycle=$cycleGeneration',
+      );
+    }
     _logBusinessKpiLoad(
       event: BusinessKpiLoadEvent.requestStarted,
       scopeGeneration: requestGeneration,
@@ -744,8 +701,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     var authModeLabel = 'none';
     var bookingsOutcome = BusinessKpiLegOutcome.network;
     var tripOutcome = BusinessKpiLegOutcome.network;
-    var fallbackAttempted = false;
-    var fallbackOutcome = BusinessKpiLegOutcome.network;
     try {
       final month = _activeMonthToken();
       final auth = await resolveCompanyOwnerAuthHeaders();
@@ -797,38 +752,67 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       var nextCurrency = 'EUR';
       var bookingsKpisOk = false;
       var tripKpisOk = false;
+      Map<dynamic, dynamic>? bookingsDecodedMap;
+      Map<dynamic, dynamic>? tripDecodedMap;
+      var bookingsKind = BusinessDashboardKpiPayloadKind.malformed;
+      var tripKind = BusinessDashboardKpiPayloadKind.malformed;
 
       final bookingsStartedAt = DateTime.now();
       try {
         final bookingsRes = await http
             .get(bookingsUri, headers: headers)
             .timeout(const Duration(seconds: 12));
-        final bookingsBodyIsAuthoritative = () {
-          if (bookingsRes.statusCode != 200) return false;
+        if (bookingsRes.statusCode == 200) {
           try {
             final decoded = jsonDecode(bookingsRes.body);
-            return decoded is Map &&
-                businessDashboardKpiPayloadIsAuthoritative(decoded);
+            if (decoded is Map) {
+              bookingsDecodedMap = decoded;
+              bookingsKind = classifyBusinessDashboardKpiBookingsPayload(
+                decoded,
+              );
+              final structurallyValid =
+                  bookingsKind != BusinessDashboardKpiPayloadKind.malformed;
+              bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
+                statusCode: bookingsRes.statusCode,
+                decodedOk: structurallyValid,
+              );
+              if (businessDashboardKpiKindIsUsable(bookingsKind)) {
+                bookingsKpisOk = true;
+                nextOpenBookings =
+                    _asInt(decoded['open_bookings_count']) ?? 0;
+              } else if (bookingsKind ==
+                  BusinessDashboardKpiPayloadKind.pending) {
+                debugPrint(
+                  '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=data_pending trigger=$reason',
+                );
+              } else {
+                debugPrint(
+                  '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+                );
+              }
+            } else {
+              bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
+                statusCode: bookingsRes.statusCode,
+                decodedOk: false,
+              );
+              debugPrint(
+                '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
+              );
+            }
           } catch (_) {
-            return false;
-          }
-        }();
-        bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
-          statusCode: bookingsRes.statusCode,
-          decodedOk: bookingsBodyIsAuthoritative,
-        );
-        if (bookingsRes.statusCode == 200) {
-          final decoded = jsonDecode(bookingsRes.body);
-          if (decoded is Map &&
-              businessDashboardKpiPayloadIsAuthoritative(decoded)) {
-            bookingsKpisOk = true;
-            nextOpenBookings = _asInt(decoded['open_bookings_count']) ?? 0;
-          } else {
+            bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
+              statusCode: bookingsRes.statusCode,
+              decodedOk: false,
+            );
             debugPrint(
               '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=invalid_payload trigger=$reason',
             );
           }
         } else {
+          bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
+            statusCode: bookingsRes.statusCode,
+            decodedOk: false,
+          );
           debugPrint(
             '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings status=${bookingsRes.statusCode} trigger=$reason',
           );
@@ -856,93 +840,68 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           authMode: authModeLabel,
         ),
       );
-      if (!bookingsKpisOk) {
-        fallbackAttempted = true;
-        final fallbackStartedAt = DateTime.now();
-        try {
-          final fallback = await _loadOpenBookingsFallbackCount(
-            headers: headers,
-            reason: reason,
-          );
-          if (fallback != null) {
-            bookingsKpisOk = true;
-            nextOpenBookings = fallback;
-            fallbackOutcome = BusinessKpiLegOutcome.success;
-          } else {
-            fallbackOutcome = BusinessKpiLegOutcome.invalidPayload;
-          }
-        } catch (e) {
-          fallbackOutcome = classifyBusinessKpiLegExceptionOutcome(
-            errorRuntimeType: e.runtimeType.toString(),
-          );
-        }
-        final fallbackElapsedMs = DateTime.now()
-            .difference(fallbackStartedAt)
-            .inMilliseconds;
-        debugPrint(
-          formatBusinessKpiLoadDiagnostic(
-            cycleGeneration: cycleGeneration,
-            reason: reason,
-            leg: BusinessKpiLegLabel.bookingsFallback,
-            attempt: attempt,
-            status: businessKpiLegOutcomeStatusLabel(fallbackOutcome),
-            elapsedMs: fallbackElapsedMs,
-            scopeReady: true,
-            authMode: authModeLabel,
-          ),
-        );
-      }
-
       final tripStartedAt = DateTime.now();
       try {
         final tripRes = await http
             .get(tripKpisUri, headers: headers)
             .timeout(const Duration(seconds: 12));
-        final tripBodyIsAuthoritative = () {
-          if (tripRes.statusCode != 200) return false;
+        if (tripRes.statusCode == 200) {
           try {
             final decoded = jsonDecode(tripRes.body);
-            return decoded is Map &&
-                businessDashboardKpiPayloadIsAuthoritative(decoded);
-          } catch (_) {
-            return false;
-          }
-        }();
-        tripOutcome = classifyBusinessKpiLegHttpOutcome(
-          statusCode: tripRes.statusCode,
-          decodedOk: tripBodyIsAuthoritative,
-        );
-        if (tripRes.statusCode == 200) {
-          final decoded = jsonDecode(tripRes.body);
-          if (decoded is Map &&
-              businessDashboardKpiPayloadIsAuthoritative(decoded)) {
-            tripKpisOk = true;
-            nextCompletedRides = _asInt(decoded['completed_rides_count']) ?? 0;
-            nextUnpaidCompleted =
-                _asInt(decoded['unpaid_completed_rides_count']) ?? 0;
-            nextCurrency =
-                (decoded['currency']?.toString().trim().isNotEmpty ?? false)
-                ? decoded['currency'].toString().trim().toUpperCase()
-                : 'EUR';
-            final netCents = _asInt(decoded['net_monthly_income_cents']);
-            final cents = netCents ?? _asInt(decoded['monthly_income_cents']);
-            if (cents != null) {
-              nextMonthlyIncomeCents = cents;
-            } else {
-              final netEur = _asDouble(decoded['net_monthly_income_eur']);
-              if (netEur != null) {
-                nextMonthlyIncomeCents = (netEur * 100).round();
+            if (decoded is Map) {
+              tripDecodedMap = decoded;
+              tripKind = classifyBusinessDashboardKpiTripPayload(decoded);
+              final structurallyValid =
+                  tripKind != BusinessDashboardKpiPayloadKind.malformed;
+              tripOutcome = classifyBusinessKpiLegHttpOutcome(
+                statusCode: tripRes.statusCode,
+                decodedOk: structurallyValid,
+              );
+              if (businessDashboardKpiKindIsUsable(tripKind)) {
+                tripKpisOk = true;
+                nextCompletedRides =
+                    _asInt(decoded['completed_rides_count']) ?? 0;
+                nextUnpaidCompleted =
+                    _asInt(decoded['unpaid_completed_rides_count']) ?? 0;
+                nextCurrency =
+                    (decoded['currency']?.toString().trim().isNotEmpty ??
+                        false)
+                    ? decoded['currency'].toString().trim().toUpperCase()
+                    : 'EUR';
+                nextMonthlyIncomeCents =
+                    parseBusinessDashboardKpiTripIncomeCents(decoded) ?? 0;
+              } else if (tripKind == BusinessDashboardKpiPayloadKind.pending) {
+                debugPrint(
+                  '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=data_pending trigger=$reason',
+                );
               } else {
-                final eur = _asDouble(decoded['monthly_income_eur']);
-                nextMonthlyIncomeCents = eur == null ? 0 : (eur * 100).round();
+                debugPrint(
+                  '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+                );
               }
+            } else {
+              tripOutcome = classifyBusinessKpiLegHttpOutcome(
+                statusCode: tripRes.statusCode,
+                decodedOk: false,
+              );
+              debugPrint(
+                '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
+              );
             }
-          } else {
+          } catch (_) {
+            tripOutcome = classifyBusinessKpiLegHttpOutcome(
+              statusCode: tripRes.statusCode,
+              decodedOk: false,
+            );
             debugPrint(
               '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=invalid_payload trigger=$reason',
             );
           }
         } else {
+          tripOutcome = classifyBusinessKpiLegHttpOutcome(
+            statusCode: tripRes.statusCode,
+            decodedOk: false,
+          );
           debugPrint(
             '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis status=${tripRes.statusCode} trigger=$reason',
           );
@@ -999,33 +958,37 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         return;
       }
 
-      // BUSINESS-DASHBOARD-KPI-LOADING-UX-1: apply only a complete response.
-      // Partial/failed legs must NOT invent zeros or wipe a prior snapshot.
-      // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: on partial failure, decide
-      // whether the coordinator may schedule exactly one bounded auto-retry.
-      final complete = businessDashboardKpiResponseIsComplete(
-        bookingsOk: bookingsKpisOk,
-        tripKpisOk: tripKpisOk,
+      // Apply only a structurally usable pair (clean or degraded last-known).
+      // Pending / malformed / HTTP failure never reconstruct KPIs from the
+      // bookings list. Transient HTTP may still use the existing one-shot
+      // auto-retry; there is no fallback-list retry loop.
+      final applyAction = resolveBusinessDashboardKpiApplyAction(
+        bookingsKind: bookingsKind,
+        tripKind: tripKind,
+        hasPreviousSnapshot:
+            businessDashboardKpiCache.get(
+                  tenantId: capturedTenantId,
+                  companyId: capturedCompanyId,
+                ) !=
+                null ||
+            (_openBookingsCount != null &&
+                _completedRidesCount != null &&
+                _unpaidCompletedRidesCount != null &&
+                _monthlyIncomeCents != null),
       );
-      if (!complete ||
+      final pendingCycle =
+          bookingsKind == BusinessDashboardKpiPayloadKind.pending ||
+          tripKind == BusinessDashboardKpiPayloadKind.pending;
+
+      if (applyAction != BusinessDashboardKpiApplyAction.apply ||
           nextOpenBookings == null ||
           nextCompletedRides == null ||
           nextUnpaidCompleted == null ||
-          nextMonthlyIncomeCents == null) {
-        // If bookings primary failed transient AND fallback also failed
-        // transient, treat the combined bookings leg as transient. If the
-        // primary succeeded (rare here because we are on the failure
-        // path) fold accordingly.
-        var effectiveBookingsOutcome = bookingsOutcome;
-        if (fallbackAttempted && !bookingsKpisOk) {
-          effectiveBookingsOutcome =
-              businessKpiLegOutcomeIsTransient(bookingsOutcome) &&
-                  businessKpiLegOutcomeIsTransient(fallbackOutcome)
-              ? BusinessKpiLegOutcome.timeout
-              : fallbackOutcome;
-        }
+          nextMonthlyIncomeCents == null ||
+          bookingsDecodedMap == null ||
+          tripDecodedMap == null) {
         final retryDecision = resolveBusinessKpiRetryDecision(
-          bookingsOutcome: effectiveBookingsOutcome,
+          bookingsOutcome: bookingsOutcome,
           tripOutcome: tripOutcome,
           attempt: attempt,
         );
@@ -1050,7 +1013,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           scopeGeneration: requestGeneration,
           durationMs: durationMs,
           detail:
-              'trigger=$reason bookings_ok=$bookingsKpisOk trip_ok=$tripKpisOk',
+              'trigger=$reason bookings_ok=$bookingsKpisOk trip_ok=$tripKpisOk pending=$pendingCycle',
         );
         debugPrint(
           formatBusinessKpiLoadDiagnostic(
@@ -1058,14 +1021,21 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             reason: reason,
             leg: BusinessKpiLegLabel.combined,
             attempt: attempt,
-            status: BusinessKpiCombinedStatus.terminal,
+            status: pendingCycle
+                ? BusinessKpiCombinedStatus.degraded
+                : BusinessKpiCombinedStatus.terminal,
             elapsedMs: durationMs,
             scopeReady: true,
             authMode: authModeLabel,
           ),
         );
         setState(() {
-          _kpiLastRequestFailed = true;
+          _kpiProjectionPending = pendingCycle;
+          _kpiLastRequestFailed =
+              (bookingsKind != BusinessDashboardKpiPayloadKind.pending &&
+                  bookingsOutcome != BusinessKpiLegOutcome.success) ||
+              (tripKind != BusinessDashboardKpiPayloadKind.pending &&
+                  tripOutcome != BusinessKpiLegOutcome.success);
         });
         return;
       }
@@ -1080,6 +1050,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         monthlyIncomeCents: nextMonthlyIncomeCents,
         currency: nextCurrency,
         responseGeneration: nextGeneration,
+        health: combineBusinessDashboardKpiWorkerHealth(
+          bookings: parseBusinessDashboardKpiWorkerHealth(bookingsDecodedMap),
+          trip: parseBusinessDashboardKpiWorkerHealth(tripDecodedMap),
+          bookingsKind: bookingsKind,
+          tripKind: tripKind,
+        ),
       );
       _logBusinessKpiLoad(
         event: BusinessKpiLoadEvent.requestCompleted,
@@ -1106,7 +1082,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           reason: reason,
           leg: BusinessKpiLegLabel.combined,
           attempt: attempt,
-          status: BusinessKpiCombinedStatus.success,
+          status: snapshot.isDegradedDisplayable
+              ? BusinessKpiCombinedStatus.degraded
+              : BusinessKpiCombinedStatus.success,
           elapsedMs: durationMs,
           scopeReady: true,
           authMode: authModeLabel,
@@ -4827,6 +4805,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                       ),
                       const SizedBox(height: 8),
+                    ],
+                    if (_kpiView.showUpdatingNotice) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          _t(
+                            nl: 'Gegevens worden bijgewerkt.',
+                            en: 'Data is being updated.',
+                            fr: 'Les données sont en cours de mise à jour.',
+                            es: 'Los datos se están actualizando.',
+                          ),
+                          style: TextStyle(
+                            color: _businessThemePalette.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ],
                     if (_kpiView.phase ==
                             BusinessDashboardKpiPhase.unavailable &&

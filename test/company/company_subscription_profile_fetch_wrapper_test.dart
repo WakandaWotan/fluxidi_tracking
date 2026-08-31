@@ -30,6 +30,17 @@ void main() {
     expect(bootstrap.contains('fetchCompanySubscriptionProfile('), isTrue);
   });
 
+  test('QA request logging defaults false and is identifier-free', () {
+    final repo = File(
+      'lib/company/company_subscription_profile_repository.dart',
+    ).readAsStringSync();
+    expect(repo.contains("defaultValue: false"), isTrue);
+    expect(repo.contains('FLUXIDI_QA_REQUEST_LOGGING'), isTrue);
+    expect(repo.contains('[SUBSCRIPTION_PROFILE]'), isTrue);
+    expect(repo.contains('tenantId='), isFalse);
+    expect(repo.contains('companyId='), isFalse);
+  });
+
   test('sign-out clears subscription and dashboard KPI caches', () {
     final source = File('lib/company_session_store.dart').readAsStringSync();
     expect(source.contains('businessDashboardKpiCache.clearAll()'), isTrue);

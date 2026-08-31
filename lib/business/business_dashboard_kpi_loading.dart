@@ -3,6 +3,16 @@
 // Pure presentation/cache ownership for Business dashboard KPI cards.
 // Does not change server KPI definitions or fare/street-ride lifecycle.
 
+/// Default health for a clean, displayable snapshot (older callers/tests).
+const BusinessDashboardKpiWorkerHealth kBusinessDashboardKpiCleanHealth =
+    BusinessDashboardKpiWorkerHealth(
+      dataPending: false,
+      degraded: false,
+      stale: false,
+      projectionHealth: 'ok',
+      countsAreAuthoritative: true,
+    );
+
 /// One successful, complete KPI response for a single tenant/company scope.
 class BusinessDashboardKpiSnapshot {
   const BusinessDashboardKpiSnapshot({
@@ -14,6 +24,7 @@ class BusinessDashboardKpiSnapshot {
     required this.monthlyIncomeCents,
     required this.currency,
     required this.responseGeneration,
+    this.health = kBusinessDashboardKpiCleanHealth,
   });
 
   final String tenantId;
@@ -27,6 +38,20 @@ class BusinessDashboardKpiSnapshot {
   /// Monotonic generation stamped when the response was accepted. All four
   /// card values always belong to the same generation.
   final int responseGeneration;
+
+  /// Worker health for this snapshot. Degraded last-known numbers stay
+  /// visible but are never marked healthy/authoritative.
+  final BusinessDashboardKpiWorkerHealth health;
+
+  bool get isAuthoritative => health.isAuthoritative;
+
+  bool get isDegradedDisplayable =>
+      !health.dataPending &&
+      !health.isAuthoritative &&
+      (health.degraded ||
+          health.stale ||
+          health.countsAreAuthoritative == false ||
+          health.projectionHealth.trim().toLowerCase() == 'dirty');
 
   bool matchesScope({required String tenantId, required String companyId}) {
     return this.tenantId == tenantId && this.companyId == companyId;
@@ -55,18 +80,33 @@ class BusinessDashboardKpiView {
     required this.snapshot,
     required this.showRefreshIndicator,
     required this.showRetry,
+    this.projectionPending = false,
   });
 
   final BusinessDashboardKpiPhase phase;
 
-  /// Authoritative values to render. Null ⇒ unavailable/loading (never show
-  /// numeric zero as authoritative).
+  /// Displayable values to render. Null ⇒ unavailable/loading (never show
+  /// numeric zero as authoritative). Degraded snapshots keep last-known
+  /// numbers without flipping [hasAuthoritativeValues].
   final BusinessDashboardKpiSnapshot? snapshot;
 
   final bool showRefreshIndicator;
   final bool showRetry;
 
-  bool get hasAuthoritativeValues => snapshot != null;
+  /// Latest cycle reported `data_pending` / missing projection.
+  final bool projectionPending;
+
+  /// True when on-screen numbers come from a clean authoritative projection.
+  bool get hasAuthoritativeValues =>
+      snapshot != null && snapshot!.isAuthoritative;
+
+  /// Last-known numbers are shown but must not be treated as a fresh healthy
+  /// zero / clean projection.
+  bool get showDegradedNotice =>
+      snapshot != null && snapshot!.isDegradedDisplayable;
+
+  /// Smallest pending/degraded treatment: "gegevens worden bijgewerkt".
+  bool get showUpdatingNotice => showDegradedNotice || projectionPending;
 }
 
 /// Scoped in-memory cache of last successful KPI snapshots.
@@ -118,6 +158,7 @@ BusinessDashboardKpiView resolveBusinessDashboardKpiView({
   required BusinessDashboardKpiSnapshot? lastSuccessfulForActiveScope,
   required bool requestInFlight,
   required bool lastRequestFailed,
+  bool projectionPending = false,
 }) {
   final snap = lastSuccessfulForActiveScope;
   if (snap != null) {
@@ -127,6 +168,7 @@ BusinessDashboardKpiView resolveBusinessDashboardKpiView({
         snapshot: snap,
         showRefreshIndicator: true,
         showRetry: false,
+        projectionPending: projectionPending,
       );
     }
     return BusinessDashboardKpiView(
@@ -134,14 +176,16 @@ BusinessDashboardKpiView resolveBusinessDashboardKpiView({
       snapshot: snap,
       showRefreshIndicator: false,
       showRetry: lastRequestFailed,
+      projectionPending: projectionPending,
     );
   }
   if (requestInFlight) {
-    return const BusinessDashboardKpiView(
+    return BusinessDashboardKpiView(
       phase: BusinessDashboardKpiPhase.initialLoading,
       snapshot: null,
       showRefreshIndicator: true,
       showRetry: false,
+      projectionPending: projectionPending,
     );
   }
   return BusinessDashboardKpiView(
@@ -149,6 +193,7 @@ BusinessDashboardKpiView resolveBusinessDashboardKpiView({
     snapshot: null,
     showRefreshIndicator: false,
     showRetry: lastRequestFailed,
+    projectionPending: projectionPending,
   );
 }
 
@@ -211,6 +256,7 @@ abstract final class BusinessKpiLoadEvent {
   static const requestCompleted = 'request_completed';
   static const requestFailed = 'request_failed';
   static const snapshotApplied = 'snapshot_applied';
+  static const manualRefresh = 'manual_refresh';
 }
 
 // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1
@@ -427,6 +473,9 @@ abstract final class BusinessKpiCycleReason {
   /// User pressed the Retry button.
   static const manualRetry = 'manual_retry';
 
+  /// User requested a dashboard KPI refresh (distinct from auto-retry).
+  static const manualRefresh = 'manual_refresh';
+
   /// App resumed from background.
   static const resume = 'resume';
 
@@ -455,6 +504,7 @@ abstract final class BusinessKpiCombinedStatus {
   static const skippedScopeNotReady = 'skipped_scope_not_ready';
   static const coalesced = 'coalesced';
   static const skippedFresh = 'skipped_fresh';
+  static const degraded = 'degraded';
 }
 
 /// Bounded PII-free auth-mode label. Mirrors `CompanyOwnerAuthMode` values
@@ -541,14 +591,14 @@ bool businessDashboardKpiScopeIsReady({
 // [businessDashboardKpiCache] pattern: one coordinator, keyed by
 // tenant_id|company_id, no extra global singleton family.
 //
-// Freshness window: 30 seconds. Short enough for a dashboard (a return after
-// real work still refreshes) and long enough to absorb the init + profile/
-// session listener + first-frame burst that previously launched 2–3 sequential
-// cycles after `finally`.
+// Freshness window: 120 seconds. Manual refresh and a real tenant/company
+// change bypass it. Route-return and State recreation reuse this process-wide
+// timestamp so disposing BusinessHomePageState cannot restart a cycle.
 
 /// Opportunistic dashboard KPI freshness window (init / listener / resume /
-/// route-return). Manual refresh and a real tenant/company change bypass it.
-const Duration kBusinessDashboardKpiFreshness = Duration(seconds: 30);
+/// route-return / State recreation). Manual refresh and a real tenant/company
+/// change bypass it.
+const Duration kBusinessDashboardKpiFreshness = Duration(seconds: 120);
 
 /// Additive Worker KPI health fields. Missing keys are treated as absent so
 /// older payloads keep working. A pending or non-authoritative projection
@@ -568,14 +618,159 @@ class BusinessDashboardKpiWorkerHealth {
   final String projectionHealth;
   final bool? countsAreAuthoritative;
 
-  /// True only when the payload may replace the on-screen snapshot.
+  /// True only for a clean, authoritative projection. Dirty / degraded /
+  /// non-authoritative / pending payloads are structurally separate.
   bool get isAuthoritative {
     if (dataPending) return false;
     if (countsAreAuthoritative == false) return false;
+    if (degraded || stale) return false;
     final health = projectionHealth.trim().toLowerCase();
-    if (health == 'pending' || health == 'data_pending') return false;
+    if (health == 'pending' ||
+        health == 'data_pending' ||
+        health == 'missing' ||
+        health == 'dirty') {
+      return false;
+    }
     return true;
   }
+}
+
+/// Dashboard KPI reconstruction must never call bookings-list/history.
+bool businessDashboardKpiAllowsAutomaticBookingsListFallback() => false;
+
+/// Structural vs health classification for one KPI HTTP body.
+///
+/// A Worker payload with `ok:true`, numeric counts, `projection_health:dirty`
+/// and `counts_are_authoritative:false` is [degraded], not [malformed].
+enum BusinessDashboardKpiPayloadKind {
+  /// Structurally valid, clean, authoritative projection.
+  clean,
+
+  /// Structurally valid last-known projection that is dirty/stale/degraded
+  /// or explicitly non-authoritative. Displayable; never a healthy zero.
+  degraded,
+
+  /// `data_pending` or missing projection. Keep the prior snapshot.
+  pending,
+
+  /// HTTP/JSON/schema failure. Not a dirty projection.
+  malformed,
+}
+
+/// Whether [kind] may supply on-screen numbers (clean or last-known degraded).
+bool businessDashboardKpiKindIsUsable(BusinessDashboardKpiPayloadKind kind) {
+  return kind == BusinessDashboardKpiPayloadKind.clean ||
+      kind == BusinessDashboardKpiPayloadKind.degraded;
+}
+
+int? businessDashboardKpiReadInt(Object? raw) {
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  return int.tryParse(raw?.toString().trim() ?? '');
+}
+
+double? businessDashboardKpiReadDouble(Object? raw) {
+  if (raw is double) return raw;
+  if (raw is num) return raw.toDouble();
+  return double.tryParse(raw?.toString().trim() ?? '');
+}
+
+int? parseBusinessDashboardKpiTripIncomeCents(Map<dynamic, dynamic> decoded) {
+  final netCents = businessDashboardKpiReadInt(
+    decoded['net_monthly_income_cents'],
+  );
+  final cents =
+      netCents ?? businessDashboardKpiReadInt(decoded['monthly_income_cents']);
+  if (cents != null) return cents;
+  final netEur = businessDashboardKpiReadDouble(
+    decoded['net_monthly_income_eur'],
+  );
+  if (netEur != null) return (netEur * 100).round();
+  final eur = businessDashboardKpiReadDouble(decoded['monthly_income_eur']);
+  if (eur == null) return null;
+  return (eur * 100).round();
+}
+
+/// Classifies a decoded KPI map. Does not treat non-authoritative counts as
+/// a malformed payload.
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiPayloadKind(
+  Map<dynamic, dynamic> decoded, {
+  required bool Function(Map<dynamic, dynamic> decoded) hasRequiredNumbers,
+}) {
+  if (decoded['ok'] != true) return BusinessDashboardKpiPayloadKind.malformed;
+  if (!hasRequiredNumbers(decoded)) {
+    return BusinessDashboardKpiPayloadKind.malformed;
+  }
+  final health = parseBusinessDashboardKpiWorkerHealth(decoded);
+  if (health.dataPending) return BusinessDashboardKpiPayloadKind.pending;
+  final projection = health.projectionHealth.trim().toLowerCase();
+  if (projection == 'pending' ||
+      projection == 'data_pending' ||
+      projection == 'missing') {
+    return BusinessDashboardKpiPayloadKind.pending;
+  }
+  final source = (decoded['source'] ?? '').toString().trim().toLowerCase();
+  final dirty =
+      health.countsAreAuthoritative == false ||
+      health.degraded ||
+      health.stale ||
+      projection == 'dirty' ||
+      source == 'projection_degraded';
+  if (dirty) return BusinessDashboardKpiPayloadKind.degraded;
+  return BusinessDashboardKpiPayloadKind.clean;
+}
+
+bool businessDashboardKpiBookingsHasRequiredNumbers(
+  Map<dynamic, dynamic> decoded,
+) {
+  return businessDashboardKpiReadInt(decoded['open_bookings_count']) != null;
+}
+
+bool businessDashboardKpiTripHasRequiredNumbers(Map<dynamic, dynamic> decoded) {
+  return businessDashboardKpiReadInt(decoded['completed_rides_count']) !=
+          null &&
+      businessDashboardKpiReadInt(decoded['unpaid_completed_rides_count']) !=
+          null &&
+      parseBusinessDashboardKpiTripIncomeCents(decoded) != null;
+}
+
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiBookingsPayload(
+  Map<dynamic, dynamic> decoded,
+) {
+  return classifyBusinessDashboardKpiPayloadKind(
+    decoded,
+    hasRequiredNumbers: businessDashboardKpiBookingsHasRequiredNumbers,
+  );
+}
+
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiTripPayload(
+  Map<dynamic, dynamic> decoded,
+) {
+  return classifyBusinessDashboardKpiPayloadKind(
+    decoded,
+    hasRequiredNumbers: businessDashboardKpiTripHasRequiredNumbers,
+  );
+}
+
+/// Apply decision after both legs have been classified. Never implies a
+/// bookings-list fallback.
+enum BusinessDashboardKpiApplyAction {
+  apply,
+  keepPrevious,
+  unavailable,
+}
+
+BusinessDashboardKpiApplyAction resolveBusinessDashboardKpiApplyAction({
+  required BusinessDashboardKpiPayloadKind bookingsKind,
+  required BusinessDashboardKpiPayloadKind tripKind,
+  required bool hasPreviousSnapshot,
+}) {
+  if (businessDashboardKpiKindIsUsable(bookingsKind) &&
+      businessDashboardKpiKindIsUsable(tripKind)) {
+    return BusinessDashboardKpiApplyAction.apply;
+  }
+  if (hasPreviousSnapshot) return BusinessDashboardKpiApplyAction.keepPrevious;
+  return BusinessDashboardKpiApplyAction.unavailable;
 }
 
 /// Parses additive Worker KPI fields without requiring them.
@@ -627,7 +822,34 @@ bool businessDashboardKpiReasonIsOpportunistic(String reason) {
 /// Whether [reason] must start a cycle even when the scope is still fresh.
 bool businessDashboardKpiReasonForcesRefresh(String reason) {
   return reason == BusinessKpiCycleReason.manualRetry ||
+      reason == BusinessKpiCycleReason.manualRefresh ||
       reason == BusinessKpiCycleReason.autoRetry;
+}
+
+/// Distinct sanitized marker for a user-requested KPI refresh.
+bool businessDashboardKpiReasonIsManualRefresh(String reason) {
+  return reason == BusinessKpiCycleReason.manualRetry ||
+      reason == BusinessKpiCycleReason.manualRefresh;
+}
+
+/// Combines both KPI legs into one snapshot health record.
+BusinessDashboardKpiWorkerHealth combineBusinessDashboardKpiWorkerHealth({
+  required BusinessDashboardKpiWorkerHealth bookings,
+  required BusinessDashboardKpiWorkerHealth trip,
+  required BusinessDashboardKpiPayloadKind bookingsKind,
+  required BusinessDashboardKpiPayloadKind tripKind,
+}) {
+  final degraded =
+      bookingsKind == BusinessDashboardKpiPayloadKind.degraded ||
+      tripKind == BusinessDashboardKpiPayloadKind.degraded;
+  return BusinessDashboardKpiWorkerHealth(
+    dataPending: false,
+    degraded: degraded || bookings.degraded || trip.degraded,
+    stale: bookings.stale || trip.stale,
+    projectionHealth: degraded ? 'dirty' : 'ok',
+    countsAreAuthoritative:
+        bookings.isAuthoritative && trip.isAuthoritative && !degraded,
+  );
 }
 
 /// Decision for one dashboard KPI refresh attempt.
