@@ -510,6 +510,11 @@ import {
   hashDocumentSnapshot,
 } from "./modules/document_core.js";
 import {
+  buildInvoicePdfStatusResponse,
+  hasIssuedFiscalDocumentForPdf,
+  resolveInvoicePdfServeDecision,
+} from "./modules/invoice_pdf_http_contract.js";
+import {
   MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS,
   MOLLIE_CONNECT_OAUTH_STATE_PURPOSE,
   MOLLIE_CONNECT_OAUTH_SCOPES,
@@ -39929,6 +39934,11 @@ export default {
               source_booking_id: sourceBookingId,
               documents,
               count: documents.length,
+              active_payable_count:
+                Number.isInteger(listed.active_payable_count)
+                  ? listed.active_payable_count
+                  : documents.filter((row) => row?.active_payable_revenue === true)
+                      .length,
               warnings,
               invoice_pdf: invoicePdf,
             });
@@ -94276,6 +94286,7 @@ async function handleBookingInvoicePdfGet(
     frozenEmbed: openFrozenLogo || openLogoAttempt,
     sellerLogoRef: openLogoRef,
   });
+  let openEnsureOutcome = null;
   if (openDecision.refresh) {
     const ensureImpl =
       typeof hooks?.ensureInvoicePdfArtifactImpl === "function"
@@ -94296,6 +94307,7 @@ async function handleBookingInvoicePdfGet(
         reason: safeStr(err?.message || err, 80) || "open_refresh_error",
       };
     }
+    openEnsureOutcome = outcome;
     console.log(
       `[INVOICE_ARTIFACT][OPEN_REFRESH] bookingId=${safeStr(bookingId, 80)} trigger=${openDecision.reason} ok=${outcome?.ok === true} skipped=${outcome?.skipped === true} reason=${safeStr(outcome?.reason, 60) || "-"}`,
     );
@@ -94312,25 +94324,63 @@ async function handleBookingInvoicePdfGet(
   }
 
   const metadata = _invoicePdfMetadataFromRecord(record);
+  const issuedFiscal = hasIssuedFiscalDocumentForPdf({
+    invoiceDocumentId:
+      record?.invoice_document_id ?? record?.invoiceDocumentId,
+    consumerSaleDocumentId:
+      record?.consumer_sale_document_id ?? record?.consumerSaleDocumentId,
+    invoiceNumber: findExistingInvoiceNumber(record),
+    saleKind: record?.fluxidi_sale_kind ?? record?.fluxidiSaleKind,
+  });
+  const ensureFailed =
+    openDecision.refresh === true &&
+    openEnsureOutcome != null &&
+    openEnsureOutcome.ok === false &&
+    openEnsureOutcome.skipped !== true;
   if (!metadata.exists) {
-    return json({
-      ok: false,
-      error: "invoice_pdf_not_available",
-      message: "Invoice PDF artifact has not been persisted for this booking.",
-    }, 404);
+    return buildInvoicePdfStatusResponse(
+      resolveInvoicePdfServeDecision({
+        metadataExists: false,
+        hasIssuedFiscalDocument: issuedFiscal,
+        ensureAttempted: openDecision.refresh === true,
+        ensureFailed,
+        storageAvailable: true,
+      }),
+    );
   }
   if (!env?.PUBLIC_MEDIA || typeof env.PUBLIC_MEDIA.get !== "function") {
-    return json({ ok: false, error: "invoice_storage_unavailable" }, 500);
+    return buildInvoicePdfStatusResponse(
+      resolveInvoicePdfServeDecision({
+        metadataExists: true,
+        storageAvailable: false,
+        hasIssuedFiscalDocument: issuedFiscal,
+        ensureFailed,
+      }),
+    );
   }
   try {
     const object = await env.PUBLIC_MEDIA.get(metadata.key);
     if (!object) {
-      return json({ ok: false, error: "invoice_pdf_not_found" }, 404);
+      return buildInvoicePdfStatusResponse(
+        resolveInvoicePdfServeDecision({
+          metadataExists: true,
+          objectFound: false,
+          storageAvailable: true,
+          hasIssuedFiscalDocument: issuedFiscal,
+        }),
+      );
     }
     const buffer = await object.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     if (!bytes.length) {
-      return json({ ok: false, error: "invoice_pdf_empty" }, 404);
+      return buildInvoicePdfStatusResponse(
+        resolveInvoicePdfServeDecision({
+          metadataExists: true,
+          objectFound: true,
+          objectEmpty: true,
+          storageAvailable: true,
+        }),
+      );
     }
     const invoiceNumber = safeStr(findExistingInvoiceNumber(record), 120) || safeStr(bookingId, 120) || "invoice";
     const safeInvoicePart = _safeArtifactPathSegment(invoiceNumber, "invoice");
@@ -94365,7 +94415,9 @@ async function handleBookingInvoicePdfGet(
   } catch (err) {
     const reason = safeStr(err?.message || err).slice(0, 160) || "invoice_pdf_read_failed";
     console.log(`[INVOICE_ARTIFACT][READ_ERROR] bookingId=${safeStr(bookingId)} reason=${reason}`);
-    return json({ ok: false, error: "invoice_pdf_read_failed" }, 500);
+    return buildInvoicePdfStatusResponse(
+      resolveInvoicePdfServeDecision({ readFailed: true }),
+    );
   }
 }
 // Hermetic stale-artifact refresh tests only (ensure impl is injected).

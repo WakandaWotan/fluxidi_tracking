@@ -417,6 +417,137 @@ export function buildInvoiceReplaySafeFields(idemHit, registryRecord) {
   };
 }
 
+// DOCUMENT-PRESENTATION-CONTRACT-P0C: derive additive fiscal/presentation
+// fields from an issued registry record. Never invents a second identity,
+// never exposes idempotency keys, and never rewrites stored documents.
+export function deriveIssuedDocumentPresentationContract(record) {
+  const rec = record && typeof record === "object" ? record : {};
+  const documentId = safeStr(rec.document_id ?? rec.documentId, 200) || "";
+  const saleKind = safeStr(
+    rec.fluxidi_sale_kind ?? rec.fluxidiSaleKind ?? rec.sale_kind ?? rec.saleKind,
+    40,
+  ).toLowerCase();
+  const documentType = safeStr(
+    rec.document_type ?? rec.documentType,
+    40,
+  ).toLowerCase();
+  const invoiceIntent = safeStr(
+    rec.invoice_intent ?? rec.invoiceIntent,
+    40,
+  ).toLowerCase();
+  const createdByRole = safeStr(
+    rec.created_by_role ?? rec.createdByRole,
+    64,
+  ).toLowerCase();
+  const lifecycle = safeStr(
+    rec.lifecycle_state ?? rec.lifecycleState,
+    40,
+  ).toLowerCase();
+  const billingCustomerType = safeStr(
+    rec.billing_customer_type ??
+      rec.billingCustomerType ??
+      rec.billing_customer_snapshot?.customer_type ??
+      rec.billingCustomerSnapshot?.customer_type,
+    40,
+  ).toLowerCase();
+  const superseded =
+    rec.superseded === true ||
+    rec.active_revenue === false ||
+    lifecycle === "superseded";
+  const voided =
+    lifecycle === "void" ||
+    lifecycle === "voided" ||
+    lifecycle === "cancelled" ||
+    lifecycle === "canceled" ||
+    lifecycle === "credited";
+  const isCredit =
+    saleKind === "credit_note" ||
+    saleKind === "creditnote" ||
+    saleKind === "consumer_conversion_credit" ||
+    documentType === "credit_note" ||
+    documentType === "creditnote";
+  const isConsumer =
+    saleKind === "consumer_sale" ||
+    saleKind === "private_sale" ||
+    saleKind === "particuliere_verkoop" ||
+    saleKind === "ritbon" ||
+    createdByRole === "system_consumer_sale" ||
+    createdByRole.includes("consumer_sale") ||
+    billingCustomerType === "private" ||
+    billingCustomerType === "consumer" ||
+    documentType === "refund_proof";
+  const explicitBusiness =
+    saleKind === "business_invoice" ||
+    saleKind === "zakelijke_factuur" ||
+    invoiceIntent === "business_invoice" ||
+    invoiceIntent === "business";
+  let fiscalKind = "unspecified";
+  let presentationLabelKey = "invoiceNeutral";
+  let consumerSale = false;
+  let explicitBusinessInvoice = false;
+  let peppolApplicable = null;
+  if (isCredit) {
+    fiscalKind = "credit_note";
+    presentationLabelKey = "creditNote";
+    peppolApplicable = false;
+  } else if (isConsumer && !explicitBusiness) {
+    fiscalKind = "consumer_sale";
+    presentationLabelKey =
+      documentType === "refund_proof" ? "refundProof" : "consumerSale";
+    consumerSale = true;
+    peppolApplicable = false;
+  } else if (explicitBusiness) {
+    fiscalKind = "business_invoice";
+    presentationLabelKey = "invoice";
+    explicitBusinessInvoice = true;
+    if (rec.peppol_applicable === false || rec.peppolApplicable === false) {
+      peppolApplicable = false;
+    } else {
+      peppolApplicable = true;
+    }
+  } else if (documentType === "invoice") {
+    fiscalKind = "unspecified";
+    presentationLabelKey = "invoiceNeutral";
+    peppolApplicable = null;
+  }
+  if (rec.peppol_applicable === true || rec.peppolApplicable === true) {
+    peppolApplicable = true;
+  } else if (rec.peppol_applicable === false || rec.peppolApplicable === false) {
+    peppolApplicable = false;
+  }
+  const activePayableRevenue =
+    !superseded &&
+    !voided &&
+    !isCredit &&
+    (fiscalKind === "consumer_sale" ||
+      fiscalKind === "business_invoice" ||
+      fiscalKind === "unspecified");
+  return {
+    fiscal_kind: fiscalKind,
+    fiscal_role: fiscalKind,
+    consumer_sale: consumerSale === true,
+    explicit_business_invoice: explicitBusinessInvoice === true,
+    peppol_applicable: peppolApplicable,
+    presentation_label_key: presentationLabelKey,
+    fiscal_identity: documentId || null,
+    active_payable_revenue: activePayableRevenue === true,
+    superseded: superseded === true,
+  };
+}
+
+export function projectIssuedDocumentsListEnvelope(documents) {
+  const rows = Array.isArray(documents) ? documents : [];
+  let activePayableCount = 0;
+  for (const row of rows) {
+    if (row && row.active_payable_revenue === true) activePayableCount += 1;
+  }
+  return {
+    documents: rows,
+    count: rows.length,
+    active_payable_count: activePayableCount,
+  };
+}
+
 // 2G-O: build the safe public metadata projection of a canonical issued
 // registry record for GET /admin/documents/:documentId. Surfaces ONLY
 // non-sensitive document/reference metadata. Never exposes buyer/seller
@@ -425,6 +556,7 @@ export function buildInvoiceReplaySafeFields(idemHit, registryRecord) {
 // fields are returned as null rather than guessed.
 export function buildIssuedDocumentPublicMetadata(record) {
   const rec = record && typeof record === "object" ? record : {};
+  const derived = deriveIssuedDocumentPresentationContract(rec);
   // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: project Fluxidi sale presentation
   // fields so the company Documents UI never falls back to "Factuur"/Peppol
   // solely because Billit OrderType is Invoice.
@@ -433,35 +565,10 @@ export function buildIssuedDocumentPublicMetadata(record) {
       rec.fluxidi_sale_kind ?? rec.fluxidiSaleKind ?? rec.sale_kind ?? rec.saleKind,
       40,
     ) || null;
-  const presentationLabelKey =
-    safeStr(
-      rec.presentation_label_key ??
-        rec.presentationLabelKey ??
-        rec.document_label_key ??
-        rec.documentLabelKey,
-      40,
-    ) || null;
   const invoiceIntent =
     safeStr(rec.invoice_intent ?? rec.invoiceIntent, 40) || null;
   const createdByRole =
     safeStr(rec.created_by_role ?? rec.createdByRole, 64) || null;
-  let peppolApplicable = null;
-  if (rec.peppol_applicable === true || rec.peppolApplicable === true) {
-    peppolApplicable = true;
-  } else if (rec.peppol_applicable === false || rec.peppolApplicable === false) {
-    peppolApplicable = false;
-  } else if (
-    String(saleKind || "").toLowerCase() === "consumer_sale" ||
-    String(createdByRole || "").toLowerCase().includes("consumer_sale")
-  ) {
-    peppolApplicable = false;
-  }
-  const superseded =
-    rec.superseded === true ||
-    rec.active_revenue === false ||
-    String(rec.lifecycle_state ?? rec.lifecycleState ?? "")
-      .toLowerCase()
-      .trim() === "superseded";
   return {
     document_id: safeStr(rec.document_id ?? rec.documentId, 200) || null,
     document_type: safeStr(rec.document_type ?? rec.documentType, 40) || null,
@@ -480,11 +587,17 @@ export function buildIssuedDocumentPublicMetadata(record) {
     source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
     fluxidi_sale_kind: saleKind,
     sale_kind: saleKind,
-    presentation_label_key: presentationLabelKey,
+    presentation_label_key: derived.presentation_label_key,
     invoice_intent: invoiceIntent,
     created_by_role: createdByRole,
-    peppol_applicable: peppolApplicable,
-    superseded: superseded === true,
+    peppol_applicable: derived.peppol_applicable,
+    superseded: derived.superseded === true,
+    fiscal_kind: derived.fiscal_kind,
+    fiscal_role: derived.fiscal_role,
+    consumer_sale: derived.consumer_sale === true,
+    explicit_business_invoice: derived.explicit_business_invoice === true,
+    fiscal_identity: derived.fiscal_identity,
+    active_payable_revenue: derived.active_payable_revenue === true,
     // B6b: safe Billit export link projection (envelope-only; null when absent).
     // Never exposes tokens, the raw OAuth record, or the raw Billit response.
     billit_export: buildSafeBillitExportProjection(rec),
@@ -603,7 +716,13 @@ export async function listIssuedDocumentsForBooking(env, scope, canonicalBooking
   if (staleSkippedCount > 0) {
     warnings.push("stale_document_index_entry_skipped");
   }
-  return { ok: true, documents, warnings };
+  const projected = projectIssuedDocumentsListEnvelope(documents);
+  return {
+    ok: true,
+    documents: projected.documents,
+    warnings,
+    active_payable_count: projected.active_payable_count,
+  };
 }
 
 /* 2G-T — read-only list of issued document REGISTRY RECORDS for one booking.
