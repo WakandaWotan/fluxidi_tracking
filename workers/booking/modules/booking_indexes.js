@@ -971,6 +971,21 @@ export async function saveCompanyBookingsListIndex(env, scope, indexObj) {
   return { ok: true, key, count: cappedItems.length };
 }
 
+let _listProjectionMutator = null;
+
+export function setBookingListProjectionMutator(fn) {
+  _listProjectionMutator = typeof fn === "function" ? fn : null;
+}
+
+async function _notifyListProjection(payload) {
+  if (typeof _listProjectionMutator !== "function") return;
+  try {
+    await _listProjectionMutator(payload);
+  } catch (_) {
+    // Projection maintenance must never fail the authoritative index write.
+  }
+}
+
 export async function upsertCompanyBookingsListIndexBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
@@ -981,7 +996,16 @@ export async function upsertCompanyBookingsListIndexBestEffort(env, bookingId, r
     const scope = _indexNormalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
     const item = bookingListIndexItemFromRecord(bookingId, rec);
-    if (!item) return { ok: false, skipped: true, reason: "invalid_item" };
+    if (!item) {
+      await _notifyListProjection({
+        env,
+        bookingId,
+        rec,
+        scopeHint: scope,
+        removed: true,
+      });
+      return { ok: false, skipped: true, reason: "invalid_item" };
+    }
     const read = await readCompanyBookingsListIndex(env, scope);
     const sourceItems = Array.isArray(read?.index?.items) ? read.index.items : [];
     const next = sourceItems.filter(
@@ -989,6 +1013,13 @@ export async function upsertCompanyBookingsListIndexBestEffort(env, bookingId, r
     );
     next.push(item);
     const saved = await saveCompanyBookingsListIndex(env, scope, { items: next });
+    await _notifyListProjection({
+      env,
+      bookingId,
+      rec,
+      scopeHint: scope,
+      removed: false,
+    });
     return { ok: true, count: Number(saved?.count || 0), key: saved?.key };
   } catch (_) {
     return { ok: false, reason: "exception" };
@@ -1013,8 +1044,24 @@ export async function removeCompanyBookingsListIndexBestEffort(env, bookingId, r
     const next = sourceItems.filter(
       (entry) => safeStr(entry?.booking_id ?? entry?.bookingId, 160) !== safeBookingId,
     );
-    if (next.length === sourceItems.length) return { ok: true, skipped: true, reason: "not_found" };
+    if (next.length === sourceItems.length) {
+      await _notifyListProjection({
+        env,
+        bookingId: safeBookingId,
+        rec,
+        scopeHint: scope,
+        removed: true,
+      });
+      return { ok: true, skipped: true, reason: "not_found" };
+    }
     const saved = await saveCompanyBookingsListIndex(env, scope, { items: next });
+    await _notifyListProjection({
+      env,
+      bookingId: safeBookingId,
+      rec,
+      scopeHint: scope,
+      removed: true,
+    });
     return { ok: true, count: Number(saved?.count || 0), key: saved?.key };
   } catch (_) {
     return { ok: false, reason: "exception" };

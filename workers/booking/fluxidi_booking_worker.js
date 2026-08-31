@@ -757,7 +757,19 @@ import {
   removeCompanyBookingsListIndexBestEffort,
   rebuildCompanyBookingsListIndexForScope,
   rebuildDriverVehicleBookingIndexesForScope,
+  setBookingListProjectionMutator,
 } from "./modules/booking_indexes.js";
+import {
+  tryListCompanyBookingsProjected,
+  tryListDriverBookingsProjected,
+  onBookingIndexMutation,
+  rebuildCompanyBookingsListProjectionForScope,
+  LIST_PROJ_GET_MAX_READS,
+  LIST_PROJ_GET_MAX_LISTS,
+  LIST_PROJ_REBUILD_MAX_READS,
+  LIST_PROJ_REBUILD_MAX_LISTS,
+  LIST_PROJ_REBUILD_MAX_WRITES,
+} from "./modules/booking_list_projection.js";
 import {
   COMPANY_DRIVER_INDEX_KEY_PREFIX,
   COMPANY_DRIVER_INDEX_KEY_MIDDLE,
@@ -840,6 +852,7 @@ import {
   listDriverBookingsAuthoritative,
   listAdminDriverBookingsPreviewAuthoritative,
 } from "./modules/driver_booking_lists.js";
+setBookingListProjectionMutator(onBookingIndexMutation);
 import {
   isLegacyTenantScopeRequest,
   bookingMatchesRequestedTenantScope,
@@ -9995,6 +10008,7 @@ export {
   dashboardBookingsKpiAggregateKey,
   serveDashboardBookingsKpisHttpGet,
 };
+export { rebuildCompanyBookingsListProjectionForScope };
 export {
   runBillitDurableExportAttempt,
   sweepBillitDurableRecoveryOutbox,
@@ -45411,6 +45425,10 @@ export default {
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const cursor = safeStr(
+          url.searchParams.get("cursor") || url.searchParams.get("next_cursor") || "",
+          4000,
+        );
         const tenantScope = normalizeFleetTenantScope({
           tenant_id: session.tenant_id,
           company_id: session.company_id,
@@ -45418,6 +45436,58 @@ export default {
         console.log(
           `[DRIVER_BOOKINGS][REQ] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)}`,
         );
+        const driverBookingKv = wrapKvBudget(env.BOOKING_KV, {
+          maxReads: LIST_PROJ_GET_MAX_READS,
+          maxLists: LIST_PROJ_GET_MAX_LISTS,
+          maxWrites: 0,
+          maxDeletes: 0,
+        });
+        try {
+          const projected = await tryListDriverBookingsProjected(
+            { ...env, BOOKING_KV: driverBookingKv },
+            {
+              limit,
+              includeHistory,
+              cursor,
+              tenantScope,
+              driverId: session.driver_id,
+              vehicleId: session.assigned_vehicle_id,
+              includeDispatch: !includeHistory,
+            },
+          );
+          if (!projected?.useLegacy) {
+            if (!projected?.ok) {
+              return json(
+                { ok: false, error: projected?.error || "bookings_list_projection_unavailable" },
+                503,
+              );
+            }
+            const items = Array.isArray(projected.items) ? projected.items : [];
+            return json(
+              {
+                ok: true,
+                items,
+                count: items.length,
+                next_cursor: projected.next_cursor || null,
+                has_more: projected.has_more === true,
+              },
+              200,
+            );
+          }
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "driver_bookings_list",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(driverBookingKv.counts?.read || 0),
+              lists: Number(driverBookingKv.counts?.list || 0),
+              writes: Number(driverBookingKv.counts?.write || 0),
+              deletes: Number(driverBookingKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "bookings_list_projection_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
         const listOut = await listDriverBookingsAuthoritative(env, {
           limit,
           includeHistory,
@@ -45559,6 +45629,10 @@ export default {
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const cursor = safeStr(
+          url.searchParams.get("cursor") || url.searchParams.get("next_cursor") || "",
+          4000,
+        );
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
         const auth = await _requireAdminOrCompanySessionAuth({
@@ -45570,6 +45644,51 @@ export default {
         if (!auth.ok) return auth.response;
         console.log(`[COMPANY_BOOKINGS_LIST][AUTH] auth_mode=${auth.auth_mode}`);
         const tenantScope = scopedRoute.scope;
+        const bookingKv = wrapKvBudget(env.BOOKING_KV, {
+          maxReads: LIST_PROJ_GET_MAX_READS,
+          maxLists: LIST_PROJ_GET_MAX_LISTS,
+          maxWrites: 0,
+          maxDeletes: 0,
+        });
+        try {
+          const projected = await tryListCompanyBookingsProjected(
+            { ...env, BOOKING_KV: bookingKv },
+            { limit, includeHistory, cursor, tenantScope },
+          );
+          if (!projected?.useLegacy) {
+            if (!projected?.ok) {
+              return json(
+                { ok: false, error: projected?.error || "bookings_list_projection_unavailable" },
+                503,
+              );
+            }
+            const items = Array.isArray(projected.items) ? projected.items : [];
+            return json(
+              {
+                ok: true,
+                items,
+                count: items.length,
+                next_cursor: projected.next_cursor || null,
+                has_more: projected.has_more === true,
+                ...(projected.degraded === true ? { degraded: true } : {}),
+              },
+              200,
+            );
+          }
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "bookings_list",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(bookingKv.counts?.read || 0),
+              lists: Number(bookingKv.counts?.list || 0),
+              writes: Number(bookingKv.counts?.write || 0),
+              deletes: Number(bookingKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "bookings_list_projection_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
         const listOut = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
@@ -45603,6 +45722,10 @@ export default {
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
         const limit = Number(url.searchParams.get("limit") || "50");
+        const cursor = safeStr(
+          url.searchParams.get("cursor") || url.searchParams.get("next_cursor") || "",
+          4000,
+        );
         const driverId = safeStr(
           url.searchParams.get("driver_id") || url.searchParams.get("driverId") || "",
           96,
@@ -45614,6 +45737,59 @@ export default {
         console.log(
           `[ADMIN_DRIVER_PREVIEW][REQ] tenant=${_maskPublicDriverLoginValue(tenantScope?.tenant_id)} company=${_maskPublicDriverLoginValue(tenantScope?.company_id)} driver=${_maskPublicDriverLoginValue(driverId)} vehicle=${_maskPublicDriverLoginValue(vehicleId)}`,
         );
+        const previewKv = wrapKvBudget(env.BOOKING_KV, {
+          maxReads: LIST_PROJ_GET_MAX_READS,
+          maxLists: LIST_PROJ_GET_MAX_LISTS,
+          maxWrites: 0,
+          maxDeletes: 0,
+        });
+        try {
+          const projected = await tryListDriverBookingsProjected(
+            { ...env, BOOKING_KV: previewKv },
+            {
+              limit,
+              includeHistory: false,
+              cursor,
+              tenantScope,
+              driverId,
+              vehicleId,
+              includeDispatch: true,
+            },
+          );
+          if (!projected?.useLegacy) {
+            if (!projected?.ok) {
+              return json(
+                { ok: false, error: projected?.error || "bookings_list_projection_unavailable" },
+                503,
+              );
+            }
+            const items = Array.isArray(projected.items) ? projected.items : [];
+            return json(
+              {
+                ok: true,
+                items,
+                count: items.length,
+                source: "admin_driver_bookings_preview",
+                next_cursor: projected.next_cursor || null,
+                has_more: projected.has_more === true,
+              },
+              200,
+            );
+          }
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "admin_driver_bookings_preview",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(previewKv.counts?.read || 0),
+              lists: Number(previewKv.counts?.list || 0),
+              writes: Number(previewKv.counts?.write || 0),
+              deletes: Number(previewKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "bookings_list_projection_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
         const listOut = await listAdminDriverBookingsPreviewAuthoritative(env, {
           limit,
           tenantScope,
@@ -45700,6 +45876,62 @@ export default {
           { dryRun, compare },
         );
         return json(out, out?.ok ? 200 : 400);
+      }
+
+      if (
+        url.pathname === "/admin/bookings-list-projection/rebuild" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+        if (!explicitScope?.hasScope) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const dryRun = _coerceBoolean(
+          body?.dryRun ??
+            body?.dry_run ??
+            url.searchParams.get("dryRun") ??
+            url.searchParams.get("dry_run"),
+          false,
+        );
+        const compare = _coerceBoolean(
+          body?.compare ??
+            url.searchParams.get("compare"),
+          false,
+        );
+        const reset = _coerceBoolean(
+          body?.reset ?? url.searchParams.get("reset"),
+          false,
+        );
+        const cursor = safeStr(body?.cursor ?? url.searchParams.get("cursor"), 4000);
+        const rebuildKv = wrapKvBudget(env.BOOKING_KV, {
+          maxReads: LIST_PROJ_REBUILD_MAX_READS,
+          maxLists: LIST_PROJ_REBUILD_MAX_LISTS,
+          maxWrites: LIST_PROJ_REBUILD_MAX_WRITES,
+          maxDeletes: 50,
+        });
+        try {
+          const out = await rebuildCompanyBookingsListProjectionForScope(
+            { ...env, BOOKING_KV: rebuildKv },
+            explicitScope,
+            { dryRun, compare, cursor: cursor || undefined, reset },
+          );
+          return json(out, out?.ok ? 200 : 400);
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "bookings_list_projection_rebuild",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(rebuildKv.counts?.read || 0),
+              lists: Number(rebuildKv.counts?.list || 0),
+              writes: Number(rebuildKv.counts?.write || 0),
+              deletes: Number(rebuildKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "bookings_list_projection_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
       }
 
       // Admin booking-finance backfill for missing contribs. Scans
@@ -51012,9 +51244,57 @@ export default {
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
+        const cursor = safeStr(
+          url.searchParams.get("cursor") || url.searchParams.get("next_cursor") || "",
+          4000,
+        );
         const scopedRoute = requireExplicitBookingRouteScope({ request, url });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
+        const trackListKv = wrapKvBudget(env.BOOKING_KV, {
+          maxReads: LIST_PROJ_GET_MAX_READS,
+          maxLists: LIST_PROJ_GET_MAX_LISTS,
+          maxWrites: 0,
+          maxDeletes: 0,
+        });
+        try {
+          const projected = await tryListCompanyBookingsProjected(
+            { ...env, BOOKING_KV: trackListKv },
+            { limit, includeHistory, cursor, tenantScope },
+          );
+          if (!projected?.useLegacy) {
+            if (!projected?.ok) {
+              return json(
+                { ok: false, error: projected?.error || "bookings_list_projection_unavailable" },
+                503,
+              );
+            }
+            const items = Array.isArray(projected.items) ? projected.items : [];
+            return json(
+              {
+                ok: true,
+                items,
+                count: items.length,
+                next_cursor: projected.next_cursor || null,
+                has_more: projected.has_more === true,
+              },
+              200,
+            );
+          }
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "track_bookings_list",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(trackListKv.counts?.read || 0),
+              lists: Number(trackListKv.counts?.list || 0),
+              writes: Number(trackListKv.counts?.write || 0),
+              deletes: Number(trackListKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "bookings_list_projection_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
         const listOut = await listBookingsAuthoritative(env, {
           limit,
           includeHistory,
