@@ -392,6 +392,47 @@ test("eligibility: non-street rejected", () => {
   assert.equal(got.error, "not_street_booking");
 });
 
+test("eligibility: calculator planned record is planned even when ride_type is business", () => {
+  const rec = {
+    booking_id: "2026-08-199",
+    booking_reference: "2026-08-000199",
+    planning_reference: "PLN-2026-000499",
+    kind: "planned",
+    ride_type: "business",
+    source: "flutter_app",
+    booking_source: "flutter_app",
+    status: "COMPLETED",
+    payment_status: "unpaid",
+    price_incl_vat: 9.4,
+    currency: "EUR",
+  };
+  assert.equal(isPlannedConsumerCheckoutRecord(rec), true);
+  const withoutPlanningRef = { ...rec };
+  delete withoutPlanningRef.planning_reference;
+  assert.equal(isPlannedConsumerCheckoutRecord(withoutPlanningRef), true);
+  const onlyPlanningRef = {
+    booking_id: "2026-08-198",
+    booking_reference: "2026-08-000198",
+    planning_reference: "PLN-2026-000498",
+    ride_type: "business",
+    booking_source: "flutter_app",
+    status: "COMPLETED",
+    payment_status: "unpaid",
+    price_incl_vat: 9.4,
+    currency: "EUR",
+  };
+  assert.equal(isPlannedConsumerCheckoutRecord(onlyPlanningRef), true);
+  assert.equal(isPlannedConsumerCheckoutRecord({
+    booking_id: "2026-08-197",
+    ride_type: "business",
+    booking_source: "flutter_app",
+    status: "COMPLETED",
+  }), false);
+  const got = streetCheckoutEligibility(rec, { isPlannedConsumer: true });
+  assert.equal(got.ok, true);
+  assert.equal(got.amount.amount_cents, 940);
+});
+
 test("eligibility: planned consumer checkout uses fixed price", () => {
   const rec = {
     booking_id: "pln-test-1",

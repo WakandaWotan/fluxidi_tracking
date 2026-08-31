@@ -158,7 +158,10 @@ function _plannedPriceInclVat(rec) {
 
 export function isPlannedConsumerCheckoutRecord(rec) {
   if (!rec || typeof rec !== "object") return false;
-  const rideType = _lower(rec.ride_type ?? rec.booking?.ride_type ?? rec.kind);
+  const rideType = _lower(rec.ride_type ?? rec.booking?.ride_type);
+  const kind = _lower(
+    rec.kind ?? rec.booking?.kind ?? rec.ride_kind ?? rec.booking?.ride_kind,
+  );
   const source = _lower(
     rec.source ??
       rec.booking_source ??
@@ -170,15 +173,25 @@ export function isPlannedConsumerCheckoutRecord(rec) {
   const ref = _lower(
     rec.booking_public_id ?? rec.bookingPublicId ?? rec.reference ?? rec.booking_reference,
   );
+  const planningRef = _lower(
+    rec.planning_reference ??
+      rec.planningReference ??
+      rec.booking?.planning_reference ??
+      rec.booking?.planningReference ??
+      rec.references?.planning_reference ??
+      rec.references?.planningReference,
+  );
   if (rideType === "direct" || source === "street_ride" || id.startsWith("street_")) {
     return false;
   }
   return (
     rideType === "planned" ||
+    kind === "planned" ||
     source === "planned" ||
     source === "customer_app" ||
     id.startsWith("pln-") ||
-    ref.startsWith("pln-")
+    ref.startsWith("pln-") ||
+    planningRef.startsWith("pln-")
   );
 }
 
