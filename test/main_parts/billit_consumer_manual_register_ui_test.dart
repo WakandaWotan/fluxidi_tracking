@@ -88,7 +88,13 @@ void main() {
     expect(block, contains('Bezig met registreren…'));
     // In-flight state disables the button for that one document only.
     expect(block, contains('_registeringBillitDocIds.contains'));
-    expect(block, contains('registering ? null :'));
+    expect(
+      RegExp(r'registering\s*\?\s*null\s*:').hasMatch(block),
+      isTrue,
+      reason:
+          'In-flight register must disable the button via onPressed: null. '
+          'The ternary may be wrapped across lines.',
+    );
   });
 
   test('the block (and therefore the button) hides once Billit is linked', () {

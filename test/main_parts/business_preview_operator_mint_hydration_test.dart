@@ -629,9 +629,14 @@ void main() {
     final source = _readSourceOrFail('lib/main_parts/driver_home_page_state.dart');
 
     test('returns a PopScope wrapping the Scaffold', () {
-      // build() is huge; a substring scan is sufficient because it is the
-      // only PopScope on this widget.
-      expect(source.contains('return PopScope('), isTrue);
+      // build() assigns the PopScope to `driverBody` (PiP can wrap it in a
+      // Stack). Require the widget, the business-preview pop contract, and
+      // that PopScope's child is the page Scaffold.
+      expect(
+        RegExp(r'(?:return|=)\s+PopScope\s*\(').hasMatch(source),
+        isTrue,
+        reason: 'Driver home build must construct a PopScope',
+      );
       expect(
         source.contains(
           'canPop: !widget.openedFromBusinessHome',
@@ -644,6 +649,11 @@ void main() {
           "_attemptBusinessPreviewRouteExit(source: 'pop_scope_system_back')",
         ),
         isTrue,
+      );
+      expect(
+        RegExp(r'PopScope\s*\([\s\S]*?child:\s*Scaffold\s*\(').hasMatch(source),
+        isTrue,
+        reason: 'PopScope must wrap the driver Scaffold',
       );
     });
 

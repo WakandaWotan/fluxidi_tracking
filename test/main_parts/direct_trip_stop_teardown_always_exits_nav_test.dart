@@ -339,13 +339,15 @@ void main() {
             'must call teardown with outcome=localOnly.',
       );
       expect(
-        stopTripBody,
-        contains(
-          'preservePendingDirectIdentity: wasDirectRide && !directFinalizeAcknowledged',
-        ),
+        RegExp(
+          r'preservePendingDirectIdentity:\s*'
+          r'wasDirectRide\s*&&\s*!directFinalizeAcknowledged',
+        ).hasMatch(stopTripBody),
+        isTrue,
         reason:
             'Pending identity preservation must be strictly derived from '
-            'wasDirectRide && !directFinalizeAcknowledged — nothing else.',
+            'wasDirectRide && !directFinalizeAcknowledged — nothing else. '
+            'The named argument may be wrapped across lines.',
       );
     });
 

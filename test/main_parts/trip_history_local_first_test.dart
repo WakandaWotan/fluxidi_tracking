@@ -407,33 +407,36 @@ void main() {
           src,
           'Future<void> _startLoad({required String reason}) async',
         );
-        // The merge must iterate backend items first (they take
-        // precedence on trip id collision) and then apply putIfAbsent
-        // for latest local items (so a local-only row keeps its
-        // truthful shouldRenderAsLocalOnlyUnconfirmed badge).
+        // Backend rows are written first. Local rows are inserted only
+        // when that trip id is still absent, so backend precedence wins
+        // and a local-only row keeps its truthful
+        // shouldRenderAsLocalOnlyUnconfirmed badge. Payment overlay on a
+        // colliding local-paid row is allowed and is not a putIfAbsent.
         final forBackendIdx = body.indexOf('for (final item in safeBackendItems)');
         final forLocalIdx = body.indexOf('for (final item in latestLocalItems)');
-        final putIfAbsentIdx = body.indexOf('putIfAbsent');
         expect(forBackendIdx >= 0, isTrue,
             reason: 'Backend loop must exist.');
         expect(forLocalIdx >= 0, isTrue,
             reason: 'Local loop must exist.');
-        expect(putIfAbsentIdx >= 0, isTrue,
-            reason: 'Local rows must be inserted with putIfAbsent so '
-                'backend precedence wins on collision.');
         expect(
           forBackendIdx < forLocalIdx,
           isTrue,
           reason:
               'Backend precedence: backend items are inserted first, '
-              'local-only rows are appended via putIfAbsent.',
+              'local-only rows are appended only when absent.',
         );
+        final localLoop = body.substring(forLocalIdx);
         expect(
-          forLocalIdx < putIfAbsentIdx,
+          RegExp(r'if\s*\(\s*existing\s*==\s*null\s*\)').hasMatch(localLoop),
           isTrue,
           reason:
-              'The local-loop putIfAbsent call must live inside the '
-              'local loop.',
+              'Local rows must be inserted only when the trip id is absent '
+              'so backend precedence wins on collision.',
+        );
+        expect(
+          localLoop.contains('mergedByTripId[tripId] = item'),
+          isTrue,
+          reason: 'Absent local-only rows must be appended to the merge map.',
         );
       },
     );

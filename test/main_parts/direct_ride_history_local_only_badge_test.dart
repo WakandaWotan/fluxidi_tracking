@@ -523,8 +523,19 @@ void main() {
       '(revenue path untouched)',
       () {
         final src = readSourceOrFail('lib/main_parts/trip_history_page.dart');
+        final stripped = stripDartComments(src);
+        // Skip call-site `_summary(merged)` / `${...}` interpolations by
+        // locating the method's unique record return type first.
+        final methodStart = stripped.indexOf(
+          'int total, int completed, int cancelled, double revenue}) _summary(',
+        );
+        expect(
+          methodStart,
+          greaterThanOrEqualTo(0),
+          reason: '_summary method declaration is missing',
+        );
         final body = extractMethodBody(
-          stripDartComments(src),
+          stripped.substring(methodStart),
           '_summary(',
         );
         expect(
@@ -580,8 +591,17 @@ void main() {
       'revenue accumulation is NOT gated by shouldRenderAsLocalOnlyUnconfirmed',
       () {
         final src = readSourceOrFail('lib/main_parts/trip_history_page.dart');
+        final stripped = stripDartComments(src);
+        final methodStart = stripped.indexOf(
+          'int total, int completed, int cancelled, double revenue}) _summary(',
+        );
+        expect(
+          methodStart,
+          greaterThanOrEqualTo(0),
+          reason: '_summary method declaration is missing',
+        );
         final body = extractMethodBody(
-          stripDartComments(src),
+          stripped.substring(methodStart),
           '_summary(',
         );
         // Extract the substring from the local-only guard to the end of the

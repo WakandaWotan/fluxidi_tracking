@@ -241,6 +241,30 @@ void main() {
 
   group('asset truth', () {
     test('9. straight.png and follow_route.png differ (all languages)', () {
+      // NAV-SIGNS-BLACK-CONTOUR-V3 runtime HUD plates carry the localized
+      // caption on-disk (`Rechtdoor` / `Continue straight` / `Tout droit` /
+      // `Siga recto`). They must stay distinct from follow_route and from
+      // each other. Hashes pin the approved committed plates.
+      const pinnedStraight = <String, String>{
+        'nl':
+            '2d8903a82b4946feb8a6a796fbf5403c2e611c2cd1bf8505afbab7bc9dd31794',
+        'en':
+            '5fd29837ca69da86ddbd22278f00891b23b3a90003073b4c3b616d529b5ac547',
+        'fr':
+            '20dd61393085752eef883f80dd78c530115792592443ca75e4b5305132c1dd71',
+        'es':
+            '78131b7c63b7fdac2c1283225598fa78e1bda0d590efc70b21141a71518d05cd',
+      };
+      const pinnedFollow = <String, String>{
+        'nl':
+            'd1c8a93e901603841182999c758f4422e7c270f5597399d04c0d78d7a5cd777c',
+        'en':
+            '801d2a55886ed530505ffd4a416b5e5e0771f2aa2fa4926539acb0f0b3714d90',
+        'fr':
+            '246f56faf0122d050808e58e4fb1bcc3a0d8715db933dd14f4d7284005fd280b',
+        'es':
+            '2a037c437275e52d93e962bef8c550f9ed4e655ed995a872ba4565bff8107f77',
+      };
       for (final lang in const ['nl', 'en', 'fr', 'es']) {
         final straight =
             _sha256('assets/fluxidi_navigation_signs_v3/png/$lang/straight.png');
@@ -248,15 +272,16 @@ void main() {
           'assets/fluxidi_navigation_signs_v3/png/$lang/follow_route.png',
         );
         expect(straight, isNot(follow), reason: '$lang hashes must differ');
-        expect(straight, hasLength(64));
-        expect(follow, hasLength(64));
+        expect(straight, pinnedStraight[lang], reason: '$lang straight.png');
+        expect(follow, pinnedFollow[lang], reason: '$lang follow_route.png');
       }
-      // Languages share identical captionless plates.
-      final nl = _sha256('assets/fluxidi_navigation_signs_v3/png/nl/straight.png');
+      final nlStraight =
+          _sha256('assets/fluxidi_navigation_signs_v3/png/nl/straight.png');
       for (final lang in const ['en', 'fr', 'es']) {
         expect(
           _sha256('assets/fluxidi_navigation_signs_v3/png/$lang/straight.png'),
-          nl,
+          isNot(nlStraight),
+          reason: '$lang straight.png carries its own on-plate caption',
         );
       }
     });

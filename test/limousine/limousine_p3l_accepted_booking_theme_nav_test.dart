@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
@@ -306,6 +307,10 @@ void main() {
   testWidgets('2) real empty-partner ownership still shows warning', (
     tester,
   ) async {
+    final previousLanguage = appLanguageNotifier.value;
+    appLanguageNotifier.value = AppLanguage.en;
+    addTearDown(() => appLanguageNotifier.value = previousLanguage);
+
     final gateway = _BookGateway();
     final controller = _booking(
       gateway: gateway,
@@ -318,6 +323,12 @@ void main() {
     expect(await controller.confirmBooking(), isFalse);
     expect(gateway.calls, 0);
     expect(controller.error, LimousineAcceptedBookingError.unauthorizedScope);
+
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       MaterialApp(
         home: LimousineAcceptedBookingPage(
@@ -326,15 +337,23 @@ void main() {
         ),
       ),
     );
-    expect(
-      find.text(
+    await tester.pump();
+
+    final warning =
         kLimousineAcceptedBookingErrors[LimousineAcceptedBookingError
                 .unauthorizedScope]!
-            .en,
-        skipOffstage: false,
-      ),
-      findsOneWidget,
+            .of(AppLanguage.en);
+    expect(warning, 'This booking does not belong to this provider.');
+    final warningFinder = find.text(warning);
+    await tester.scrollUntilVisible(
+      warningFinder,
+      400,
+      scrollable: find.byType(Scrollable).first,
     );
+    expect(warningFinder, findsOneWidget);
+    final box = tester.getRect(warningFinder);
+    expect(box.height, greaterThan(0));
+    expect(box.width, greaterThan(0));
     controller.dispose();
   });
 

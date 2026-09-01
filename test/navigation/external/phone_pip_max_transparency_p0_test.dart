@@ -151,8 +151,14 @@ void main() {
       final home = _read('lib/main_parts/driver_home_page_state.dart');
       expect(home, contains('pipHostTablet'));
       expect(
-        home,
-        contains('pipHostTablet ? const Color(0xFF0B0F14) : Colors.transparent'),
+        RegExp(
+          r'pipHostTablet\s*\?\s*const Color\(0xFF0B0F14\)\s*:\s*'
+          r'Colors\.transparent',
+        ).hasMatch(home),
+        isTrue,
+        reason:
+            'Phone PiP scaffold must be transparent; tablet stays opaque. '
+            'The ternary may be wrapped across lines.',
       );
     });
   });

@@ -520,14 +520,39 @@ void main() {
   });
 
   group('NAV-RESPONSIVE-MANEUVER-BANNER-V1 arrival', () {
-    test('arrival is stable across every distance', () {
-      for (final d in [3000.0, 800.0, 120.0, 20.0, 0.0]) {
+    test('far arrive stays distance-ahead until the reached band', () {
+      for (final d in [3000.0, 800.0, 120.0]) {
+        final p = _build(_snap(distance: d, type: 'arrive'));
+        expect(p.isArrival, isTrue, reason: 'd=$d');
+        expect(p.maneuverVisual, ManeuverVisual.arrive);
+        expect(
+          p.primaryInstruction,
+          isNot('Bestemming bereikt'),
+          reason: 'd=$d must not claim arrival before the reached band',
+        );
+        expect(p.primaryInstruction, contains('naar de bestemming'));
+        expect(p.distanceLabel, isNotEmpty, reason: 'd=$d');
+      }
+    });
+
+    test('in-band or truth-confirmed arrive shows Bestemming bereikt', () {
+      for (final d in [20.0, 0.0]) {
         final p = _build(_snap(distance: d, type: 'arrive'));
         expect(p.isArrival, isTrue, reason: 'd=$d');
         expect(p.maneuverVisual, ManeuverVisual.arrive);
         expect(p.primaryInstruction, 'Bestemming bereikt');
         expect(p.distanceLabel, '', reason: 'd=$d');
       }
+
+      final confirmed = buildResponsiveManeuverPresentation(
+        snapshot: _snap(distance: 3000, type: 'arrive'),
+        tr: _trNl,
+        arrivalConfirmed: true,
+      );
+      expect(confirmed.isArrival, isTrue);
+      expect(confirmed.maneuverVisual, ManeuverVisual.arrive);
+      expect(confirmed.primaryInstruction, 'Bestemming bereikt');
+      expect(confirmed.distanceLabel, isEmpty);
     });
   });
 }

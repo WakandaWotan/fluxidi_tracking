@@ -557,6 +557,7 @@ void main() {
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      expect(_longTurn.secondaryInstruction, contains('Rijksweg'));
       for (final form in _allForms) {
         await _pump(
           tester,
@@ -568,16 +569,60 @@ void main() {
           isNull,
           reason: 'overflow at ${form.name}',
         );
-        final texts = tester.widgetList<Text>(find.byType(Text));
-        expect(texts, isNotEmpty);
-        for (final t in texts) {
+        final texts = tester
+            .widgetList<Text>(
+              find.descendant(of: _bannerFinder, matching: find.byType(Text)),
+            )
+            .toList();
+        expect(texts, isNotEmpty, reason: form.name);
+
+        // Long destination/road copy is the line that can overflow at
+        // compact width. It must ellipsize. The main maneuver verb and
+        // distance chip stay fully visible on normal panes
+        // (NAV-SIGNAGE-FIELD-QUALITY-P0-1) and must still not overflow.
+        final roadLine = texts.where((t) {
+          final data = t.data ?? '';
+          return data.contains('Rijksweg') ||
+              data.contains('Koekamerstraat') ||
+              data.contains(_longTurn.secondaryInstruction);
+        }).toList();
+        expect(
+          roadLine,
+          isNotEmpty,
+          reason: '${form.name}: long road/destination line must render',
+        );
+        for (final t in roadLine) {
           expect(
             t.overflow,
             TextOverflow.ellipsis,
-            reason: '${form.name}: every banner Text must be ellipsis-safe',
+            reason: '${form.name}: long secondary must ellipsize',
           );
           expect(t.maxLines, isNotNull);
           expect(t.maxLines, lessThanOrEqualTo(2));
+        }
+
+        for (final t in texts) {
+          expect(t.maxLines, isNotNull, reason: form.name);
+          expect(t.maxLines, lessThanOrEqualTo(2), reason: form.name);
+          final data = t.data ?? '';
+          final isRoad = data.contains('Rijksweg') ||
+              data.contains('Koekamerstraat') ||
+              data == _longTurn.secondaryInstruction;
+          if (isRoad) {
+            expect(
+              t.overflow,
+              TextOverflow.ellipsis,
+              reason: '${form.name}: long secondary must ellipsize',
+            );
+          } else {
+            expect(
+              t.overflow,
+              TextOverflow.visible,
+              reason:
+                  '${form.name}: primary/distance stay fully visible on '
+                  'normal panes',
+            );
+          }
         }
       }
     });
