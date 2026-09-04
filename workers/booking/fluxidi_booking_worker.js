@@ -28,6 +28,7 @@ import {
   noteIsolateReads,
   logKvPass,
 } from "./modules/kv_op_budget.js";
+import { upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
   scheduleBaseCancellation,
@@ -20841,6 +20842,95 @@ function _companyCodeResultPayload({
   };
 }
 
+function _registrySyncPublicFields(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return { registry_sync_pending: true };
+  }
+  if (source.registry_sync_pending === true) {
+    return {
+      registry_sync_pending: true,
+      ...(source.registry_sync_error
+        ? {
+            registry_sync_error: sanitizeTenantString(source.registry_sync_error, 64),
+          }
+        : {}),
+    };
+  }
+  if (source.ok === true && source.registry_sync_pending !== true) {
+    return { registry_sync_pending: false };
+  }
+  return {
+    registry_sync_pending: true,
+    registry_sync_error: sanitizeTenantString(source.error, 64) || "registry_sync_failed",
+  };
+}
+
+function _attachRegistrySyncState(payload, registryResult) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  if (registryResult?.ok === true) {
+    return {
+      ...payload,
+      registry_sync_pending: false,
+      registry_already_indexed: registryResult.already_indexed === true,
+    };
+  }
+  return {
+    ...payload,
+    registry_sync_pending: true,
+    registry_sync_error: sanitizeTenantString(registryResult?.error, 64) || "registry_sync_failed",
+  };
+}
+
+async function _syncCompanyRegistryMembership(env, {
+  companyCode,
+  displayName = null,
+  linkingEnabled = true,
+  createdAt = null,
+  nowIso = new Date().toISOString(),
+} = {}) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const masked = _maskPublicDriverLoginValue(normalizedCode);
+  if (!isValidGeneratedFluxidiCompanyCode(normalizedCode)) {
+    console.log(`[COMPANY_REGISTRY][SYNC][PENDING] company=${masked} error=invalid_company_code`);
+    return { ok: false, error: "invalid_company_code", already_indexed: false };
+  }
+  if (!env?.BOOKING_KV) {
+    console.log(`[COMPANY_REGISTRY][SYNC][PENDING] company=${masked} error=kv_unbound`);
+    return { ok: false, error: "kv_unbound", already_indexed: false };
+  }
+  const playReviewCode = _playReviewConfiguredCompanyCode(env);
+  let result;
+  try {
+    result = await upsertCompanyRegistryEntry(env.BOOKING_KV, {
+      company_code: normalizedCode,
+      display_name: displayName || null,
+      lifecycle_status: linkingEnabled === false ? "inactive" : "active",
+      environment_class: playReviewCode && normalizedCode === playReviewCode
+        ? "review"
+        : "unknown",
+      created_at: createdAt || nowIso,
+      updated_at: nowIso,
+    }, { nowIso });
+  } catch (err) {
+    result = { ok: false, error: "registry_sync_threw", already_indexed: false };
+    console.log(
+      `[COMPANY_REGISTRY][SYNC][THREW] company=${masked} error=${sanitizeTenantString(err?.message ?? "threw", 80)}`,
+    );
+  }
+  if (result?.ok === true) {
+    console.log(
+      `[COMPANY_REGISTRY][SYNC][OK] company=${masked} already_indexed=${result.already_indexed === true} membership_changed=${result.membershipChanged === true}`,
+    );
+    return result;
+  }
+  console.log(
+    `[COMPANY_REGISTRY][SYNC][PENDING] company=${masked} error=${sanitizeTenantString(result?.error, 64) || "registry_sync_failed"}`,
+  );
+  return result && typeof result === "object"
+    ? result
+    : { ok: false, error: "registry_sync_failed", already_indexed: false };
+}
+
 function _normalizeCompanyLinkIndexSource(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const source =
@@ -21053,13 +21143,23 @@ async function _upsertCompanyCodeIndexesForScope(
       code_index_key: codeKey,
     }),
   );
-  return _companyCodeResultPayload({
+  const registryResult = await _syncCompanyRegistryMembership(env, {
     companyCode: normalizedCode,
-    publicCompanySlug,
-    publicDisplayCode,
-    codeIndexKey: codeKey,
-    scopeIndexKey: scopeKey,
+    displayName: displayName || currentDisplayName || null,
+    linkingEnabled: linkedRecord.linking_enabled,
+    createdAt,
+    nowIso,
   });
+  return _attachRegistrySyncState(
+    _companyCodeResultPayload({
+      companyCode: normalizedCode,
+      publicCompanySlug,
+      publicDisplayCode,
+      codeIndexKey: codeKey,
+      scopeIndexKey: scopeKey,
+    }),
+    registryResult,
+  );
 }
 
 async function ensurePublicCompanyCodeForScope(env, scope, options = {}) {
@@ -24304,6 +24404,7 @@ async function handlePublicCompanyRegister(body, env) {
       ...basePayload,
       link_method: "public_company_register",
       linkMethod: "public_company_register",
+      ..._registrySyncPublicFields(ensuredCode),
       tenant_id: scope.tenant_id,
       tenantId: scope.tenant_id,
       company_id: scope.company_id,
@@ -24863,11 +24964,18 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
   console.log(
     `[COMPANY_RECOVERY][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} link_method=public_company_recovery`,
   );
+  const recoveryRegistrySync = await _syncCompanyRegistryMembership(env, {
+    companyCode: companyRecord.company_code ?? codeValidation.code,
+    displayName: companyDisplayName,
+    linkingEnabled: companyRecord.linking_enabled,
+    nowIso,
+  });
   return json(
     {
       ...basePayload,
       link_method: "public_company_recovery",
       linkMethod: "public_company_recovery",
+      ..._registrySyncPublicFields(recoveryRegistrySync),
       company_session_token: companySessionToken,
       companySessionToken: companySessionToken,
       expires_in: COMPANY_SESSION_TTL_SECONDS,
@@ -28092,6 +28200,12 @@ async function handlePublicCompanyLinkVerify(body, env) {
   console.log(
     `[COMPANY_SESSION][CREATE] tenant=${_maskPublicDriverLoginValue(companyRecord.tenant_id)} company=${_maskPublicDriverLoginValue(companyRecord.company_id)} code=${_maskPublicDriverLoginValue(companyRecord.company_code ?? codeRead.code)}`,
   );
+  const linkRegistrySync = await _syncCompanyRegistryMembership(env, {
+    companyCode: companyRecord.company_code ?? codeRead.code,
+    displayName: companyDisplayName,
+    linkingEnabled: companyRecord.linking_enabled,
+    nowIso,
+  });
   return json(
     {
       ...basePayload,
@@ -28099,6 +28213,7 @@ async function handlePublicCompanyLinkVerify(body, env) {
       companySessionToken: companySessionToken,
       expires_in: COMPANY_SESSION_TTL_SECONDS,
       expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      ..._registrySyncPublicFields(linkRegistrySync),
     },
     200,
   );
@@ -31104,6 +31219,7 @@ async function handleCompanyBootstrap(request, env) {
   let companyCode = sessionCompanyCode;
   let companyPublicSlug = "";
   let companyDisplayCode = "";
+  let bootstrapRegistrySync = null;
   const scopeMask =
     `tenant=${_maskPublicDriverLoginValue(scope.tenant_id)} company=${_maskPublicDriverLoginValue(scope.company_id)}`;
   const contextCompanyCode = normalizePublicCompanyCode(
@@ -31123,6 +31239,11 @@ async function handleCompanyBootstrap(request, env) {
     console.log(
       `[COMPANY_CODE_ENSURE][SKIP_PRESENT] ${scopeMask}`,
     );
+    bootstrapRegistrySync = await _syncCompanyRegistryMembership(env, {
+      companyCode: contextCompanyCode,
+      displayName: _resolvePublicCompanyDisplayName(businessProfile),
+      nowIso: new Date().toISOString(),
+    });
   } else if (backoffUntilMs > Date.now()) {
     console.log(
       `[COMPANY_CODE_ENSURE][BACKOFF_SKIP] ${scopeMask}`,
@@ -31146,6 +31267,7 @@ async function handleCompanyBootstrap(request, env) {
           ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
           240,
         );
+        bootstrapRegistrySync = ensuredCode;
         if (ensureBackoffKey) _companyCodeEnsureBackoffUntilByScope.delete(ensureBackoffKey);
         console.log(
           `[COMPANY_CODE_ENSURE][CREATED] ${scopeMask}`,
@@ -31261,6 +31383,11 @@ async function handleCompanyBootstrap(request, env) {
       ok: true,
       tenant_id: scope.tenant_id,
       company_id: scope.company_id,
+      ...(companyCode
+        ? _registrySyncPublicFields(
+            bootstrapRegistrySync || { ok: false, error: "registry_sync_skipped" },
+          )
+        : {}),
       ...(companyCode
         ? {
             company_code: companyCode,
@@ -48055,6 +48182,7 @@ export default {
         let ensuredPublicCompanyCode = "";
         let ensuredPublicCompanySlug = "";
         let ensuredPublicDisplayCode = "";
+        let adminProfileRegistrySync = { ok: false, error: "company_code_ensure_failed" };
         try {
           const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
             profile,
@@ -48081,6 +48209,7 @@ export default {
               ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
               240,
             );
+            adminProfileRegistrySync = ensuredCode;
           }
         } catch (err) {
           console.log(
@@ -48091,6 +48220,7 @@ export default {
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ..._registrySyncPublicFields(adminProfileRegistrySync),
           ...(resolvedCompanyCode
             ? {
                 company_code: resolvedCompanyCode,
@@ -48469,6 +48599,7 @@ export default {
         let ensuredPublicCompanyCode = "";
         let ensuredPublicCompanySlug = "";
         let ensuredPublicDisplayCode = "";
+        let adminProfilePostRegistrySync = { ok: false, error: "company_code_ensure_failed" };
         try {
           const ensuredCode = await ensurePublicCompanyCodeForScope(env, explicitScope, {
             profile,
@@ -48499,6 +48630,7 @@ export default {
               ensuredCode.public_display_code ?? ensuredCode.publicDisplayCode,
               240,
             );
+            adminProfilePostRegistrySync = ensuredCode;
           }
         } catch (err) {
           console.log(
@@ -48529,6 +48661,7 @@ export default {
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ..._registrySyncPublicFields(adminProfilePostRegistrySync),
           ...(confirmationRequired
             ? {
                 confirmation_required: true,
