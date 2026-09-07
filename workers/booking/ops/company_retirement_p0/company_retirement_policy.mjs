@@ -5,10 +5,15 @@
  * No wildcards, no "all except".
  */
 
-export {
+import {
   HARD_PROTECTED_COMPANY_CODES,
   isHardProtectedCompanyCode,
 } from "../../modules/company_registry_tombstone_guard.mjs";
+
+export {
+  HARD_PROTECTED_COMPANY_CODES,
+  isHardProtectedCompanyCode,
+};
 
 export const EXPLICIT_RETIREMENT_CANDIDATES = Object.freeze([
   "FLX-00002",
@@ -40,8 +45,33 @@ export const PHASE_B_FULL_PURGE = "full_purge";
 export const ACTIVE_PHASE = PHASE_A_REGISTRY_RETIREMENT;
 export const PHASE_B_ENABLED = false;
 
-export const EXECUTE_CONFIRMATION_TEXT = "RETIRE-REGISTRY-ONLY-P0";
+export const EXECUTE_CONFIRMATION_TEXT = "RETIRE-REGISTRY-ONLY-P0-GEN25";
 export const LEGACY_EXECUTE_CONFIRMATION_TEXT = "RETIRE-EXPLICIT-TEST-COMPANIES-P0";
+export const REJECTED_CONFIRMATION_TEXTS = Object.freeze([
+  "RETIRE-EXPLICIT-TEST-COMPANIES-P0",
+  "RETIRE-REGISTRY-ONLY-P0",
+]);
+
+/**
+ * Offline registry rollback notes (not a production execute path).
+ *
+ * Restoring only page, manifest, registry-code and company-link records is
+ * incomplete. After Phase A the live tombstone guard keeps blocking a code
+ * until that code's tombstone is deleted or proven neutralized.
+ *
+ * Production rollback and tombstone DELETE stay hard-disabled here.
+ * Offline memory tests may restore records and neutralize the exact
+ * tombstone list from the pre-retirement backup.
+ *
+ * A future production rollback must require all of:
+ * - a new explicit confirmation, never Phase A RETIRE-REGISTRY-ONLY-P0-GEN25
+ * - a unique execute-id
+ * - live versus backup checksum verification
+ * - the exact tombstone key list from the pre-retirement backup
+ * - hard protection of FLX-00001, FLX-00020 and FLX-00023
+ */
+export const REGISTRY_ROLLBACK_CONFIRMATION_TEXT = "ROLLBACK-REGISTRY-TOMBSTONES-P0";
+export const REGISTRY_ROLLBACK_PRODUCTION_ENABLED = false;
 
 export const OBSERVED_ID_MISMATCH_CODES = Object.freeze([]);
 
@@ -127,7 +157,7 @@ export function selectRetirementCodes(requested = EXPLICIT_RETIREMENT_CANDIDATES
       errors.push({ code, error: "invalid_company_code" });
       continue;
     }
-    if (code === "FLX-00001" || code === "FLX-00020") {
+    if (isHardProtectedCompanyCode(code)) {
       errors.push({ code, error: "protected_company" });
       continue;
     }
@@ -164,13 +194,42 @@ export function assertExecuteAuthorization({
   if (executeEnabled !== true) {
     return { ok: false, error: "execute_disabled_until_explicit_approval" };
   }
-  if (String(confirm || "") === LEGACY_EXECUTE_CONFIRMATION_TEXT) {
-    return { ok: false, error: "legacy_full_purge_confirmation_rejected" };
+  if (REJECTED_CONFIRMATION_TEXTS.includes(String(confirm || ""))) {
+    return { ok: false, error: "legacy_confirmation_rejected" };
   }
   if (String(confirm || "") !== EXECUTE_CONFIRMATION_TEXT) {
     return { ok: false, error: "confirmation_text_mismatch" };
   }
   return { ok: true, mode: "execute", phase: PHASE_A_REGISTRY_RETIREMENT };
+}
+
+export function assertRegistryRollbackAuthorization({
+  offline = false,
+  production = false,
+  remote = false,
+  confirm = "",
+  executeId = "",
+} = {}) {
+  if (production === true || remote === true) {
+    return { ok: false, error: "production_rollback_forbidden" };
+  }
+  if (REGISTRY_ROLLBACK_PRODUCTION_ENABLED === true) {
+    return { ok: false, error: "production_rollback_must_remain_disabled" };
+  }
+  if (offline !== true) {
+    return { ok: false, error: "offline_rollback_required" };
+  }
+  if (String(confirm || "") === EXECUTE_CONFIRMATION_TEXT
+    || REJECTED_CONFIRMATION_TEXTS.includes(String(confirm || ""))) {
+    return { ok: false, error: "phase_a_confirmation_cannot_authorize_rollback" };
+  }
+  if (String(confirm || "") !== REGISTRY_ROLLBACK_CONFIRMATION_TEXT) {
+    return { ok: false, error: "rollback_confirmation_mismatch" };
+  }
+  if (!String(executeId || "").trim()) {
+    return { ok: false, error: "rollback_execute_id_required" };
+  }
+  return { ok: true, mode: "offline_rollback_plan" };
 }
 
 export function assertFullPurgeForbidden(flags = {}) {
@@ -225,7 +284,7 @@ export function isAllowedPhaseAWriteKey(key, selectedCodes = EXPLICIT_RETIREMENT
   const link = text.match(/^company_link:index:code:(FLX-[0-9]{4,12}):v1$/);
   const companyCode = (tombstone || code || link)?.[1];
   if (!companyCode) return false;
-  if (companyCode === "FLX-00001" || companyCode === "FLX-00020") return false;
+  if (isHardProtectedCompanyCode(companyCode) || companyCode === "FLX-91611") return false;
   return selectedCodes.includes(companyCode);
 }
 

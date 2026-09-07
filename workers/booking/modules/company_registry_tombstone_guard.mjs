@@ -8,7 +8,11 @@
  * Hard-protected production companies can never be treated as revoked.
  */
 
-export const HARD_PROTECTED_COMPANY_CODES = Object.freeze(["FLX-00001", "FLX-00020"]);
+export const HARD_PROTECTED_COMPANY_CODES = Object.freeze([
+  "FLX-00001",
+  "FLX-00020",
+  "FLX-00023",
+]);
 
 export const COMPANY_REGISTRY_TOMBSTONE_PREFIX = "company_registry:tombstone:";
 
@@ -58,7 +62,7 @@ export function assertProtectedCompanyImmutable(companyCode, action = "registry_
     code,
     error: "protected_company",
     action,
-    message: "FLX-00001 and FLX-00020 cannot receive a tombstone, retirement, or purge",
+    message: "FLX-00001, FLX-00020 and FLX-00023 cannot receive a tombstone, retirement, or purge",
   };
 }
 

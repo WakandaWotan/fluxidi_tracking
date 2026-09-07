@@ -8,7 +8,11 @@ import {
 import { registryTombstoneKey } from "../../modules/company_registry_tombstone_guard.mjs";
 import { sha256Hex } from "./company_retirement_inventory.mjs";
 import { companyLinkCodeKey } from "./company_retirement_keys.mjs";
-import { isSecretBearingKey } from "./company_retirement_policy.mjs";
+import {
+  assertRegistryRollbackAuthorization,
+  isHardProtectedCompanyCode,
+  isSecretBearingKey,
+} from "./company_retirement_policy.mjs";
 
 export function defaultBackupRoot() {
   return "C:\\_flutter_work\\_local_backups\\fluxidi_company_registry_retirement_p0";
@@ -104,6 +108,7 @@ export function collectRegistryRawBackup(report) {
     records,
     tombstone_keys_not_present: (report.companies || [])
       .filter((row) => !row.identity?.has_tombstone)
+      .filter((row) => !isHardProtectedCompanyCode(row.company_code) && row.company_code !== "FLX-91611")
       .map((row) => registryTombstoneKey(row.company_code)),
   };
 }
@@ -165,7 +170,17 @@ export function writeRetirementBackup(backupRoot, report, plan) {
     ],
     secrets: "omitted",
     git: false,
-    restore: "offline_put_of_raw_registry_backup_records",
+    restore: "offline_put_of_raw_records_and_delete_of_tombstone_keys_not_present",
+    rollback: {
+      incomplete_without_tombstone_neutralization: true,
+      production_enabled: false,
+      requires: [
+        "explicit_confirmation",
+        "execute_id",
+        "checksums",
+        "exact_tombstone_list",
+      ],
+    },
   };
   const inventoryPath = join(dir, "sanitized_inventory.json");
   const planPath = join(dir, "retirement_plan.json");
@@ -190,6 +205,51 @@ export function readRegistryRawBackup(dir) {
   return JSON.parse(readFileSync(join(dir, "raw_registry_backup.json"), "utf8"));
 }
 
+export function assertExactTombstoneList(rawBackup, requestedKeys = []) {
+  const expected = [...(rawBackup?.tombstone_keys_not_present || [])].sort();
+  const requested = [...requestedKeys].sort();
+  if (JSON.stringify(expected) !== JSON.stringify(requested)) {
+    return { ok: false, error: "tombstone_list_mismatch", expected, requested };
+  }
+  for (const key of requested) {
+    const code = String(key || "").match(/^company_registry:tombstone:(FLX-[0-9]{4,12}):v1$/)?.[1];
+    if (!code) return { ok: false, error: "invalid_tombstone_key", key };
+    if (isHardProtectedCompanyCode(code) || code === "FLX-91611") {
+      return { ok: false, error: "protected_or_unknown_tombstone_forbidden", code };
+    }
+  }
+  return { ok: true, tombstone_keys: expected };
+}
+
+export async function applyOfflineRegistryRollback(kv, rawBackup, options = {}) {
+  const auth = assertRegistryRollbackAuthorization(options);
+  if (!auth.ok) return auth;
+  const list = assertExactTombstoneList(rawBackup, options.tombstoneKeys);
+  if (!list.ok) return list;
+  if (options.expectedChecksums) {
+    for (const record of rawBackup.records || []) {
+      const expected = options.expectedChecksums[record.key];
+      if (expected && expected !== record.sha256) {
+        return { ok: false, error: "backup_checksum_mismatch", key: record.key };
+      }
+    }
+  }
+  if (typeof kv?.delete !== "function") {
+    return { ok: false, error: "offline_kv_delete_required_for_tombstone_neutralization" };
+  }
+  const restored = await restoreRegistryBackup(kv, rawBackup);
+  if (!restored.ok) {
+    return { ok: false, error: "offline_restore_checksum_mismatch", restored };
+  }
+  return {
+    ok: true,
+    mode: "offline_restore_and_tombstone_neutralize",
+    restored_count: restored.restored_count,
+    neutralized_tombstones: list.tombstone_keys,
+    execute_id: String(options.executeId || "").trim(),
+  };
+}
+
 export async function restoreRegistryBackup(kv, rawBackup) {
   const restored = [];
   for (const record of rawBackup.records || []) {
@@ -202,6 +262,10 @@ export async function restoreRegistryBackup(kv, rawBackup) {
     });
   }
   for (const tombstoneKey of rawBackup.tombstone_keys_not_present || []) {
+    const code = String(tombstoneKey).match(/^company_registry:tombstone:(FLX-[0-9]{4,12}):v1$/)?.[1];
+    if (isHardProtectedCompanyCode(code) || code === "FLX-91611") {
+      return { ok: false, error: "protected_or_unknown_tombstone_forbidden", code };
+    }
     if (typeof kv.delete === "function") {
       await kv.delete(tombstoneKey);
     }

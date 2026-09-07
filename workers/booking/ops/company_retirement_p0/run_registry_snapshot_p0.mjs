@@ -69,7 +69,7 @@ async function main() {
     cwd,
   });
 
-  const extraCodes = ["FLX-00001", "FLX-00020"];
+  const extraCodes = ["FLX-00001", "FLX-00020", "FLX-00023"];
   const extra = {};
   for (const code of extraCodes) {
     extra[code] = {
@@ -84,7 +84,7 @@ async function main() {
   for (const record of raw.records) {
     memory.map.set(record.key, record.raw);
   }
-  const codes = [...EXPLICIT_RETIREMENT_CANDIDATES, "FLX-00001", "FLX-00020"];
+  const codes = [...EXPLICIT_RETIREMENT_CANDIDATES, "FLX-00001", "FLX-00020", "FLX-00023"];
   const before = registryStateChecksums(memory.map, codes, result.report?.registry_snapshot?.page_count || 1);
   const applied = await applyRegistryRetirementExecute(memory, result.report, {
     nowIso: "2026-09-07T16:30:00.000Z",
@@ -115,7 +115,7 @@ async function main() {
       keys: (row.writes || []).map((write) => ({ key: write.key, kind: write.kind })),
     })),
     protected_in_write_set: (result.plan?.companies || []).some((row) => (
-      row.company_code === "FLX-00001" || row.company_code === "FLX-00020"
+      row.company_code === "FLX-00001" || row.company_code === "FLX-00020" || row.company_code === "FLX-00023"
     )),
     offline_restore: {
       apply_ok: applied.ok === true,
@@ -125,7 +125,8 @@ async function main() {
       tombstone_appeared_after_apply: Boolean(mid[registryTombstoneKey("FLX-00022")]),
       protected_registry_unchanged:
         before[registryCodeKey("FLX-00001")] === after[registryCodeKey("FLX-00001")]
-        && before[registryCodeKey("FLX-00020")] === after[registryCodeKey("FLX-00020")],
+        && before[registryCodeKey("FLX-00020")] === after[registryCodeKey("FLX-00020")]
+        && before[registryCodeKey("FLX-00023")] === after[registryCodeKey("FLX-00023")],
     },
     live_worker_bundle_files: result.live_worker_bundle_files,
   }, null, 2));

@@ -45,11 +45,9 @@ export function assertUnknownCompaniesPreserved(beforeSnapshot, afterSnapshot, r
   if (dropped.length) {
     return { ok: false, error: "unknown_or_non_candidate_company_would_be_dropped", dropped, remaining: after };
   }
-  if (before.includes("FLX-00001") && !after.includes("FLX-00001")) {
-    return { ok: false, error: "protected_company_dropped", dropped: ["FLX-00001"], remaining: after };
-  }
-  if (before.includes("FLX-00020") && !after.includes("FLX-00020")) {
-    return { ok: false, error: "protected_company_dropped", dropped: ["FLX-00020"], remaining: after };
+  const droppedProtected = HARD_PROTECTED_COMPANY_CODES.filter((code) => before.includes(code) && !after.includes(code));
+  if (droppedProtected.length) {
+    return { ok: false, error: "protected_company_dropped", dropped: droppedProtected, remaining: after };
   }
   return { ok: true, remaining: after, preserved: mustKeep };
 }
@@ -231,7 +229,7 @@ export function buildRetirementPlan(report, { nowIso = new Date().toISOString() 
       "Mark company_registry:code:{CODE}:v1 as lifecycle_status=retired (keep key)",
       "Mark company_link:index:code:{CODE}:v1 as linking_enabled=false / retired (keep key)",
       "Rewrite affected company_registry page(s) and manifest:v1",
-      "Never mutate FLX-00001 or FLX-00020",
+      "Never mutate FLX-00001, FLX-00020 or FLX-00023",
       "Never delete bookings, payments, invoices, drivers, vehicles, sessions, tokens, R2, or integrations",
       "Never call Mollie, Billit or Chiron APIs",
     ],

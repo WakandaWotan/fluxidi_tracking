@@ -214,8 +214,7 @@ export function reconcileObservedCodes(pageCodes, explicitCodes) {
   const observed = pageCodes.map((row) => row.company_code);
   const extraObserved = observed.filter((code) => (
     !explicit.has(code)
-    && code !== "FLX-00001"
-    && code !== "FLX-00020"
+    && !isHardProtectedCompanyCode(code)
   ));
   const missingExplicit = explicitCodes.filter((code) => !observed.includes(code));
   return {

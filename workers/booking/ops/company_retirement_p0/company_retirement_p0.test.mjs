@@ -25,9 +25,12 @@ import {
   HARD_PROTECTED_COMPANY_CODES,
   LEGACY_EXECUTE_CONFIRMATION_TEXT,
   LIVE_WORKER_BUNDLE_RETIREMENT_FILES,
+  REGISTRY_ROLLBACK_CONFIRMATION_TEXT,
+  REGISTRY_ROLLBACK_PRODUCTION_ENABLED,
   RISK_GROUPS,
   assertExecuteAuthorization,
   assertFullPurgeForbidden,
+  assertRegistryRollbackAuthorization,
   looksLikeWildcardSelection,
   selectRetirementCodes,
 } from "./company_retirement_policy.mjs";
@@ -42,6 +45,8 @@ import {
 } from "./company_retirement_plan.mjs";
 import { isAllowedPhaseAWriteKey } from "./company_retirement_policy.mjs";
 import {
+  applyOfflineRegistryRollback,
+  assertExactTombstoneList,
   collectRegistryRawBackup,
   registryStateChecksums,
   restoreRegistryBackup,
@@ -87,6 +92,7 @@ function seedRegistrySnapshot(kv, codes) {
   const companies = [
     publicRegistryFields({ company_code: "FLX-00001", display_name: "Fluxidi" }),
     publicRegistryFields({ company_code: "FLX-00020", display_name: "Fluxidi Google Review" }),
+    publicRegistryFields({ company_code: "FLX-00023", display_name: "AFG" }),
     ...codes.map((code) => publicRegistryFields({ company_code: code })),
   ];
   const manifest = {
@@ -111,12 +117,13 @@ test("wrangler stdout parser keeps JSON when npm notice is glued on", () => {
 
 test("explicit ID selection accepts only the 22 candidates", () => {
   assert.equal(EXPLICIT_RETIREMENT_CANDIDATES.length, 22);
-  assert.deepEqual(HARD_PROTECTED_COMPANY_CODES, ["FLX-00001", "FLX-00020"]);
+  assert.deepEqual(HARD_PROTECTED_COMPANY_CODES, ["FLX-00001", "FLX-00020", "FLX-00023"]);
   const ok = selectRetirementCodes(["FLX-00002", "FLX-00022"]);
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.selected, ["FLX-00002", "FLX-00022"]);
   assert.equal(selectRetirementCodes(["FLX-00001"]).ok, false);
   assert.equal(selectRetirementCodes(["FLX-00020"]).ok, false);
+  assert.equal(selectRetirementCodes(["FLX-00023"]).ok, false);
   assert.equal(selectRetirementCodes(["FLX-00099"]).ok, false);
   assert.equal(selectRetirementCodes(["FLX-90811"]).ok, true);
   assert.equal(selectRetirementCodes(["FLX-91611"]).ok, false);
@@ -128,6 +135,7 @@ test("explicit ID selection accepts only the 22 candidates", () => {
 test("protected company guards are hardcoded and tested", () => {
   assert.equal(isHardProtectedCompanyCode("FLX-00001"), true);
   assert.equal(isHardProtectedCompanyCode("FLX-00020"), true);
+  assert.equal(isHardProtectedCompanyCode("FLX-00023"), true);
   assert.equal(isHardProtectedCompanyCode("FLX-00022"), false);
   const snapshot = {
     manifest: emptyRegistryManifest(),
@@ -143,6 +151,8 @@ test("protected company guards are hardcoded and tested", () => {
   assert.equal(blocked.membershipChanged, false);
   assert.throws(() => tombstoneRecord("FLX-00001", "2026-09-07T00:00:00.000Z"), /protected_company/);
   assert.throws(() => tombstoneRecord("FLX-00020", "2026-09-07T00:00:00.000Z"), /protected_company/);
+  assert.throws(() => tombstoneRecord("FLX-00023", "2026-09-07T00:00:00.000Z"), /protected_company/);
+  assert.equal(applyRegistryRemove(snapshot, "FLX-00023").blocked, "protected_company");
 });
 
 test("dry-run is the default and execute needs exact registry-only confirmation", async () => {
@@ -161,6 +171,11 @@ test("dry-run is the default and execute needs exact registry-only confirmation"
   assert.equal(assertExecuteAuthorization({
     execute: true,
     confirm: LEGACY_EXECUTE_CONFIRMATION_TEXT,
+    executeEnabled: true,
+  }).ok, false);
+  assert.equal(assertExecuteAuthorization({
+    execute: true,
+    confirm: "RETIRE-REGISTRY-ONLY-P0",
     executeEnabled: true,
   }).ok, false);
   const kv = createMemoryKv();
@@ -272,7 +287,8 @@ test("registry backup is raw and restore returns the exact original state", asyn
   seedRegistrySnapshot(kv, ["FLX-00022"]);
   seedCandidate(kv, "FLX-00022");
   const report = await inventorySelection({ BOOKING_KV: kv }, ["FLX-00022"]);
-  const before = registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020"]);
+  const protectedCodes = ["FLX-00001", "FLX-00020", "FLX-00023"];
+  const before = registryStateChecksums(kv.map, ["FLX-00022", ...protectedCodes]);
   const dir = mkdtempSync(join(tmpdir(), "retire-registry-"));
   const plan = buildRetirementPlan(report);
   const backup = writeRetirementBackup(dir, report, plan);
@@ -285,15 +301,18 @@ test("registry backup is raw and restore returns the exact original state", asyn
     nowIso: "2026-09-07T16:10:00.000Z",
   });
   assert.equal(applied.ok, true);
-  const mid = registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020"]);
+  const mid = registryStateChecksums(kv.map, ["FLX-00022", ...protectedCodes]);
   assert.notEqual(mid[registryTombstoneKey("FLX-00022")], before[registryTombstoneKey("FLX-00022")]);
   const restored = await restoreRegistryBackup(kv, backup.raw_backup);
   assert.equal(restored.ok, true);
-  const after = registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020"]);
+  const after = registryStateChecksums(kv.map, ["FLX-00022", ...protectedCodes]);
   assert.deepEqual(after, before);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00022")), false);
   const manifest = JSON.parse(readFileSync(backup.files[0], "utf8"));
   assert.equal(manifest.secrets, "omitted");
   assert.equal(manifest.git, false);
+  assert.equal(manifest.rollback.incomplete_without_tombstone_neutralization, true);
+  assert.equal(manifest.rollback.production_enabled, false);
   assert.doesNotMatch(JSON.stringify(manifest), /access_token|refresh_token|Bearer /);
 });
 
@@ -341,6 +360,7 @@ test("authorized registry execute retires only selected codes and keeps unknowns
     companies: [
       publicRegistryFields({ company_code: "FLX-00001" }),
       publicRegistryFields({ company_code: "FLX-00020" }),
+      publicRegistryFields({ company_code: "FLX-00023" }),
       publicRegistryFields({ company_code: "FLX-00022" }),
       publicRegistryFields({ company_code: "FLX-90811" }),
       publicRegistryFields({ company_code: "FLX-99999" }),
@@ -365,6 +385,7 @@ test("authorized registry execute retires only selected codes and keeps unknowns
     const codes = page.companies.map((row) => row.company_code);
     assert.ok(codes.includes("FLX-00001"));
     assert.ok(codes.includes("FLX-00020"));
+    assert.ok(codes.includes("FLX-00023"));
     assert.ok(codes.includes("FLX-99999"));
     assert.equal(codes.includes("FLX-00022"), false);
     assert.equal(codes.includes("FLX-90811"), false);
@@ -434,11 +455,13 @@ test("unknown page members are kept and FLX-91611 cannot be selected or written"
   assert.equal(isAllowedPhaseAWriteKey("company_registry:tombstone:FLX-91611:v1"), false);
   assert.equal(isAllowedPhaseAWriteKey("company_registry:tombstone:FLX-90811:v1"), true);
   assert.equal(isAllowedPhaseAWriteKey("company_registry:tombstone:FLX-00001:v1"), false);
+  assert.equal(isAllowedPhaseAWriteKey("company_registry:tombstone:FLX-00023:v1"), false);
   const before = {
     manifest: emptyRegistryManifest(),
     pages: [{ page: 1, membership_generation: 4, companies: [
       publicRegistryFields({ company_code: "FLX-00001" }),
       publicRegistryFields({ company_code: "FLX-00020" }),
+      publicRegistryFields({ company_code: "FLX-00023" }),
       publicRegistryFields({ company_code: "FLX-00022" }),
       publicRegistryFields({ company_code: "FLX-99999" }),
     ] }],
@@ -449,6 +472,7 @@ test("unknown page members are kept and FLX-91611 cannot be selected or written"
   assert.ok(preserved.remaining.includes("FLX-99999"));
   assert.ok(preserved.remaining.includes("FLX-00001"));
   assert.ok(preserved.remaining.includes("FLX-00020"));
+  assert.ok(preserved.remaining.includes("FLX-00023"));
   assert.equal(preserved.remaining.includes("FLX-00022"), false);
   const dropped = assertUnknownCompaniesPreserved(before, {
     pages: [{ page: 1, companies: [
@@ -458,6 +482,71 @@ test("unknown page members are kept and FLX-91611 cannot be selected or written"
   }, ["FLX-00022"]);
   assert.equal(dropped.ok, false);
   assert.equal(dropped.error, "unknown_or_non_candidate_company_would_be_dropped");
+});
+
+test("offline rollback must neutralize tombstones and stay production-disabled", async () => {
+  assert.equal(REGISTRY_ROLLBACK_PRODUCTION_ENABLED, false);
+  assert.equal(assertRegistryRollbackAuthorization({
+    offline: true,
+    confirm: EXECUTE_CONFIRMATION_TEXT,
+    executeId: "rb-1",
+  }).error, "phase_a_confirmation_cannot_authorize_rollback");
+  assert.equal(assertRegistryRollbackAuthorization({
+    production: true,
+    offline: true,
+    confirm: REGISTRY_ROLLBACK_CONFIRMATION_TEXT,
+    executeId: "rb-1",
+  }).error, "production_rollback_forbidden");
+  assert.equal(assertRegistryRollbackAuthorization({
+    offline: true,
+    confirm: REGISTRY_ROLLBACK_CONFIRMATION_TEXT,
+  }).error, "rollback_execute_id_required");
+  assert.equal(assertExactTombstoneList({
+    tombstone_keys_not_present: [registryTombstoneKey("FLX-00023")],
+  }, [registryTombstoneKey("FLX-00023")]).error, "protected_or_unknown_tombstone_forbidden");
+  assert.equal(assertExactTombstoneList({
+    tombstone_keys_not_present: [registryTombstoneKey("FLX-00022")],
+  }, [registryTombstoneKey("FLX-91611")]).error, "tombstone_list_mismatch");
+
+  const kv = createMemoryKv();
+  seedRegistrySnapshot(kv, ["FLX-00022"]);
+  seedCandidate(kv, "FLX-00022");
+  const report = await inventorySelection({ BOOKING_KV: kv }, ["FLX-00022"]);
+  const before = registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020", "FLX-00023"]);
+  const raw = collectRegistryRawBackup(report);
+  const applied = await applyRegistryRetirementExecute(kv, report, {
+    nowIso: "2026-09-07T16:20:00.000Z",
+  });
+  assert.equal(applied.ok, true);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00022")), true);
+  const pageOnly = {
+    ...raw,
+    tombstone_keys_not_present: [],
+  };
+  await restoreRegistryBackup(kv, pageOnly);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00022")), true);
+  const incomplete = registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020", "FLX-00023"]);
+  assert.notEqual(incomplete[registryTombstoneKey("FLX-00022")], before[registryTombstoneKey("FLX-00022")]);
+
+  const rolled = await applyOfflineRegistryRollback(kv, raw, {
+    offline: true,
+    confirm: REGISTRY_ROLLBACK_CONFIRMATION_TEXT,
+    executeId: "offline-rollback-p0",
+    tombstoneKeys: raw.tombstone_keys_not_present,
+    expectedChecksums: Object.fromEntries(raw.records.map((row) => [row.key, row.sha256])),
+  });
+  assert.equal(rolled.ok, true);
+  assert.deepEqual(registryStateChecksums(kv.map, ["FLX-00022", "FLX-00001", "FLX-00020", "FLX-00023"]), before);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00022")), false);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00001")), false);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00020")), false);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-00023")), false);
+  assert.equal(kv.map.has(registryTombstoneKey("FLX-91611")), false);
+
+  await assert.rejects(
+    () => runRetirementCli(["--rollback"], { stores: { BOOKING_KV: kv }, writeBackup: false }),
+    /production_rollback_forbidden/,
+  );
 });
 
 test("risk groups split empty, data, payments, and missing codes", () => {

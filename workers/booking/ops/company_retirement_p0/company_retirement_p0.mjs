@@ -7,6 +7,7 @@
 import {
   EXPLICIT_RETIREMENT_CANDIDATES,
   EXECUTE_CONFIRMATION_TEXT,
+  HARD_PROTECTED_COMPANY_CODES,
   LIVE_WORKER_BUNDLE_RETIREMENT_FILES,
   LOCAL_ONLY_RETIREMENT_FILES,
   PHASE_A_REGISTRY_RETIREMENT,
@@ -60,6 +61,9 @@ function parseArgs(argv) {
     else if (token === "--phase") args.phase = String(argv[++i] || args.phase);
     else if (token === "--full-purge" || token === "--purge") args.fullPurge = true;
     else if (token === "--registry-only") args.registryOnly = true;
+    else if (token === "--rollback" || token === "--tombstone-delete") {
+      throw new Error("production_rollback_forbidden");
+    }
     else if (token === "--help" || token === "-h") args.help = true;
     else throw new Error(`unknown_flag:${token}`);
   }
@@ -75,6 +79,9 @@ function printHelp() {
   --execute --confirm ${EXECUTE_CONFIRMATION_TEXT}
   Execute requires FLUXIDI_RETIREMENT_EXECUTE_ENABLED=1
   --full-purge is hard-disabled.
+  --rollback / --tombstone-delete are hard-disabled in production.
+  A complete registry rollback also needs the exact tombstone list
+  neutralized; page/manifest/code/link PUTs alone are incomplete.
 `);
 }
 
@@ -90,8 +97,7 @@ export async function runOfflineRestoreTest(report, backup) {
   }
   const codes = [
     ...EXPLICIT_RETIREMENT_CANDIDATES,
-    "FLX-00001",
-    "FLX-00020",
+    ...HARD_PROTECTED_COMPANY_CODES,
   ];
   const before = registryStateChecksums(memory.map, codes, report.registry_snapshot?.page_count || 1);
   const applied = await applyRegistryRetirementExecute(memory, report, {
@@ -183,10 +189,18 @@ export async function runRetirementCli(argv = process.argv.slice(2), {
     const backupCodes = (report.raw_registry?.pages || []).flatMap((page) => (page.companies || []).map((row) => row.company_code));
     const liveChecksum = liveAgain.checksums || {};
     const backupChecksum = report.registry_snapshot?.checksums || {};
+    const liveManifest = liveAgain.manifest || {};
+    const backupManifest = report.raw_registry?.manifest || {};
+    const livePage = liveAgain.pages?.[0] || {};
+    const backupPage = report.raw_registry?.pages?.[0] || {};
     if (
       liveChecksum.registry_manifest !== backupChecksum.registry_manifest
       || liveChecksum.registry_page !== backupChecksum.registry_page
       || !sameCodeList(liveCodes, backupCodes)
+      || liveManifest.total !== backupManifest.total
+      || liveManifest.membership_generation !== backupManifest.membership_generation
+      || livePage.membership_generation !== backupPage.membership_generation
+      || (livePage.companies || []).length !== (backupPage.companies || []).length
     ) {
       return {
         ok: false,
@@ -271,7 +285,7 @@ if (isMain) {
         keys: (row.writes || []).map((write) => ({ key: write.key, kind: write.kind, op: write.op })),
       })),
       backup_dir: result.backup?.dir || null,
-      protected_untouched: result.plan?.protected_untouched || ["FLX-00001", "FLX-00020"],
+      protected_untouched: result.plan?.protected_untouched || [...HARD_PROTECTED_COMPANY_CODES],
       live_worker_bundle_files: result.live_worker_bundle_files || LIVE_WORKER_BUNDLE_RETIREMENT_FILES,
     }, null, 2));
     if (!result.ok && !result.help) process.exitCode = 2;
