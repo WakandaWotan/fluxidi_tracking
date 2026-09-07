@@ -7,10 +7,30 @@
  * after membership confirm, so ok:false cannot be treated as resolved.
  */
 
+import {
+  COMPANY_REGISTRY_TOMBSTONE_PREFIX,
+  HARD_PROTECTED_COMPANY_CODES,
+  assertProtectedCompanyImmutable,
+  isCompanyRegistryRevoked,
+  isHardProtectedCompanyCode,
+  readRegistryTombstone,
+  registryTombstoneKey,
+} from "./company_registry_tombstone_guard.mjs";
+
+export {
+  COMPANY_REGISTRY_TOMBSTONE_PREFIX,
+  HARD_PROTECTED_COMPANY_CODES,
+  assertProtectedCompanyImmutable,
+  isCompanyRegistryRevoked,
+  isHardProtectedCompanyCode,
+  readRegistryTombstone,
+  registryTombstoneKey,
+};
+
 export const COMPANY_REGISTRY_SCHEMA = 1;
 export const COMPANY_REGISTRY_PAGE_SIZE = 100;
 export const COMPANY_REGISTRY_MANIFEST_KEY = "company_registry:manifest:v1";
-export const REGISTRY_LIFECYCLE = Object.freeze(["active", "inactive", "deleted"]);
+export const REGISTRY_LIFECYCLE = Object.freeze(["active", "inactive", "retired", "deleted"]);
 export const REGISTRY_ENVIRONMENT = Object.freeze([
   "production",
   "test",
@@ -217,6 +237,32 @@ function confirmOk(before, intended, confirm, entry, token) {
   return true;
 }
 
+export function applyRegistryRemove(snapshot, companyCode) {
+  const code = String(companyCode || "").trim();
+  const next = cloneSnapshot(snapshot);
+  if (isHardProtectedCompanyCode(code)) {
+    return { ...next, membershipChanged: false, blocked: "protected_company" };
+  }
+  let changed = false;
+  for (const page of next.pages) {
+    const before = page.companies.length;
+    page.companies = page.companies.filter((row) => row.company_code !== code);
+    if (page.companies.length !== before) changed = true;
+  }
+  next.pages = next.pages.filter((page) => page.companies.length > 0);
+  if (!changed) {
+    next.manifest.total = [...codesOf(next)].length;
+    next.manifest.page_count = next.pages.length;
+    return { ...next, membershipChanged: false };
+  }
+  next.manifest.membership_generation += 1;
+  for (const page of next.pages) page.membership_generation = next.manifest.membership_generation;
+  next.manifest.total = [...codesOf(next)].length;
+  next.manifest.page_count = next.pages.length;
+  next.manifest.updated_at = new Date().toISOString();
+  return { ...next, membershipChanged: true };
+}
+
 export async function upsertCompanyRegistryEntry(kv, input, {
   nowIso = new Date().toISOString(),
   maxAttempts = 8,
@@ -231,6 +277,15 @@ export async function upsertCompanyRegistryEntry(kv, input, {
     return { ok: false, error: "invalid_company_code", already_indexed: false, ops: tallyWrite(ops) };
   }
   const codeKey = registryCodeKey(code);
+  if (await isCompanyRegistryRevoked(kv, code)) {
+    return {
+      ok: false,
+      error: "registry_revoked",
+      revoked: true,
+      already_indexed: false,
+      ops: tallyWrite(ops),
+    };
+  }
   ops.code_gets += 1;
   const existing = await kvGetJson(kv, codeKey);
   if (isIndexedRegistryEntry(existing, code)) {

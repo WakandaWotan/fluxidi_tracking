@@ -28,7 +28,13 @@ import {
   noteIsolateReads,
   logKvPass,
 } from "./modules/kv_op_budget.js";
-import { upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
+import {
+  isCompanyRegistryRevoked,
+  isHardProtectedCompanyCode,
+} from "./modules/company_registry_tombstone_guard.mjs";
+import {
+  upsertCompanyRegistryEntry,
+} from "./modules/company_registry_index.mjs";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
   scheduleBaseCancellation,
@@ -20898,6 +20904,11 @@ async function _syncCompanyRegistryMembership(env, {
     console.log(`[COMPANY_REGISTRY][SYNC][PENDING] company=${masked} error=kv_unbound`);
     return { ok: false, error: "kv_unbound", already_indexed: false };
   }
+  if (!isHardProtectedCompanyCode(normalizedCode)
+      && await isCompanyRegistryRevoked(env.BOOKING_KV, normalizedCode)) {
+    console.log(`[COMPANY_REGISTRY][SYNC][REVOKED] company=${masked}`);
+    return { ok: false, error: "registry_revoked", revoked: true, already_indexed: false };
+  }
   const playReviewCode = _playReviewConfiguredCompanyCode(env);
   let result;
   try {
@@ -21015,6 +21026,10 @@ async function _upsertCompanyCodeIndexesForScope(
   const normalizedCode = normalizePublicCompanyCode(companyCode);
   if (!isValidGeneratedFluxidiCompanyCode(normalizedCode)) {
     return { ok: false, error: "invalid_company_code" };
+  }
+  if (!isHardProtectedCompanyCode(normalizedCode)
+      && await isCompanyRegistryRevoked(env?.BOOKING_KV, normalizedCode)) {
+    return { ok: false, error: "registry_revoked", revoked: true };
   }
   const codeKey = _companyLinkIndexKeyForCode(normalizedCode);
   const scopeKey = buildCompanyLinkScopeIndexKey({

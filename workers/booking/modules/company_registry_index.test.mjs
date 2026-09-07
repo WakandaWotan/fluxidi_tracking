@@ -14,7 +14,11 @@ import {
   registryPageKey,
   registryReadPlan,
   upsertCompanyRegistryEntry,
+  isCompanyRegistryRevoked,
+  isHardProtectedCompanyCode,
+  registryTombstoneKey,
 } from "./company_registry_index.mjs";
+import { COMPANY_REGISTRY_TOMBSTONE_PREFIX } from "./company_registry_tombstone_guard.mjs";
 
 function pageCodes(kv, page = 1) {
   const raw = kv.map.get(registryPageKey(page));
@@ -192,6 +196,24 @@ test("applyUpsert never drops previously observed codes", () => {
   assert.equal(next.manifest.total, 3);
 });
 
+test("tombstone blocks re-upsert except for hard-protected companies", async () => {
+  const kv = createMemoryRegistryKv();
+  await kv.put(registryTombstoneKey("FLX-00022"), JSON.stringify({
+    company_code: "FLX-00022",
+    revoked: true,
+  }));
+  const revoked = await upsertCompanyRegistryEntry(kv, { company_code: "FLX-00022" });
+  assert.equal(revoked.ok, false);
+  assert.equal(revoked.error, "registry_revoked");
+  assert.equal(await isCompanyRegistryRevoked(kv, "FLX-00022"), true);
+  assert.equal(isHardProtectedCompanyCode("FLX-00001"), true);
+  await kv.put(registryTombstoneKey("FLX-00001"), JSON.stringify({
+    company_code: "FLX-00001",
+    revoked: true,
+  }));
+  assert.equal(await isCompanyRegistryRevoked(kv, "FLX-00001"), false);
+});
+
 test("no list, no cron, and cost helpers stay list-free", () => {
   const source = readFileSync(fileURLToPath(new URL("./company_registry_index.mjs", import.meta.url)), "utf8");
   const worker = readFileSync(fileURLToPath(new URL("../fluxidi_booking_worker.js", import.meta.url)), "utf8");
@@ -202,6 +224,10 @@ test("no list, no cron, and cost helpers stay list-free", () => {
   assert.match(worker, /upsertCompanyRegistryEntry/);
   assert.match(worker, /_upsertCompanyCodeIndexesForScope/);
   assert.match(worker, /_syncCompanyRegistryMembership/);
+  assert.match(worker, /registry_revoked/);
+  assert.match(worker, /company_registry_tombstone_guard\.mjs/);
+  assert.equal(COMPANY_REGISTRY_TOMBSTONE_PREFIX, "company_registry:tombstone:");
+  assert.match(source, /company_registry_tombstone_guard\.mjs/);
   assert.deepEqual(registryReadPlan(10), { manifest_gets: 1, page_gets: 1, total_gets: 2 });
   assert.equal(registryMaintainCost(1).list_ops, 0);
   assert.equal(registryMaintainCost(1).scheduled_rebuild, false);
