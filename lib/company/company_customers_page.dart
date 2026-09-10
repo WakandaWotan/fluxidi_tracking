@@ -5,6 +5,9 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
+import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
+import 'package:fluxidi_tracking/company/company_customer_quote_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
@@ -30,6 +33,7 @@ const Key kCompanyCustomersArchivedFilterKey = Key(
   'company_customers_filter_archived',
 );
 const Key kCompanyCustomersEditButtonKey = Key('company_customers_edit');
+const Key kCompanyCustomersQuoteButtonKey = Key('company_customers_quote');
 
 const double kCompanyCustomersSplitBreakpoint = 720;
 
@@ -204,6 +208,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
         builder: (_) => _CompanyCustomerDetailScaffold(
           language: _lang,
           customer: _selected,
+          repository: _repository,
           onEdit: () => _editCurrent(),
           onArchive: () => _archiveCurrent(),
           onRestore: () => _restoreCurrent(),
@@ -566,6 +571,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
           : _CompanyCustomerDetailBody(
               language: _lang,
               customer: _selected!,
+              repository: _repository,
               onEdit: _editCurrent,
               onArchive: _archiveCurrent,
               onRestore: _restoreCurrent,
@@ -666,6 +672,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
   const _CompanyCustomerDetailScaffold({
     required this.language,
     required this.customer,
+    required this.repository,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -674,6 +681,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
 
   final AppLanguage language;
   final CompanyCustomer? customer;
+  final CompanyCustomersRepository repository;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -688,6 +696,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
           : _CompanyCustomerDetailBody(
               language: language,
               customer: customer!,
+              repository: repository,
               onEdit: onEdit,
               onArchive: onArchive,
               onRestore: onRestore,
@@ -701,6 +710,7 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
   const _CompanyCustomerDetailBody({
     required this.language,
     required this.customer,
+    required this.repository,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -709,6 +719,7 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
 
   final AppLanguage language;
   final CompanyCustomer customer;
+  final CompanyCustomersRepository repository;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -751,6 +762,12 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
           customer.internalNotes.isEmpty ? '—' : customer.internalNotes,
         ),
         const SizedBox(height: 24),
+        _CompanyCustomerQuotesPanel(
+          repository: repository,
+          customer: customer,
+          language: language,
+        ),
+        const SizedBox(height: 24),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -759,6 +776,23 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
               key: kCompanyCustomersEditButtonKey,
               onPressed: acting ? null : onEdit,
               child: Text(kCompanyCustomersEdit.of(language)),
+            ),
+            OutlinedButton(
+              key: kCompanyCustomersQuoteButtonKey,
+              onPressed: acting
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => CompanyCustomerQuotePage(
+                            repository: repository,
+                            customer: customer,
+                            language: language,
+                          ),
+                        ),
+                      );
+                    },
+              child: Text(kCompanyCustomerQuoteCreate.of(language)),
             ),
             if (customer.isArchived)
               OutlinedButton(
@@ -774,6 +808,76 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
               ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+class _CompanyCustomerQuotesPanel extends StatefulWidget {
+  const _CompanyCustomerQuotesPanel({
+    required this.repository,
+    required this.customer,
+    required this.language,
+  });
+
+  final CompanyCustomersRepository repository;
+  final CompanyCustomer customer;
+  final AppLanguage language;
+
+  @override
+  State<_CompanyCustomerQuotesPanel> createState() =>
+      _CompanyCustomerQuotesPanelState();
+}
+
+class _CompanyCustomerQuotesPanelState
+    extends State<_CompanyCustomerQuotesPanel> {
+  List<CompanyCustomerQuote> _quotes = const <CompanyCustomerQuote>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final items = await widget.repository.listQuotes(widget.customer.customerId);
+      if (!mounted) return;
+      setState(() => _quotes = items);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(kCompanyCustomerQuoteTitle.of(widget.language)),
+        for (final quote in _quotes)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              '${quote.state} · ${formatQuoteEuros(quote.enteredAmountCents, currency: quote.currency)}',
+            ),
+            subtitle: Text(
+              '${quote.pickup} → ${quote.dropoff}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CompanyCustomerQuotePage(
+                    repository: widget.repository,
+                    customer: widget.customer,
+                    existing: quote,
+                    language: widget.language,
+                  ),
+                ),
+              );
+              await _load();
+            },
+          ),
       ],
     );
   }

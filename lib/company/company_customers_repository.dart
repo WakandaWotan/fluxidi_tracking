@@ -6,6 +6,7 @@
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_http.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 
@@ -206,6 +207,95 @@ class CompanyCustomersRepository {
       headers: _headers,
     );
     return parseCompanyCustomerImportBatch(decoded);
+  }
+
+  Future<List<CompanyCustomerQuote>> listQuotes(String customerId) async {
+    final decoded = await _listTransport(
+      path:
+          '$kCompanyCustomersPath/${Uri.encodeComponent(customerId.trim())}$kCompanyCustomerQuotesPathSuffix',
+      query: _scope(),
+      headers: _headers,
+    );
+    return parseCompanyCustomerQuotes(decoded);
+  }
+
+  Future<CompanyCustomerQuote> createQuote(
+    String customerId,
+    CompanyCustomerQuoteWrite write,
+  ) async {
+    final decoded = await _sendTransport(
+      method: 'POST',
+      path:
+          '$kCompanyCustomersPath/${Uri.encodeComponent(customerId.trim())}$kCompanyCustomerQuotesPathSuffix',
+      query: _scope(),
+      body: <String, dynamic>{...write.toJson(), ..._scope()},
+      headers: _headers,
+    );
+    if (decoded['ok'] != true) {
+      throw CompanyCustomerException(
+        decoded['error']?.toString().trim().isNotEmpty == true
+            ? decoded['error'].toString()
+            : 'quote_not_ok',
+      );
+    }
+    return parseCompanyCustomerQuote(decoded);
+  }
+
+  Future<CompanyCustomerQuote> getQuote(String quoteId) async {
+    final decoded = await _listTransport(
+      path: '$kCompanyCustomerQuotesPath/${Uri.encodeComponent(quoteId.trim())}',
+      query: _scope(),
+      headers: _headers,
+    );
+    if (decoded['ok'] != true) {
+      throw CompanyCustomerException(
+        decoded['error']?.toString().trim().isNotEmpty == true
+            ? decoded['error'].toString()
+            : 'quote_not_ok',
+      );
+    }
+    return parseCompanyCustomerQuote(decoded);
+  }
+
+  Future<CompanyCustomerQuote> updateQuote(
+    String quoteId,
+    CompanyCustomerQuoteWrite write, {
+    required int revision,
+  }) async {
+    final decoded = await _sendTransport(
+      method: 'PATCH',
+      path: '$kCompanyCustomerQuotesPath/${Uri.encodeComponent(quoteId.trim())}',
+      query: _scope(),
+      body: <String, dynamic>{...write.toJson(revision: revision), ..._scope()},
+      headers: _headers,
+    );
+    if (decoded['ok'] != true) {
+      throw CompanyCustomerException(
+        decoded['error']?.toString().trim().isNotEmpty == true
+            ? decoded['error'].toString()
+            : 'quote_not_ok',
+      );
+    }
+    return parseCompanyCustomerQuote(decoded);
+  }
+
+  Future<CompanyCustomerQuote> sendQuote(String quoteId) async {
+    final decoded = await _sendTransport(
+      method: 'POST',
+      path:
+          '$kCompanyCustomerQuotesPath/${Uri.encodeComponent(quoteId.trim())}/send',
+      query: _scope(),
+      body: _scope(),
+      headers: _headers,
+    );
+    if (decoded['ok'] != true) {
+      throw CompanyCustomerException(
+        decoded['error']?.toString().trim().isNotEmpty == true
+            ? decoded['error'].toString()
+            : 'quote_not_ok',
+      );
+    }
+    return parseCompanyCustomerQuote(decoded);
   }
 
   Future<CompanyCustomerImportStatus> getImport(String importId) async {
