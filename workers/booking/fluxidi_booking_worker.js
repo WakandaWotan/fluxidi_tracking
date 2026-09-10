@@ -781,6 +781,7 @@ import {
 } from "./modules/booking_list_projection.js";
 import {
   matchCompanyCustomersPath,
+  matchPublicCustomerQuotePath,
   serveCompanyCustomersHttp,
   CUSTOMER_GET_MAX_READS,
   CUSTOMER_GET_MAX_LISTS,
@@ -792,6 +793,10 @@ import {
   CUSTOMER_IMPORT_MAX_WRITES,
 } from "./modules/company_customers.mjs";
 import { serveCompanyCustomerImportHttp } from "./modules/company_customers_import.mjs";
+import {
+  serveCompanyCustomerQuotesHttp,
+  servePublicCustomerQuoteHttp,
+} from "./modules/company_customer_quotes.mjs";
 import { CompanyCustomerImportCoordinatorDO } from "./modules/company_customer_import_coordinator.mjs";
 export { CompanyCustomerImportCoordinatorDO };
 import {
@@ -45375,6 +45380,25 @@ export default {
         return handlePublicCompanyReviewAccessVerify(body, env, request);
       }
 
+      const publicCustomerQuoteRoute = matchPublicCustomerQuotePath(url.pathname);
+      if (publicCustomerQuoteRoute) {
+        let publicQuoteBody = null;
+        if (request.method === "POST") {
+          try {
+            publicQuoteBody = await request.json();
+          } catch {
+            publicQuoteBody = {};
+          }
+        }
+        return await servePublicCustomerQuoteHttp({
+          env,
+          method: request.method,
+          token: publicCustomerQuoteRoute.token,
+          action: publicCustomerQuoteRoute.action,
+          body: publicQuoteBody,
+        });
+      }
+
       if (url.pathname === "/public/customer/recovery/start") {
         if (request.method !== "POST") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -45828,6 +45852,9 @@ export default {
         console.log(`[COMPANY_CUSTOMERS][AUTH] auth_mode=${customerAuth.auth_mode}`);
         const customerGet = request.method === "GET";
         const isCustomerImport = companyCustomerRoute.kind === "import";
+        const isCustomerQuote =
+          companyCustomerRoute.kind === "customer_quotes" ||
+          companyCustomerRoute.kind === "customer_quote";
         const customerKv = wrapKvBudget(env.BOOKING_KV, isCustomerImport
           ? {
               maxReads: CUSTOMER_IMPORT_MAX_READS,
@@ -45835,18 +45862,18 @@ export default {
               maxWrites: customerGet ? 0 : CUSTOMER_IMPORT_MAX_WRITES,
               maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
             }
-          : customerGet
+          : isCustomerQuote || !customerGet
           ? {
+              maxReads: CUSTOMER_MUTATE_MAX_READS,
+              maxLists: 0,
+              maxWrites: customerGet ? 2 : CUSTOMER_MUTATE_MAX_WRITES,
+              maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
+            }
+          : {
               maxReads: CUSTOMER_GET_MAX_READS,
               maxLists: CUSTOMER_GET_MAX_LISTS,
               maxWrites: CUSTOMER_GET_MAX_WRITES,
               maxDeletes: 0,
-            }
-          : {
-              maxReads: CUSTOMER_MUTATE_MAX_READS,
-              maxLists: 0,
-              maxWrites: CUSTOMER_MUTATE_MAX_WRITES,
-              maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
             });
         try {
           if (isCustomerImport) {
@@ -45858,6 +45885,18 @@ export default {
               url,
               body: customerBody,
               request,
+              scope: scopedCustomerRoute.scope,
+            });
+          }
+          if (
+            companyCustomerRoute.kind === "customer_quotes" ||
+            companyCustomerRoute.kind === "customer_quote"
+          ) {
+            return await serveCompanyCustomerQuotesHttp({
+              env: { ...env, BOOKING_KV: customerKv },
+              method: request.method,
+              route: companyCustomerRoute,
+              body: customerBody,
               scope: scopedCustomerRoute.scope,
             });
           }

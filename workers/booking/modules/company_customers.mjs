@@ -43,6 +43,29 @@ export function matchCompanyCustomersPath(pathname) {
       importId: safeStr(importMatch[1] || ""),
       action: safeStr(importMatch[2] || ""),
       customerId: "",
+      quoteId: "",
+    };
+  }
+  const quotesMatch = path.match(/^\/company\/customers\/([^/]+)\/quotes$/);
+  if (quotesMatch) {
+    return {
+      kind: "customer_quotes",
+      customerId: safeStr(quotesMatch[1] || ""),
+      action: "",
+      importId: "",
+      quoteId: "",
+    };
+  }
+  const quoteMatch = path.match(
+    /^\/company\/customer-quotes\/([^/]+)(?:\/(send|pdf))?$/,
+  );
+  if (quoteMatch) {
+    return {
+      kind: "customer_quote",
+      quoteId: safeStr(quoteMatch[1] || ""),
+      action: safeStr(quoteMatch[2] || ""),
+      customerId: "",
+      importId: "",
     };
   }
   const m = path.match(/^\/company\/customers(?:\/([^/]+))?(?:\/(archive|restore))?$/);
@@ -52,6 +75,17 @@ export function matchCompanyCustomersPath(pathname) {
     customerId: safeStr(m[1] || ""),
     action: safeStr(m[2] || ""),
     importId: "",
+    quoteId: "",
+  };
+}
+
+export function matchPublicCustomerQuotePath(pathname) {
+  const path = String(pathname || "");
+  const m = path.match(/^\/public\/customer-quotes\/([^/]+)(?:\/(accept|pdf))?$/);
+  if (!m) return null;
+  return {
+    token: safeStr(m[1] || ""),
+    action: safeStr(m[2] || ""),
   };
 }
 
