@@ -710,13 +710,18 @@ void main() {
       );
     });
 
-    test('22 AI Dispatch remains disabled / coming soon', () {
+    test('22 Klantenbeheer tile replaces AI Dispatch placeholder', () {
       final home = File(
         'lib/main_parts/business_home_page_state.dart',
       ).readAsStringSync();
       expect(home.contains("actionKey: 'ai_dispatch'"), isTrue);
-      expect(home.contains('isFuture: true'), isTrue);
-      expect(home.contains("nl: 'Binnenkort'"), isTrue);
+      expect(home.contains("nl: 'Klantenbeheer'"), isTrue);
+      expect(home.contains('_openCompanyCustomers'), isTrue);
+      expect(home.contains("nl: 'AI Dispatch'"), isFalse);
+      expect(
+        home.contains("CompanyCustomersPage"),
+        isTrue,
+      );
     });
 
     testWidgets('23 tablet portrait and landscape do not overflow', (

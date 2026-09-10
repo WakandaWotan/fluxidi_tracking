@@ -1635,6 +1635,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  Future<void> _openCompanyCustomers(BuildContext context) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const CompanyCustomersPage(),
+      ),
+    );
+    if (!mounted) return;
+    unawaited(
+      _refreshDashboardKpis(reason: BusinessKpiCycleReason.routeReturn),
+    );
+  }
+
   ({Color bg, Color border, Color text}) _statusColors(
     CompanyProfile profile, {
     required bool serverPaired,
@@ -4008,24 +4020,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             card(
               actionKey: 'ai_dispatch',
               title: _t(
-                nl: 'AI Dispatch',
-                en: 'AI Dispatch',
-                fr: 'Dispatch IA',
-                es: 'Despacho IA',
+                nl: 'Klantenbeheer',
+                en: 'Customer management',
+                fr: 'Gestion des clients',
+                es: 'Gestión de clientes',
               ),
               subtitle: _t(
-                nl: 'Binnenkort',
-                en: 'Coming soon',
-                fr: 'Bientôt',
-                es: 'Próximamente',
+                nl: 'Bedrijfsklanten',
+                en: 'Company customers',
+                fr: 'Clients de l’entreprise',
+                es: 'Clientes de la empresa',
               ),
-              isFuture: true,
-              futureBadge: _t(
-                nl: 'Binnenkort',
-                en: 'Soon',
-                fr: 'Bientôt',
-                es: 'Pronto',
-              ),
+              onTap: () => _openCompanyCustomers(context),
             ),
           ],
         );
@@ -5597,26 +5603,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 width: cardWidth,
                                 height: businessQuickActionCardHeight,
                                 child: _quickActionCard(
-                                  icon: Icons.auto_awesome_outlined,
+                                  icon: Icons.people_outline,
                                   title: _t(
-                                    nl: 'AI Dispatch',
-                                    en: 'AI Dispatch',
-                                    fr: 'Dispatch IA',
-                                    es: 'Despacho IA',
+                                    nl: 'Klantenbeheer',
+                                    en: 'Customer management',
+                                    fr: 'Gestion des clients',
+                                    es: 'Gestión de clientes',
                                   ),
                                   subtitle: _t(
-                                    nl: 'Binnenkort',
-                                    en: 'Coming soon',
-                                    fr: 'Bientôt',
-                                    es: 'Próximamente',
+                                    nl: 'Bedrijfsklanten',
+                                    en: 'Company customers',
+                                    fr: 'Clients de l’entreprise',
+                                    es: 'Clientes de la empresa',
                                   ),
-                                  isFuture: true,
-                                  futureBadge: _t(
-                                    nl: 'Binnenkort',
-                                    en: 'Soon',
-                                    fr: 'Bientôt',
-                                    es: 'Pronto',
-                                  ),
+                                  onTap: () => _openCompanyCustomers(context),
                                   backgroundAsset: _businessImageAsset(
                                     executiveGoldAsset:
                                         'assets/fluxidi/ai_dispatch_background_company.webp',
