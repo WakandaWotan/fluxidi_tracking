@@ -29,6 +29,7 @@ import {
   _driverAvailableUnassignedRowHidden,
 } from "./dispatch_open_pool.js";
 import { isAllocatorProbeRecord } from "./human_booking_id_allocator.mjs";
+import { KvBudgetExceededError } from "./kv_op_budget.js";
 
 export const LIST_PROJ_VERSION = 1;
 export const LIST_PROJ_PAGE_SIZE = 200;
@@ -383,7 +384,8 @@ async function kvGetJson(env, key) {
   try {
     const raw = await env.BOOKING_KV.get(key, { type: "json" });
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
-  } catch (_) {
+  } catch (err) {
+    if (err instanceof KvBudgetExceededError) throw err;
     return null;
   }
 }
@@ -636,6 +638,62 @@ function removeBookingFromPage(page, bookingId) {
   return page.rows.length !== before;
 }
 
+function markPageDirty(cache, keyBuilder, marker, view, pageId, page) {
+  const cacheKey = pageStoreKey(keyBuilder.kind, keyBuilder.actorId, view, pageId);
+  cache.pages.set(cacheKey, page);
+  cache.dirtyPages.add(cacheKey);
+  cache.pageMeta.set(cacheKey, {
+    keyBuilder,
+    view,
+    pageId,
+    generation: marker.generation,
+  });
+}
+
+async function spillOverflowRows(
+  env,
+  cache,
+  keyBuilder,
+  marker,
+  view,
+  viewState,
+  fromPageId,
+  overflow,
+  compareFn,
+) {
+  let remaining = Array.isArray(overflow) ? [...overflow] : [];
+  let currentIdx = viewState.pages.findIndex((desc) => desc.id === fromPageId);
+  while (remaining.length) {
+    const nextDesc = currentIdx >= 0 ? viewState.pages[currentIdx + 1] : null;
+    if (nextDesc) {
+      const nextPage = await loadPage(env, keyBuilder, view, nextDesc.id, cache);
+      nextPage.rows.push(...remaining);
+      nextPage.rows.sort(compareFn);
+      markPageDirty(cache, keyBuilder, marker, view, nextDesc.id, nextPage);
+      if (nextPage.rows.length <= LIST_PROJ_PAGE_SIZE) {
+        remaining = [];
+        break;
+      }
+      remaining = nextPage.rows.splice(LIST_PROJ_PAGE_SIZE);
+      currentIdx += 1;
+      continue;
+    }
+    const chunk = remaining.slice(0, LIST_PROJ_PAGE_SIZE);
+    remaining = remaining.slice(LIST_PROJ_PAGE_SIZE);
+    const newId = String(viewState.next_page_id++);
+    const newPage = {
+      version: LIST_PROJ_VERSION,
+      view,
+      page_id: newId,
+      rows: chunk,
+    };
+    markPageDirty(cache, keyBuilder, marker, view, newId, newPage);
+    const insertAt = currentIdx >= 0 ? currentIdx + 1 : viewState.pages.length;
+    viewState.pages.splice(insertAt, 0, { id: newId, n: chunk.length, hi: null, lo: null });
+    currentIdx = insertAt;
+  }
+}
+
 async function insertRowsIntoView(env, cache, keyBuilder, marker, view, rows, compareFn) {
   const viewState = marker.views[view] || emptyView();
   if (!Array.isArray(viewState.pages)) viewState.pages = [];
@@ -650,29 +708,20 @@ async function insertRowsIntoView(env, cache, keyBuilder, marker, view, rows, co
     page.rows = page.rows.filter((existing) => rowKey(existing) !== rowKey(row));
     page.rows.push(row);
     page.rows.sort(compareFn);
-    const cacheKey = pageStoreKey(keyBuilder.kind, keyBuilder.actorId, view, pageId);
-    cache.dirtyPages.add(cacheKey);
-    cache.pageMeta.set(cacheKey, { keyBuilder, view, pageId, generation: marker.generation });
-    while (page.rows.length > LIST_PROJ_PAGE_SIZE) {
+    markPageDirty(cache, keyBuilder, marker, view, pageId, page);
+    if (page.rows.length > LIST_PROJ_PAGE_SIZE) {
       const overflow = page.rows.splice(LIST_PROJ_PAGE_SIZE);
-      const newId = String(viewState.next_page_id++);
-      const newPage = {
-        version: LIST_PROJ_VERSION,
-        view,
-        page_id: newId,
-        rows: overflow,
-      };
-      const newCacheKey = pageStoreKey(keyBuilder.kind, keyBuilder.actorId, view, newId);
-      cache.pages.set(newCacheKey, newPage);
-      cache.dirtyPages.add(newCacheKey);
-      cache.pageMeta.set(newCacheKey, {
+      await spillOverflowRows(
+        env,
+        cache,
         keyBuilder,
+        marker,
         view,
-        pageId: newId,
-        generation: marker.generation,
-      });
-      const idx = viewState.pages.findIndex((d) => d.id === pageId);
-      viewState.pages.splice(Math.max(0, idx) + 1, 0, { id: newId, n: overflow.length, hi: null, lo: null });
+        viewState,
+        pageId,
+        overflow,
+        compareFn,
+      );
     }
   }
   marker.views[view] = viewState;
@@ -682,6 +731,86 @@ async function insertRowsIntoView(env, cache, keyBuilder, marker, view, rows, co
     if (cache.pages.has(ck)) byId.set(desc.id, cache.pages.get(ck));
   }
   refreshViewDescriptors(marker, view, byId, compareFn);
+}
+
+async function compactMarkerViews(env, keyBuilder, marker) {
+  if (!marker?.views || typeof marker.views !== "object") return;
+  const cache = newCache();
+  const kind = keyBuilder.kind === "driver" || keyBuilder.kind === "vehicle"
+    ? keyBuilder.kind
+    : "company";
+  for (const view of Object.keys(marker.views)) {
+    const compareFn = compareForView(view, kind);
+    const viewState = marker.views[view] || emptyView();
+    const collected = [];
+    for (const desc of viewState.pages || []) {
+      const page = await loadPage(env, keyBuilder, view, desc.id, cache);
+      for (const raw of page.rows || []) {
+        const decorated = decorateRow(raw) || raw;
+        if (decorated) collected.push(decorated);
+      }
+    }
+    const unique = new Map();
+    for (const row of collected) unique.set(rowKey(row), row);
+    const packed = [...unique.values()].sort(compareFn);
+    const nextState = emptyView();
+    for (let i = 0; i < packed.length; i += LIST_PROJ_PAGE_SIZE) {
+      const chunk = packed.slice(i, i + LIST_PROJ_PAGE_SIZE);
+      const pageId = String(nextState.next_page_id++);
+      const page = {
+        version: LIST_PROJ_VERSION,
+        view,
+        page_id: pageId,
+        rows: chunk,
+      };
+      markPageDirty(cache, keyBuilder, marker, view, pageId, page);
+      nextState.pages.push({ id: pageId, n: chunk.length, hi: null, lo: null });
+    }
+    marker.views[view] = nextState;
+    const byId = new Map();
+    for (const desc of nextState.pages) {
+      const ck = pageStoreKey(keyBuilder.kind, keyBuilder.actorId, view, desc.id);
+      if (cache.pages.has(ck)) byId.set(desc.id, cache.pages.get(ck));
+    }
+    refreshViewDescriptors(marker, view, byId, compareFn);
+  }
+  cache.markers.set(keyBuilder.markerKey(), marker);
+  cache.dirtyMarkers.add(keyBuilder.markerKey());
+  await flushProjectionCache(env, cache);
+}
+
+async function compactPendingProjectionGeneration(
+  env,
+  scope,
+  generation,
+  { drivers = [], vehicles = [] } = {},
+) {
+  try {
+    const companyBuilder = companyKeyBuilder(scope, generation, { pending: true });
+    const companyMarker = await kvGetJson(env, companyBuilder.markerKey());
+    if (companyMarker?.views) {
+      companyMarker.generation = generation;
+      await compactMarkerViews(env, companyBuilder, companyMarker);
+    }
+    for (const driverId of drivers) {
+      const builder = actorKeyBuilder(scope, "driver", driverId, generation, { pending: true });
+      const marker = await kvGetJson(env, builder.markerKey());
+      if (!marker?.views) continue;
+      marker.generation = generation;
+      await compactMarkerViews(env, builder, marker);
+    }
+    for (const vehicleId of vehicles) {
+      const builder = actorKeyBuilder(scope, "vehicle", vehicleId, generation, { pending: true });
+      const marker = await kvGetJson(env, builder.markerKey());
+      if (!marker?.views) continue;
+      marker.generation = generation;
+      await compactMarkerViews(env, builder, marker);
+    }
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof KvBudgetExceededError) throw err;
+    return { ok: false, error: "projection_compact_failed" };
+  }
 }
 
 function companyKeyBuilder(scope, generation, { pending = false } = {}) {
@@ -1772,6 +1901,32 @@ export async function rebuildCompanyBookingsListProjectionForScope(
   };
   if (!dryRun && !compare) {
     if (complete) {
+      const compacted = await compactPendingProjectionGeneration(
+        env,
+        normalizedScope,
+        generation,
+        { drivers: touchedDrivers, vehicles: touchedVehicles },
+      );
+      if (!compacted.ok) {
+        await kvPutJson(env, progressKey, {
+          ...nextProgress,
+          complete: false,
+          compact_error: compacted.error || "projection_compact_failed",
+        });
+        return {
+          ok: false,
+          dry_run: false,
+          compare: false,
+          complete: false,
+          cursor: nextCursor,
+          generation,
+          scanned: nextProgress.scanned,
+          matched_scope: nextProgress.matched_scope,
+          indexed: nextProgress.indexed,
+          skipped: nextProgress.skipped,
+          error: compacted.error || "projection_compact_failed",
+        };
+      }
       for (const driverId of touchedDrivers) {
         await promotePendingMarker(
           env,
