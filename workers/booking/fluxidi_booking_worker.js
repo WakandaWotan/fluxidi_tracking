@@ -780,6 +780,16 @@ import {
   LIST_PROJ_REBUILD_MAX_WRITES,
 } from "./modules/booking_list_projection.js";
 import {
+  matchCompanyCustomersPath,
+  serveCompanyCustomersHttp,
+  CUSTOMER_GET_MAX_READS,
+  CUSTOMER_GET_MAX_LISTS,
+  CUSTOMER_GET_MAX_WRITES,
+  CUSTOMER_MUTATE_MAX_READS,
+  CUSTOMER_MUTATE_MAX_WRITES,
+  CUSTOMER_MUTATE_MAX_DELETES,
+} from "./modules/company_customers.mjs";
+import {
   COMPANY_DRIVER_INDEX_KEY_PREFIX,
   COMPANY_DRIVER_INDEX_KEY_MIDDLE,
   COMPANY_DRIVER_INDEX_KEY_SUFFIX,
@@ -45782,6 +45792,74 @@ export default {
         }
         if (object.httpEtag) headers.set("ETag", object.httpEtag);
         return new Response(object.body, { status: 200, headers });
+      }
+
+      // =========================
+      // COMPANY CUSTOMER OPS P0A
+      // =========================
+      const companyCustomerRoute = matchCompanyCustomersPath(url.pathname);
+      if (companyCustomerRoute) {
+        let customerBody = null;
+        if (request.method === "POST" || request.method === "PATCH") {
+          try {
+            customerBody = await request.json();
+          } catch {
+            customerBody = {};
+          }
+        }
+        const scopedCustomerRoute = requireExplicitBookingRouteScope({
+          request,
+          url,
+          body: customerBody,
+        });
+        if (!scopedCustomerRoute.ok) return scopedCustomerRoute.response;
+        const customerAuth = await _requireAdminOrCompanySessionAuth({
+          request,
+          url,
+          env,
+          tenantScope: scopedCustomerRoute.scope,
+        });
+        if (!customerAuth.ok) return customerAuth.response;
+        console.log(`[COMPANY_CUSTOMERS][AUTH] auth_mode=${customerAuth.auth_mode}`);
+        const customerGet = request.method === "GET";
+        const customerKv = wrapKvBudget(env.BOOKING_KV, customerGet
+          ? {
+              maxReads: CUSTOMER_GET_MAX_READS,
+              maxLists: CUSTOMER_GET_MAX_LISTS,
+              maxWrites: CUSTOMER_GET_MAX_WRITES,
+              maxDeletes: 0,
+            }
+          : {
+              maxReads: CUSTOMER_MUTATE_MAX_READS,
+              maxLists: 0,
+              maxWrites: CUSTOMER_MUTATE_MAX_WRITES,
+              maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
+            });
+        try {
+          return await serveCompanyCustomersHttp({
+            env: { ...env, BOOKING_KV: customerKv },
+            method: request.method,
+            customerId: companyCustomerRoute.customerId,
+            action: companyCustomerRoute.action,
+            url,
+            body: customerBody,
+            request,
+            scope: scopedCustomerRoute.scope,
+          });
+        } catch (err) {
+          if (err instanceof KvBudgetExceededError) {
+            logKvPass("HTTP_KV_BUDGET", {
+              route: "company_customers",
+              reason: safeStr(err.kind, 32) || "budget",
+              reads: Number(customerKv.counts?.read || 0),
+              lists: Number(customerKv.counts?.list || 0),
+              writes: Number(customerKv.counts?.write || 0),
+              deletes: Number(customerKv.counts?.delete || 0),
+            });
+            return json({ ok: false, error: "company_customers_budget_exceeded" }, 503);
+          }
+          throw err;
+        }
       }
 
       // =========================
