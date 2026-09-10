@@ -17,6 +17,16 @@ export const CUSTOMER_MUTATE_MAX_READS = 40;
 export const CUSTOMER_MUTATE_MAX_WRITES = 40;
 export const CUSTOMER_MUTATE_MAX_DELETES = 8;
 export const CUSTOMER_SEARCH_PAGE_READS = 3;
+export const CUSTOMER_IMPORT_BATCH_MAX = 2;
+export const CUSTOMER_IMPORT_LOOKUP_MAX = 15;
+export const CUSTOMER_IMPORT_MAX_READS = 80;
+export const CUSTOMER_IMPORT_MAX_WRITES = 80;
+export const CUSTOMER_IMPORT_TTL_SECONDS = 72 * 60 * 60;
+
+// Workers KV has no compare-and-swap or transactions. Concurrent PATCH with
+// the same revision and concurrent creates with the same idempotency key can
+// both commit. A process lock or read-check-write is not atomic across
+// isolates. Import therefore only promises sequential retry safety.
 
 const ADDRESS_TYPES = new Set(["home", "work", "pickup", "billing", "other"]);
 const LIST_VIEWS = ["active", "archived", "all"];
@@ -24,11 +34,24 @@ const PREFERENCE_KEYS = new Set(["version", "preferred_locale"]);
 
 export function matchCompanyCustomersPath(pathname) {
   const path = String(pathname || "");
+  const importMatch = path.match(
+    /^\/company\/customers\/import(?:\/([^/]+))?(?:\/(batches|lookups))?$/,
+  );
+  if (importMatch) {
+    return {
+      kind: "import",
+      importId: safeStr(importMatch[1] || ""),
+      action: safeStr(importMatch[2] || ""),
+      customerId: "",
+    };
+  }
   const m = path.match(/^\/company\/customers(?:\/([^/]+))?(?:\/(archive|restore))?$/);
   if (!m) return null;
   return {
+    kind: "customer",
     customerId: safeStr(m[1] || ""),
     action: safeStr(m[2] || ""),
+    importId: "",
   };
 }
 
@@ -357,11 +380,13 @@ export function composeCustomerDisplayName(body) {
   return `${clip(body?.first_name, 80)} ${clip(body?.last_name, 80)}`.trim();
 }
 
-export function validateCustomerWrite(body, { partial = false } = {}) {
+export function validateCustomerWrite(body, { partial = false, allowImportSource = false } = {}) {
   const fields = {};
   const value = {};
   const source = clip(body?.source, 16).toLowerCase();
-  if (source && source !== "manual") fields.source = "manual_only";
+  if (source && source !== "manual" && !(allowImportSource && source === "import")) {
+    fields.source = "manual_only";
+  }
 
   const nameTouched =
     !partial || body?.display_name != null || body?.first_name != null || body?.last_name != null;
@@ -838,16 +863,35 @@ export async function getCompanyCustomer(env, { scope, customerId }) {
   return { ok: true, status: 200, body: { ok: true, customer: publicCustomer(record) } };
 }
 
-export async function createCompanyCustomer(env, { scope, body, idempotencyKey }) {
+export async function createCompanyCustomer(env, { scope, body, idempotencyKey, source = "manual", allowImportSource = false }) {
   const s = normalizeCustomerScope(scope);
   if (!s.hasScope) return { ok: false, status: 400, error: "missing_tenant_scope" };
   const kv = env.BOOKING_KV;
   const rawIdem = clip(idempotencyKey, 120);
   let hashed = "";
+  let incomingHash = "";
+  const validated = validateCustomerWrite(body || {}, {
+    partial: false,
+    allowImportSource,
+  });
+  if (validated.ok) {
+    incomingHash = await sha256Hex(
+      JSON.stringify({
+        display_name: validated.value.display_name || "",
+        email: validated.value.email || "",
+        phone_normalized: validated.value.phone_normalized || "",
+        company_name: validated.value.company_name || "",
+        source: allowImportSource && source === "import" ? "import" : "manual",
+      }),
+    );
+  }
   if (rawIdem) {
     hashed = await hashIdempotency(s, "create", rawIdem);
     const existing = await loadIdempotency(kv, s, hashed);
     if (existing?.customer_id) {
+      if (existing.content_hash && incomingHash && existing.content_hash !== incomingHash) {
+        return { ok: false, status: 409, error: "idempotency_payload_conflict" };
+      }
       const record = await kvGetJson(kv, companyCustomerRecordKey(s, existing.customer_id));
       if (record?.customer_id) {
         return {
@@ -858,7 +902,6 @@ export async function createCompanyCustomer(env, { scope, body, idempotencyKey }
       }
     }
   }
-  const validated = validateCustomerWrite(body || {}, { partial: false });
   if (!validated.ok) {
     return { ok: false, status: 400, error: "invalid_customer", fields: validated.fields };
   }
@@ -871,7 +914,7 @@ export async function createCompanyCustomer(env, { scope, body, idempotencyKey }
     ...validated.value,
     addresses: validated.value.addresses || [],
     preferences: validated.value.preferences || { version: 1 },
-    source: "manual",
+    source: allowImportSource && source === "import" ? "import" : "manual",
     status: "active",
     created_at: clock.iso,
     updated_at: clock.iso,
@@ -887,9 +930,13 @@ export async function createCompanyCustomer(env, { scope, body, idempotencyKey }
   await updateContactIndexes(kv, s, record, null);
   await replaceCustomerInViews(kv, s, record, null);
   if (hashed) {
-    await saveIdempotency(kv, s, hashed, { op: "create", customer_id: customerId });
+    await saveIdempotency(kv, s, hashed, {
+      op: "create",
+      customer_id: customerId,
+      content_hash: incomingHash,
+    });
   }
-  audit("create", { reason: "manual", status: "active", id_len: customerId.length });
+  audit("create", { reason: record.source, status: "active", id_len: customerId.length });
   const response = { ok: true, customer: publicCustomer(record) };
   if (matches.length) response.duplicate_warning = { matches };
   return { ok: true, status: 201, body: response };

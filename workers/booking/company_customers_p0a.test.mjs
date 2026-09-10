@@ -589,6 +589,32 @@ test("PII stays out of logs and public list rows", async () => {
   }
 });
 
+test("sequential create with the same idempotency key rejects a changed payload", async () => {
+  const kv = countingKV();
+  const env = envWith(kv);
+  const first = await createViaHttp(
+    env,
+    { display_name: "Idem One", email: "idem-one@example.test" },
+    { headers: { "Idempotency-Key": "create-one" } },
+  );
+  assert.equal(first.res.status, 201);
+  const changed = await createViaHttp(
+    env,
+    { display_name: "Idem Two", email: "idem-two@example.test" },
+    { headers: { "Idempotency-Key": "create-one" } },
+  );
+  assert.equal(changed.res.status, 409);
+  assert.equal(changed.json.error, "idempotency_payload_conflict");
+  const replay = await createViaHttp(
+    env,
+    { display_name: "Idem One", email: "idem-one@example.test" },
+    { headers: { "Idempotency-Key": "create-one" } },
+  );
+  assert.equal(replay.res.status, 200);
+  assert.equal(replay.json.idempotent, true);
+  assert.equal(replay.json.customer.customer_id, first.json.customer.customer_id);
+});
+
 test("client-invented cursor is rejected", async () => {
   const kv = countingKV();
   const env = envWith(kv);

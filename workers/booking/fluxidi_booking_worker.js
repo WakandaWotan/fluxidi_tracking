@@ -788,7 +788,10 @@ import {
   CUSTOMER_MUTATE_MAX_READS,
   CUSTOMER_MUTATE_MAX_WRITES,
   CUSTOMER_MUTATE_MAX_DELETES,
+  CUSTOMER_IMPORT_MAX_READS,
+  CUSTOMER_IMPORT_MAX_WRITES,
 } from "./modules/company_customers.mjs";
+import { serveCompanyCustomerImportHttp } from "./modules/company_customers_import.mjs";
 import {
   COMPANY_DRIVER_INDEX_KEY_PREFIX,
   COMPANY_DRIVER_INDEX_KEY_MIDDLE,
@@ -45822,7 +45825,15 @@ export default {
         if (!customerAuth.ok) return customerAuth.response;
         console.log(`[COMPANY_CUSTOMERS][AUTH] auth_mode=${customerAuth.auth_mode}`);
         const customerGet = request.method === "GET";
-        const customerKv = wrapKvBudget(env.BOOKING_KV, customerGet
+        const isCustomerImport = companyCustomerRoute.kind === "import";
+        const customerKv = wrapKvBudget(env.BOOKING_KV, isCustomerImport
+          ? {
+              maxReads: CUSTOMER_IMPORT_MAX_READS,
+              maxLists: 0,
+              maxWrites: customerGet ? 0 : CUSTOMER_IMPORT_MAX_WRITES,
+              maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
+            }
+          : customerGet
           ? {
               maxReads: CUSTOMER_GET_MAX_READS,
               maxLists: CUSTOMER_GET_MAX_LISTS,
@@ -45836,6 +45847,18 @@ export default {
               maxDeletes: CUSTOMER_MUTATE_MAX_DELETES,
             });
         try {
+          if (isCustomerImport) {
+            return await serveCompanyCustomerImportHttp({
+              env: { ...env, BOOKING_KV: customerKv },
+              method: request.method,
+              importId: companyCustomerRoute.importId,
+              action: companyCustomerRoute.action,
+              url,
+              body: customerBody,
+              request,
+              scope: scopedCustomerRoute.scope,
+            });
+          }
           return await serveCompanyCustomersHttp({
             env: { ...env, BOOKING_KV: customerKv },
             method: request.method,
