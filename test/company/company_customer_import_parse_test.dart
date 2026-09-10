@@ -205,4 +205,93 @@ void main() {
     expect({for (final row in prepared) row.rowKey}, hasLength(401));
     expect(prepared.every((row) => row.isValid), isTrue);
   });
+
+  test('session json roundtrip keeps pending rows without the raw file', () {
+    final table = parseCompanyCustomerCsv(
+      bytes: utf8.encode('Name,Email\nAda,ada@example.test\n'),
+      fileName: 'one.csv',
+    );
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    final rows = prepareCompanyCustomerImportRows(
+      table: table,
+      mappings: mappings,
+    );
+    final session = CompanyCustomerImportSession(
+      importId: 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      companyId: 'CA',
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
+      rows: rows,
+      outcomes: <String, CompanyCustomerImportRowOutcome>{},
+      defaultCallingCode: '',
+      mappings: mappings,
+      fingerprint: buildCompanyCustomerImportFingerprint(
+        file: CompanyCustomerImportPickedFile(
+          name: 'one.csv',
+          bytes: utf8.encode('Name,Email\nAda,ada@example.test\n'),
+        ),
+        table: table,
+        mappings: mappings,
+      ),
+    );
+    final parsed = parseCompanyCustomerImportSession(session.toJson());
+    expect(parsed, isNotNull);
+    expect(parsed!.pending, hasLength(1));
+    expect(parsed.needsFileRepick, isFalse);
+    expect(parsed.rows.first.write.email, 'ada@example.test');
+  });
+
+  test('metadata-only session requires the same file and mapping', () {
+    final bytes = utf8.encode('Name,Email\nAda,ada@example.test\n');
+    final table = parseCompanyCustomerCsv(bytes: bytes, fileName: 'one.csv');
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    final fingerprint = buildCompanyCustomerImportFingerprint(
+      file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: bytes),
+      table: table,
+      mappings: mappings,
+    );
+    final session = CompanyCustomerImportSession(
+      importId: 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      companyId: 'CA',
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
+      rows: const <CompanyCustomerImportPreparedRow>[],
+      outcomes: const <String, CompanyCustomerImportRowOutcome>{
+        'r1': CompanyCustomerImportRowOutcome(
+          rowKey: 'r1',
+          outcome: 'created',
+          customerId: 'cus_1',
+        ),
+      },
+      defaultCallingCode: '',
+      mappings: mappings,
+      fingerprint: fingerprint,
+    );
+    expect(session.needsFileRepick, isTrue);
+    expect(
+      matchCompanyCustomerImportFile(
+        fingerprint: fingerprint,
+        file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: bytes),
+        table: table,
+        mappings: mappings,
+      ),
+      CompanyCustomerImportFileMatch.ok,
+    );
+    expect(
+      matchCompanyCustomerImportFile(
+        fingerprint: fingerprint,
+        file: CompanyCustomerImportPickedFile(name: 'other.csv', bytes: bytes),
+        table: table,
+        mappings: mappings,
+      ),
+      CompanyCustomerImportFileMatch.fileMismatch,
+    );
+    expect(
+      matchCompanyCustomerImportFile(
+        fingerprint: fingerprint,
+        file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: bytes),
+        table: table,
+        mappings: <String>['skip', 'email'],
+      ),
+      CompanyCustomerImportFileMatch.mappingMismatch,
+    );
+  });
 }

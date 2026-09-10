@@ -164,6 +164,67 @@ class CompanyCustomerImportStatus {
   final Map<String, CompanyCustomerImportRowOutcome> rows;
 }
 
+class CompanyCustomerImportFileFingerprint {
+  const CompanyCustomerImportFileFingerprint({
+    required this.fileName,
+    required this.byteLength,
+    required this.headerSignature,
+    required this.mappingSignature,
+  });
+
+  final String fileName;
+  final int byteLength;
+  final String headerSignature;
+  final String mappingSignature;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'file_name': fileName,
+      'byte_length': byteLength,
+      'header_signature': headerSignature,
+      'mapping_signature': mappingSignature,
+    };
+  }
+}
+
+CompanyCustomerImportFileFingerprint? parseCompanyCustomerImportFileFingerprint(
+  Object? raw,
+) {
+  if (raw == null) return null;
+  if (raw is! Map) return null;
+  final map = Map<dynamic, dynamic>.from(raw);
+  final name = map['file_name']?.toString().trim() ?? '';
+  final length = parseExactCount(map['byte_length']) ?? 0;
+  if (name.isEmpty || length < 1) return null;
+  return CompanyCustomerImportFileFingerprint(
+    fileName: name,
+    byteLength: length,
+    headerSignature: map['header_signature']?.toString() ?? '',
+    mappingSignature: map['mapping_signature']?.toString() ?? '',
+  );
+}
+
+String companyCustomerImportHeaderSignature(List<String> headers) {
+  return headers.join('\u001f');
+}
+
+String companyCustomerImportMappingSignature(List<String> mappings) {
+  return mappings.join(',');
+}
+
+CompanyCustomerImportFileFingerprint buildCompanyCustomerImportFingerprint({
+  required CompanyCustomerImportPickedFile file,
+  required CompanyCustomerImportTable table,
+  required List<String> mappings,
+}) {
+  return CompanyCustomerImportFileFingerprint(
+    fileName: file.name.trim(),
+    byteLength: file.bytes.length,
+    headerSignature: companyCustomerImportHeaderSignature(table.headers),
+    mappingSignature: companyCustomerImportMappingSignature(mappings),
+  );
+}
+
 class CompanyCustomerImportSession {
   CompanyCustomerImportSession({
     required this.importId,
@@ -173,6 +234,8 @@ class CompanyCustomerImportSession {
     required this.outcomes,
     required this.defaultCallingCode,
     this.confirmedPartial = false,
+    this.fingerprint,
+    this.mappings = const <String>[],
   });
 
   final String importId;
@@ -182,8 +245,12 @@ class CompanyCustomerImportSession {
   final Map<String, CompanyCustomerImportRowOutcome> outcomes;
   final String defaultCallingCode;
   bool confirmedPartial;
+  final CompanyCustomerImportFileFingerprint? fingerprint;
+  final List<String> mappings;
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
+
+  bool get needsFileRepick => rows.isEmpty && importId.trim().isNotEmpty;
 
   List<CompanyCustomerImportPreparedRow> get pending {
     return [
@@ -193,6 +260,64 @@ class CompanyCustomerImportSession {
             !outcomes.containsKey(row.rowKey))
           row,
     ];
+  }
+
+  CompanyCustomerImportSession copyWith({
+    List<CompanyCustomerImportPreparedRow>? rows,
+    Map<String, CompanyCustomerImportRowOutcome>? outcomes,
+    bool? confirmedPartial,
+    CompanyCustomerImportFileFingerprint? fingerprint,
+    List<String>? mappings,
+    String? defaultCallingCode,
+  }) {
+    return CompanyCustomerImportSession(
+      importId: importId,
+      companyId: companyId,
+      expiresAt: expiresAt,
+      rows: rows ?? this.rows,
+      outcomes: outcomes ?? this.outcomes,
+      defaultCallingCode: defaultCallingCode ?? this.defaultCallingCode,
+      confirmedPartial: confirmedPartial ?? this.confirmedPartial,
+      fingerprint: fingerprint ?? this.fingerprint,
+      mappings: mappings ?? this.mappings,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'import_id': importId,
+      'company_id': companyId,
+      'expires_at': expiresAt.toUtc().toIso8601String(),
+      'default_calling_code': defaultCallingCode,
+      'confirmed_partial': confirmedPartial,
+      if (fingerprint != null) 'fingerprint': fingerprint!.toJson(),
+      'mappings': mappings,
+      'outcomes': <String, dynamic>{
+        for (final entry in outcomes.entries)
+          entry.key: <String, dynamic>{
+            'row_key': entry.value.rowKey,
+            'outcome': entry.value.outcome,
+            if (entry.value.customerId.isNotEmpty)
+              'customer_id': entry.value.customerId,
+            if (entry.value.error.isNotEmpty) 'error': entry.value.error,
+            if (entry.value.idempotent) 'idempotent': true,
+            if (entry.value.replayed) 'replayed': true,
+          },
+      },
+      'rows': [
+        for (final row in rows)
+          <String, dynamic>{
+            'row_key': row.rowKey,
+            'source_index': row.sourceIndex,
+            'selected': row.selected,
+            'decision': row.decision == CompanyCustomerImportDecision.skip
+                ? 'skip'
+                : 'create',
+            'field_errors': row.fieldErrors,
+            'customer': row.write.toJson(),
+          },
+      ],
+    };
   }
 }
 
@@ -564,4 +689,119 @@ String newCompanyCustomerImportId([List<int>? bytes]) {
   final raw = bytes ?? List<int>.generate(16, (_) => random.nextInt(256));
   final hex = raw.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
   return 'imp_$hex';
+}
+
+CompanyCustomerWrite companyCustomerWriteFromImportJson(Map<dynamic, dynamic> raw) {
+  final addresses = <CompanyCustomerAddress>[];
+  final rawAddresses = raw['addresses'];
+  if (rawAddresses is List) {
+    for (final item in rawAddresses) {
+      if (item is Map) {
+        addresses.add(parseCompanyCustomerAddress(item));
+      }
+    }
+  }
+  return CompanyCustomerWrite(
+    displayName: raw['display_name']?.toString() ?? '',
+    firstName: raw['first_name']?.toString() ?? '',
+    lastName: raw['last_name']?.toString() ?? '',
+    email: raw['email']?.toString() ?? '',
+    phone: raw['phone']?.toString() ?? '',
+    countryCallingCode: raw['country_calling_code']?.toString() ?? '',
+    locale: raw['locale']?.toString() ?? '',
+    companyName: raw['company_name']?.toString() ?? '',
+    vatNumber: raw['vat_number']?.toString() ?? '',
+    internalNotes: raw['internal_notes']?.toString() ?? '',
+    addresses: addresses,
+  );
+}
+
+CompanyCustomerImportSession? parseCompanyCustomerImportSession(
+  Map<dynamic, dynamic> raw,
+) {
+  final importId = raw['import_id']?.toString().trim() ?? '';
+  final companyId = raw['company_id']?.toString().trim() ?? '';
+  final expiresAt = DateTime.tryParse(raw['expires_at']?.toString() ?? '');
+  if (importId.isEmpty || companyId.isEmpty || expiresAt == null) return null;
+  final outcomes = <String, CompanyCustomerImportRowOutcome>{};
+  final outcomesRaw = raw['outcomes'];
+  if (outcomesRaw is Map) {
+    outcomesRaw.forEach((key, value) {
+      if (value is! Map) return;
+      final mapped = Map<dynamic, dynamic>.from(value);
+      mapped['row_key'] = mapped['row_key']?.toString().trim().isNotEmpty == true
+          ? mapped['row_key']
+          : key.toString();
+      if ((mapped['outcome']?.toString() ?? '').isEmpty) return;
+      final parsed = parseCompanyCustomerImportRowOutcome(mapped);
+      outcomes[parsed.rowKey] = parsed;
+    });
+  }
+  final rows = <CompanyCustomerImportPreparedRow>[];
+  final rowsRaw = raw['rows'];
+  if (rowsRaw is List) {
+    for (final item in rowsRaw) {
+      if (item is! Map) continue;
+      final map = Map<dynamic, dynamic>.from(item);
+      final rowKey = map['row_key']?.toString().trim() ?? '';
+      if (rowKey.isEmpty) continue;
+      final customerRaw = map['customer'];
+      rows.add(
+        CompanyCustomerImportPreparedRow(
+          rowKey: rowKey,
+          sourceIndex: parseExactCount(map['source_index']) ?? 0,
+          write: customerRaw is Map
+              ? companyCustomerWriteFromImportJson(customerRaw)
+              : const CompanyCustomerWrite(),
+          fieldErrors: <String, String>{
+            if (map['field_errors'] is Map)
+              for (final entry in Map<dynamic, dynamic>.from(map['field_errors']).entries)
+                if (entry.key.toString().trim().isNotEmpty)
+                  entry.key.toString(): entry.value.toString(),
+          },
+          inFileDupSources: const <int>[],
+          companyMatches: const <CompanyCustomerImportCompanyMatch>[],
+          selected: map['selected'] != false,
+          decision: map['decision']?.toString() == 'skip'
+              ? CompanyCustomerImportDecision.skip
+              : CompanyCustomerImportDecision.create,
+        ),
+      );
+    }
+  }
+  return CompanyCustomerImportSession(
+    importId: importId,
+    companyId: companyId,
+    expiresAt: expiresAt.toUtc(),
+    rows: rows,
+    outcomes: outcomes,
+    defaultCallingCode: raw['default_calling_code']?.toString() ?? '',
+    confirmedPartial: raw['confirmed_partial'] == true,
+    fingerprint: parseCompanyCustomerImportFileFingerprint(raw['fingerprint']),
+    mappings: [
+      if (raw['mappings'] is List)
+        for (final item in raw['mappings'] as List) item.toString(),
+    ],
+  );
+}
+
+enum CompanyCustomerImportFileMatch { ok, fileMismatch, mappingMismatch }
+
+CompanyCustomerImportFileMatch matchCompanyCustomerImportFile({
+  required CompanyCustomerImportFileFingerprint fingerprint,
+  required CompanyCustomerImportPickedFile file,
+  required CompanyCustomerImportTable table,
+  required List<String> mappings,
+}) {
+  if (fingerprint.fileName != file.name.trim() ||
+      fingerprint.byteLength != file.bytes.length ||
+      fingerprint.headerSignature !=
+          companyCustomerImportHeaderSignature(table.headers)) {
+    return CompanyCustomerImportFileMatch.fileMismatch;
+  }
+  if (fingerprint.mappingSignature !=
+      companyCustomerImportMappingSignature(mappings)) {
+    return CompanyCustomerImportFileMatch.mappingMismatch;
+  }
+  return CompanyCustomerImportFileMatch.ok;
 }

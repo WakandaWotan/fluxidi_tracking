@@ -5,6 +5,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
@@ -219,6 +220,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
         builder: (_) => CompanyCustomerImportPage(
           repository: _repository,
           language: _lang,
+          sessionStore: DirectoryCompanyCustomerImportSessionStore(),
         ),
       ),
     );

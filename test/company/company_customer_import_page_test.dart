@@ -6,6 +6,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_parse.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
@@ -14,6 +15,7 @@ import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 class _FakeImportRepository extends CompanyCustomersRepository {
   _FakeImportRepository({
     this.failFirstBatch = false,
+    this.expireImport = false,
   }) : super(
          scopeQuery: const <String, String>{
            'tenant_id': 'TA',
@@ -51,6 +53,7 @@ class _FakeImportRepository extends CompanyCustomersRepository {
        );
 
   final bool failFirstBatch;
+  final bool expireImport;
   int lookupCalls = 0;
   int batchCalls = 0;
   final List<Map<String, dynamic>> batchRows = <Map<String, dynamic>>[];
@@ -94,6 +97,9 @@ class _FakeImportRepository extends CompanyCustomersRepository {
 
   @override
   Future<CompanyCustomerImportStatus> getImport(String importId) async {
+    if (expireImport) {
+      throw const CompanyCustomerException('import_expired');
+    }
     return CompanyCustomerImportStatus(
       importId: importId,
       added: 1,
@@ -230,6 +236,120 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.batchCalls, greaterThan(1));
     expect(find.byKey(kCompanyCustomerImportResultKey), findsOneWidget);
+  });
+
+  testWidgets('expired server import shows a new-import next step', (
+    tester,
+  ) async {
+    final repo = _FakeImportRepository(expireImport: true);
+    final store = MemoryCompanyCustomerImportSessionStore();
+    await store.save(
+      CompanyCustomerImportSession(
+        importId: 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        companyId: 'CA',
+        expiresAt: DateTime.now().add(const Duration(hours: 2)),
+        rows: prepareCompanyCustomerImportRows(
+          table: parseCompanyCustomerImportBytes(
+            bytes: _csvTwo().bytes,
+            fileName: _csvTwo().name,
+          ),
+          mappings: const <String>['display_name', 'email'],
+        ),
+        outcomes: <String, CompanyCustomerImportRowOutcome>{
+          'r1': const CompanyCustomerImportRowOutcome(
+            rowKey: 'r1',
+            outcome: 'created',
+            customerId: 'cus_old',
+          ),
+        },
+        defaultCallingCode: '',
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: CompanyCustomerImportPage(
+            repository: repo,
+            language: AppLanguage.nl,
+            sessionStore: store,
+            importIdFactory: () => 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(kCompanyCustomerImportResumeKey));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(kCompanyCustomerImportExpired.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(repo.batchCalls, 0);
+  });
+
+  testWidgets('metadata-only resume asks for the same file', (tester) async {
+    final repo = _FakeImportRepository();
+    final bytes = utf8.encode(
+      'Naam,E-mail\nAda Lovelace,ada@example.test\nAlan,alan@example.test\n',
+    );
+    final table = parseCompanyCustomerImportBytes(
+      bytes: bytes,
+      fileName: 'two.csv',
+    );
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    final store = MemoryCompanyCustomerImportSessionStore();
+    await store.save(
+      CompanyCustomerImportSession(
+        importId: 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        companyId: 'CA',
+        expiresAt: DateTime.now().add(const Duration(hours: 2)),
+        rows: const <CompanyCustomerImportPreparedRow>[],
+        outcomes: const <String, CompanyCustomerImportRowOutcome>{
+          'r1': CompanyCustomerImportRowOutcome(
+            rowKey: 'r1',
+            outcome: 'created',
+            customerId: 'cus_1',
+          ),
+        },
+        defaultCallingCode: '',
+        mappings: mappings,
+        fingerprint: buildCompanyCustomerImportFingerprint(
+          file: CompanyCustomerImportPickedFile(name: 'two.csv', bytes: bytes),
+          table: table,
+          mappings: mappings,
+        ),
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: CompanyCustomerImportPage(
+            repository: repo,
+            language: AppLanguage.nl,
+            sessionStore: store,
+            importIdFactory: () => 'imp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            picker: () async => CompanyCustomerImportPickedFile(
+              name: 'two.csv',
+              bytes: bytes,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byKey(kCompanyCustomerImportRepickKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomerImportResumeKey), findsNothing);
+    await tester.tap(find.byKey(kCompanyCustomerImportRepickKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCustomerImportResumeKey), findsOneWidget);
   });
 
   testWidgets('customers page opens the import wizard', (tester) async {

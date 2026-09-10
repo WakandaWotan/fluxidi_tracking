@@ -33,6 +33,9 @@ const Key kCompanyCustomerImportResumeKey = Key(
 const Key kCompanyCustomerImportCountryKey = Key(
   'company_customer_import_country',
 );
+const Key kCompanyCustomerImportRepickKey = Key(
+  'company_customer_import_repick',
+);
 
 typedef CompanyCustomerImportPicker =
     Future<CompanyCustomerImportPickedFile?> Function();
@@ -168,12 +171,22 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
           return kCompanyCustomerImportFormula.of(_lang);
         case 'unsupported':
           return kCompanyCustomerImportUnsupported.of(_lang);
+        case 'file_mismatch':
+          return kCompanyCustomerImportFileMismatch.of(_lang);
+        case 'mapping_mismatch':
+          return kCompanyCustomerImportMappingMismatch.of(_lang);
         default:
           return kCompanyCustomerImportFileUnreadable.of(_lang);
       }
     }
-    if (error is CompanyCustomerException && error.offline) {
-      return kCompanyCustomersOffline.of(_lang);
+    if (error is CompanyCustomerException) {
+      if (error.offline) return kCompanyCustomersOffline.of(_lang);
+      if (error.code == 'import_expired') {
+        return kCompanyCustomerImportExpired.of(_lang);
+      }
+      if (error.code == 'import_not_found') {
+        return kCompanyCustomerImportUnknown.of(_lang);
+      }
     }
     return kCompanyCustomerImportFileUnreadable.of(_lang);
   }
@@ -194,9 +207,40 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
         headerRowIndex: _headerRowIndex,
         xlsxParser: parseCompanyCustomerXlsx,
       );
+      _applyTable(table, file, preferMap: preferMap);
+      final session = _session;
+      if (session != null && session.needsFileRepick && session.fingerprint != null) {
+        if (session.mappings.isNotEmpty) {
+          _mappings = List<String>.from(session.mappings);
+        }
+        final match = matchCompanyCustomerImportFile(
+          fingerprint: session.fingerprint!,
+          file: file,
+          table: table,
+          mappings: _mappings,
+        );
+        if (match == CompanyCustomerImportFileMatch.fileMismatch) {
+          throw const CompanyCustomerImportException('file_mismatch');
+        }
+        if (match == CompanyCustomerImportFileMatch.mappingMismatch) {
+          setState(() {
+            _busy = false;
+            _step = CompanyCustomerImportStep.map;
+            _error = kCompanyCustomerImportMappingMismatch.of(_lang);
+          });
+          return;
+        }
+        _prepareRows();
+        _session = session.copyWith(rows: _rows);
+        await _store.save(_session!);
+        setState(() {
+          _busy = false;
+          _step = CompanyCustomerImportStep.pick;
+        });
+        return;
+      }
       setState(() {
         _busy = false;
-        _applyTable(table, file, preferMap: preferMap);
       });
     } catch (error) {
       if (!mounted) return;
@@ -260,6 +304,8 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
         ..addAll(byRow[row.rowKey] ?? const <CompanyCustomerImportCompanyMatch>[]);
     }
     final companyId = widget.repository.companyScopeId();
+    final picked = _picked;
+    final table = _table;
     _session = CompanyCustomerImportSession(
       importId: importId,
       companyId: companyId,
@@ -267,6 +313,14 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
       rows: _rows,
       outcomes: <String, CompanyCustomerImportRowOutcome>{},
       defaultCallingCode: _defaultCallingCode,
+      mappings: List<String>.from(_mappings),
+      fingerprint: picked != null && table != null
+          ? buildCompanyCustomerImportFingerprint(
+              file: picked,
+              table: table,
+              mappings: _mappings,
+            )
+          : null,
     );
     await _store.save(_session!);
   }
@@ -333,17 +387,41 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
       session?.confirmedPartial = _confirmPartial;
     }
     if (session == null) return;
+    final active = session;
+    if (active.needsFileRepick) {
+      setState(() => _error = kCompanyCustomerImportRepick.of(_lang));
+      return;
+    }
     setState(() {
       _step = CompanyCustomerImportStep.progress;
       _stop = false;
       _busy = true;
       _error = null;
-      _added = session!.outcomes.values.where((row) => row.outcome == 'created').length;
-      _skipped = session.outcomes.values.where((row) => row.outcome == 'skipped').length;
-      _failed = session.outcomes.values.where((row) => row.outcome == 'failed').length;
+      _added = active.outcomes.values.where((row) => row.outcome == 'created').length;
+      _skipped = active.outcomes.values.where((row) => row.outcome == 'skipped').length;
+      _failed = active.outcomes.values.where((row) => row.outcome == 'failed').length;
     });
     try {
-      await _runBatches(session);
+      try {
+        if (resume || active.outcomes.isNotEmpty) {
+          final status = await widget.repository.getImport(active.importId);
+          _mergeStatus(active, status);
+        }
+      } on CompanyCustomerException catch (error) {
+        if (error.code == 'import_expired' ||
+            (error.code == 'import_not_found' && active.outcomes.isNotEmpty)) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _step = CompanyCustomerImportStep.result;
+            _error = _errorText(error);
+          });
+          await _store.clear(active.companyId);
+          return;
+        }
+        if (!error.offline) rethrow;
+      }
+      await _runBatches(active);
     } finally {
       if (mounted) {
         setState(() {
@@ -495,15 +573,27 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
           Text(_table!.fileName, overflow: TextOverflow.ellipsis),
           Text('${_table!.rows.length}'),
         ],
-        if (_session != null && _session!.pending.isNotEmpty) ...[
+        if (_session != null &&
+            (_session!.pending.isNotEmpty || _session!.needsFileRepick)) ...[
           const SizedBox(height: 24),
-          Text(kCompanyCustomerImportResumeHint.of(_lang)),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            key: kCompanyCustomerImportResumeKey,
-            onPressed: () => _startImport(resume: true),
-            child: Text(kCompanyCustomerImportResume.of(_lang)),
+          Text(
+            _session!.needsFileRepick
+                ? kCompanyCustomerImportRepick.of(_lang)
+                : kCompanyCustomerImportResumeHint.of(_lang),
           ),
+          const SizedBox(height: 8),
+          if (_session!.needsFileRepick)
+            OutlinedButton(
+              key: kCompanyCustomerImportRepickKey,
+              onPressed: _busy ? null : _chooseFile,
+              child: Text(kCompanyCustomerImportChooseFile.of(_lang)),
+            )
+          else
+            OutlinedButton(
+              key: kCompanyCustomerImportResumeKey,
+              onPressed: () => _startImport(resume: true),
+              child: Text(kCompanyCustomerImportResume.of(_lang)),
+            ),
         ],
       ],
     );

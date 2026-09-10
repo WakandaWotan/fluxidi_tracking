@@ -190,3 +190,38 @@ const LocalizedText kCompanyCustomerImportSkipColumn = LocalizedText(
   fr: 'Ignorer',
   es: 'Omitir',
 );
+
+const LocalizedText kCompanyCustomerImportExpired = LocalizedText(
+  nl: 'Deze import is verlopen. De al bevestigde klanten blijven bewaard. Start een nieuwe import voor de rest.',
+  en: 'This import has expired. Confirmed customers are kept. Start a new import for the rest.',
+  fr: 'Cette import a expiré. Les clients confirmés sont conservés. Recommencez pour le reste.',
+  es: 'Esta importación caducó. Los clientes confirmados se conservan. Empieza una nueva para el resto.',
+);
+
+const LocalizedText kCompanyCustomerImportUnknown = LocalizedText(
+  nl: 'Deze import is niet meer bekend op de server. Start een nieuwe import. Al bevestigde klanten blijven staan.',
+  en: 'The server no longer knows this import. Start a new import. Confirmed customers remain.',
+  fr: 'Le serveur ne connaît plus cette import. Recommencez. Les clients confirmés restent.',
+  es: 'El servidor ya no conoce esta importación. Empieza una nueva. Los confirmados permanecen.',
+);
+
+const LocalizedText kCompanyCustomerImportRepick = LocalizedText(
+  nl: 'Kies hetzelfde bestand opnieuw. Alleen de lokale voortgang is bewaard, niet het bestand.',
+  en: 'Choose the same file again. Only local progress was kept, not the file.',
+  fr: 'Choisissez le même fichier. Seule la progression locale a été conservée.',
+  es: 'Elige de nuevo el mismo archivo. Solo se guardó el progreso local.',
+);
+
+const LocalizedText kCompanyCustomerImportFileMismatch = LocalizedText(
+  nl: 'Dit bestand of de kolommen komen niet overeen met de onderbroken import.',
+  en: 'This file or its columns do not match the unfinished import.',
+  fr: 'Ce fichier ou ses colonnes ne correspondent pas à l’import interrompue.',
+  es: 'Este archivo o sus columnas no coinciden con la importación interrumpida.',
+);
+
+const LocalizedText kCompanyCustomerImportMappingMismatch = LocalizedText(
+  nl: 'De veldkoppeling komt niet overeen. Controleer de kolommen vóór hervatten.',
+  en: 'The column mapping does not match. Check the columns before resuming.',
+  fr: 'L’association des colonnes ne correspond pas. Vérifiez-la avant de reprendre.',
+  es: 'La asignación de columnas no coincide. Revísala antes de reanudar.',
+);
