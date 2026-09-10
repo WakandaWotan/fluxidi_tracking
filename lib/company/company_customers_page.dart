@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
@@ -11,7 +12,12 @@ import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 const Key kCompanyCustomersPageKey = Key('company_customers_page');
 const Key kCompanyCustomersSearchFieldKey = Key('company_customers_search');
 const Key kCompanyCustomersAddButtonKey = Key('company_customers_add');
+const Key kCompanyCustomersImportButtonKey = Key('company_customers_import');
+const Key kCompanyCustomersContinueSearchKey = Key(
+  'company_customers_continue_search',
+);
 const Key kCompanyCustomersLoadMoreKey = Key('company_customers_load_more');
+const int kCompanyCustomersSearchFollowHops = 16;
 const Key kCompanyCustomersListKey = Key('company_customers_list');
 const Key kCompanyCustomersDetailPaneKey = Key('company_customers_detail_pane');
 const Key kCompanyCustomersArchiveButtonKey = Key('company_customers_archive');
@@ -95,7 +101,21 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
       _totalCount = null;
     });
     try {
-      final page = await _repository.list(status: _status, query: _query);
+      var page = await _repository.list(status: _status, query: _query);
+      var hops = 0;
+      if (_query.isNotEmpty) {
+        while (page.items.isEmpty &&
+            page.hasMore &&
+            (page.nextCursor ?? '').trim().isNotEmpty &&
+            hops < kCompanyCustomersSearchFollowHops) {
+          hops += 1;
+          page = await _repository.list(
+            status: _status,
+            query: _query,
+            cursor: page.nextCursor!,
+          );
+        }
+      }
       if (!mounted) return;
       setState(() {
         _items.addAll(page.items);
@@ -190,6 +210,63 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _importCustomers() async {
+    if (_acting) return;
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => CompanyCustomerImportPage(
+          repository: _repository,
+          language: _lang,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (changed == true) {
+      await _reload();
+    }
+  }
+
+  Future<void> _followSearch() async {
+    if (_query.isEmpty || !_hasMore || (_nextCursor ?? '').trim().isEmpty) {
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      var page = await _repository.list(
+        status: _status,
+        query: _query,
+        cursor: _nextCursor!,
+      );
+      var hops = 0;
+      while (page.items.isEmpty &&
+          page.hasMore &&
+          (page.nextCursor ?? '').trim().isNotEmpty &&
+          hops < kCompanyCustomersSearchFollowHops) {
+        hops += 1;
+        page = await _repository.list(
+          status: _status,
+          query: _query,
+          cursor: page.nextCursor!,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(page.items);
+        _hasMore = page.hasMore;
+        _nextCursor = page.nextCursor;
+        _loading = false;
+      });
+    } on CompanyCustomerException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.offline
+            ? kCompanyCustomersOffline.of(_lang)
+            : kCompanyCustomersError.of(_lang);
+      });
+    }
   }
 
   Future<void> _addCustomer() async {
@@ -364,14 +441,10 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      key: kCompanyCustomersAddButtonKey,
-                      onPressed: _addCustomer,
-                      icon: const Icon(Icons.person_add_alt_1),
-                      label: Text(kCompanyCustomersAddLabel.of(_lang)),
-                    ),
+                  child: _CustomersActionBar(
+                    language: _lang,
+                    onAdd: _addCustomer,
+                    onImport: _importCustomers,
                   ),
                 ),
               ],
@@ -394,6 +467,17 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
       );
     }
     if (_items.isEmpty) {
+      if (_query.isNotEmpty &&
+          _hasMore &&
+          (_nextCursor ?? '').trim().isNotEmpty) {
+        return _MessageState(
+          message: kCompanyCustomersSearchStillOpen.of(_lang),
+          language: _lang,
+          actionKey: kCompanyCustomersContinueSearchKey,
+          onRetry: _followSearch,
+          actionLabel: kCompanyCustomersContinueSearch.of(_lang),
+        );
+      }
       final empty = _query.isNotEmpty
           ? kCompanyCustomersEmptySearch
           : _status == 'archived'
@@ -489,16 +573,68 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
   }
 }
 
+class _CustomersActionBar extends StatelessWidget {
+  const _CustomersActionBar({
+    required this.language,
+    required this.onAdd,
+    required this.onImport,
+  });
+
+  final AppLanguage language;
+  final VoidCallback onAdd;
+  final VoidCallback onImport;
+
+  @override
+  Widget build(BuildContext context) {
+    final add = FilledButton.icon(
+      key: kCompanyCustomersAddButtonKey,
+      onPressed: onAdd,
+      icon: const Icon(Icons.person_add_alt_1),
+      label: Text(kCompanyCustomersAddLabel.of(language)),
+    );
+    final import = OutlinedButton.icon(
+      key: kCompanyCustomersImportButtonKey,
+      onPressed: onImport,
+      icon: const Icon(Icons.file_upload_outlined),
+      label: Text(kCompanyCustomersImportLabel.of(language)),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 520) {
+          return Column(
+            children: [
+              SizedBox(width: double.infinity, child: add),
+              const SizedBox(height: 8),
+              SizedBox(width: double.infinity, child: import),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: add),
+            const SizedBox(width: 8),
+            Expanded(child: import),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _MessageState extends StatelessWidget {
   const _MessageState({
     required this.message,
     required this.language,
     this.onRetry,
+    this.actionKey,
+    this.actionLabel,
   });
 
   final String message;
   final AppLanguage language;
   final VoidCallback? onRetry;
+  final Key? actionKey;
+  final String? actionLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -512,8 +648,9 @@ class _MessageState extends StatelessWidget {
             if (onRetry != null) ...[
               const SizedBox(height: 12),
               OutlinedButton(
+                key: actionKey,
                 onPressed: onRetry,
-                child: Text(kCompanyCustomersRetry.of(language)),
+                child: Text(actionLabel ?? kCompanyCustomersRetry.of(language)),
               ),
             ],
           ],

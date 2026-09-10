@@ -65,6 +65,27 @@ const LocalizedText kCompanyCustomersEmptySearch = LocalizedText(
   es: 'Ningún cliente coincide con esta búsqueda.',
 );
 
+const LocalizedText kCompanyCustomersSearchStillOpen = LocalizedText(
+  nl: 'Deze zoekopdracht is nog niet door alle pagina’s gegaan.',
+  en: 'This search has not yet walked every remaining page.',
+  fr: 'Cette recherche n’a pas encore parcouru toutes les pages.',
+  es: 'Esta búsqueda aún no ha recorrido todas las páginas.',
+);
+
+const LocalizedText kCompanyCustomersContinueSearch = LocalizedText(
+  nl: 'Verder zoeken in volgende pagina’s',
+  en: 'Continue searching later pages',
+  fr: 'Continuer la recherche sur les pages suivantes',
+  es: 'Seguir buscando en páginas posteriores',
+);
+
+const LocalizedText kCompanyCustomersImportLabel = LocalizedText(
+  nl: 'Klanten importeren',
+  en: 'Import customers',
+  fr: 'Importer des clients',
+  es: 'Importar clientes',
+);
+
 const LocalizedText kCompanyCustomersLoading = LocalizedText(
   nl: 'Klanten laden…',
   en: 'Loading customers…',

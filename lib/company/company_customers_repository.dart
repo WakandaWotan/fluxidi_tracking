@@ -4,6 +4,7 @@
 // never stores tokens.
 
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_http.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -167,5 +168,52 @@ class CompanyCustomersRepository {
       idempotencyKey: idempotencyKey,
     );
     return parseCompanyCustomerEnvelope(decoded);
+  }
+
+  String companyScopeId() => _scope()['company_id'] ?? '';
+
+  Future<List<CompanyCustomerImportCompanyMatch>> lookupImportContacts({
+    required String importId,
+    required List<Map<String, String>> contacts,
+  }) async {
+    final decoded = await _sendTransport(
+      method: 'POST',
+      path:
+          '$kCompanyCustomerImportPathPrefix/${Uri.encodeComponent(importId)}/lookups',
+      query: _scope(),
+      body: <String, dynamic>{
+        ..._scope(),
+        'contacts': contacts,
+      },
+      headers: _headers,
+    );
+    return parseCompanyCustomerImportMatches(decoded);
+  }
+
+  Future<CompanyCustomerImportBatchResult> importBatch({
+    required String importId,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    final decoded = await _sendTransport(
+      method: 'POST',
+      path:
+          '$kCompanyCustomerImportPathPrefix/${Uri.encodeComponent(importId)}/batches',
+      query: _scope(),
+      body: <String, dynamic>{
+        ..._scope(),
+        'rows': rows,
+      },
+      headers: _headers,
+    );
+    return parseCompanyCustomerImportBatch(decoded);
+  }
+
+  Future<CompanyCustomerImportStatus> getImport(String importId) async {
+    final decoded = await _listTransport(
+      path: '$kCompanyCustomerImportPathPrefix/${Uri.encodeComponent(importId)}',
+      query: _scope(),
+      headers: _headers,
+    );
+    return parseCompanyCustomerImportStatus(decoded);
   }
 }

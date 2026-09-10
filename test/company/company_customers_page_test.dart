@@ -12,6 +12,7 @@ class _FakeCustomersRepository extends CompanyCustomersRepository {
     this.pages,
     this.detail,
     this.listError,
+    this.emptyHasMore = false,
   }) : super(
          scopeQuery: const <String, String>{
            'tenant_id': 'TA',
@@ -39,6 +40,7 @@ class _FakeCustomersRepository extends CompanyCustomersRepository {
   List<CompanyCustomerListPage>? pages;
   CompanyCustomer? detail;
   CompanyCustomerException? listError;
+  bool emptyHasMore;
   final List<String> listCursors = <String>[];
   final List<String> listQueries = <String>[];
   int createCalls = 0;
@@ -63,6 +65,14 @@ class _FakeCustomersRepository extends CompanyCustomersRepository {
     listCursors.add(cursor);
     listQueries.add(query);
     if (listError != null) throw listError!;
+    if (emptyHasMore && query.isNotEmpty) {
+      return CompanyCustomerListPage(
+        items: const <CompanyCustomerListItem>[],
+        hasMore: true,
+        nextCursor: 'more-${listCursors.length}',
+        totalCount: null,
+      );
+    }
     if (pages == null || pages!.isEmpty) {
       return const CompanyCustomerListPage(
         items: <CompanyCustomerListItem>[],
@@ -72,7 +82,12 @@ class _FakeCustomersRepository extends CompanyCustomersRepository {
       );
     }
     if (cursor.isEmpty) return pages!.first;
-    return pages!.length > 1 ? pages!.last : pages!.first;
+    for (var i = 0; i < pages!.length; i += 1) {
+      if (pages![i].nextCursor == cursor && i + 1 < pages!.length) {
+        return pages![i + 1];
+      }
+    }
+    return pages!.last;
   }
 
   @override
@@ -221,6 +236,7 @@ void main() {
     );
     await _pumpPage(tester, repository: repo, size: const Size(390, 844));
     expect(find.byKey(kCompanyCustomersAddButtonKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersImportButtonKey), findsOneWidget);
     expect(find.byKey(kCompanyCustomersSearchFieldKey), findsOneWidget);
     expect(find.byKey(kCompanyCustomersDetailPaneKey), findsNothing);
     expect(tester.takeException(), isNull);
@@ -250,6 +266,7 @@ void main() {
     for (final size in <Size>[const Size(800, 1280), const Size(1280, 800)]) {
       await _pumpPage(tester, repository: repo, size: size);
       expect(find.byKey(kCompanyCustomersDetailPaneKey), findsOneWidget);
+      expect(find.byKey(kCompanyCustomersImportButtonKey), findsOneWidget);
       await tester.tap(find.byKey(const Key('company_customer_row_cus_1')));
       await tester.pumpAndSettle();
       expect(find.text('ada@example.test'), findsWidgets);
@@ -280,9 +297,50 @@ void main() {
     await _pumpPage(tester, repository: repo, size: const Size(1440, 900));
     expect(find.byKey(kCompanyCustomersDetailPaneKey), findsOneWidget);
     expect(find.byKey(kCompanyCustomersAddButtonKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersImportButtonKey), findsOneWidget);
     await _pumpPage(tester, repository: repo, size: const Size(680, 860));
     expect(find.byKey(kCompanyCustomersDetailPaneKey), findsNothing);
     expect(find.byKey(kCompanyCustomersAddButtonKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersImportButtonKey), findsOneWidget);
+  });
+
+  testWidgets('search follows server cursors instead of a final empty page', (
+    tester,
+  ) async {
+    final repo = _FakeCustomersRepository(
+      pages: <CompanyCustomerListPage>[
+        const CompanyCustomerListPage(
+          items: <CompanyCustomerListItem>[],
+          hasMore: true,
+          nextCursor: 'cursor-needle',
+          totalCount: null,
+        ),
+        CompanyCustomerListPage(
+          items: <CompanyCustomerListItem>[_item('cus_n', 'Needle Only')],
+          hasMore: false,
+          nextCursor: null,
+          totalCount: null,
+        ),
+      ],
+    );
+    await _pumpPage(tester, repository: repo, size: const Size(390, 844));
+    await tester.enterText(find.byKey(kCompanyCustomersSearchFieldKey), 'needle');
+    await tester.pumpAndSettle();
+    expect(repo.listCursors, contains('cursor-needle'));
+    expect(find.text('Needle Only'), findsOneWidget);
+    expect(find.text(kCompanyCustomersEmptySearch.of(AppLanguage.nl)), findsNothing);
+  });
+
+  testWidgets('search keeps continue when later pages remain unread', (
+    tester,
+  ) async {
+    final repo = _FakeCustomersRepository(emptyHasMore: true);
+    await _pumpPage(tester, repository: repo, size: const Size(390, 844));
+    await tester.enterText(find.byKey(kCompanyCustomersSearchFieldKey), 'ghost');
+    await tester.pumpAndSettle();
+    expect(find.text(kCompanyCustomersSearchStillOpen.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersContinueSearchKey), findsOneWidget);
+    expect(find.text(kCompanyCustomersEmptySearch.of(AppLanguage.nl)), findsNothing);
   });
 
   testWidgets('double submit is blocked on the form', (tester) async {
