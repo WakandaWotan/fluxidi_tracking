@@ -792,6 +792,8 @@ import {
   CUSTOMER_IMPORT_MAX_WRITES,
 } from "./modules/company_customers.mjs";
 import { serveCompanyCustomerImportHttp } from "./modules/company_customers_import.mjs";
+import { CompanyCustomerImportCoordinatorDO } from "./modules/company_customer_import_coordinator.mjs";
+export { CompanyCustomerImportCoordinatorDO };
 import {
   COMPANY_DRIVER_INDEX_KEY_PREFIX,
   COMPANY_DRIVER_INDEX_KEY_MIDDLE,

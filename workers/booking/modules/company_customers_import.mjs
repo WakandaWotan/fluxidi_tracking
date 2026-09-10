@@ -1,9 +1,9 @@
 // COMPANY-CUSTOMER-OPS-P0B — bounded sequential customer import.
 //
-// Workers KV cannot atomically unique concurrent writes. This module only
-// promises sequential retry safety per import_id + row_key. The client must
-// send batches one after another. Parallel same-key creates can still
-// duplicate; that is a KV infrastructure limit, not a process lock.
+// Workers KV cannot atomically unique concurrent writes. Sequential retries
+// are safe. Concurrent same-key or different-row batches are serialized by
+// CompanyCustomerImportCoordinatorDO when the binding is present. A process
+// lock or KV read-check-write is not a server guarantee.
 
 import { safeStr } from "./parsing_utils.js";
 import { sha256Hex } from "./crypto_utils.js";
@@ -23,6 +23,10 @@ import {
   normalizeCustomerScope,
   validateCustomerWrite,
 } from "./company_customers.mjs";
+import {
+  callCompanyCustomerImportCoordinator,
+  hasCompanyCustomerImportCoordinator,
+} from "./company_customer_import_coordinator.mjs";
 
 export function companyCustomerImportKey(scope, importId) {
   const s = normalizeCustomerScope(scope);
@@ -135,21 +139,73 @@ function nowIso(env) {
   return date.toISOString();
 }
 
+export function isCompanyCustomerImportExpired(meta, now) {
+  if (!meta || typeof meta !== "object") return false;
+  const expiresAt = Date.parse(meta.expires_at || "");
+  if (!Number.isFinite(expiresAt)) return false;
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(nowMs)) return false;
+  return nowMs >= expiresAt;
+}
+
+function expiredImportResult(meta) {
+  return {
+    ok: false,
+    status: 410,
+    error: "import_expired",
+    next_step: "start_new_import",
+    import: meta?.import_id ? publicImportMeta(meta) : undefined,
+    ledger: meta,
+  };
+}
+
+function cloneLedger(meta) {
+  if (!meta || typeof meta !== "object") return null;
+  return {
+    version: Number(meta.version || 1),
+    import_id: meta.import_id,
+    created_at: meta.created_at,
+    expires_at: meta.expires_at,
+    added: Number(meta.added || 0),
+    skipped: Number(meta.skipped || 0),
+    failed: Number(meta.failed || 0),
+    processed: Number(meta.processed || 0),
+    rows: meta.rows && typeof meta.rows === "object" ? { ...meta.rows } : {},
+  };
+}
+
 function auditImport(event, extra = {}) {
   console.log(
     `[COMPANY_CUSTOMERS][IMPORT] ${event} reason=${safeStr(extra.reason || "")} rows=${Number(extra.rows || 0)} added=${Number(extra.added || 0)} skipped=${Number(extra.skipped || 0)} failed=${Number(extra.failed || 0)}`,
   );
 }
 
-export async function getCompanyCustomerImport(env, { scope, importId }) {
+export async function getCompanyCustomerImport(env, { scope, importId, ledger = null }) {
   const s = normalizeCustomerScope(scope);
   if (!s.hasScope) return { ok: false, status: 400, error: "missing_tenant_scope" };
   if (!isValidCompanyCustomerImportId(importId)) {
     return { ok: false, status: 400, error: "invalid_import_id" };
   }
-  const meta = await loadImportMeta(env.BOOKING_KV, s, importId);
-  if (!meta?.import_id) return { ok: false, status: 404, error: "import_not_found" };
-  return { ok: true, status: 200, body: { ok: true, import: publicImportMeta(meta) } };
+  const now = nowIso(env);
+  let meta = ledger?.import_id ? cloneLedger(ledger) : null;
+  if (!meta?.import_id) meta = await loadImportMeta(env.BOOKING_KV, s, importId);
+  if (!meta?.import_id) {
+    return {
+      ok: false,
+      status: 404,
+      error: "import_not_found",
+      next_step: "start_new_import",
+    };
+  }
+  if (isCompanyCustomerImportExpired(meta, now)) {
+    return expiredImportResult(meta);
+  }
+  return {
+    ok: true,
+    status: 200,
+    body: { ok: true, import: publicImportMeta(meta) },
+    ledger: cloneLedger(meta),
+  };
 }
 
 export async function lookupImportContacts(env, { scope, importId, contacts }) {
@@ -217,7 +273,7 @@ export async function lookupImportContacts(env, { scope, importId, contacts }) {
   return { ok: true, status: 200, body: { ok: true, matches } };
 }
 
-export async function processImportBatch(env, { scope, importId, rows }) {
+export async function processImportBatch(env, { scope, importId, rows, ledger = null }) {
   const s = normalizeCustomerScope(scope);
   if (!s.hasScope) return { ok: false, status: 400, error: "missing_tenant_scope" };
   if (!isValidCompanyCustomerImportId(importId)) {
@@ -231,8 +287,14 @@ export async function processImportBatch(env, { scope, importId, rows }) {
   }
   const kv = env.BOOKING_KV;
   const now = nowIso(env);
-  let meta = await loadImportMeta(kv, s, importId);
+  let meta = ledger?.import_id ? cloneLedger(ledger) : await loadImportMeta(kv, s, importId);
+  if (meta?.import_id && isCompanyCustomerImportExpired(meta, now)) {
+    return expiredImportResult(meta);
+  }
   if (!meta?.import_id) meta = emptyImportMeta(importId, now);
+  if (isCompanyCustomerImportExpired(meta, now)) {
+    return expiredImportResult(meta);
+  }
   if (!meta.rows || typeof meta.rows !== "object") meta.rows = {};
 
   const results = [];
@@ -328,6 +390,7 @@ export async function processImportBatch(env, { scope, importId, rows }) {
     skipped: meta.skipped,
     failed: meta.failed,
   });
+  const nextLedger = cloneLedger(meta);
   return {
     ok: true,
     status: 200,
@@ -340,13 +403,21 @@ export async function processImportBatch(env, { scope, importId, rows }) {
       processed: meta.processed,
       rows: results,
     },
+    ledger: nextLedger,
   };
 }
 
 function errorBody(result) {
   const body = { ok: false, error: result.error || "invalid_import" };
   if (result.fields) body.fields = result.fields;
+  if (result.next_step) body.next_step = result.next_step;
+  if (result.import) body.import = result.import;
   return body;
+}
+
+function resultToHttp(result) {
+  if (!result?.ok) return json(errorBody(result || {}), result?.status || 500);
+  return json(result.body, result.status || 200);
 }
 
 export async function serveCompanyCustomerImportHttp({
@@ -358,9 +429,16 @@ export async function serveCompanyCustomerImportHttp({
   scope,
 }) {
   if (method === "GET" && !action) {
+    if (hasCompanyCustomerImportCoordinator(env)) {
+      const result = await callCompanyCustomerImportCoordinator(env, {
+        action: "get_import",
+        scope,
+        importId,
+      });
+      return resultToHttp(result);
+    }
     const result = await getCompanyCustomerImport(env, { scope, importId });
-    if (!result.ok) return json(errorBody(result), result.status);
-    return json(result.body, 200);
+    return resultToHttp(result);
   }
   if (method === "POST" && action === "lookups") {
     const result = await lookupImportContacts(env, {
@@ -372,13 +450,23 @@ export async function serveCompanyCustomerImportHttp({
     return json(result.body, 200);
   }
   if (method === "POST" && action === "batches") {
-    const result = await processImportBatch(env, {
+    if (!hasCompanyCustomerImportCoordinator(env)) {
+      return json(
+        {
+          ok: false,
+          error: "import_coordinator_unavailable",
+          next_step: "configure_import_coordinator",
+        },
+        503,
+      );
+    }
+    const result = await callCompanyCustomerImportCoordinator(env, {
+      action: "process_batch",
       scope,
       importId,
       rows: body?.rows,
     });
-    if (!result.ok) return json(errorBody(result), result.status);
-    return json(result.body, 200);
+    return resultToHttp(result);
   }
   return json({ ok: false, error: "method_not_allowed" }, 405);
 }

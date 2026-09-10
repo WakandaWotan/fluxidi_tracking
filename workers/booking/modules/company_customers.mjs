@@ -26,7 +26,7 @@ export const CUSTOMER_IMPORT_TTL_SECONDS = 72 * 60 * 60;
 // Workers KV has no compare-and-swap or transactions. Concurrent PATCH with
 // the same revision and concurrent creates with the same idempotency key can
 // both commit. A process lock or read-check-write is not atomic across
-// isolates. Import therefore only promises sequential retry safety.
+// isolates. Import batches are serialized by CompanyCustomerImportCoordinatorDO.
 
 const ADDRESS_TYPES = new Set(["home", "work", "pickup", "billing", "other"]);
 const LIST_VIEWS = ["active", "archived", "all"];

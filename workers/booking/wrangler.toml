@@ -117,6 +117,10 @@ class_name = "FluxidiSubscriptionFounderSlotsDO"
 name = "HUMAN_BOOKING_ID_SEQUENCE"
 class_name = "HumanBookingIdSequenceDO"
 
+[[durable_objects.bindings]]
+name = "COMPANY_CUSTOMER_IMPORT_COORDINATOR"
+class_name = "CompanyCustomerImportCoordinatorDO"
+
 # REQUIRED KV bindings used by this worker code.
 [[kv_namespaces]]
 binding = "BOOKING_KV"
@@ -153,3 +157,7 @@ new_sqlite_classes = ["FluxidiSubscriptionFounderSlotsDO"]
 [[migrations]]
 tag = "human-booking-id-sequence-v1"
 new_sqlite_classes = ["HumanBookingIdSequenceDO"]
+
+[[migrations]]
+tag = "company-customer-import-coordinator-v1"
+new_sqlite_classes = ["CompanyCustomerImportCoordinatorDO"]

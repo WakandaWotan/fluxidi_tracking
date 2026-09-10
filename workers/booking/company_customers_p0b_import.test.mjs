@@ -16,6 +16,7 @@ import {
   matchCompanyCustomersPath,
 } from "./modules/company_customers.mjs";
 import { companyCustomerImportKey } from "./modules/company_customers_import.mjs";
+import { createMemoryCompanyCustomerImportCoordinatorBinding } from "./modules/company_customer_import_coordinator.mjs";
 
 const ADMIN = "p0a-admin-token";
 const TENANT_A = "TA";
@@ -90,7 +91,12 @@ async function seedCompanySession({ tokenValue, tenantId, companyId }) {
 }
 
 function envWith(kv, extra = {}) {
-  return { ADMIN_TOKEN: ADMIN, BOOKING_KV: kv, ...extra };
+  const env = { ADMIN_TOKEN: ADMIN, BOOKING_KV: kv, ...extra };
+  if (!env.COMPANY_CUSTOMER_IMPORT_COORDINATOR) {
+    env.COMPANY_CUSTOMER_IMPORT_COORDINATOR =
+      createMemoryCompanyCustomerImportCoordinatorBinding(env);
+  }
+  return env;
 }
 
 function newImportId(n) {
