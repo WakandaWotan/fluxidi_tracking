@@ -224,6 +224,30 @@ async function companyGet(env, { limit = 50, includeHistory = false, cursor = ""
   );
 }
 
+async function findCompanyListRowByBookingId(env, bookingId) {
+  let cursor = "";
+  for (let page = 0; page < 80; page += 1) {
+    const res = await companyGet(env, { includeHistory: true, cursor });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.ok(Array.isArray(body.items));
+    assert.ok(body.items.length <= 50, `company list page exceeded contract limit page=${page}`);
+    if (body.has_more === true) {
+      assert.ok(String(body.next_cursor || "").trim(), "has_more requires a cursor");
+    } else {
+      assert.equal(body.next_cursor, null);
+    }
+    const row = body.items.find((item) => item.booking_id === bookingId);
+    if (row) return row;
+    if (body.has_more !== true) {
+      assert.fail(`booking ${bookingId} missing after projected list handoff`);
+    }
+    cursor = body.next_cursor;
+  }
+  assert.fail(`booking ${bookingId} not found within company list pagination bound`);
+}
+
 async function driverGet(env, token, { limit = 50, includeHistory = false, cursor = "" } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (includeHistory) params.set("include_history", "1");
@@ -587,18 +611,25 @@ test("complete rebuild handoff switches GET to projected reads", async () => {
 });
 
 test("mutation during rebuild is visible after complete handoff", async () => {
+  const fillerCreatedAt = "2026-07-01T00:00:00.000Z";
+  const fillerPickupIso = "2026-07-01T08:00:00.000Z";
+  const liveCreatedAt = "2026-09-01T00:00:01.000Z";
+  const livePickupIso = "2026-09-01T08:00:00.000Z";
   const seed = {};
   for (let i = 0; i < 250; i += 1) {
     const id = `filler-${String(i).padStart(3, "0")}`;
     seed[`booking:${id}`] = bookingRec({
       id,
-      createdAt: "2026-07-01T00:00:00.000Z",
+      createdAt: fillerCreatedAt,
+      updatedAt: fillerCreatedAt,
+      pickupIso: fillerPickupIso,
     });
   }
   const live = bookingRec({
     id: "2026-08-940",
-    createdAt: "2026-09-01T00:00:01.000Z",
-    updatedAt: "2026-09-01T00:00:01.000Z",
+    createdAt: liveCreatedAt,
+    updatedAt: liveCreatedAt,
+    pickupIso: livePickupIso,
   });
   seed["booking:2026-08-940"] = live;
   seed[companyBookingsListIndexKey(SCOPE)] = indexFor(SCOPE, ["2026-08-940"]);
@@ -624,8 +655,7 @@ test("mutation during rebuild is visible after complete handoff", async () => {
     cursor = step.cursor;
   }
   assert.equal(complete, true);
-  const body = await (await companyGet(env, { includeHistory: true })).json();
-  const row = body.items.find((r) => r.booking_id === "2026-08-940");
+  const row = await findCompanyListRowByBookingId(env, "2026-08-940");
   assert.ok(row);
   assert.equal(row.from, "DuringRebuild");
 });
