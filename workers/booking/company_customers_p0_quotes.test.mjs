@@ -150,6 +150,18 @@ test("draft can be saved without email and reopened", async () => {
   assert.equal(reopened.entered_amount_cents, 8000);
 });
 
+test("quote issuer prefers the company-supplied name over the env fallback", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "ada@example.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({ issuer_name: "Nocturne Limousines" }),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const body = await created.json();
+  assert.equal(body.quote.issuer_name, "Nocturne Limousines");
+});
+
 test("send requires email, uses the test adapter, and GET does not accept", async () => {
   const env = envWith(countingKV());
   const customer = await createCustomer(env, { email: "" , phone: "+32470000081" });

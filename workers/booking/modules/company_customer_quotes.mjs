@@ -266,8 +266,7 @@ async function appendQuoteId(kv, scope, customerId, quoteId) {
 }
 
 function issuerName(env, body) {
-  const fromEnv = clip(env?.COMPANY_QUOTE_BRAND?.company_name, 160);
-  return fromEnv || clip(body?.issuer_name, 160);
+  return clip(body?.issuer_name, 160) || clip(env?.COMPANY_QUOTE_BRAND?.company_name, 160);
 }
 
 function isExpired(record, now) {
