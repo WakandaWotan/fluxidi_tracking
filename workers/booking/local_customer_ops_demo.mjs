@@ -13,14 +13,20 @@ import { fileURLToPath } from "node:url";
 import worker from "./fluxidi_booking_worker.js";
 import { sha256Hex } from "./modules/crypto_utils.js";
 import { createMemoryCompanyCustomerImportCoordinatorBinding } from "./modules/company_customer_import_coordinator.mjs";
-import { LOCAL_DEMO_COMPANIES, solidLogoPng } from "./local_customer_ops_demo_companies.mjs";
+import {
+  LOCAL_DEMO_COMPANIES,
+  demoDriver,
+  demoVehicle,
+  solidLogoPng,
+} from "./local_customer_ops_demo_companies.mjs";
 
-export { LOCAL_DEMO_COMPANIES, solidLogoPng };
+export { LOCAL_DEMO_COMPANIES, demoDriver, demoVehicle, solidLogoPng };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(HERE, ".local-customer-ops-demo");
 const KV_FILE = join(DATA_DIR, "kv.json");
 const MAIL_FILE = join(DATA_DIR, "mail.json");
+const MEDIA_FILE = join(DATA_DIR, "public-media.json");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.CUSTOMER_OPS_DEMO_PORT || 8788);
 const PUBLIC_BASE = `http://${HOST}:${PORT}`;
@@ -28,7 +34,7 @@ const PUBLIC_BASE = `http://${HOST}:${PORT}`;
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-headers": "authorization,content-type,idempotency-key,x-admin-token",
-  "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PATCH,PUT,OPTIONS",
 };
 
 function persistKv(store) {
@@ -66,16 +72,34 @@ function persistKv(store) {
 }
 
 let flushPromise = Promise.resolve();
-async function flushNow(store, sink) {
+async function flushNow(store, sink, media) {
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(KV_FILE, JSON.stringify(Object.fromEntries(store), null, 2));
   await writeFile(MAIL_FILE, JSON.stringify(sink, null, 2));
+  if (media) {
+    await writeFile(
+      MEDIA_FILE,
+      JSON.stringify(
+        Object.fromEntries(
+          [...media.entries()].map(([key, value]) => [
+            key,
+            {
+              body: Buffer.from(value.body).toString("base64"),
+              httpMetadata: value.httpMetadata || {},
+            },
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
-function scheduleFlush(store, sink) {
-  flushPromise = flushPromise.then(() => flushNow(store, sink)).catch((err) => {
-    console.error("[local-demo] persist failed", err);
-  });
+function scheduleFlush(store, sink, media) {
+  flushPromise = flushPromise
+    .then(() => flushNow(store, sink, media))
+    .catch((err) => {
+      console.error("[local-demo] persist failed", err);
+    });
   return flushPromise;
 }
 
@@ -97,12 +121,63 @@ async function loadSink() {
   }
 }
 
+async function loadPublicMediaEntries() {
+  try {
+    const raw = JSON.parse(await readFile(MEDIA_FILE, "utf8"));
+    return Object.entries(raw || {}).map(([key, value]) => [
+      key,
+      {
+        body: Buffer.from(value?.body || "", "base64"),
+        httpMetadata: value?.httpMetadata || {},
+      },
+    ]);
+  } catch {
+    return [];
+  }
+}
+
 function logoPath(companyId) {
   return `/local/media/${companyId}/logo.png`;
 }
 
 function logoUrl(companyId) {
   return `${PUBLIC_BASE}${logoPath(companyId)}`;
+}
+
+function createMemoryPublicMedia(initial, onChange) {
+  const objects = new Map(initial || []);
+  return {
+    async put(key, bytes, opts) {
+      objects.set(String(key), {
+        body: Buffer.from(bytes),
+        httpMetadata: opts?.httpMetadata || {},
+      });
+      await onChange?.(objects);
+    },
+    async get(key) {
+      const obj = objects.get(String(key));
+      if (!obj) return null;
+      return {
+        body: obj.body,
+        httpEtag: "",
+        writeHttpMetadata(headers) {
+          if (obj.httpMetadata.contentType) {
+            headers.set("Content-Type", obj.httpMetadata.contentType);
+          }
+          if (obj.httpMetadata.cacheControl) {
+            headers.set("Cache-Control", obj.httpMetadata.cacheControl);
+          }
+        },
+      };
+    },
+  };
+}
+
+async function putIfAbsent(kv, key, value) {
+  const existing = await kv.get(key);
+  if (existing != null) return false;
+  await kv.put(key, value);
+  return true;
 }
 
 async function seedCompany(kv, company) {
@@ -120,7 +195,8 @@ async function seedCompany(kv, company) {
     }),
   );
   const profileKey = `tenant:${company.id}:company:${company.id}:business_profile:v1`;
-  await kv.put(
+  await putIfAbsent(
+    kv,
     profileKey,
     JSON.stringify({
       business_profile: {
@@ -129,7 +205,61 @@ async function seedCompany(kv, company) {
         publicLogoUrl: logoUrl(company.id),
         public_logo_url: logoUrl(company.id),
         country: "BE",
+        phone: "+3227110000",
+        email: `ops@${company.id.split("_").join("-")}.local`,
+        company_code: company.code,
+        public_company_code: company.code,
+        publicCompanyCode: company.code,
       },
+    }),
+  );
+  const existingProfileRaw = await kv.get(profileKey);
+  if (existingProfileRaw) {
+    try {
+      const parsed =
+        typeof existingProfileRaw === "string"
+          ? JSON.parse(existingProfileRaw)
+          : existingProfileRaw;
+      const profile = parsed?.business_profile && typeof parsed.business_profile === "object"
+        ? parsed.business_profile
+        : parsed;
+      if (profile && typeof profile === "object" && !profile.public_company_code && !profile.publicCompanyCode) {
+        profile.company_code = profile.company_code || company.code;
+        profile.public_company_code = company.code;
+        profile.publicCompanyCode = company.code;
+        await kv.put(
+          profileKey,
+          JSON.stringify(
+            parsed?.business_profile
+              ? { ...parsed, business_profile: profile }
+              : { business_profile: profile },
+          ),
+        );
+      }
+    } catch {
+      // Keep the stored profile if it cannot be repaired.
+    }
+  }
+  const nowIso = new Date().toISOString();
+  const vehicle = demoVehicle(company);
+  await putIfAbsent(
+    kv,
+    `tenant:${company.id}:company:${company.id}:fleet:vehicles:v1`,
+    JSON.stringify({
+      version: 1,
+      updated_at: nowIso,
+      source_revision: 1,
+      vehicles: [vehicle],
+      deleted_vehicle_ids: {},
+    }),
+  );
+  const driver = demoDriver(company);
+  await putIfAbsent(
+    kv,
+    `tenant:${company.id}:company:${company.id}:drivers:index:v1`,
+    JSON.stringify({
+      drivers: { [driver.driver_id]: driver },
+      updated_at: nowIso,
     }),
   );
 }
@@ -158,7 +288,8 @@ async function main() {
   await mkdir(DATA_DIR, { recursive: true });
   const store = await loadStore();
   const sink = await loadSink();
-  const flush = () => scheduleFlush(store, sink);
+  let mediaEntries = new Map(await loadPublicMediaEntries());
+  const flush = () => scheduleFlush(store, sink, mediaEntries);
   const kv = persistKv(store);
   const originalPut = kv.put.bind(kv);
   const originalDelete = kv.delete.bind(kv);
@@ -174,6 +305,10 @@ async function main() {
   const env = {
     ADMIN_TOKEN: "local-demo-admin",
     BOOKING_KV: kv,
+    PUBLIC_MEDIA: createMemoryPublicMedia(mediaEntries, async (next) => {
+      mediaEntries = next;
+      await flush();
+    }),
     CUSTOMER_QUOTE_MAIL_SINK: sink,
     CUSTOMER_QUOTE_PUBLIC_BASE: PUBLIC_BASE,
   };

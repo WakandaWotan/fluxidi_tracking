@@ -45524,6 +45524,54 @@ export default {
         return handleAdminCompanyLinkCodeCreate(request, url, env);
       }
 
+      if (url.pathname === "/admin/company/drivers/index" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_COMPANY_DRIVERS_INDEX_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const record = await _loadDriverIndexRecord(env, authScope.explicitScope);
+        const drivers = Object.values(record?.drivers || {})
+          .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+          .map((entry) => ({
+            driver_id: sanitizeTenantString(entry.driver_id ?? entry.driverId, 96),
+            display_name: _normalizeDriverDisplayName(
+              entry.display_name ?? entry.displayName ?? entry.fullName,
+            ),
+            employee_number: _normalizeDriverEmployeeNumber(
+              entry.employee_number ?? entry.employeeNumber,
+            ),
+            phone: _normalizeDriverPhone(entry.phone),
+            is_active: _coerceBoolean(entry.is_active ?? entry.isActive, true),
+            availability_status: _normalizeDriverAvailabilityStatus(
+              entry.availability_status ?? entry.availabilityStatus,
+              "available",
+            ),
+            assigned_vehicle_id: sanitizeTenantString(
+              entry.assigned_vehicle_id ?? entry.assignedVehicleId,
+              96,
+            ),
+            driver_photo_url: _normalizeSafeRemoteMediaRef(
+              entry.driver_photo_url ??
+                entry.driverPhotoUrl ??
+                entry.public_portrait_url ??
+                entry.publicPortraitUrl,
+            ),
+          }))
+          .filter((row) => row.driver_id);
+        return json(
+          {
+            ok: true,
+            key: record?.key || _companyDriverIndexKey(authScope.explicitScope),
+            count: drivers.length,
+            drivers,
+          },
+          200,
+        );
+      }
+
       if (url.pathname === "/admin/company/drivers/index/upsert") {
         if (request.method !== "POST") {
           return json({ ok: false, error: "method_not_allowed" }, 405);

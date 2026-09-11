@@ -36,6 +36,43 @@ function pngChunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crc]);
 }
 
+export function demoVehicle(company) {
+  const fluxidi = company.id === "demo_company_p0";
+  return {
+    vehicle_id: `vh_${company.id}_1`,
+    vehicleId: `vh_${company.id}_1`,
+    vehicle_name: fluxidi ? "S-Klasse" : "Ghost",
+    vehicleName: fluxidi ? "S-Klasse" : "Ghost",
+    brand_model: fluxidi ? "Mercedes S500" : "Rolls-Royce Ghost",
+    brandModel: fluxidi ? "Mercedes S500" : "Rolls-Royce Ghost",
+    license_plate: fluxidi ? "1-FLX-001" : "1-NTC-001",
+    licensePlate: fluxidi ? "1-FLX-001" : "1-NTC-001",
+    is_active: true,
+    isActive: true,
+    passenger_capacity: 3,
+    passengerCapacity: 3,
+    tenant_id: company.id,
+    company_id: company.id,
+    tenantId: company.id,
+    companyId: company.id,
+  };
+}
+
+export function demoDriver(company) {
+  const fluxidi = company.id === "demo_company_p0";
+  const driverId = `drv_${company.id}_1`;
+  return {
+    driver_id: driverId,
+    display_name: fluxidi ? "Karel Peeters" : "Lina Moreau",
+    displayName: fluxidi ? "Karel Peeters" : "Lina Moreau",
+    phone: fluxidi ? "+32470000011" : "+32470000022",
+    is_active: true,
+    isActive: true,
+    availability_status: "available",
+    availabilityStatus: "available",
+  };
+}
+
 export function solidLogoPng({ r, g, b, barR, barG, barB }) {
   const w = 64;
   const h = 64;
