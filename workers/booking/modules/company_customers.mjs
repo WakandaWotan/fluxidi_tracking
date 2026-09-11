@@ -7,6 +7,10 @@
 import { sanitizeTenantString, safeStr } from "./parsing_utils.js";
 import { jsonBase64urlEncode, jsonBase64urlDecode, sha256Hex } from "./crypto_utils.js";
 import { json } from "./http_response.js";
+import {
+  callCompanyCustomerImportCoordinator,
+  hasCompanyCustomerImportCoordinator,
+} from "./company_customer_import_coordinator.mjs";
 
 export const CUSTOMER_LIST_PAGE_SIZE = 200;
 export const CUSTOMER_HTTP_LIST_LIMIT = 50;
@@ -26,7 +30,8 @@ export const CUSTOMER_IMPORT_TTL_SECONDS = 72 * 60 * 60;
 // Workers KV has no compare-and-swap or transactions. Concurrent PATCH with
 // the same revision and concurrent creates with the same idempotency key can
 // both commit. A process lock or read-check-write is not atomic across
-// isolates. Import batches are serialized by CompanyCustomerImportCoordinatorDO.
+// isolates. When CompanyCustomerImportCoordinatorDO is bound, import batches
+// and manual create/PATCH/archive/restore share that per-company queue.
 
 const ADDRESS_TYPES = new Set(["home", "work", "pickup", "billing", "other"]);
 const LIST_VIEWS = ["active", "archived", "all"];
@@ -1096,6 +1101,11 @@ function readIdempotencyKey(request, body) {
   return clip(body?.idempotency_key, 120);
 }
 
+async function writeThroughCustomerCoordinator(env, action, payload, fallback) {
+  if (!hasCompanyCustomerImportCoordinator(env)) return fallback();
+  return callCompanyCustomerImportCoordinator(env, { action, ...payload });
+}
+
 export async function serveCompanyCustomersHttp({
   env,
   method,
@@ -1118,7 +1128,12 @@ export async function serveCompanyCustomersHttp({
     return json(result.body, 200);
   }
   if (!customerId && method === "POST") {
-    const result = await createCompanyCustomer(env, { scope, body: body || {}, idempotencyKey: idem });
+    const result = await writeThroughCustomerCoordinator(
+      env,
+      "create_customer",
+      { scope, body: body || {}, idempotencyKey: idem },
+      () => createCompanyCustomer(env, { scope, body: body || {}, idempotencyKey: idem }),
+    );
     if (!result.ok) return json(errorBody(result), result.status);
     return json(result.body, result.status);
   }
@@ -1128,17 +1143,32 @@ export async function serveCompanyCustomersHttp({
     return json(result.body, 200);
   }
   if (customerId && !action && method === "PATCH") {
-    const result = await updateCompanyCustomer(env, { scope, customerId, body: body || {} });
+    const result = await writeThroughCustomerCoordinator(
+      env,
+      "update_customer",
+      { scope, customerId, body: body || {} },
+      () => updateCompanyCustomer(env, { scope, customerId, body: body || {} }),
+    );
     if (!result.ok) return json(errorBody(result), result.status);
     return json(result.body, 200);
   }
   if (customerId && action === "archive" && method === "POST") {
-    const result = await archiveCompanyCustomer(env, { scope, customerId, idempotencyKey: idem });
+    const result = await writeThroughCustomerCoordinator(
+      env,
+      "archive_customer",
+      { scope, customerId, idempotencyKey: idem },
+      () => archiveCompanyCustomer(env, { scope, customerId, idempotencyKey: idem }),
+    );
     if (!result.ok) return json(errorBody(result), result.status);
     return json(result.body, 200);
   }
   if (customerId && action === "restore" && method === "POST") {
-    const result = await restoreCompanyCustomer(env, { scope, customerId, idempotencyKey: idem });
+    const result = await writeThroughCustomerCoordinator(
+      env,
+      "restore_customer",
+      { scope, customerId, idempotencyKey: idem },
+      () => restoreCompanyCustomer(env, { scope, customerId, idempotencyKey: idem }),
+    );
     if (!result.ok) return json(errorBody(result), result.status);
     return json(result.body, 200);
   }

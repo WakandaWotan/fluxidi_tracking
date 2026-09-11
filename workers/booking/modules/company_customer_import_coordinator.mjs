@@ -3,7 +3,9 @@
 // Workers KV has no compare-and-swap. A process lock or read-check-write is
 // not a server guarantee across isolates. This Durable Object is single-threaded
 // per tenant+company, so same-key and different-row import batches serialize
-// before they touch customer records or packed list pages.
+// before they touch customer records or packed list pages. Manual create,
+// PATCH, archive and restore use the same instance so they cannot overwrite
+// those pages while an import batch is in flight.
 //
 // The DO ledger outlives the 72h KV progress document. After expiry the
 // coordinator refuses new creates for that import_id instead of silently
@@ -12,7 +14,13 @@
 // Production activation requires the wrangler binding + sqlite migration.
 // Tests use the in-memory binding. Missing binding fails closed for batches.
 
-import { normalizeCustomerScope } from "./company_customers.mjs";
+import {
+  archiveCompanyCustomer,
+  createCompanyCustomer,
+  normalizeCustomerScope,
+  restoreCompanyCustomer,
+  updateCompanyCustomer,
+} from "./company_customers.mjs";
 import {
   getCompanyCustomerImport,
   processImportBatch,
@@ -58,6 +66,10 @@ export class CompanyCustomerImportCoordinatorDO {
     const action = String(body?.action || "").trim().toLowerCase();
     if (action === "process_batch") return this._processBatch(body);
     if (action === "get_import") return this._getImport(body);
+    if (action === "create_customer") return this._createCustomer(body);
+    if (action === "update_customer") return this._updateCustomer(body);
+    if (action === "archive_customer") return this._archiveCustomer(body);
+    if (action === "restore_customer") return this._restoreCustomer(body);
     return this._json({ ok: false, error: "unknown_action" }, 400);
   }
 
@@ -87,6 +99,42 @@ export class CompanyCustomerImportCoordinatorDO {
       scope: body.scope,
       importId,
       ledger,
+    });
+    return this._json(result, result?.status || 500);
+  }
+
+  async _createCustomer(body) {
+    const result = await createCompanyCustomer(this.env, {
+      scope: body.scope,
+      body: body.body || {},
+      idempotencyKey: body.idempotencyKey,
+    });
+    return this._json(result, result?.status || 500);
+  }
+
+  async _updateCustomer(body) {
+    const result = await updateCompanyCustomer(this.env, {
+      scope: body.scope,
+      customerId: body.customerId || body.customer_id,
+      body: body.body || {},
+    });
+    return this._json(result, result?.status || 500);
+  }
+
+  async _archiveCustomer(body) {
+    const result = await archiveCompanyCustomer(this.env, {
+      scope: body.scope,
+      customerId: body.customerId || body.customer_id,
+      idempotencyKey: body.idempotencyKey,
+    });
+    return this._json(result, result?.status || 500);
+  }
+
+  async _restoreCustomer(body) {
+    const result = await restoreCompanyCustomer(this.env, {
+      scope: body.scope,
+      customerId: body.customerId || body.customer_id,
+      idempotencyKey: body.idempotencyKey,
     });
     return this._json(result, result?.status || 500);
   }

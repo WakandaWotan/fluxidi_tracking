@@ -2,8 +2,10 @@
 //
 // Reuses customer scope, document branding fields, and a booking handoff
 // record. This is not a second limousine marketplace. Opening a public link
-// never accepts; accept requires POST confirm=true. Tests must use the mail
-// adapter or local capture — this module never calls Resend.
+// never accepts; accept requires POST confirm=true. CUSTOMER_QUOTE_MAIL_SINK
+// is test sending only. CUSTOMER_QUOTE_MAIL_SEND is adapter-accepted, not
+// proven delivery. Without either, send fails closed. This module never
+// calls Resend.
 
 import { safeStr, sanitizeTenantString } from "./parsing_utils.js";
 import { sha256Hex } from "./crypto_utils.js";
@@ -25,6 +27,13 @@ export const CUSTOMER_QUOTE_STATES = Object.freeze({
   ACCEPTED: "accepted",
   EXPIRED: "expired",
   WITHDRAWN: "withdrawn",
+});
+
+export const CUSTOMER_QUOTE_DELIVERY = Object.freeze({
+  TEST_ADAPTER: "test_adapter",
+  ADAPTER_ACCEPTED: "adapter_accepted",
+  NOT_CONFIGURED: "mail_not_configured",
+  FAILED: "send_failed",
 });
 
 const VAT_TREATMENTS = new Set(["incl", "excl", "none", "zero"]);
@@ -193,6 +202,9 @@ function publicQuote(record, { includeToken = false } = {}) {
     accepted_at: record.accepted_at || null,
     booking_id: record.booking_id || null,
     booking_dispatch_blocked: true,
+    delivery: record.delivery || "",
+    delivery_proven: false,
+    test_send: record.delivery === CUSTOMER_QUOTE_DELIVERY.TEST_ADAPTER || record.test_send === true,
   };
   if (includeToken && record.public_token) out.public_token = record.public_token;
   return out;
@@ -380,15 +392,54 @@ export async function updateCompanyCustomerQuote(env, { scope, quoteId, body }) 
 
 export async function deliverCompanyCustomerQuoteMail(env, payload) {
   if (typeof env?.CUSTOMER_QUOTE_MAIL_SEND === "function") {
-    return env.CUSTOMER_QUOTE_MAIL_SEND(payload);
+    try {
+      const result = await env.CUSTOMER_QUOTE_MAIL_SEND(payload);
+      if (result?.ok) {
+        return {
+          ok: true,
+          delivery: CUSTOMER_QUOTE_DELIVERY.ADAPTER_ACCEPTED,
+          delivery_proven: false,
+          test_send: false,
+        };
+      }
+      return {
+        ok: false,
+        status: 502,
+        error: result?.error || CUSTOMER_QUOTE_DELIVERY.FAILED,
+        delivery: CUSTOMER_QUOTE_DELIVERY.FAILED,
+        delivery_proven: false,
+      };
+    } catch {
+      return {
+        ok: false,
+        status: 502,
+        error: CUSTOMER_QUOTE_DELIVERY.FAILED,
+        delivery: CUSTOMER_QUOTE_DELIVERY.FAILED,
+        delivery_proven: false,
+      };
+    }
   }
   if (Array.isArray(env?.CUSTOMER_QUOTE_MAIL_SINK)) {
-    env.CUSTOMER_QUOTE_MAIL_SINK.push(payload);
-    return { ok: true, delivery: "test_adapter" };
+    env.CUSTOMER_QUOTE_MAIL_SINK.push({
+      ...payload,
+      delivery: CUSTOMER_QUOTE_DELIVERY.TEST_ADAPTER,
+      test_send: true,
+      delivery_proven: false,
+    });
+    return {
+      ok: true,
+      delivery: CUSTOMER_QUOTE_DELIVERY.TEST_ADAPTER,
+      delivery_proven: false,
+      test_send: true,
+    };
   }
-  const key = companyCustomerQuoteMailCaptureKey(payload.scope, payload.quote_id);
-  if (key) await env.BOOKING_KV.put(key, JSON.stringify(payload));
-  return { ok: true, delivery: "local_capture" };
+  return {
+    ok: false,
+    status: 503,
+    error: CUSTOMER_QUOTE_DELIVERY.NOT_CONFIGURED,
+    delivery: CUSTOMER_QUOTE_DELIVERY.NOT_CONFIGURED,
+    delivery_proven: false,
+  };
 }
 
 export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBaseUrl = "" }) {
@@ -406,6 +457,10 @@ export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBase
   if (record.entered_amount_cents == null) {
     return { ok: false, status: 400, error: "invalid_quote", fields: { entered_amount_cents: "required" } };
   }
+  const currency = clip(record.currency, 3).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return { ok: false, status: 400, error: "invalid_quote", fields: { currency: "required" } };
+  }
   const now = nowIso(env);
   if (!record.valid_until) {
     record.valid_until = new Date(Date.parse(now) + 14 * 24 * 60 * 60 * 1000).toISOString();
@@ -417,18 +472,6 @@ export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBase
   }
   const token = newId("").slice(4);
   const tokenHash = await sha256Hex(token);
-  record.public_token = token;
-  record.public_token_hash = tokenHash;
-  record.state = CUSTOMER_QUOTE_STATES.SENT;
-  record.sent_at = now;
-  record.updated_at = now;
-  await kvPutJson(env.BOOKING_KV, companyCustomerQuoteTokenKey(tokenHash), {
-    tenant_id: s.tenant_id,
-    company_id: s.company_id,
-    quote_id: record.quote_id,
-    revision: record.revision,
-  });
-  await saveQuote(env.BOOKING_KV, s, record);
   const base = clip(publicBaseUrl || env?.CUSTOMER_QUOTE_PUBLIC_BASE || "https://example.test", 200);
   const publicPath = `/public/customer-quotes/${token}`;
   const publicUrl = `${base.replace(/\/$/, "")}${publicPath}`;
@@ -441,8 +484,33 @@ export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBase
     public_path: publicPath,
     public_url: publicUrl,
     entered_amount_cents: record.entered_amount_cents,
-    currency: record.currency,
+    currency,
   });
+  if (!mail?.ok) {
+    return {
+      ok: false,
+      status: mail?.status || 502,
+      error: mail?.error || CUSTOMER_QUOTE_DELIVERY.FAILED,
+      delivery: mail?.delivery || CUSTOMER_QUOTE_DELIVERY.FAILED,
+      delivery_proven: false,
+    };
+  }
+  record.public_token = token;
+  record.public_token_hash = tokenHash;
+  record.state = CUSTOMER_QUOTE_STATES.SENT;
+  record.sent_at = now;
+  record.updated_at = now;
+  record.currency = currency;
+  record.delivery = mail.delivery;
+  record.delivery_proven = false;
+  record.test_send = mail.test_send === true;
+  await kvPutJson(env.BOOKING_KV, companyCustomerQuoteTokenKey(tokenHash), {
+    tenant_id: s.tenant_id,
+    company_id: s.company_id,
+    quote_id: record.quote_id,
+    revision: record.revision,
+  });
+  await saveQuote(env.BOOKING_KV, s, record);
   return {
     ok: true,
     status: 200,
@@ -451,7 +519,9 @@ export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBase
       quote: publicQuote(record, { includeToken: true }),
       public_path: publicPath,
       public_url: publicUrl,
-      delivery: mail?.delivery || "local_capture",
+      delivery: mail.delivery,
+      delivery_proven: false,
+      test_send: mail.test_send === true,
     },
   };
 }
@@ -586,6 +656,8 @@ function errorBody(result) {
   const body = { ok: false, error: result.error || "invalid_quote" };
   if (result.fields) body.fields = result.fields;
   if (result.revision != null) body.revision = result.revision;
+  if (result.delivery) body.delivery = result.delivery;
+  if (result.delivery_proven != null) body.delivery_proven = false;
   return body;
 }
 

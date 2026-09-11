@@ -58,11 +58,14 @@ function envWith(kv, extra = {}) {
   const env = {
     ADMIN_TOKEN: ADMIN,
     BOOKING_KV: kv,
-    CUSTOMER_QUOTE_MAIL_SINK: sink,
     COMPANY_QUOTE_BRAND: { company_name: "Fluxidi Demo Cars" },
     ...extra,
   };
+  if (!("CUSTOMER_QUOTE_MAIL_SINK" in extra) && typeof extra.CUSTOMER_QUOTE_MAIL_SEND !== "function") {
+    env.CUSTOMER_QUOTE_MAIL_SINK = sink;
+  }
   env.COMPANY_CUSTOMER_IMPORT_COORDINATOR =
+    extra.COMPANY_CUSTOMER_IMPORT_COORDINATOR ||
     createMemoryCompanyCustomerImportCoordinatorBinding(env);
   return env;
 }
@@ -166,8 +169,13 @@ test("send requires email, uses the test adapter, and GET does not accept", asyn
   assert.equal(sent.status, 200);
   const sendBody = await sent.json();
   assert.equal(sendBody.delivery, "test_adapter");
+  assert.equal(sendBody.delivery_proven, false);
+  assert.equal(sendBody.test_send, true);
+  assert.equal(sendBody.quote.test_send, true);
   assert.equal(env.CUSTOMER_QUOTE_MAIL_SINK.length, 1);
   assert.equal(env.CUSTOMER_QUOTE_MAIL_SINK[0].to, "guest@p0quote.test");
+  assert.equal(env.CUSTOMER_QUOTE_MAIL_SINK[0].test_send, true);
+  assert.equal(env.CUSTOMER_QUOTE_MAIL_SINK[0].delivery, "test_adapter");
   const token = sendBody.quote.public_token;
   const view = await worker.fetch(new Request(`https://example.test/public/customer-quotes/${token}`), env, {});
   assert.equal(view.status, 200);
@@ -277,4 +285,80 @@ test("expired and foreign tokens stay closed", async () => {
     company: COMPANY_B,
   });
   assert.equal(cross.status, 404);
+});
+
+test("draft without price stays empty and send never invents 80 euro", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "price@p0quote.test" });
+  const body = quoteBody({ passenger_email: "price@p0quote.test" });
+  delete body.entered_amount_cents;
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body,
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quote = (await created.json()).quote;
+  assert.equal(quote.entered_amount_cents, null);
+  assert.notEqual(quote.entered_amount_cents, 8000);
+  const refused = await adminRequest(env, `/company/customer-quotes/${quote.quote_id}/send`, { method: "POST" });
+  assert.equal(refused.status, 400);
+  const refusedBody = await refused.json();
+  assert.equal(refusedBody.error, "invalid_quote");
+  assert.equal(refusedBody.fields.entered_amount_cents, "required");
+  const reopened = await (await adminRequest(env, `/company/customer-quotes/${quote.quote_id}`)).json();
+  assert.equal(reopened.quote.state, "draft");
+  assert.equal(reopened.quote.entered_amount_cents, null);
+});
+
+test("send without adapter stays draft and does not claim customer delivery", async () => {
+  const env = envWith(countingKV(), { CUSTOMER_QUOTE_MAIL_SINK: null });
+  const customer = await createCustomer(env);
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody(),
+  });
+  const quoteId = (await created.json()).quote.quote_id;
+  const sent = await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" });
+  assert.equal(sent.status, 503);
+  const sentBody = await sent.json();
+  assert.equal(sentBody.error, "mail_not_configured");
+  assert.equal(sentBody.delivery, "mail_not_configured");
+  assert.equal(sentBody.delivery_proven, false);
+  const reopened = await (await adminRequest(env, `/company/customer-quotes/${quoteId}`)).json();
+  assert.equal(reopened.quote.state, "draft");
+  assert.equal(reopened.quote.delivery, "");
+});
+
+test("adapter failure keeps draft; adapter accept is not proven delivery", async () => {
+  const failing = envWith(countingKV(), {
+    CUSTOMER_QUOTE_MAIL_SEND: async () => ({ ok: false, error: "smtp_down" }),
+  });
+  const customer = await createCustomer(failing, { email: "fail@p0quote.test" });
+  const created = await adminRequest(failing, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({ passenger_email: "fail@p0quote.test" }),
+  });
+  const quoteId = (await created.json()).quote.quote_id;
+  const failed = await adminRequest(failing, `/company/customer-quotes/${quoteId}/send`, { method: "POST" });
+  assert.equal(failed.status, 502);
+  assert.equal((await failed.json()).error, "smtp_down");
+  assert.equal((await (await adminRequest(failing, `/company/customer-quotes/${quoteId}`)).json()).quote.state, "draft");
+
+  const accepting = envWith(countingKV(), {
+    CUSTOMER_QUOTE_MAIL_SEND: async () => ({ ok: true, delivery: "resend" }),
+  });
+  const other = await createCustomer(accepting, { email: "ok@p0quote.test" });
+  const ready = await adminRequest(accepting, `/company/customers/${other.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({ passenger_email: "ok@p0quote.test" }),
+  });
+  const acceptedId = (await ready.json()).quote.quote_id;
+  const sent = await adminRequest(accepting, `/company/customer-quotes/${acceptedId}/send`, { method: "POST" });
+  assert.equal(sent.status, 200);
+  const sentBody = await sent.json();
+  assert.equal(sentBody.delivery, "adapter_accepted");
+  assert.equal(sentBody.delivery_proven, false);
+  assert.equal(sentBody.test_send, false);
+  assert.equal(sentBody.quote.delivery, "adapter_accepted");
+  assert.notEqual(sentBody.delivery, "delivered");
 });
