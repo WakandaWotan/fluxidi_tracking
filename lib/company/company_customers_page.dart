@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
@@ -391,7 +392,8 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
       key: kCompanyCustomersPageKey,
       appBar: AppBar(title: Text(kCompanyCustomersTitle.of(_lang))),
       body: SafeArea(
@@ -477,6 +479,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -714,7 +717,8 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
       appBar: AppBar(title: Text(kCompanyCustomersTitle.of(language))),
       body: customer == null
           ? Center(child: Text(kCompanyCustomersError.of(language)))
@@ -729,6 +733,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
               onRestore: onRestore,
               acting: acting,
             ),
+    ),
     );
   }
 }

@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
 const Key kCompanyCustomerQuotePageKey = Key('company_customer_quote_page');
 const Key kCompanyCustomerQuoteSaveKey = Key('company_customer_quote_save');
@@ -218,10 +219,12 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
-    return Scaffold(
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
       key: kCompanyCustomerQuotePageKey,
       appBar: AppBar(title: Text(kCompanyCustomerQuoteTitle.of(_lang))),
       body: SafeArea(
+        child: CompanyOpsBoundedForm(
         child: ListView(
           padding: EdgeInsets.fromLTRB(16, 16, 16, 24 + bottom),
           children: [
@@ -365,7 +368,9 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
             ),
           ],
         ),
+        ),
       ),
+    ),
     );
   }
 }

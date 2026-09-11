@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/company/company_customer_import_parse.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_xlsx.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
+import 'package:fluxidi_tracking/company/company_customer_locale_options.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 
@@ -638,18 +639,17 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
         DropdownButtonFormField<String>(
           key: kCompanyCustomerImportCountryKey,
           isExpanded: true,
-          value: _defaultCallingCode,
-          items: const [
-            DropdownMenuItem<String>(
+          initialValue: _defaultCallingCode,
+          items: [
+            const DropdownMenuItem<String>(
               value: '',
               child: Text('—'),
             ),
-            DropdownMenuItem<String>(value: '31', child: Text('+31')),
-            DropdownMenuItem<String>(value: '32', child: Text('+32')),
-            DropdownMenuItem<String>(value: '33', child: Text('+33')),
-            DropdownMenuItem<String>(value: '34', child: Text('+34')),
-            DropdownMenuItem<String>(value: '44', child: Text('+44')),
-            DropdownMenuItem<String>(value: '49', child: Text('+49')),
+            for (final option in kCompanyCustomerCallingCodeOptions)
+              DropdownMenuItem<String>(
+                value: option.callingCode,
+                child: Text(option.label.of(_lang)),
+              ),
           ],
           onChanged: (value) => setState(() => _defaultCallingCode = value ?? ''),
         ),

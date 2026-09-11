@@ -1636,9 +1636,21 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Future<void> _openCompanyCustomers(BuildContext context) async {
+    final settingsName = businessSettingsNotifier.value.companyName.trim();
+    final profileName = (companyProfileNotifier.value?.companyName ?? '').trim();
+    final issuer = settingsName.isNotEmpty ? settingsName : profileName;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const CompanyCustomersPage(),
+        builder: (_) => CompanyCustomersPage(
+          issuerName: issuer.isEmpty ? null : issuer,
+          onOpenBooking: (bookingId) {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const CompanyBookingsOverviewPage(),
+              ),
+            );
+          },
+        ),
       ),
     );
     if (!mounted) return;
@@ -3793,10 +3805,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     required bool isTabletLandscape,
     required double cardHeight,
     required double spacing,
+    bool isDesktopWide = false,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = isTabletLandscape ? 3 : 2;
+        final columns = companyDashboardGoldTileColumns(
+          screenClass: isDesktopWide
+              ? FluxidiScreenClass.desktop
+              : isTabletLandscape
+              ? FluxidiScreenClass.tablet
+              : FluxidiScreenClass.phone,
+          isTabletLandscape: isTabletLandscape,
+        );
         final cardWidth =
             (constraints.maxWidth - (spacing * (columns - 1))) / columns;
         Widget card({
@@ -4598,6 +4618,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 height: brandSignatureGoldHeaderHeightForLayout(
                                   isTabletLandscape: isTabletLandscape,
                                   useTabletVisualMode: useTabletVisualMode,
+                                  isDesktopWide:
+                                      FluxidiBreakpoints.classifyWidth(W) ==
+                                      FluxidiScreenClass.desktop,
                                 ),
                                 logoRef: resolution.ref,
                                 hasCompanyLogo: hasCompanyLogo,
@@ -5138,6 +5161,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         isTabletLandscape: isTabletLandscape,
                         cardHeight: businessQuickActionCardHeight,
                         spacing: businessQuickActionSpacing,
+                        isDesktopWide:
+                            FluxidiBreakpoints.classifyWidth(W) ==
+                            FluxidiScreenClass.desktop,
                       )
                     else
                       LayoutBuilder(

@@ -150,10 +150,10 @@ const LocalizedText kCompanyCustomersRestore = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomersDisplayName = LocalizedText(
-  nl: 'Naam',
-  en: 'Name',
-  fr: 'Nom',
-  es: 'Nombre',
+  nl: 'Weergavenaam',
+  en: 'Display name',
+  fr: 'Nom affiché',
+  es: 'Nombre visible',
 );
 
 const LocalizedText kCompanyCustomersFirstName = LocalizedText(
@@ -233,11 +233,46 @@ const LocalizedText kCompanyCustomersAddAddress = LocalizedText(
   es: 'Añadir dirección',
 );
 
+const LocalizedText kCompanyCustomersRequiredMark = LocalizedText(
+  nl: 'Verplicht',
+  en: 'Required',
+  fr: 'Obligatoire',
+  es: 'Obligatorio',
+);
+
+const LocalizedText kCompanyCustomersIdentityGroup = LocalizedText(
+  nl: 'Naam',
+  en: 'Name',
+  fr: 'Nom',
+  es: 'Nombre',
+);
+
+const LocalizedText kCompanyCustomersContactGroup = LocalizedText(
+  nl: 'Contact',
+  en: 'Contact',
+  fr: 'Contact',
+  es: 'Contacto',
+);
+
+const LocalizedText kCompanyCustomersCompanyGroup = LocalizedText(
+  nl: 'Bedrijf',
+  en: 'Company',
+  fr: 'Entreprise',
+  es: 'Empresa',
+);
+
 const LocalizedText kCompanyCustomersContactRequired = LocalizedText(
   nl: 'Vul een naam in en minstens e-mail of telefoon.',
   en: 'Enter a name and at least an email or phone number.',
   fr: 'Saisissez un nom et au moins un e-mail ou un téléphone.',
   es: 'Introduce un nombre y al menos un correo o teléfono.',
+);
+
+const LocalizedText kCompanyCustomersEmailOrPhoneHint = LocalizedText(
+  nl: 'E-mail of telefoon is verplicht.',
+  en: 'Email or phone is required.',
+  fr: 'E-mail ou téléphone obligatoire.',
+  es: 'Correo o teléfono obligatorio.',
 );
 
 const LocalizedText kCompanyCustomersInvalidEmail = LocalizedText(

@@ -250,7 +250,28 @@ String composeCompanyCustomerDisplayName({
 }) {
   final display = displayName.trim();
   if (display.isNotEmpty) return display;
-  return '$firstName $lastName'.trim();
+  return suggestedCompanyCustomerDisplayName(
+    firstName: firstName,
+    lastName: lastName,
+  );
+}
+
+String suggestedCompanyCustomerDisplayName({
+  required String firstName,
+  required String lastName,
+}) {
+  return '${firstName.trim()} ${lastName.trim()}'.replaceAll(
+    RegExp(r'\s+'),
+    ' ',
+  ).trim();
+}
+
+bool shouldReplaceSuggestedCompanyCustomerDisplayName({
+  required String currentDisplayName,
+  required String previousSuggestion,
+}) {
+  final current = currentDisplayName.trim();
+  return current.isEmpty || current == previousSuggestion.trim();
 }
 
 String normalizeCompanyCustomerEmail(String raw) => raw.trim().toLowerCase();

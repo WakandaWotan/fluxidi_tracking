@@ -3,13 +3,29 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
+import 'package:fluxidi_tracking/company/company_customer_locale_options.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
 const Key kCompanyCustomersSaveButtonKey = Key('company_customers_save');
 const Key kCompanyCustomerFormPageKey = Key('company_customer_form_page');
 const Key kCompanyCustomerFormNameKey = Key('company_customer_form_name');
 const Key kCompanyCustomerFormEmailKey = Key('company_customer_form_email');
+const Key kCompanyCustomerFormFirstNameKey = Key(
+  'company_customer_form_first_name',
+);
+const Key kCompanyCustomerFormLastNameKey = Key(
+  'company_customer_form_last_name',
+);
+const Key kCompanyCustomerFormPhoneKey = Key('company_customer_form_phone');
+const Key kCompanyCustomerFormCallingCodeKey = Key(
+  'company_customer_form_calling_code',
+);
+const Key kCompanyCustomerFormLocaleKey = Key('company_customer_form_locale');
+const Key kCompanyCustomerFormRequiredHintKey = Key(
+  'company_customer_form_required_hint',
+);
 
 class CompanyCustomerFormPage extends StatefulWidget {
   const CompanyCustomerFormPage({
@@ -42,6 +58,7 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
   bool _saving = false;
   String? _formError;
   Map<String, String> _fieldErrors = const <String, String>{};
+  late String _displayNameSuggestion;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
 
@@ -66,6 +83,28 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
         _addresses.add(_AddressDraft.fromAddress(address));
       }
     }
+    _displayNameSuggestion = suggestedCompanyCustomerDisplayName(
+      firstName: _firstName.text,
+      lastName: _lastName.text,
+    );
+    if (_displayName.text.trim().isEmpty &&
+        _displayNameSuggestion.isNotEmpty) {
+      _displayName.text = _displayNameSuggestion;
+    }
+  }
+
+  void _suggestDisplayName() {
+    final next = suggestedCompanyCustomerDisplayName(
+      firstName: _firstName.text,
+      lastName: _lastName.text,
+    );
+    if (shouldReplaceSuggestedCompanyCustomerDisplayName(
+      currentDisplayName: _displayName.text,
+      previousSuggestion: _displayNameSuggestion,
+    )) {
+      _displayName.text = next;
+    }
+    _displayNameSuggestion = next;
   }
 
   @override
@@ -166,171 +205,265 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
     }
   }
 
+  String _requiredLabel(LocalizedText label) =>
+      '${label.of(_lang)} *';
+
+  String? _callingCodeValue() {
+    final code = normalizeCompanyCustomerCallingCode(_callingCode.text);
+    if (code.isEmpty) return '';
+    for (final option in kCompanyCustomerCallingCodeOptions) {
+      if (option.callingCode == code) return code;
+    }
+    return '';
+  }
+
+  String? _localeValue() {
+    final code = _locale.text.trim();
+    if (code.isEmpty) return '';
+    for (final option in kCompanyCustomerLocaleOptions) {
+      if (option.code == code) return code;
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.existing == null
         ? kCompanyCustomersAddLabel.of(_lang)
         : kCompanyCustomersEdit.of(_lang);
-    return Scaffold(
-      key: kCompanyCustomerFormPageKey,
-      appBar: AppBar(title: Text(title)),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                children: [
-                  TextField(
-                    key: kCompanyCustomerFormNameKey,
-                    controller: _displayName,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersDisplayName.of(_lang),
-                      errorText: _fieldErrors['display_name'] == null
-                          ? null
-                          : kCompanyCustomersContactRequired.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _firstName,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersFirstName.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _lastName,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersLastName.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: kCompanyCustomerFormEmailKey,
-                    controller: _email,
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersEmail.of(_lang),
-                      errorText: _fieldErrors['email'] == null
-                          ? null
-                          : kCompanyCustomersInvalidEmail.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _callingCode,
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersCallingCode.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _phone,
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersPhone.of(_lang),
-                      errorText: _fieldErrors['phone'] == null
-                          ? null
-                          : kCompanyCustomersInvalidPhone.of(_lang),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _locale,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersLocale.of(_lang),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _companyName,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersCompanyName.of(_lang),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _vat,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersVat.of(_lang),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    kCompanyCustomersAddresses.of(_lang),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  for (var i = 0; i < _addresses.length; i += 1)
-                    _AddressEditor(
-                      draft: _addresses[i],
-                      onRemove: () {
-                        setState(() {
-                          _addresses.removeAt(i).dispose();
-                        });
-                      },
-                    ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: () {
-                        setState(() => _addresses.add(_AddressDraft()));
-                      },
-                      icon: const Icon(Icons.add),
-                      label: Text(kCompanyCustomersAddAddress.of(_lang)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _notes,
-                    minLines: 3,
-                    maxLines: 6,
-                    decoration: InputDecoration(
-                      labelText: kCompanyCustomersInternalNotes.of(_lang),
-                      alignLabelWithHint: true,
-                    ),
-                  ),
-                  if (_formError != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      _formError!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
+        key: kCompanyCustomerFormPageKey,
+        appBar: AppBar(title: Text(title)),
+        body: SafeArea(
+          child: CompanyOpsBoundedForm(
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    children: [
+                      Text(
+                        kCompanyCustomersIdentityGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  key: kCompanyCustomersSaveButtonKey,
-                  onPressed: _canSave ? _save : null,
-                  child: Text(kCompanyCustomersSave.of(_lang)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: kCompanyCustomerFormNameKey,
+                        controller: _displayName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: _requiredLabel(
+                            kCompanyCustomersDisplayName,
+                          ),
+                          helperText: kCompanyCustomersRequiredMark.of(_lang),
+                          errorText: _fieldErrors['display_name'] == null
+                              ? null
+                              : kCompanyCustomersContactRequired.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormFirstNameKey,
+                        controller: _firstName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersFirstName.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {
+                          _suggestDisplayName();
+                        }),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormLastNameKey,
+                        controller: _lastName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersLastName.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {
+                          _suggestDisplayName();
+                        }),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        kCompanyCustomersContactGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        kCompanyCustomersContactRequired.of(_lang),
+                        key: kCompanyCustomerFormRequiredHintKey,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: kCompanyCustomerFormEmailKey,
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: '${kCompanyCustomersEmail.of(_lang)} *',
+                          helperText: kCompanyCustomersEmailOrPhoneHint.of(
+                            _lang,
+                          ),
+                          errorText: _fieldErrors['email'] == null
+                              ? null
+                              : kCompanyCustomersInvalidEmail.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        key: kCompanyCustomerFormCallingCodeKey,
+                        isExpanded: true,
+                        initialValue: _callingCodeValue(),
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersCallingCode.of(_lang),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child: Text('—'),
+                          ),
+                          for (final option
+                              in kCompanyCustomerCallingCodeOptions)
+                            DropdownMenuItem<String>(
+                              value: option.callingCode,
+                              child: Text(option.label.of(_lang)),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _callingCode.text = value ?? '';
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormPhoneKey,
+                        controller: _phone,
+                        keyboardType: TextInputType.phone,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: '${kCompanyCustomersPhone.of(_lang)} *',
+                          helperText: kCompanyCustomersEmailOrPhoneHint.of(
+                            _lang,
+                          ),
+                          errorText: _fieldErrors['phone'] == null
+                              ? null
+                              : kCompanyCustomersInvalidPhone.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        key: kCompanyCustomerFormLocaleKey,
+                        isExpanded: true,
+                        initialValue: _localeValue(),
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersLocale.of(_lang),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child: Text('—'),
+                          ),
+                          for (final option in kCompanyCustomerLocaleOptions)
+                            DropdownMenuItem<String>(
+                              value: option.code,
+                              child: Text(option.label.of(_lang)),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          setState(() => _locale.text = value ?? '');
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        kCompanyCustomersCompanyGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _companyName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersCompanyName.of(_lang),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _vat,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersVat.of(_lang),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        kCompanyCustomersAddresses.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      for (var i = 0; i < _addresses.length; i += 1)
+                        _AddressEditor(
+                          draft: _addresses[i],
+                          language: _lang,
+                          onRemove: () {
+                            setState(() {
+                              _addresses.removeAt(i).dispose();
+                            });
+                          },
+                        ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            setState(() => _addresses.add(_AddressDraft()));
+                          },
+                          icon: const Icon(Icons.add),
+                          label: Text(kCompanyCustomersAddAddress.of(_lang)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _notes,
+                        minLines: 3,
+                        maxLines: 6,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersInternalNotes.of(_lang),
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                      if (_formError != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _formError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      key: kCompanyCustomersSaveButtonKey,
+                      onPressed: _canSave ? _save : null,
+                      child: Text(kCompanyCustomersSave.of(_lang)),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -388,9 +521,14 @@ class _AddressDraft {
 }
 
 class _AddressEditor extends StatelessWidget {
-  const _AddressEditor({required this.draft, required this.onRemove});
+  const _AddressEditor({
+    required this.draft,
+    required this.language,
+    required this.onRemove,
+  });
 
   final _AddressDraft draft;
+  final AppLanguage language;
   final VoidCallback onRemove;
 
   @override
@@ -437,9 +575,31 @@ class _AddressEditor extends StatelessWidget {
               controller: draft.postalCode,
               decoration: const InputDecoration(labelText: 'postal_code'),
             ),
-            TextField(
-              controller: draft.countryCode,
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: () {
+                final code = draft.countryCode.text.trim().toUpperCase();
+                if (code.isEmpty) return '';
+                for (final option in kCompanyCustomerCallingCodeOptions) {
+                  if (option.countryCode == code) return code;
+                }
+                return '';
+              }(),
               decoration: const InputDecoration(labelText: 'country_code'),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: '',
+                  child: Text('—'),
+                ),
+                for (final option in kCompanyCustomerCallingCodeOptions)
+                  DropdownMenuItem<String>(
+                    value: option.countryCode,
+                    child: Text(option.label.of(language)),
+                  ),
+              ],
+              onChanged: (value) {
+                draft.countryCode.text = value ?? '';
+              },
             ),
           ],
         ),

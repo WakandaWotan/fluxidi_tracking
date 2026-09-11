@@ -19,6 +19,7 @@ const Key kBrandSignatureGoldLogoFallbackKey = Key(
 const double kBrandSignatureGoldHeaderHeightTabletLandscape = 156;
 const double kBrandSignatureGoldHeaderHeightTablet = 208;
 const double kBrandSignatureGoldHeaderHeightPhone = 168;
+const double kBrandSignatureGoldHeaderHeightDesktopWide = 96;
 const EdgeInsets kBrandSignatureGoldHeaderLogoPadding = EdgeInsets.fromLTRB(
   28,
   16,
@@ -32,7 +33,11 @@ const double kBrandSignatureGoldHeaderActionGap = 8;
 double brandSignatureGoldHeaderHeightForLayout({
   required bool isTabletLandscape,
   required bool useTabletVisualMode,
+  bool isDesktopWide = false,
 }) {
+  if (isDesktopWide) {
+    return kBrandSignatureGoldHeaderHeightDesktopWide;
+  }
   if (isTabletLandscape) {
     return kBrandSignatureGoldHeaderHeightTabletLandscape;
   }

@@ -59,10 +59,10 @@ const LocalizedText kCompanyCustomerImportHeaderRow = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomerImportDefaultCountry = LocalizedText(
-  nl: 'Standaardland voor lokale nummers (niet automatisch België)',
-  en: 'Default country for local numbers (not assumed to be Belgium)',
-  fr: 'Pays par défaut pour les numéros locaux (la Belgique n’est pas présumée)',
-  es: 'País predeterminado para números locales (no se asume Bélgica)',
+  nl: 'Land voor telefoonnummers zonder landcode',
+  en: 'Country for phone numbers without a country code',
+  fr: 'Pays pour les numéros sans indicatif',
+  es: 'País para números sin código de país',
 );
 
 const LocalizedText kCompanyCustomerImportNoDefaultCountry = LocalizedText(

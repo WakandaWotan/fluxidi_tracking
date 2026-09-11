@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
 const Key kCompanyLocalBookingsPageKey = Key('company_local_bookings_page');
 const Key kCompanyLocalBookingDetailKey = Key('company_local_booking_detail');
@@ -55,7 +56,8 @@ class _CompanyLocalBookingsPageState extends State<CompanyLocalBookingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
       key: kCompanyLocalBookingsPageKey,
       appBar: AppBar(
         title: const Text('Boekingen'),
@@ -102,6 +104,7 @@ class _CompanyLocalBookingsPageState extends State<CompanyLocalBookingsPage> {
                         );
                       },
                     ),
+    ),
     );
   }
 }
@@ -185,7 +188,8 @@ class _CompanyLocalBookingDetailPageState
     final currency = (booking['currency'] ?? record['currency'] ?? 'EUR')
         .toString();
     final status = (_row['status'] ?? record['status'] ?? '').toString();
-    return Scaffold(
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
       key: kCompanyLocalBookingDetailKey,
       appBar: AppBar(title: Text(kCompanyCustomerQuoteViewBooking.of(_lang))),
       body: _loading
@@ -208,6 +212,7 @@ class _CompanyLocalBookingDetailPageState
                     Text('Boeking: ${widget.bookingId}'),
                   ],
                 ),
+    ),
     );
   }
 }

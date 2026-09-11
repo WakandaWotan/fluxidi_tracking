@@ -9,7 +9,9 @@ void main() {
     ).readAsStringSync();
     expect(home.contains("nl: 'Klantenbeheer'"), isTrue);
     expect(home.contains('_openCompanyCustomers'), isTrue);
-    expect(home.contains('const CompanyCustomersPage()'), isTrue);
+    expect(home.contains('CompanyCustomersPage('), isTrue);
+    expect(home.contains('issuerName:'), isTrue);
+    expect(home.contains('onOpenBooking:'), isTrue);
     expect(home.contains("nl: 'AI Dispatch'"), isFalse);
     expect(
       home.contains("onTap: () => _openCompanyCustomers(context)"),

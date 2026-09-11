@@ -87,6 +87,37 @@ void main() {
       );
     });
 
+    test('display name suggestion does not overwrite a manual edit', () {
+      expect(
+        suggestedCompanyCustomerDisplayName(
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+        ),
+        'Ada Lovelace',
+      );
+      expect(
+        shouldReplaceSuggestedCompanyCustomerDisplayName(
+          currentDisplayName: '',
+          previousSuggestion: '',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldReplaceSuggestedCompanyCustomerDisplayName(
+          currentDisplayName: 'Ada Lovelace',
+          previousSuggestion: 'Ada Lovelace',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldReplaceSuggestedCompanyCustomerDisplayName(
+          currentDisplayName: 'Ada L.',
+          previousSuggestion: 'Ada Lovelace',
+        ),
+        isFalse,
+      );
+    });
+
     test('write validation requires a name and one contact method', () {
       expect(
         validateCompanyCustomerWrite(const CompanyCustomerWrite()),
