@@ -238,6 +238,7 @@ void main() {
     expect(parsed!.pending, hasLength(1));
     expect(parsed.needsFileRepick, isFalse);
     expect(parsed.rows.first.write.email, 'ada@example.test');
+    expect(parsed.fingerprint?.contentSha256, isNotEmpty);
   });
 
   test('metadata-only session requires the same file and mapping', () {
@@ -292,6 +293,48 @@ void main() {
         mappings: <String>['skip', 'email'],
       ),
       CompanyCustomerImportFileMatch.mappingMismatch,
+    );
+  });
+
+  test('same name size and columns with different content refuse resume', () {
+    final original = utf8.encode('Name,Email\nAda,ada@example.test\n');
+    final changed = utf8.encode('Name,Email\nAda,ada@examplf.test\n');
+    expect(changed.length, original.length);
+    final table = parseCompanyCustomerCsv(bytes: original, fileName: 'one.csv');
+    final changedTable = parseCompanyCustomerCsv(
+      bytes: changed,
+      fileName: 'one.csv',
+    );
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    final fingerprint = buildCompanyCustomerImportFingerprint(
+      file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: original),
+      table: table,
+      mappings: mappings,
+    );
+    expect(fingerprint.contentSha256, isNotEmpty);
+    expect(
+      matchCompanyCustomerImportFile(
+        fingerprint: fingerprint,
+        file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: changed),
+        table: changedTable,
+        mappings: mappings,
+      ),
+      CompanyCustomerImportFileMatch.fileMismatch,
+    );
+    expect(
+      matchCompanyCustomerImportFile(
+        fingerprint: CompanyCustomerImportFileFingerprint(
+          fileName: 'one.csv',
+          byteLength: original.length,
+          headerSignature: companyCustomerImportHeaderSignature(table.headers),
+          mappingSignature: companyCustomerImportMappingSignature(mappings),
+          contentSha256: '',
+        ),
+        file: CompanyCustomerImportPickedFile(name: 'one.csv', bytes: original),
+        table: table,
+        mappings: mappings,
+      ),
+      CompanyCustomerImportFileMatch.fileMismatch,
     );
   });
 }

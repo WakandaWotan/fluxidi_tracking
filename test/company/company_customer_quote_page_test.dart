@@ -24,6 +24,9 @@ Map<String, dynamic> _quoteJson({
   String state = 'draft',
   String email = '',
   int revision = 1,
+  int? amountCents,
+  String delivery = '',
+  bool testSend = false,
 }) {
   return <String, dynamic>{
     'ok': true,
@@ -40,14 +43,19 @@ Map<String, dynamic> _quoteJson({
       'description': 'Transfer',
       'passenger_name': 'No App Guest',
       'passenger_email': email,
-      'entered_amount_cents': 8000,
+      if (amountCents != null) 'entered_amount_cents': amountCents,
       'currency': 'EUR',
       'vat_treatment': 'incl',
       'valid_until': '2026-09-25T00:00:00.000Z',
       'created_at': '2026-09-10T00:00:00.000Z',
       'updated_at': '2026-09-10T00:00:00.000Z',
+      if (delivery.isNotEmpty) 'delivery': delivery,
+      'delivery_proven': false,
+      'test_send': testSend,
     },
-    if (state == 'sent') 'delivery': 'test_adapter',
+    if (delivery.isNotEmpty) 'delivery': delivery,
+    'delivery_proven': false,
+    if (testSend) 'test_send': true,
   };
 }
 
@@ -91,7 +99,11 @@ class _FakeQuoteRepository extends CompanyCustomersRepository {
   ) async {
     createCalls += 1;
     draft = parseCompanyCustomerQuote(
-      _quoteJson(email: write.passengerEmail, revision: 1),
+      _quoteJson(
+        email: write.passengerEmail,
+        revision: 1,
+        amountCents: write.enteredAmountCents,
+      ),
     );
     return draft!;
   }
@@ -104,7 +116,11 @@ class _FakeQuoteRepository extends CompanyCustomersRepository {
   }) async {
     updateCalls += 1;
     draft = parseCompanyCustomerQuote(
-      _quoteJson(email: write.passengerEmail, revision: revision),
+      _quoteJson(
+        email: write.passengerEmail,
+        revision: revision,
+        amountCents: write.enteredAmountCents,
+      ),
     );
     return draft!;
   }
@@ -113,7 +129,13 @@ class _FakeQuoteRepository extends CompanyCustomersRepository {
   Future<CompanyCustomerQuote> sendQuote(String quoteId) async {
     sendCalls += 1;
     draft = parseCompanyCustomerQuote(
-      _quoteJson(state: 'sent', email: 'guest@p0quote.test'),
+      _quoteJson(
+        state: 'sent',
+        email: 'guest@p0quote.test',
+        amountCents: 8000,
+        delivery: 'test_adapter',
+        testSend: true,
+      ),
     );
     return draft!;
   }
@@ -171,7 +193,33 @@ void main() {
     }
   });
 
-  testWidgets('draft of 80 euro can be saved without email and reopened', (
+  testWidgets('new quote leaves price empty and never falls back to 80 euro', (
+    tester,
+  ) async {
+    final repo = _FakeQuoteRepository();
+    await _pumpQuote(tester, repository: repo, size: const Size(390, 844));
+    final priceField = tester.widget<TextFormField>(
+      find.byKey(kCompanyCustomerQuotePriceKey),
+    );
+    expect(priceField.controller?.text, isEmpty);
+    expect(find.text('80.00'), findsNothing);
+    expect(priceField.controller?.text.contains('80'), isFalse);
+    await tester.ensureVisible(find.byKey(kCompanyCustomerQuoteSaveKey));
+    await tester.tap(find.byKey(kCompanyCustomerQuoteSaveKey));
+    await tester.pumpAndSettle();
+    expect(repo.createCalls, 1);
+    expect(repo.draft?.enteredAmountCents, isNull);
+    await tester.ensureVisible(find.byKey(kCompanyCustomerQuoteSendKey));
+    await tester.tap(find.byKey(kCompanyCustomerQuoteSendKey));
+    await tester.pumpAndSettle();
+    expect(repo.sendCalls, 0);
+    expect(
+      find.text(kCompanyCustomerQuotePriceRequired.of(AppLanguage.nl)),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('explicit 80 euro draft can be saved without email and reopened', (
     tester,
   ) async {
     final repo = _FakeQuoteRepository();

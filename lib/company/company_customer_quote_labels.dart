@@ -100,6 +100,34 @@ const LocalizedText kCompanyCustomerQuoteEmailRequired = LocalizedText(
   es: 'El envío necesita un correo válido. El borrador puede guardarse sin él.',
 );
 
+const LocalizedText kCompanyCustomerQuotePriceRequired = LocalizedText(
+  nl: 'Voor verzending is een expliciete prijs en valuta nodig. Een concept mag zonder prijs.',
+  en: 'Sending needs an explicit price and currency. A draft may be saved without a price.',
+  fr: 'L’envoi exige un prix et une devise explicites. Un brouillon peut être enregistré sans prix.',
+  es: 'El envío necesita un precio y una moneda explícitos. El borrador puede guardarse sin precio.',
+);
+
+const LocalizedText kCompanyCustomerQuoteMailNotConfigured = LocalizedText(
+  nl: 'Geen verzendadapter. De offerte is niet naar de klant verzonden.',
+  en: 'No send adapter. The quote was not sent to the customer.',
+  fr: 'Aucun adaptateur d’envoi. Le devis n’a pas été envoyé au client.',
+  es: 'Sin adaptador de envío. El presupuesto no se envió al cliente.',
+);
+
+const LocalizedText kCompanyCustomerQuoteSendFailed = LocalizedText(
+  nl: 'Verzenden is mislukt. De offerte blijft een concept.',
+  en: 'Sending failed. The quote stays a draft.',
+  fr: 'L’envoi a échoué. Le devis reste un brouillon.',
+  es: 'El envío falló. El presupuesto sigue siendo un borrador.',
+);
+
+const LocalizedText kCompanyCustomerQuoteAdapterAccepted = LocalizedText(
+  nl: 'Verzendadapter heeft de offerte aangenomen. Bezorging is niet bewezen.',
+  en: 'The send adapter accepted the quote. Delivery is not proven.',
+  fr: 'L’adaptateur d’envoi a accepté le devis. La livraison n’est pas prouvée.',
+  es: 'El adaptador de envío aceptó el presupuesto. La entrega no está demostrada.',
+);
+
 const LocalizedText kCompanyCustomerQuoteSent = LocalizedText(
   nl: 'Offerte klaargezet voor lokale testverzending. Geen echte klantmail.',
   en: 'Quote queued for local test delivery. No real customer email was sent.',

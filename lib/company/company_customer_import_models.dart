@@ -2,6 +2,7 @@
 
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 
 const int kCompanyCustomerImportMaxFileBytes = 2 * 1024 * 1024;
@@ -170,12 +171,14 @@ class CompanyCustomerImportFileFingerprint {
     required this.byteLength,
     required this.headerSignature,
     required this.mappingSignature,
+    required this.contentSha256,
   });
 
   final String fileName;
   final int byteLength;
   final String headerSignature;
   final String mappingSignature;
+  final String contentSha256;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -183,6 +186,7 @@ class CompanyCustomerImportFileFingerprint {
       'byte_length': byteLength,
       'header_signature': headerSignature,
       'mapping_signature': mappingSignature,
+      'content_sha256': contentSha256,
     };
   }
 }
@@ -201,7 +205,12 @@ CompanyCustomerImportFileFingerprint? parseCompanyCustomerImportFileFingerprint(
     byteLength: length,
     headerSignature: map['header_signature']?.toString() ?? '',
     mappingSignature: map['mapping_signature']?.toString() ?? '',
+    contentSha256: map['content_sha256']?.toString().trim() ?? '',
   );
+}
+
+String companyCustomerImportContentSha256(List<int> bytes) {
+  return sha256.convert(bytes).toString();
 }
 
 String companyCustomerImportHeaderSignature(List<String> headers) {
@@ -222,6 +231,7 @@ CompanyCustomerImportFileFingerprint buildCompanyCustomerImportFingerprint({
     byteLength: file.bytes.length,
     headerSignature: companyCustomerImportHeaderSignature(table.headers),
     mappingSignature: companyCustomerImportMappingSignature(mappings),
+    contentSha256: companyCustomerImportContentSha256(file.bytes),
   );
 }
 
@@ -796,7 +806,10 @@ CompanyCustomerImportFileMatch matchCompanyCustomerImportFile({
   if (fingerprint.fileName != file.name.trim() ||
       fingerprint.byteLength != file.bytes.length ||
       fingerprint.headerSignature !=
-          companyCustomerImportHeaderSignature(table.headers)) {
+          companyCustomerImportHeaderSignature(table.headers) ||
+      fingerprint.contentSha256.isEmpty ||
+      fingerprint.contentSha256 !=
+          companyCustomerImportContentSha256(file.bytes)) {
     return CompanyCustomerImportFileMatch.fileMismatch;
   }
   if (fingerprint.mappingSignature !=

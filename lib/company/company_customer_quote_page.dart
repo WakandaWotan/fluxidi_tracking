@@ -56,6 +56,12 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
 
+  String _initialQuotePriceText(CompanyCustomerQuote? existing) {
+    final cents = existing?.enteredAmountCents;
+    if (cents == null) return '';
+    return (cents / 100).toStringAsFixed(2);
+  }
+
   String get _issuer {
     final explicit = widget.issuerName?.trim() ?? '';
     if (explicit.isNotEmpty) return explicit;
@@ -91,11 +97,7 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
           ? existing!.passengerPhone
           : widget.customer.phone,
     );
-    _price = TextEditingController(
-      text: existing?.enteredAmountCents != null
-          ? (existing!.enteredAmountCents! / 100).toStringAsFixed(2)
-          : '80.00',
-    );
+    _price = TextEditingController(text: _initialQuotePriceText(existing));
     _validUntil = TextEditingController(text: existing?.validUntil ?? '');
   }
 
@@ -167,6 +169,10 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
   }
 
   Future<void> _send() async {
+    if (!hasExplicitQuotePrice(_price.text)) {
+      setState(() => _error = kCompanyCustomerQuotePriceRequired.of(_lang));
+      return;
+    }
     if (!isUsableCompanyCustomerEmail(_email.text)) {
       setState(() => _error = kCompanyCustomerQuoteEmailRequired.of(_lang));
       return;
@@ -187,10 +193,23 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = error.code == 'invalid_quote'
-            ? kCompanyCustomerQuoteEmailRequired.of(_lang)
-            : kCompanyCustomersSaveFailed.of(_lang);
+        _error = _sendErrorText(error);
       });
+    }
+  }
+
+  String _sendErrorText(CompanyCustomerException error) {
+    switch (error.code) {
+      case 'invalid_quote':
+        return hasExplicitQuotePrice(_price.text)
+            ? kCompanyCustomerQuoteEmailRequired.of(_lang)
+            : kCompanyCustomerQuotePriceRequired.of(_lang);
+      case 'mail_not_configured':
+        return kCompanyCustomerQuoteMailNotConfigured.of(_lang);
+      case 'send_failed':
+        return kCompanyCustomerQuoteSendFailed.of(_lang);
+      default:
+        return kCompanyCustomersSaveFailed.of(_lang);
     }
   }
 
@@ -208,8 +227,10 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
             if (_quote != null) Text(_quote!.state),
             if (_quote?.isAccepted == true)
               Text(kCompanyCustomerQuoteAccepted.of(_lang)),
-            if (_quote?.state == 'sent' || _quote?.state == 'viewed')
+            if (_quote?.isTestSend == true)
               Text(kCompanyCustomerQuoteSent.of(_lang)),
+            if (_quote?.isAdapterAccepted == true)
+              Text(kCompanyCustomerQuoteAdapterAccepted.of(_lang)),
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!, maxLines: 4, overflow: TextOverflow.ellipsis),

@@ -29,6 +29,8 @@ class CompanyCustomerQuote {
     this.bookingId = '',
     this.publicToken = '',
     this.delivery = '',
+    this.deliveryProven = false,
+    this.testSend = false,
   });
 
   final String quoteId;
@@ -53,10 +55,19 @@ class CompanyCustomerQuote {
   final String bookingId;
   final String publicToken;
   final String delivery;
+  final bool deliveryProven;
+  final bool testSend;
 
   bool get isDraft => state == 'draft';
   bool get isAccepted => state == 'accepted';
+  bool get isTestSend =>
+      testSend || delivery == kCompanyCustomerQuoteDeliveryTestAdapter;
+  bool get isAdapterAccepted =>
+      delivery == kCompanyCustomerQuoteDeliveryAdapterAccepted && !isTestSend;
 }
+
+const String kCompanyCustomerQuoteDeliveryTestAdapter = 'test_adapter';
+const String kCompanyCustomerQuoteDeliveryAdapterAccepted = 'adapter_accepted';
 
 class CompanyCustomerQuoteWrite {
   const CompanyCustomerQuoteWrite({
@@ -117,6 +128,11 @@ int? parseEuroToCents(String raw) {
   return (value * 100).round();
 }
 
+bool hasExplicitQuotePrice(String raw) {
+  final cents = parseEuroToCents(raw);
+  return cents != null;
+}
+
 String formatQuoteEuros(int? cents, {String currency = 'EUR'}) {
   if (cents == null) return '$currency —';
   return '$currency ${(cents / 100).toStringAsFixed(2)}';
@@ -147,7 +163,12 @@ CompanyCustomerQuote parseCompanyCustomerQuote(Map<dynamic, dynamic> raw) {
     updatedAt: quoteRaw['updated_at']?.toString().trim() ?? '',
     bookingId: quoteRaw['booking_id']?.toString().trim() ?? '',
     publicToken: quoteRaw['public_token']?.toString().trim() ?? '',
-    delivery: raw['delivery']?.toString().trim() ?? '',
+    delivery: quoteRaw['delivery']?.toString().trim().isNotEmpty == true
+        ? quoteRaw['delivery'].toString().trim()
+        : raw['delivery']?.toString().trim() ?? '',
+    deliveryProven: quoteRaw['delivery_proven'] == true ||
+        raw['delivery_proven'] == true,
+    testSend: quoteRaw['test_send'] == true || raw['test_send'] == true,
   );
 }
 
