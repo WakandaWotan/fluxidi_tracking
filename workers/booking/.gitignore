@@ -1,3 +1,5 @@
 *.txt
 *_BACKUP_*.js
 *_patch.txt
+.local-customer-ops-demo/kv.json
+.local-customer-ops-demo/mail.json

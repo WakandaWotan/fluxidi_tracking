@@ -11,6 +11,8 @@ import { safeStr, sanitizeTenantString } from "./parsing_utils.js";
 import { sha256Hex } from "./crypto_utils.js";
 import { html, json } from "./http_response.js";
 import { renderPdfFromHtml } from "./pdf_render.mjs";
+import { putBookingCreateIfAbsent } from "./human_booking_id_allocator.mjs";
+import { upsertCompanyBookingsListIndexBestEffort } from "./booking_indexes.js";
 import {
   companyCustomerRecordKey,
   isUsableCustomerEmail,
@@ -201,6 +203,7 @@ function publicQuote(record, { includeToken = false } = {}) {
     sent_at: record.sent_at || null,
     accepted_at: record.accepted_at || null,
     booking_id: record.booking_id || null,
+    booking_list_ready: record.state === CUSTOMER_QUOTE_STATES.ACCEPTED && record.booking_list_ready === true,
     booking_dispatch_blocked: true,
     delivery: record.delivery || "",
     delivery_proven: false,
@@ -541,7 +544,7 @@ function quoteHtml(record, { acceptEnabled = false } = {}) {
   const currency = record.currency || "EUR";
   const issuer = record.issuer_name || "";
   const accept = acceptEnabled
-    ? `<button type="button" id="accept">Accepteren</button><script>document.getElementById("accept").addEventListener("click",async()=>{const r=await fetch("accept",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({confirm:true})});const j=await r.json();if(j.ok){document.getElementById("accept").replaceWith(Object.assign(document.createElement("p"),{id:"accepted",textContent:"Geaccepteerd"}));}});</script>`
+    ? `<button type="button" id="accept">Accepteren</button><script>document.getElementById("accept").addEventListener("click",async()=>{const r=await fetch(new URL("accept", location.href.endsWith("/") ? location.href : location.href + "/"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({confirm:true})});const j=await r.json();if(j.ok){document.getElementById("accept").replaceWith(Object.assign(document.createElement("p"),{id:"accepted",textContent:"Geaccepteerd"}));}});</script>`
     : record.state === CUSTOMER_QUOTE_STATES.ACCEPTED
       ? `<p id="accepted">Geaccepteerd</p>`
       : `<p id="closed">${record.state}</p>`;
@@ -583,6 +586,135 @@ export async function viewPublicCustomerQuote(env, { token, markViewed = true })
   return { ok: true, status: 200, record, scope: loaded.scope };
 }
 
+export async function customerQuoteBookingId(quoteId) {
+  const hex = await sha256Hex(safeStr(quoteId));
+  return hex ? `cqb_${hex.slice(0, 32)}` : "";
+}
+
+function quoteAmountEuros(cents) {
+  const n = Number(cents);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return Math.round(n) / 100;
+}
+
+function sameQuoteBooking(existing, quoteId) {
+  const id = safeStr(quoteId);
+  if (!existing || typeof existing !== "object" || !id) return false;
+  return (
+    safeStr(existing.quote_id) === id ||
+    safeStr(existing.booking?.quote_id) === id ||
+    safeStr(existing.quote?.quote_id) === id
+  );
+}
+
+function buildAcceptedQuoteBookingRecord(quote, bookingId, now) {
+  const pickup = quote.pickup || "";
+  const dropoff = quote.dropoff || "";
+  const pickupIso = quote.start_at || "";
+  const pax = Number(quote.passengers || 1);
+  const euros = quoteAmountEuros(quote.entered_amount_cents);
+  const currency = quote.currency || "EUR";
+  const customerName = quote.passenger_name || "";
+  const customerEmail = quote.passenger_email || "";
+  const customerPhone = quote.passenger_phone || "";
+  return {
+    booking_id: bookingId,
+    tenant_id: quote.tenant_id,
+    company_id: quote.company_id,
+    customer_id: quote.customer_id,
+    source: "company_customer_quote",
+    status: "PENDING",
+    stage: "PENDING",
+    lifecycle: "PENDING",
+    do_not_dispatch: true,
+    ride_started: false,
+    quote_id: quote.quote_id,
+    quote_revision: quote.revision,
+    planning_reference: quote.quote_id,
+    public_booking_reference: quote.quote_id,
+    pickup_iso: pickupIso,
+    created_at: now,
+    updated_at: now,
+    booking: {
+      tenant_id: quote.tenant_id,
+      company_id: quote.company_id,
+      from: pickup,
+      to: dropoff,
+      pickup_iso: pickupIso,
+      pickupStartIso: pickupIso,
+      pax,
+      customer_name: customerName,
+      customer_email: customerEmail,
+      customer_phone: customerPhone,
+      customer: {
+        name: customerName,
+        email: customerEmail,
+        phone: customerPhone,
+      },
+      currency,
+      price_incl_vat: euros,
+      status: "PENDING",
+      source: "company_customer_quote",
+      quote_id: quote.quote_id,
+      do_not_dispatch: true,
+    },
+    quote: {
+      from: pickup,
+      to: dropoff,
+      pickup_iso: pickupIso,
+      quote_id: quote.quote_id,
+      pricing: {
+        price_incl_vat: euros,
+        currency,
+      },
+    },
+  };
+}
+
+async function persistAcceptedQuoteOnCompanyBookingsList(env, quote, now) {
+  const bookingId = safeStr(quote.booking_id) || (await customerQuoteBookingId(quote.quote_id));
+  if (!bookingId) return { ok: false, error: "booking_id_unavailable" };
+  const next = buildAcceptedQuoteBookingRecord(quote, bookingId, now);
+  const existing = await kvGetJson(env.BOOKING_KV, companyCustomerQuoteBookingKey(bookingId));
+  if (existing && !sameQuoteBooking(existing, quote.quote_id)) {
+    return { ok: false, error: "booking_id_collision", booking_id: bookingId };
+  }
+  if (existing?.created_at || existing?.booking?.created_at) {
+    next.created_at = existing.created_at || existing.booking.created_at;
+  }
+  const put = await putBookingCreateIfAbsent(
+    env.BOOKING_KV,
+    bookingId,
+    JSON.stringify(next),
+    { mode: existing ? "upsert_same" : "create" },
+  );
+  if (!put.ok) {
+    return { ok: false, error: put.error || "booking_write_failed", booking_id: bookingId };
+  }
+  const listed = await upsertCompanyBookingsListIndexBestEffort(env, bookingId, next, {
+    tenant_id: quote.tenant_id,
+    company_id: quote.company_id,
+    hasScope: true,
+  });
+  return {
+    ok: true,
+    booking_id: bookingId,
+    listed: listed?.ok === true,
+    record: next,
+  };
+}
+
+function acceptedQuoteHandoffBody(record, { bookingId, idempotent = false } = {}) {
+  return {
+    ok: true,
+    quote: publicCustomerQuoteView(record),
+    booking_id: bookingId || record.booking_id,
+    booking_list_ready: record.booking_list_ready === true,
+    booking_dispatch_blocked: true,
+    ...(idempotent ? { idempotent: true } : {}),
+  };
+}
+
 export async function acceptPublicCustomerQuote(env, { token, confirm = false }) {
   if (confirm !== true) {
     return { ok: false, status: 400, error: "confirm_required" };
@@ -594,61 +726,53 @@ export async function acceptPublicCustomerQuote(env, { token, confirm = false })
   if (record.state === CUSTOMER_QUOTE_STATES.EXPIRED) {
     return { ok: false, status: 410, error: "quote_expired" };
   }
-  if (record.state === CUSTOMER_QUOTE_STATES.ACCEPTED && record.booking_id) {
-    return {
-      ok: true,
-      status: 200,
-      body: {
-        ok: true,
-        quote: publicCustomerQuoteView(record),
-        booking_id: record.booking_id,
-        idempotent: true,
-      },
-    };
-  }
-  if (record.state !== CUSTOMER_QUOTE_STATES.SENT && record.state !== CUSTOMER_QUOTE_STATES.VIEWED) {
+  const alreadyAccepted = record.state === CUSTOMER_QUOTE_STATES.ACCEPTED && !!record.booking_id;
+  if (
+    !alreadyAccepted &&
+    record.state !== CUSTOMER_QUOTE_STATES.SENT &&
+    record.state !== CUSTOMER_QUOTE_STATES.VIEWED
+  ) {
     return { ok: false, status: 409, error: "quote_not_acceptable" };
   }
-  const bookingId = newId("cqb_");
-  const booking = {
-    booking_id: bookingId,
-    source: "company_customer_quote",
-    lifecycle: "quote_accepted",
-    status: "accepted_quote",
-    do_not_dispatch: true,
-    ride_started: false,
-    tenant_id: record.tenant_id,
-    company_id: record.company_id,
-    customer_id: record.customer_id,
-    quote_id: record.quote_id,
-    quote_revision: record.revision,
-    pickup: record.pickup,
-    dropoff: record.dropoff,
-    start_at: record.start_at,
-    passengers: record.passengers,
-    description: record.description,
-    entered_amount_cents: record.entered_amount_cents,
-    currency: record.currency,
-    vat_treatment: record.vat_treatment,
-    vat_rate: record.vat_rate,
-    issuer_name: record.issuer_name,
-    created_at: now,
-  };
-  await kvPutJson(env.BOOKING_KV, companyCustomerQuoteBookingKey(bookingId), booking);
-  record.state = CUSTOMER_QUOTE_STATES.ACCEPTED;
-  record.accepted_at = now;
+  const persist = await persistAcceptedQuoteOnCompanyBookingsList(env, record, now);
+  if (!persist.ok) {
+    return {
+      ok: false,
+      status: persist.error === "booking_id_collision" ? 409 : 503,
+      error: persist.error,
+      booking_id: persist.booking_id,
+      booking_list_ready: false,
+    };
+  }
+  if (!persist.listed) {
+    if (alreadyAccepted) {
+      record.booking_list_ready = false;
+      record.updated_at = now;
+      await saveQuote(env.BOOKING_KV, loaded.scope, record);
+    }
+    return {
+      ok: false,
+      status: 503,
+      error: "booking_list_index_failed",
+      booking_id: persist.booking_id,
+      booking_list_ready: false,
+    };
+  }
+  record.booking_id = persist.booking_id;
+  record.booking_list_ready = true;
   record.updated_at = now;
-  record.booking_id = bookingId;
+  if (!alreadyAccepted) {
+    record.state = CUSTOMER_QUOTE_STATES.ACCEPTED;
+    record.accepted_at = now;
+  }
   await saveQuote(env.BOOKING_KV, loaded.scope, record);
   return {
     ok: true,
     status: 200,
-    body: {
-      ok: true,
-      quote: publicCustomerQuoteView(record),
-      booking_id: bookingId,
-      booking_dispatch_blocked: true,
-    },
+    body: acceptedQuoteHandoffBody(record, {
+      bookingId: persist.booking_id,
+      idempotent: alreadyAccepted,
+    }),
   };
 }
 
@@ -658,6 +782,8 @@ function errorBody(result) {
   if (result.revision != null) body.revision = result.revision;
   if (result.delivery) body.delivery = result.delivery;
   if (result.delivery_proven != null) body.delivery_proven = false;
+  if (result.booking_id) body.booking_id = result.booking_id;
+  if (result.booking_list_ready != null) body.booking_list_ready = result.booking_list_ready;
   return body;
 }
 
@@ -731,7 +857,9 @@ export async function servePublicCustomerQuoteHttp({ env, method, token, action,
     }
     const acceptEnabled =
       result.record.state === CUSTOMER_QUOTE_STATES.SENT ||
-      result.record.state === CUSTOMER_QUOTE_STATES.VIEWED;
+      result.record.state === CUSTOMER_QUOTE_STATES.VIEWED ||
+      (result.record.state === CUSTOMER_QUOTE_STATES.ACCEPTED &&
+        result.record.booking_list_ready !== true);
     return html(quoteHtml(result.record, { acceptEnabled }), 200);
   }
   if (action === "accept" && method === "GET") {

@@ -183,6 +183,7 @@ test("send requires email, uses the test adapter, and GET does not accept", asyn
   assert.match(html, /Fluxidi Demo Cars/);
   assert.match(html, /EUR 80.00/);
   assert.match(html, /id="accept"/);
+  assert.match(html, /new URL\("accept"/);
   const company = await adminRequest(env, `/company/customer-quotes/${quoteId}`);
   assert.equal((await company.json()).quote.state, "viewed");
   const getAccept = await worker.fetch(
@@ -203,17 +204,8 @@ test("send requires email, uses the test adapter, and GET does not accept", asyn
   assert.equal(noConfirm.status, 400);
 });
 
-test("conscious accept creates one blocked booking and repeats stay idempotent", async () => {
-  const env = envWith(countingKV());
-  const customer = await createCustomer(env);
-  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
-    method: "POST",
-    body: quoteBody(),
-  });
-  const quoteId = (await created.json()).quote.quote_id;
-  const sent = await (await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" })).json();
-  const token = sent.quote.public_token;
-  const first = await worker.fetch(
+async function acceptQuote(env, token) {
+  return worker.fetch(
     new Request(`https://example.test/public/customer-quotes/${token}/accept`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -222,30 +214,153 @@ test("conscious accept creates one blocked booking and repeats stay idempotent",
     env,
     {},
   );
+}
+
+async function sendQuoteForCustomer(env, extras = {}) {
+  const customer = await createCustomer(env, {
+    email: extras.email,
+    phone: extras.phone,
+    display_name: extras.display_name,
+  });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({
+      passenger_email: extras.email || "guest@p0quote.test",
+      start_at: extras.start_at,
+      pickup: extras.pickup,
+    }),
+  });
+  const quoteId = (await created.json()).quote.quote_id;
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" })).json();
+  return { customer, quoteId, token: sent.quote.public_token };
+}
+
+test("conscious accept creates one blocked booking and repeats stay idempotent", async () => {
+  const env = envWith(countingKV());
+  const { quoteId, token } = await sendQuoteForCustomer(env);
+  const first = await acceptQuote(env, token);
   assert.equal(first.status, 200);
   const firstBody = await first.json();
   assert.equal(firstBody.quote.accepted, true);
   assert.match(firstBody.booking_id, /^cqb_[a-f0-9]{32}$/);
   assert.equal(firstBody.booking_dispatch_blocked, true);
-  const second = await worker.fetch(
-    new Request(`https://example.test/public/customer-quotes/${token}/accept`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirm: true }),
-    }),
-    env,
-    {},
-  );
+  assert.equal(firstBody.booking_list_ready, true);
+  const listed = await (await adminRequest(env, "/bookings?limit=50")).json();
+  assert.equal(listed.ok, true);
+  assert.equal(listed.items.length, 1);
+  assert.equal(listed.items[0].booking_id, firstBody.booking_id);
+  assert.equal(listed.items[0].from, "Station Antwerpen");
+  assert.equal(listed.items[0].to, "Brussel Zuid");
+  assert.equal(listed.items[0].pax, 2);
+  assert.equal(listed.items[0].price, 80);
+  assert.equal(listed.items[0].currency, "EUR");
+  assert.equal(listed.items[0].customer_name, "No App Guest");
+  assert.equal(listed.items[0].status, "PENDING");
+  assert.equal(listed.items[0].quote_id, quoteId);
+  assert.equal(listed.items[0].assigned_driver_id ?? null, null);
+  assert.equal(listed.items[0].assigned_vehicle_id ?? null, null);
+  const foreign = await (await adminRequest(env, "/bookings?limit=50", {
+    tenant: TENANT_B,
+    company: COMPANY_B,
+  })).json();
+  assert.equal(foreign.ok, true);
+  assert.equal(foreign.items.length, 0);
+  const second = await acceptQuote(env, token);
   const secondBody = await second.json();
+  assert.equal(second.status, 200);
   assert.equal(secondBody.idempotent, true);
   assert.equal(secondBody.booking_id, firstBody.booking_id);
+  const again = await (await adminRequest(env, "/bookings?limit=50")).json();
+  assert.equal(again.items.length, 1);
+  assert.equal(again.items[0].booking_id, firstBody.booking_id);
   const company = await (await adminRequest(env, `/company/customer-quotes/${quoteId}`)).json();
   assert.equal(company.quote.state, "accepted");
   assert.equal(company.quote.booking_id, firstBody.booking_id);
+  assert.equal(company.quote.booking_list_ready, true);
   const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${firstBody.booking_id}`));
   assert.equal(booking.do_not_dispatch, true);
   assert.equal(booking.ride_started, false);
   assert.equal(booking.source, "company_customer_quote");
+  assert.equal(booking.status, "PENDING");
+  const bookingKeys = [...env.BOOKING_KV.store.keys()].filter((key) => key.startsWith("booking:"));
+  assert.equal(bookingKeys.length, 1);
+});
+
+test("accept retries a missing company list index without a second booking", async () => {
+  const kv = countingKV();
+  const originalPut = kv.put.bind(kv);
+  let failIndex = true;
+  kv.put = async (key, val) => {
+    if (failIndex && String(key).includes(":bookings:list:v1")) {
+      throw new Error("simulated_index_fail");
+    }
+    return originalPut(key, val);
+  };
+  const env = envWith(kv);
+  const { quoteId, token } = await sendQuoteForCustomer(env, {
+    email: "retry@p0quote.test",
+    phone: "+32470000094",
+  });
+  const interrupted = await acceptQuote(env, token);
+  assert.equal(interrupted.status, 503);
+  const interruptedBody = await interrupted.json();
+  assert.equal(interruptedBody.error, "booking_list_index_failed");
+  assert.match(interruptedBody.booking_id, /^cqb_[a-f0-9]{32}$/);
+  assert.equal(interruptedBody.booking_list_ready, false);
+  const companyAfterFail = await (await adminRequest(env, `/company/customer-quotes/${quoteId}`)).json();
+  assert.notEqual(companyAfterFail.quote.state, "accepted");
+  assert.ok(["sent", "viewed"].includes(companyAfterFail.quote.state));
+  assert.equal(companyAfterFail.quote.booking_id, null);
+  assert.equal(companyAfterFail.quote.booking_list_ready, false);
+  const emptyList = await (await adminRequest(env, "/bookings?limit=50")).json();
+  assert.equal(emptyList.items?.length || 0, 0);
+  const retryPage = await worker.fetch(
+    new Request(`https://example.test/public/customer-quotes/${token}`),
+    env,
+    {},
+  );
+  assert.match(await retryPage.text(), /id="accept"/);
+  failIndex = false;
+  const repaired = await acceptQuote(env, token);
+  assert.equal(repaired.status, 200);
+  const repairedBody = await repaired.json();
+  assert.equal(repairedBody.booking_id, interruptedBody.booking_id);
+  assert.equal(repairedBody.booking_list_ready, true);
+  assert.equal(repairedBody.idempotent, undefined);
+  const listed = await (await adminRequest(env, "/bookings?limit=50")).json();
+  assert.equal(listed.items.length, 1);
+  assert.equal(listed.items[0].booking_id, interruptedBody.booking_id);
+  const bookingKeys = [...env.BOOKING_KV.store.keys()].filter((key) => key.startsWith("booking:"));
+  assert.equal(bookingKeys.length, 1);
+});
+
+test("accepted quotes honour existing company booking-list pagination", async () => {
+  const env = envWith(countingKV());
+  const first = await sendQuoteForCustomer(env, {
+    email: "one@p0quote.test",
+    phone: "+32470000091",
+    start_at: "2026-09-21T09:00:00.000Z",
+  });
+  const second = await sendQuoteForCustomer(env, {
+    email: "two@p0quote.test",
+    phone: "+32470000092",
+    start_at: "2026-09-22T09:00:00.000Z",
+  });
+  const third = await sendQuoteForCustomer(env, {
+    email: "three@p0quote.test",
+    phone: "+32470000093",
+    start_at: "2026-09-23T09:00:00.000Z",
+  });
+  const a = await (await acceptQuote(env, first.token)).json();
+  const b = await (await acceptQuote(env, second.token)).json();
+  const c = await (await acceptQuote(env, third.token)).json();
+  const page = await (await adminRequest(env, "/bookings?limit=2")).json();
+  assert.equal(page.ok, true);
+  assert.equal(page.items.length, 2);
+  const all = await (await adminRequest(env, "/bookings?limit=50")).json();
+  assert.equal(all.items.length, 3);
+  const ids = all.items.map((item) => item.booking_id).sort();
+  assert.deepEqual(ids, [a.booking_id, b.booking_id, c.booking_id].sort());
 });
 
 test("expired and foreign tokens stay closed", async () => {

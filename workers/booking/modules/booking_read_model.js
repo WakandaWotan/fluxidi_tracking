@@ -1402,6 +1402,10 @@ export function _flattenBookingForRidesList(bookingId, rec) {
     tier,
     pax,
     bags,
+    quote_id:
+      _pick(rec, ["quote_id"], null) ??
+      _pick(rec, ["booking", "quote_id"], null) ??
+      _pick(rec, ["quote", "quote_id"], null),
     assigned_vehicle_id: assignedVehicleId || null,
     assignedVehicleId: assignedVehicleId || null,
     ...(assignedDriverId
