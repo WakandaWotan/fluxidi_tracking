@@ -167,11 +167,30 @@ Future<Map<String, dynamic>> fetchCompanyOpsBusinessProfile() async {
       decoded['error']?.toString() ?? 'business_profile_failed',
     );
   }
+  return mergeCompanyOpsProfilePublicCodes(decoded);
+}
+
+Map<String, dynamic> mergeCompanyOpsProfilePublicCodes(
+  Map<String, dynamic> decoded,
+) {
   final profile = decoded['business_profile'];
-  if (profile is Map) {
-    return Map<String, dynamic>.from(profile);
+  final map = profile is Map
+      ? Map<String, dynamic>.from(profile)
+      : Map<String, dynamic>.from(decoded);
+  for (final key in const <String>[
+    'public_company_code',
+    'publicCompanyCode',
+    'company_code',
+    'companyCode',
+    'public_display_code',
+    'publicDisplayCode',
+  ]) {
+    final value = decoded[key]?.toString().trim() ?? '';
+    if (value.isEmpty) continue;
+    final existing = map[key]?.toString().trim() ?? '';
+    if (existing.isEmpty) map[key] = value;
   }
-  return decoded;
+  return map;
 }
 
 Future<List<CompanyOpsDirectoryEntry>> fetchCompanyOpsLocalDirectory() async {
