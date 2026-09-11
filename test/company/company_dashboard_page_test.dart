@@ -1,17 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
+import 'package:fluxidi_tracking/company/company_bookings_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_page.dart';
+import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_settings_page.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 
 void main() {
+  test('web tiles keep bookings and settings reachable and cockpit blocked', () {
+    CompanyDashboardTileSpec tile(String key) =>
+        kCompanyDashboardTiles.firstWhere((item) => item.actionKey == key);
+    expect(tile('settings').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('planning').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('vehicles').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('customers').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('payments').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('booking_link').webFit, CompanyDashboardTileWebFit.available);
+    expect(tile('drivers').webFit, CompanyDashboardTileWebFit.blocked);
+    expect(tile('chiron').webFit, CompanyDashboardTileWebFit.blocked);
+    expect(tile('demand_radar').webFit, CompanyDashboardTileWebFit.blocked);
+  });
+
   setUp(() {
     companyOpsContextGeneration = 0;
     companyOpsLocalSessionNotifier.value = null;
@@ -130,6 +149,42 @@ void main() {
               'publicLogoUrl':
                   'http://127.0.0.1:8788/local/media/${companyOpsLocalSessionNotifier.value?.companyId}/logo.png',
             },
+            bookingsPageLoader: ({cursor = '', forceRefresh = false}) async {
+              return const BookingListPageResult(
+                scopeKey: 's',
+                cacheKey: 's|',
+                contract: BookingListContractKind.legacy,
+                items: <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'booking_id': 'cqb_ae3b84ee25e4f6505adc0b076192d394',
+                    'customer_name': 'Ada Lovelace',
+                    'from': 'Brussel-Zuid',
+                    'to': 'Antwerpen-Centraal',
+                    'status': 'PENDING',
+                    'quote_id': 'cqq_711fd5c7c0095f21764a542d8b55b846',
+                  },
+                ],
+                count: 1,
+                hasMore: false,
+              );
+            },
+            bookingDetailLoader: (bookingId) async => <String, dynamic>{
+              'ok': true,
+              'status': 'PENDING',
+              'record': <String, dynamic>{
+                'booking_id': bookingId,
+                'customer_name': 'Ada Lovelace',
+                'from': 'Brussel-Zuid',
+                'to': 'Antwerpen-Centraal',
+                'quote_id': 'cqq_711fd5c7c0095f21764a542d8b55b846',
+              },
+            },
+            settingsProfileLoader: () async => <String, dynamic>{
+              'companyName': 'Fluxidi Demo Cars',
+              'phone': '+3227110000',
+              'email': 'ops@demo.local',
+              'country': 'BE',
+            },
             onOpenCustomers: (context, identity) {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -151,7 +206,7 @@ void main() {
     expect(find.text('Fluxidi Demo Cars'), findsWidgets);
     expect(tester.getSize(find.byKey(kCompanyDashboardHeaderKey)).height, 96);
 
-    await tester.tap(find.byKey(const Key('brand_signature_action_settings')));
+    await tester.tap(find.byKey(const Key('brand_signature_action_chiron')));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyDashboardUnavailablePageKey), findsOneWidget);
     expect(
@@ -159,9 +214,35 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.textContaining('BusinessSettingsPage'),
+      find.textContaining('ChironComplianceDashboardPage'),
       findsOneWidget,
     );
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const Key('brand_signature_action_planning')),
+    );
+    await tester.tap(find.byKey(const Key('brand_signature_action_planning')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyBookingsPageKey), findsOneWidget);
+    expect(find.textContaining('Ada Lovelace'), findsWidgets);
+    await tester.tap(find.text('Brussel-Zuid → Antwerpen-Centraal'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
+    expect(find.textContaining('Terug gaat naar de boekingenlijst'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyBookingsPageKey), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const Key('brand_signature_action_settings')),
+    );
+    await tester.tap(find.byKey(const Key('brand_signature_action_settings')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanySettingsPageKey), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
 

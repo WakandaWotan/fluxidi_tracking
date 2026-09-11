@@ -5,13 +5,17 @@
 //   --dart-define=BOOKING_BASE_URL=http://127.0.0.1:8788
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_page.dart';
-import 'package:fluxidi_tracking/company/company_local_bookings_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Flutter web uses CanvasKit. Real Chrome paints glyphs correctly; some
+  // automation screenshot hosts sample the glyph atlas and look unreadable.
+  SemanticsBinding.instance.ensureSemantics();
   appLanguageNotifier.value = AppLanguage.nl;
   runApp(const CompanyCustomerOpsLocalDemoApp());
 }
@@ -30,7 +34,7 @@ class CompanyCustomerOpsLocalDemoApp extends StatelessWidget {
         if (bookingFromQuery.isNotEmpty) {
           return MaterialPageRoute<void>(
             settings: settings,
-            builder: (_) => CompanyLocalBookingDetailPage(
+            builder: (_) => CompanyBookingDetailPage(
               bookingId: bookingFromQuery,
               language: AppLanguage.nl,
             ),
@@ -43,7 +47,7 @@ class CompanyCustomerOpsLocalDemoApp extends StatelessWidget {
           );
           return MaterialPageRoute<void>(
             settings: settings,
-            builder: (_) => CompanyLocalBookingDetailPage(
+            builder: (_) => CompanyBookingDetailPage(
               bookingId: bookingId,
               language: AppLanguage.nl,
             ),

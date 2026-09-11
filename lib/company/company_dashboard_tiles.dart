@@ -64,17 +64,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Profil & branding',
           es: 'Perfil y marca',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Instellingen opent BusinessSettingsPage. Die pagina importeert dart:io, path_provider en lokale bestandskiezers en zit niet in de Flutter-webcompilatie. Er is geen lokale vervangingspagina.',
-          en:
-              'Settings opens BusinessSettingsPage. That page imports dart:io, path_provider and local file pickers and is not in the Flutter web compilation unit. There is no stand-in page.',
-          fr:
-              'Réglages ouvre BusinessSettingsPage. Cette page importe dart:io, path_provider et des sélecteurs de fichiers locaux et n’est pas compilée pour Flutter web. Il n’y a pas de page de remplacement.',
-          es:
-              'Ajustes abre BusinessSettingsPage. Esa página importa dart:io, path_provider y selectores de archivos locales y no entra en la compilación web de Flutter. No hay página sustituta.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'payments',
@@ -90,17 +80,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Facturation',
           es: 'Facturación',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Abonnement opent CompanySubscriptionBillingPage, een part of lib/main.dart met native facturatie- en sessieketens. Die bestemming compileert niet voor Flutter web. Er is geen lege facturatiepagina.',
-          en:
-              'Plan opens CompanySubscriptionBillingPage, a part of lib/main.dart with native billing and session chains. That destination does not compile for Flutter web. There is no empty billing page.',
-          fr:
-              'Abonnement ouvre CompanySubscriptionBillingPage, un part de lib/main.dart avec facturation et session natives. Cette destination ne compile pas pour Flutter web. Il n’y a pas de page de facturation vide.',
-          es:
-              'Plan abre CompanySubscriptionBillingPage, un part de lib/main.dart con facturación y sesión nativas. Ese destino no compila en Flutter web. No hay una página de facturación vacía.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'vehicles',
@@ -116,17 +96,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Flotte',
           es: 'Flota',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Voertuigen opent VehicleManagementPage (dart:io, lokale fleetbestanden, native camera/bestanden). Die pagina zit niet in de webcompilatie.',
-          en:
-              'Vehicles opens VehicleManagementPage (dart:io, local fleet files, native camera/files). That page is not in the web compilation unit.',
-          fr:
-              'Véhicules ouvre VehicleManagementPage (dart:io, fichiers de flotte locaux, caméra/fichiers natifs). Cette page n’est pas compilée pour le web.',
-          es:
-              'Vehículos abre VehicleManagementPage (dart:io, archivos de flota locales, cámara/archivos nativos). Esa página no entra en la compilación web.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'chiron',
@@ -168,17 +138,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Équipe',
           es: 'Equipo',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Chauffeurs opent CompanyDriverManagementPage na een backend-bedrijfssessiecontrole. Die pagina en de hersteldialogen zitten in de native app-shell (main.dart / dart:io) en ontbreken in Flutter web.',
-          en:
-              'Drivers opens CompanyDriverManagementPage after a backend company-session check. That page and the recovery dialogs live in the native app shell (main.dart / dart:io) and are absent from Flutter web.',
-          fr:
-              'Chauffeurs ouvre CompanyDriverManagementPage après un contrôle de session entreprise. Cette page et les dialogues de reprise sont dans le shell natif (main.dart / dart:io) et absents de Flutter web.',
-          es:
-              'Conductores abre CompanyDriverManagementPage tras una comprobación de sesión de empresa. Esa página y los diálogos de recuperación están en el shell nativo (main.dart / dart:io) y no existen en Flutter web.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'drivers',
@@ -197,9 +157,9 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
         webFit: CompanyDashboardTileWebFit.blocked,
         blocker: LocalizedText(
           nl:
-              'Chauffeur weergave opent de bestaande chauffeurcockpit (Mapbox, geolocator, dart:io). Die cockpit compileert niet voor Flutter web. Er is geen tweede cockpit.',
+              'Chauffeur weergave is de rijcockpit: live kaart (Mapbox), gps, offline kaarten en navigatie. Een browser kan het administratieve chauffeursbeheer tonen, niet deze cockpit. Geen tweede cockpit.',
           en:
-              'Driver view opens the existing driver cockpit (Mapbox, geolocator, dart:io). That cockpit does not compile for Flutter web. There is no second cockpit.',
+              'Driver view is the driving cockpit: live map (Mapbox), GPS, offline maps and navigation. A browser can show administrative driver management, not this cockpit. There is no second cockpit.',
           fr:
               'Vue chauffeur ouvre le cockpit chauffeur existant (Mapbox, geolocator, dart:io). Ce cockpit ne compile pas pour Flutter web. Il n’y a pas de second cockpit.',
           es:
@@ -246,17 +206,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Lien + QR',
           es: 'Enlace + QR',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Deel boekingslink gebruikt de native share-sheet, QR-weergave en de gepaarde publieke boekings-URL uit de volledige bedrijfssessie. Die keten is hier niet aangesloten; er is geen nep-QR.',
-          en:
-              'Share booking link uses the native share sheet, QR rendering and the paired public booking URL from the full company session. That chain is not wired here; there is no fake QR.',
-          fr:
-              'Partager le lien utilise la feuille de partage native, le QR et l’URL publique appariée de la session entreprise. Cette chaîne n’est pas branchée ici ; il n’y a pas de faux QR.',
-          es:
-              'Compartir enlace usa la hoja nativa, el QR y la URL pública emparejada de la sesión de empresa. Esa cadena no está cableada aquí; no hay un QR falso.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'planning',
@@ -272,17 +222,7 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
           fr: 'Planification & suivi',
           es: 'Planificación y seguimiento',
         ),
-        webFit: CompanyDashboardTileWebFit.blocked,
-        blocker: LocalizedText(
-          nl:
-              'Boekingen opent CompanyBookingsOverviewPage (part of lib/main.dart): planning, toewijzing, annuleren, credit en archief. Die pagina compileert niet voor Flutter web. Geaccepteerde offertes blijven zichtbaar via Klantenbeheer → Boeking bekijken (GET /bookings/:id). Dit is geen tweede planner.',
-          en:
-              'Bookings opens CompanyBookingsOverviewPage (part of lib/main.dart): planning, assignment, cancel, credit and archive. That page does not compile for Flutter web. Accepted quotes remain visible via Customer management → View booking (GET /bookings/:id). This is not a second planner.',
-          fr:
-              'Réservations ouvre CompanyBookingsOverviewPage (part de lib/main.dart) : planning, affectation, annulation, avoir et archive. Cette page ne compile pas pour Flutter web. Les devis acceptés restent visibles via Gestion des clients → Voir la réservation. Ce n’est pas un second planner.',
-          es:
-              'Reservas abre CompanyBookingsOverviewPage (part de lib/main.dart): planificación, asignación, cancelación, abono y archivo. Esa página no compila en Flutter web. Los presupuestos aceptados siguen visibles en Gestión de clientes → Ver reserva. No es una segunda agenda.',
-        ),
+        webFit: CompanyDashboardTileWebFit.available,
       ),
       CompanyDashboardTileSpec(
         actionKey: 'ai_dispatch',

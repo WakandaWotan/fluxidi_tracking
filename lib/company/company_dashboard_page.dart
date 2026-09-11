@@ -5,14 +5,21 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
+import 'package:fluxidi_tracking/company/company_booking_link_page.dart';
+import 'package:fluxidi_tracking/company/company_bookings_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
-import 'package:fluxidi_tracking/company/company_local_bookings_page.dart';
+import 'package:fluxidi_tracking/company/company_drivers_admin_page.dart';
+import 'package:fluxidi_tracking/company/company_fleet_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+import 'package:fluxidi_tracking/company/company_settings_page.dart';
+import 'package:fluxidi_tracking/company/company_subscription_status_page.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/widgets/brand_signature_gold_action_card.dart';
 
@@ -33,6 +40,10 @@ class CompanyDashboardPage extends StatefulWidget {
     this.identityLoader,
     this.onOpenCustomers,
     this.onOpenBooking,
+    this.bookingsPageLoader,
+    this.bookingDetailLoader,
+    this.settingsProfileLoader,
+    this.settingsProfileSaver,
   });
 
   final AppLanguage? language;
@@ -41,6 +52,16 @@ class CompanyDashboardPage extends StatefulWidget {
   final void Function(BuildContext context, CompanyOpsIdentity identity)?
       onOpenCustomers;
   final void Function(String bookingId)? onOpenBooking;
+  final Future<BookingListPageResult> Function({
+    String cursor,
+    bool forceRefresh,
+  })?
+  bookingsPageLoader;
+  final Future<Map<String, dynamic>> Function(String bookingId)?
+      bookingDetailLoader;
+  final Future<Map<String, dynamic>> Function()? settingsProfileLoader;
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic> profile)?
+      settingsProfileSaver;
 
   @override
   State<CompanyDashboardPage> createState() => CompanyDashboardPageState();
@@ -159,31 +180,93 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
       return;
     }
     final identity = companyOpsIdentityNotifier.value;
-    if (widget.onOpenCustomers != null) {
-      widget.onOpenCustomers!(context, identity);
-      return;
+    switch (tile.actionKey) {
+      case 'settings':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanySettingsPage(
+              language: _lang,
+              profileLoader: widget.settingsProfileLoader,
+              profileSaver: widget.settingsProfileSaver,
+              onSaved: _refreshIdentity,
+            ),
+          ),
+        );
+        return;
+      case 'payments':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanySubscriptionStatusPage(language: _lang),
+          ),
+        );
+        return;
+      case 'vehicles':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyFleetPage(language: _lang),
+          ),
+        );
+        return;
+      case 'customers':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyDriversAdminPage(language: _lang),
+          ),
+        );
+        return;
+      case 'booking_link':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyBookingLinkPage(language: _lang),
+          ),
+        );
+        return;
+      case 'planning':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyBookingsPage(
+              language: _lang,
+              pageLoader: widget.bookingsPageLoader,
+              detailLoader: widget.bookingDetailLoader,
+            ),
+          ),
+        );
+        return;
+      case 'ai_dispatch':
+        if (widget.onOpenCustomers != null) {
+          widget.onOpenCustomers!(context, identity);
+          return;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyCustomersPage(
+              language: _lang,
+              issuerName: identity.companyName,
+              repository: createCompanyCustomersRepository(),
+              sessionStore: createCompanyCustomerImportSessionStore(),
+              onOpenBooking: widget.onOpenBooking ?? _openBookingFromQuote,
+            ),
+          ),
+        );
+        return;
+      default:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CompanyDashboardUnavailablePage(
+              tile: tile,
+              language: _lang,
+            ),
+          ),
+        );
     }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CompanyCustomersPage(
-          language: _lang,
-          issuerName: identity.companyName,
-          repository: createCompanyCustomersRepository(),
-          sessionStore: createCompanyCustomerImportSessionStore(),
-          onOpenBooking: widget.onOpenBooking ?? _openBooking,
-        ),
-      ),
-    );
   }
 
-  void _openBooking(String bookingId) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CompanyLocalBookingDetailPage(
-          bookingId: bookingId,
-          language: _lang,
-        ),
-      ),
+  void _openBookingFromQuote(String bookingId) {
+    openCompanyBookingDetail(
+      context,
+      bookingId: bookingId,
+      language: _lang,
+      openedFrom: CompanyBookingOpenedFrom.quote,
     );
   }
 
