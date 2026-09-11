@@ -1635,6 +1635,35 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  Future<Map<String, dynamic>> _loadCompanyBookingDetail(
+    String bookingId,
+  ) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) {
+      throw StateError('booking_id_required');
+    }
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    final profile = companyProfileNotifier.value;
+    final tenant = (profile?.tenantId ?? profile?.companyId ?? '').trim();
+    final company = (profile?.companyId ?? '').trim();
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+    ).replace(
+      queryParameters: <String, String>{
+        if (tenant.isNotEmpty) 'tenant_id': tenant,
+        if (company.isNotEmpty) 'company_id': company,
+      },
+    );
+    final res = await http
+        .get(uri, headers: auth.headers)
+        .timeout(const Duration(seconds: 12));
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (res.statusCode != 200 || decoded is! Map || decoded['ok'] != true) {
+      throw StateError('booking_not_found');
+    }
+    return Map<String, dynamic>.from(decoded);
+  }
+
   Future<void> _openCompanyCustomers(BuildContext context) async {
     final settingsName = businessSettingsNotifier.value.companyName.trim();
     final profileName = (companyProfileNotifier.value?.companyName ?? '').trim();
@@ -1644,10 +1673,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         builder: (_) => CompanyCustomersPage(
           issuerName: issuer.isEmpty ? null : issuer,
           onOpenBooking: (bookingId) {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const CompanyBookingsOverviewPage(),
-              ),
+            openCompanyBookingDetail(
+              context,
+              bookingId: bookingId,
+              openedFrom: CompanyBookingOpenedFrom.quote,
+              loader: _loadCompanyBookingDetail,
             );
           },
         ),

@@ -12,6 +12,12 @@ void main() {
     expect(home.contains('CompanyCustomersPage('), isTrue);
     expect(home.contains('issuerName:'), isTrue);
     expect(home.contains('onOpenBooking:'), isTrue);
+    expect(home.contains('openCompanyBookingDetail('), isTrue);
+    expect(home.contains('CompanyBookingOpenedFrom.quote'), isTrue);
+    expect(home.contains('const BusinessSettingsPage()'), isTrue);
+    expect(home.contains('const VehicleManagementPage()'), isTrue);
+    expect(home.contains('const CompanyDriverManagementPage()'), isTrue);
+    expect(home.contains('const CompanyBookingsOverviewPage()'), isTrue);
     expect(home.contains("nl: 'AI Dispatch'"), isFalse);
     expect(
       home.contains("onTap: () => _openCompanyCustomers(context)"),

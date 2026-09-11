@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
 const Key kCompanyLocalBookingsPageKey = Key('company_local_bookings_page');
@@ -109,112 +110,12 @@ class _CompanyLocalBookingsPageState extends State<CompanyLocalBookingsPage> {
   }
 }
 
-class CompanyLocalBookingDetailPage extends StatefulWidget {
+class CompanyLocalBookingDetailPage extends CompanyBookingDetailPage {
   const CompanyLocalBookingDetailPage({
     super.key,
-    required this.bookingId,
-    this.language,
-  });
-
-  final String bookingId;
-  final AppLanguage? language;
-
-  @override
-  State<CompanyLocalBookingDetailPage> createState() =>
-      _CompanyLocalBookingDetailPageState();
-}
-
-class _CompanyLocalBookingDetailPageState
-    extends State<CompanyLocalBookingDetailPage> {
-  bool _loading = true;
-  String? _error;
-  Map<String, dynamic> _row = const <String, dynamic>{};
-
-  AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final body = await fetchCompanyLocalBooking(widget.bookingId);
-      if (!mounted) return;
-      setState(() {
-        _row = body;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = kCompanyCustomersLoadFailedNl;
-        _loading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final record = _row['record'] is Map
-        ? Map<String, dynamic>.from(_row['record'] as Map)
-        : _row;
-    final booking = record['booking'] is Map
-        ? Map<String, dynamic>.from(record['booking'] as Map)
-        : const <String, dynamic>{};
-    final quoteId = (record['quote_id'] ?? booking['quote_id'] ?? '').toString();
-    final customer = (booking['customer_name'] ??
-            record['customer_name'] ??
-            '')
-        .toString();
-    final from = (booking['from'] ??
-            record['from'] ??
-            record['pickup'] ??
-            '')
-        .toString();
-    final to = (booking['to'] ??
-            record['to'] ??
-            record['dropoff'] ??
-            '')
-        .toString();
-    final pickup = (booking['pickup_iso'] ??
-            record['pickup_iso'] ??
-            record['start_at'] ??
-            '')
-        .toString();
-    final pax = booking['pax'] ?? record['pax'] ?? record['passengers'];
-    final amount = booking['price_incl_vat'] ?? record['price'];
-    final currency = (booking['currency'] ?? record['currency'] ?? 'EUR')
-        .toString();
-    final status = (_row['status'] ?? record['status'] ?? '').toString();
-    return CompanyOpsThemedSurface(
-      child: Scaffold(
-      key: kCompanyLocalBookingDetailKey,
-      appBar: AppBar(title: Text(kCompanyCustomerQuoteViewBooking.of(_lang))),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Text('Klant: ${customer.isEmpty ? '—' : customer}'),
-                    Text('$from → $to'),
-                    Text('Datum en tijd: $pickup'),
-                    Text('Passagiers: ${pax ?? '—'}'),
-                    Text(
-                      'Bedrag: $currency ${amount == null ? '—' : amount}',
-                    ),
-                    if (quoteId.isNotEmpty) Text('Offerte: $quoteId'),
-                    Text('Status: $status'),
-                    Text(kCompanyCustomerQuoteAssignmentPending.of(_lang)),
-                    Text('Boeking: ${widget.bookingId}'),
-                  ],
-                ),
-    ),
-    );
-  }
+    required super.bookingId,
+    super.language,
+  }) : super(openedFrom: CompanyBookingOpenedFrom.bookingsList);
 }
 
 const String kCompanyCustomersLoadFailedNl = 'Boekingen laden mislukt';

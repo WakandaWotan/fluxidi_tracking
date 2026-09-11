@@ -4,6 +4,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 
@@ -299,5 +300,62 @@ void main() {
     await tester.tap(find.byKey(kCompanyCustomerQuoteViewBookingKey));
     await tester.pump();
     expect(opened, 'cqb_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  });
+
+  testWidgets('quote booking detail pops back to the same quote page', (
+    tester,
+  ) async {
+    final repo = _FakeQuoteRepository();
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyCustomerQuotePage(
+          repository: repo,
+          customer: _guest(),
+          language: AppLanguage.nl,
+          issuerName: 'Fluxidi Demo Cars',
+          existing: parseCompanyCustomerQuote(
+            _quoteJson(
+              state: 'accepted',
+              amountCents: 9500,
+              bookingId: 'cqb_ae3b84ee25e4f6505adc0b076192d394',
+              bookingListReady: true,
+            ),
+          ),
+          onOpenBooking: (bookingId) {
+            final nav = tester.element(find.byType(CompanyCustomerQuotePage));
+            openCompanyBookingDetail(
+              nav,
+              bookingId: bookingId,
+              language: AppLanguage.nl,
+              openedFrom: CompanyBookingOpenedFrom.quote,
+              loader: (id) async => <String, dynamic>{
+                'ok': true,
+                'status': 'PENDING',
+                'record': <String, dynamic>{
+                  'booking_id': id,
+                  'customer_name': 'Ada Lovelace',
+                  'from': 'Brussel-Zuid',
+                  'to': 'Antwerpen-Centraal',
+                  'quote_id': 'cqq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                },
+              },
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(kCompanyCustomerQuoteViewBookingKey));
+    await tester.tap(find.byKey(kCompanyCustomerQuoteViewBookingKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
+    expect(find.textContaining('Terug gaat naar de offerte'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCustomerQuotePageKey), findsOneWidget);
+    expect(find.byKey(kCompanyBookingDetailPageKey), findsNothing);
+    expect(find.byKey(kCompanyCustomerQuoteViewBookingKey), findsOneWidget);
   });
 }
