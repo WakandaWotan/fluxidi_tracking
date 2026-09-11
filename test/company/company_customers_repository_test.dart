@@ -151,6 +151,16 @@ void main() {
       }) async {
         throw StateError('transport must not run');
       },
+      sendTransport: ({
+        required method,
+        required path,
+        required query,
+        required body,
+        required headers,
+        idempotencyKey,
+      }) async {
+        throw StateError('transport must not run');
+      },
     );
     expect(
       () => customers.list(),

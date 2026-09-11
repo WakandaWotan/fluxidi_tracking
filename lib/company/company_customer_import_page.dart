@@ -2,12 +2,11 @@
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_parse.dart';
-import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_xlsx.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';

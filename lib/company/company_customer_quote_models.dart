@@ -27,7 +27,9 @@ class CompanyCustomerQuote {
     required this.createdAt,
     required this.updatedAt,
     this.bookingId = '',
+    this.bookingListReady = false,
     this.publicToken = '',
+    this.publicUrl = '',
     this.delivery = '',
     this.deliveryProven = false,
     this.testSend = false,
@@ -53,7 +55,9 @@ class CompanyCustomerQuote {
   final String createdAt;
   final String updatedAt;
   final String bookingId;
+  final bool bookingListReady;
   final String publicToken;
+  final String publicUrl;
   final String delivery;
   final bool deliveryProven;
   final bool testSend;
@@ -162,7 +166,12 @@ CompanyCustomerQuote parseCompanyCustomerQuote(Map<dynamic, dynamic> raw) {
     createdAt: quoteRaw['created_at']?.toString().trim() ?? '',
     updatedAt: quoteRaw['updated_at']?.toString().trim() ?? '',
     bookingId: quoteRaw['booking_id']?.toString().trim() ?? '',
+    bookingListReady: quoteRaw['booking_list_ready'] == true ||
+        raw['booking_list_ready'] == true,
     publicToken: quoteRaw['public_token']?.toString().trim() ?? '',
+    publicUrl: quoteRaw['public_url']?.toString().trim().isNotEmpty == true
+        ? quoteRaw['public_url'].toString().trim()
+        : raw['public_url']?.toString().trim() ?? '',
     delivery: quoteRaw['delivery']?.toString().trim().isNotEmpty == true
         ? quoteRaw['delivery'].toString().trim()
         : raw['delivery']?.toString().trim() ?? '',

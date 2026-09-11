@@ -1,4 +1,9 @@
+import 'package:flutter/foundation.dart';
+
 enum AppLanguage { nl, en, fr, es, de }
+
+final ValueNotifier<AppLanguage> appLanguageNotifier =
+    ValueNotifier<AppLanguage>(AppLanguage.en);
 
 class LocalizedText {
   final String nl;

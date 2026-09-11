@@ -16,6 +16,8 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 
+export 'package:fluxidi_tracking/app_strings.dart' show appLanguageNotifier;
+
 class CompanyIdentityConfig {
   final String companyName;
   final String appTitle;
@@ -2766,9 +2768,6 @@ String limousineServiceClassLabel(String? id, AppLanguage language) {
   if (option == null) return '';
   return option.labelFor(language);
 }
-
-final ValueNotifier<AppLanguage> appLanguageNotifier =
-    ValueNotifier<AppLanguage>(AppLanguage.en);
 
 const String kTenantId = 'fluxidi';
 const String kCompanyId = kTenantId;

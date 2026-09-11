@@ -1,14 +1,12 @@
 // COMPANY-CUSTOMER-OPS-P0
 
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
 
 const Key kCompanyCustomerQuotePageKey = Key('company_customer_quote_page');
 const Key kCompanyCustomerQuoteSaveKey = Key('company_customer_quote_save');
@@ -16,6 +14,10 @@ const Key kCompanyCustomerQuoteReviewKey = Key('company_customer_quote_review');
 const Key kCompanyCustomerQuoteSendKey = Key('company_customer_quote_send');
 const Key kCompanyCustomerQuotePriceKey = Key('company_customer_quote_price');
 const Key kCompanyCustomerQuoteEmailKey = Key('company_customer_quote_email');
+const Key kCompanyCustomerQuoteGuestLinkKey =
+    Key('company_customer_quote_guest_link');
+const Key kCompanyCustomerQuoteViewBookingKey =
+    Key('company_customer_quote_view_booking');
 
 class CompanyCustomerQuotePage extends StatefulWidget {
   const CompanyCustomerQuotePage({
@@ -25,6 +27,7 @@ class CompanyCustomerQuotePage extends StatefulWidget {
     this.existing,
     this.language,
     this.issuerName,
+    this.onOpenBooking,
   });
 
   final CompanyCustomersRepository repository;
@@ -32,6 +35,7 @@ class CompanyCustomerQuotePage extends StatefulWidget {
   final CompanyCustomerQuote? existing;
   final AppLanguage? language;
   final String? issuerName;
+  final void Function(String bookingId)? onOpenBooking;
 
   @override
   State<CompanyCustomerQuotePage> createState() =>
@@ -65,8 +69,6 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
   String get _issuer {
     final explicit = widget.issuerName?.trim() ?? '';
     if (explicit.isNotEmpty) return explicit;
-    final profile = companyProfileNotifier.value?.companyName.trim() ?? '';
-    if (profile.isNotEmpty) return profile;
     return widget.customer.companyId;
   }
 
@@ -231,6 +233,34 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
               Text(kCompanyCustomerQuoteSent.of(_lang)),
             if (_quote?.isAdapterAccepted == true)
               Text(kCompanyCustomerQuoteAdapterAccepted.of(_lang)),
+            if ((_quote?.publicUrl ?? '').isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(kCompanyCustomerQuoteGuestLink.of(_lang)),
+              SelectableText(
+                _quote!.publicUrl,
+                key: kCompanyCustomerQuoteGuestLinkKey,
+              ),
+            ],
+            if ((_quote?.bookingId ?? '').isNotEmpty) ...[
+              Text(
+                '${kCompanyCustomerQuoteBookingId.of(_lang)}: ${_quote!.bookingId}',
+              ),
+              if (_quote!.isAccepted && !_quote!.bookingListReady)
+                Text(kCompanyCustomerQuoteBookingNotListed.of(_lang)),
+              if (_quote!.isAccepted)
+                Text(kCompanyCustomerQuoteAssignmentPending.of(_lang)),
+              if (widget.onOpenBooking != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton(
+                    key: kCompanyCustomerQuoteViewBookingKey,
+                    onPressed: _busy
+                        ? null
+                        : () => widget.onOpenBooking!(_quote!.bookingId),
+                    child: Text(kCompanyCustomerQuoteViewBooking.of(_lang)),
+                  ),
+                ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 8),
               Text(_error!, maxLines: 4, overflow: TextOverflow.ellipsis),

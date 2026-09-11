@@ -1,7 +1,6 @@
 // COMPANY-CUSTOMER-OPS-P0A
 
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';

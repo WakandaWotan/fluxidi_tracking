@@ -3,12 +3,9 @@
 // Company-scoped customer repository. Uses only Worker-issued cursors and
 // never stores tokens.
 
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
-import 'package:fluxidi_tracking/company/company_customers_http.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
 
 typedef CompanyCustomerHeaders = Future<Map<String, String>> Function();
 typedef CompanyCustomerListTransport =
@@ -27,43 +24,30 @@ typedef CompanyCustomerSendTransport =
       String? idempotencyKey,
     });
 
-Map<String, String>? resolveCompanyCustomerScopeQuery() {
-  final profileId = companyProfileNotifier.value?.companyId.trim() ?? '';
-  final sessionId = activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-  if (profileId.isEmpty || sessionId.isEmpty || profileId != sessionId) {
-    return null;
-  }
-  return <String, String>{
-    'tenant_id': sessionId,
-    'company_id': sessionId,
-    'tenantId': sessionId,
-    'companyId': sessionId,
-  };
-}
-
-Future<Map<String, String>> resolveCompanyCustomerHeaders() async {
-  final auth = await resolveCompanyOwnerAuthHeaders();
-  return auth.headers;
-}
-
 class CompanyCustomersRepository {
   CompanyCustomersRepository({
-    CompanyCustomerListTransport? listTransport,
-    CompanyCustomerSendTransport? sendTransport,
+    required CompanyCustomerListTransport listTransport,
+    required CompanyCustomerSendTransport sendTransport,
     CompanyCustomerHeaders? headers,
     Map<String, String>? scopeQuery,
-  }) : _listTransport = listTransport ?? companyCustomersHttpGet,
-       _sendTransport = sendTransport ?? companyCustomersHttpSend,
-       _headers = headers ?? resolveCompanyCustomerHeaders,
-       _scopeQuery = scopeQuery;
+    Map<String, String>? Function()? scopeResolver,
+  }) : _listTransport = listTransport,
+       _sendTransport = sendTransport,
+       _headers = headers ?? _emptyHeaders,
+       _scopeQuery = scopeQuery,
+       _scopeResolver = scopeResolver;
 
   final CompanyCustomerListTransport _listTransport;
   final CompanyCustomerSendTransport _sendTransport;
   final CompanyCustomerHeaders _headers;
   final Map<String, String>? _scopeQuery;
+  final Map<String, String>? Function()? _scopeResolver;
+
+  static Future<Map<String, String>> _emptyHeaders() async =>
+      const <String, String>{};
 
   Map<String, String> _scope() {
-    final scope = _scopeQuery ?? resolveCompanyCustomerScopeQuery();
+    final scope = _scopeQuery ?? _scopeResolver?.call();
     if (scope == null || scope.isEmpty) {
       throw const CompanyCustomerException('missing_tenant_scope');
     }

@@ -27,6 +27,8 @@ Map<String, dynamic> _quoteJson({
   int? amountCents,
   String delivery = '',
   bool testSend = false,
+  String bookingId = '',
+  bool bookingListReady = false,
 }) {
   return <String, dynamic>{
     'ok': true,
@@ -52,6 +54,8 @@ Map<String, dynamic> _quoteJson({
       if (delivery.isNotEmpty) 'delivery': delivery,
       'delivery_proven': false,
       'test_send': testSend,
+      if (bookingId.isNotEmpty) 'booking_id': bookingId,
+      'booking_list_ready': bookingListReady,
     },
     if (delivery.isNotEmpty) 'delivery': delivery,
     'delivery_proven': false,
@@ -257,5 +261,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.sendCalls, 1);
     expect(find.text(kCompanyCustomerQuoteSent.of(AppLanguage.nl)), findsOneWidget);
+  });
+
+  testWidgets('accepted quote opens the existing booking from the quote page', (
+    tester,
+  ) async {
+    final repo = _FakeQuoteRepository();
+    var opened = '';
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyCustomerQuotePage(
+          repository: repo,
+          customer: _guest(),
+          language: AppLanguage.nl,
+          issuerName: 'Fluxidi Demo Cars',
+          onOpenBooking: (bookingId) => opened = bookingId,
+          existing: parseCompanyCustomerQuote(
+            _quoteJson(
+              state: 'accepted',
+              amountCents: 9500,
+              bookingId: 'cqb_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              bookingListReady: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text(kCompanyCustomerQuoteViewBooking.of(AppLanguage.nl)), findsOneWidget);
+    expect(
+      find.text(kCompanyCustomerQuoteAssignmentPending.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.byKey(kCompanyCustomerQuoteViewBookingKey));
+    await tester.tap(find.byKey(kCompanyCustomerQuoteViewBookingKey));
+    await tester.pump();
+    expect(opened, 'cqb_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   });
 }

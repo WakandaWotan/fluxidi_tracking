@@ -1,17 +1,20 @@
 // COMPANY-CUSTOMER-OPS-P0A
 
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_page.dart';
-import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_customers_repository_factory.dart'
+    if (dart.library.html) 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart'
+    as customer_ops_factory;
 
 const Key kCompanyCustomersPageKey = Key('company_customers_page');
 const Key kCompanyCustomersSearchFieldKey = Key('company_customers_search');
@@ -42,10 +45,20 @@ class CompanyCustomersPage extends StatefulWidget {
     super.key,
     this.repository,
     this.language,
+    this.issuerName,
+    this.sessionStore,
+    this.importPicker,
+    this.initialImportFile,
+    this.onOpenBooking,
   });
 
   final CompanyCustomersRepository? repository;
   final AppLanguage? language;
+  final String? issuerName;
+  final CompanyCustomerImportSessionStore? sessionStore;
+  final CompanyCustomerImportPicker? importPicker;
+  final CompanyCustomerImportPickedFile? initialImportFile;
+  final void Function(String bookingId)? onOpenBooking;
 
   @override
   State<CompanyCustomersPage> createState() => CompanyCustomersPageState();
@@ -75,7 +88,8 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
   @override
   void initState() {
     super.initState();
-    _repository = widget.repository ?? CompanyCustomersRepository();
+    _repository =
+        widget.repository ?? customer_ops_factory.createCompanyCustomersRepository();
     _reload();
   }
 
@@ -209,6 +223,8 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
           language: _lang,
           customer: _selected,
           repository: _repository,
+          issuerName: widget.issuerName,
+          onOpenBooking: widget.onOpenBooking,
           onEdit: () => _editCurrent(),
           onArchive: () => _archiveCurrent(),
           onRestore: () => _restoreCurrent(),
@@ -225,7 +241,10 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
         builder: (_) => CompanyCustomerImportPage(
           repository: _repository,
           language: _lang,
-          sessionStore: DirectoryCompanyCustomerImportSessionStore(),
+          picker: widget.importPicker,
+          initialFile: widget.initialImportFile,
+          sessionStore: widget.sessionStore ??
+              customer_ops_factory.createCompanyCustomerImportSessionStore(),
         ),
       ),
     );
@@ -572,6 +591,8 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
               language: _lang,
               customer: _selected!,
               repository: _repository,
+              issuerName: widget.issuerName,
+              onOpenBooking: widget.onOpenBooking,
               onEdit: _editCurrent,
               onArchive: _archiveCurrent,
               onRestore: _restoreCurrent,
@@ -673,6 +694,8 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
     required this.language,
     required this.customer,
     required this.repository,
+    this.issuerName,
+    this.onOpenBooking,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -682,6 +705,8 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
   final AppLanguage language;
   final CompanyCustomer? customer;
   final CompanyCustomersRepository repository;
+  final String? issuerName;
+  final void Function(String bookingId)? onOpenBooking;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -697,6 +722,8 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
               language: language,
               customer: customer!,
               repository: repository,
+              issuerName: issuerName,
+              onOpenBooking: onOpenBooking,
               onEdit: onEdit,
               onArchive: onArchive,
               onRestore: onRestore,
@@ -711,6 +738,8 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
     required this.language,
     required this.customer,
     required this.repository,
+    this.issuerName,
+    this.onOpenBooking,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -720,6 +749,8 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
   final AppLanguage language;
   final CompanyCustomer customer;
   final CompanyCustomersRepository repository;
+  final String? issuerName;
+  final void Function(String bookingId)? onOpenBooking;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -766,6 +797,8 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
           repository: repository,
           customer: customer,
           language: language,
+          issuerName: issuerName,
+          onOpenBooking: onOpenBooking,
         ),
         const SizedBox(height: 24),
         Wrap(
@@ -788,6 +821,8 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
                             repository: repository,
                             customer: customer,
                             language: language,
+                            issuerName: issuerName,
+                            onOpenBooking: onOpenBooking,
                           ),
                         ),
                       );
@@ -818,11 +853,15 @@ class _CompanyCustomerQuotesPanel extends StatefulWidget {
     required this.repository,
     required this.customer,
     required this.language,
+    this.issuerName,
+    this.onOpenBooking,
   });
 
   final CompanyCustomersRepository repository;
   final CompanyCustomer customer;
   final AppLanguage language;
+  final String? issuerName;
+  final void Function(String bookingId)? onOpenBooking;
 
   @override
   State<_CompanyCustomerQuotesPanel> createState() =>
@@ -872,6 +911,8 @@ class _CompanyCustomerQuotesPanelState
                     customer: widget.customer,
                     existing: quote,
                     language: widget.language,
+                    issuerName: widget.issuerName,
+                    onOpenBooking: widget.onOpenBooking,
                   ),
                 ),
               );

@@ -121,6 +121,20 @@ const LocalizedText kCompanyCustomerQuoteSendFailed = LocalizedText(
   es: 'El envío falló. El presupuesto sigue siendo un borrador.',
 );
 
+const LocalizedText kCompanyCustomerQuoteGuestLink = LocalizedText(
+  nl: 'Gastlink (lokale test)',
+  en: 'Guest link (local test)',
+  fr: 'Lien invité (test local)',
+  es: 'Enlace de invitado (prueba local)',
+);
+
+const LocalizedText kCompanyCustomerQuoteBookingId = LocalizedText(
+  nl: 'Boeking',
+  en: 'Booking',
+  fr: 'Réservation',
+  es: 'Reserva',
+);
+
 const LocalizedText kCompanyCustomerQuoteAdapterAccepted = LocalizedText(
   nl: 'Verzendadapter heeft de offerte aangenomen. Bezorging is niet bewezen.',
   en: 'The send adapter accepted the quote. Delivery is not proven.',
@@ -140,4 +154,25 @@ const LocalizedText kCompanyCustomerQuoteAccepted = LocalizedText(
   en: 'Accepted. No ride was started.',
   fr: 'Accepté. Aucune course n’a été démarrée.',
   es: 'Aceptado. No se inició ningún viaje.',
+);
+
+const LocalizedText kCompanyCustomerQuoteViewBooking = LocalizedText(
+  nl: 'Boeking bekijken',
+  en: 'View booking',
+  fr: 'Voir la réservation',
+  es: 'Ver reserva',
+);
+
+const LocalizedText kCompanyCustomerQuoteBookingNotListed = LocalizedText(
+  nl: 'De boeking is nog niet in het overzicht gezet. Accepteer opnieuw om de aansluiting te herstellen. Er is geen tweede boeking gemaakt.',
+  en: 'The booking is not in the overview yet. Accept again to restore the link. A second booking was not created.',
+  fr: 'La réservation n’est pas encore dans l’aperçu. Acceptez à nouveau pour rétablir le lien. Aucune seconde réservation n’a été créée.',
+  es: 'La reserva aún no está en el resumen. Acepte de nuevo para restablecer el enlace. No se creó una segunda reserva.',
+);
+
+const LocalizedText kCompanyCustomerQuoteAssignmentPending = LocalizedText(
+  nl: 'Chauffeur en voertuig moeten nog toegewezen worden.',
+  en: 'Driver and vehicle still need to be assigned.',
+  fr: 'Le chauffeur et le véhicule doivent encore être assignés.',
+  es: 'Aún hay que asignar conductor y vehículo.',
 );

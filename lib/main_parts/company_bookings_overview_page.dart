@@ -3196,6 +3196,34 @@ class _CompanyBookingsOverviewPageState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
+                if (item.passengerCount != null)
+                  Text(
+                    '${_t(nl: 'Passagiers', en: 'Passengers', fr: 'Passagers', es: 'Pasajeros')}: ${item.passengerCount}',
+                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                  ),
+                if (item.quoteId.trim().isNotEmpty)
+                  Text(
+                    '${_t(nl: 'Offerte', en: 'Quote', fr: 'Devis', es: 'Presupuesto')}: ${item.quoteId}',
+                    style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                if (item.quoteId.trim().isNotEmpty &&
+                    item.assignedDriverText == '—' &&
+                    item.assignedVehicleText == '—')
+                  Text(
+                    _t(
+                      nl: 'Chauffeur en voertuig moeten nog toegewezen worden',
+                      en: 'Driver and vehicle still need to be assigned',
+                      fr: 'Le chauffeur et le véhicule doivent encore être assignés',
+                      es: 'Aún hay que asignar conductor y vehículo',
+                    ),
+                    style: TextStyle(
+                      color: tokens.textSecondary,
+                      fontSize: 11.4,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 Text(
                   '${_t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor')}: ${item.assignedDriverText}',
                   style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),

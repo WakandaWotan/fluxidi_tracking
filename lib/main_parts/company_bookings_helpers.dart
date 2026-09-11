@@ -86,6 +86,8 @@ class _CompanyBookingOverviewItem {
   final bool companyConfirmationRequired;
   final String companyConfirmedAt;
   final Map<String, dynamic> pricingSnapshot;
+  final String quoteId;
+  final int? passengerCount;
   final _CompanyBookingsFilter bucket;
 
   const _CompanyBookingOverviewItem({
@@ -137,6 +139,8 @@ class _CompanyBookingOverviewItem {
     this.companyConfirmationRequired = false,
     this.companyConfirmedAt = '',
     this.pricingSnapshot = const <String, dynamic>{},
+    this.quoteId = '',
+    this.passengerCount,
     required this.bucket,
   });
 
@@ -1853,6 +1857,22 @@ class _CompanyBookingOverviewItem {
     if (snapshotRaw is Map) {
       pricingSnapshot = Map<String, dynamic>.from(snapshotRaw);
     }
+    final quoteId = _firstText(raw, const <String>[
+      'quote_id',
+      'quoteId',
+      'quote.quote_id',
+      'record.quote_id',
+      'record.quote.quote_id',
+      'booking.quote_id',
+    ]);
+    final passengerCount = _firstNum(raw, const <String>[
+      'pax',
+      'passengers',
+      'booking.pax',
+      'booking.passengers',
+      'record.pax',
+      'record.booking.pax',
+    ])?.round();
     final bucket = _bucketFromStatus(statusRaw: statusRaw);
     if (isOperationalLeg) {
       debugPrint(
@@ -1909,6 +1929,8 @@ class _CompanyBookingOverviewItem {
       companyConfirmationRequired: companyConfirmationRequired,
       companyConfirmedAt: companyConfirmedAt,
       pricingSnapshot: pricingSnapshot,
+      quoteId: quoteId,
+      passengerCount: passengerCount,
       bucket: bucket,
     );
   }
