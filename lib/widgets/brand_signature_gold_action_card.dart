@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_gold_assets.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/company/brand_signature_gold_windows_layout.dart';
 
 const BoxFit kBrandSignatureGoldIllustrationFit = BoxFit.contain;
 const EdgeInsets kBrandSignatureGoldActionCardPadding = EdgeInsets.fromLTRB(
@@ -106,6 +107,11 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
     this.contrastTextAgainstCard = false,
     this.rectangularLightCardIconShadow = false,
     this.phoneGoldIconBox = false,
+    this.padding,
+    this.iconExtent,
+    this.iconGap,
+    this.titleFontSize,
+    this.subtitleFontSize,
   });
 
   final String actionKey;
@@ -131,10 +137,22 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
   /// so transparent asset padding does not shrink the visible metal.
   final bool phoneGoldIconBox;
 
+  /// Windows Brand Signature Gold compact tiles only. Phone/tablet omit these
+  /// so the existing Expanded illustration path stays unchanged.
+  final EdgeInsets? padding;
+  final double? iconExtent;
+  final double? iconGap;
+  final double? titleFontSize;
+  final double? subtitleFontSize;
+
   @override
   Widget build(BuildContext context) {
     final assetKey = kBrandSignatureGoldActionAssetKeys[actionKey] ?? actionKey;
-    final icon = BrandSignatureGoldContainedIllustration(assetKey: assetKey);
+    final icon = BrandSignatureGoldContainedIllustration(
+      assetKey: assetKey,
+      width: iconExtent,
+      height: iconExtent,
+    );
     return ValueListenableBuilder<BrandSignaturePalette>(
       valueListenable: paletteListenable ?? brandSignaturePaletteNotifier,
       child: icon,
@@ -191,79 +209,114 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
                 ],
               ),
               child: Padding(
-                padding: kBrandSignatureGoldActionCardPadding,
+                padding: padding ?? kBrandSignatureGoldActionCardPadding,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: phoneGoldIconBox
-                          ? LayoutBuilder(
-                              builder: (context, constraints) {
-                                final box =
-                                    brandSignatureGoldPhoneActionIconExtent(
-                                      maxWidth: constraints.maxWidth,
-                                      maxHeight: constraints.maxHeight,
-                                    );
-                                final dpr =
-                                    MediaQuery.maybeDevicePixelRatioOf(
-                                      context,
-                                    ) ??
-                                    2.0;
-                                final decode = (box * dpr).round().clamp(
-                                  48,
-                                  256,
-                                );
-                                return Center(
-                                  child: SizedBox(
-                                    key:
-                                        kBrandSignatureGoldPhoneActionIconBoxKey,
-                                    width: box,
-                                    height: box,
-                                    child: ClipRect(
-                                      child: Transform.scale(
-                                        scale:
-                                            kBrandSignatureGoldChauffeurActionIconFill,
-                                        child:
-                                            BrandSignatureGoldContainedIllustration(
-                                              assetKey: assetKey,
-                                              width: box,
-                                              height: box,
-                                              cacheSize: decode,
-                                            ),
+                    if (iconExtent != null)
+                      SizedBox(
+                        width: double.infinity,
+                        height: iconExtent,
+                        child: Center(
+                          child: SizedBox(
+                            width: iconExtent,
+                            height: iconExtent,
+                            child: iconOnCard,
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(
+                        child: phoneGoldIconBox
+                            ? LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final box =
+                                      brandSignatureGoldPhoneActionIconExtent(
+                                        maxWidth: constraints.maxWidth,
+                                        maxHeight: constraints.maxHeight,
+                                      );
+                                  final dpr =
+                                      MediaQuery.maybeDevicePixelRatioOf(
+                                        context,
+                                      ) ??
+                                      2.0;
+                                  final decode = (box * dpr).round().clamp(
+                                    48,
+                                    256,
+                                  );
+                                  return Center(
+                                    child: SizedBox(
+                                      key:
+                                          kBrandSignatureGoldPhoneActionIconBoxKey,
+                                      width: box,
+                                      height: box,
+                                      child: ClipRect(
+                                        child: Transform.scale(
+                                          scale:
+                                              kBrandSignatureGoldChauffeurActionIconFill,
+                                          child:
+                                              BrandSignatureGoldContainedIllustration(
+                                                assetKey: assetKey,
+                                                width: box,
+                                                height: box,
+                                                cacheSize: decode,
+                                              ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                );
-                              },
-                            )
-                          : Center(child: iconOnCard),
+                                  );
+                                },
+                              )
+                            : Center(child: iconOnCard),
+                      ),
+                    SizedBox(
+                      height: iconGap ?? kBrandSignatureGoldActionIconGap,
                     ),
-                    const SizedBox(height: kBrandSignatureGoldActionIconGap),
                     Text(
                       title,
                       key: brandSignatureGoldActionTitleKey(actionKey),
                       maxLines: phoneGoldIconBox ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: titleColor,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                      ),
+                      style: _windowsCompactLabels
+                          ? _compactLabelStyle(
+                              color: titleColor,
+                              fontSize: titleFontSize ?? 14,
+                              fontWeight: FontWeight.w800,
+                            )
+                          : TextStyle(
+                              color: titleColor,
+                              fontWeight: FontWeight.w800,
+                              fontSize: titleFontSize ?? 14,
+                            ),
+                      strutStyle: _windowsCompactLabels
+                          ? _compactLabelStrut(titleFontSize ?? 14)
+                          : null,
                     ),
                     if (!phoneGoldIconBox ||
                         (isFuture ? (futureBadge ?? subtitle) : subtitle)
                             .trim()
                             .isNotEmpty) ...[
-                      const SizedBox(height: 2),
+                      const SizedBox(
+                        height: kBrandSignatureGoldWindowsSubtitleGap,
+                      ),
                       Text(
                         isFuture ? (futureBadge ?? subtitle) : subtitle,
-                        maxLines: 2,
+                        maxLines: _windowsCompactLabels ? 1 : 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: subtitleColor,
-                          fontSize: 11.4,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: _windowsCompactLabels
+                            ? _compactLabelStyle(
+                                color: subtitleColor,
+                                fontSize: subtitleFontSize ?? 11.4,
+                                fontWeight: FontWeight.w600,
+                              )
+                            : TextStyle(
+                                color: subtitleColor,
+                                fontSize: subtitleFontSize ?? 11.4,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        strutStyle: _windowsCompactLabels
+                            ? _compactLabelStrut(subtitleFontSize ?? 11.4)
+                            : null,
                       ),
                     ],
                     if (statusBadge != null && statusBadge!.trim().isNotEmpty)
@@ -285,6 +338,31 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  bool get _windowsCompactLabels => iconExtent != null;
+
+  TextStyle _compactLabelStyle({
+    required Color color,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    return TextStyle(
+      color: color,
+      fontWeight: fontWeight,
+      fontSize: fontSize,
+      height: kBrandSignatureGoldWindowsLabelLineHeight,
+      leadingDistribution: TextLeadingDistribution.even,
+    );
+  }
+
+  StrutStyle _compactLabelStrut(double fontSize) {
+    return StrutStyle(
+      fontSize: fontSize,
+      height: kBrandSignatureGoldWindowsLabelLineHeight,
+      forceStrutHeight: true,
+      leadingDistribution: TextLeadingDistribution.even,
     );
   }
 }

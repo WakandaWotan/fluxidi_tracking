@@ -139,7 +139,10 @@ class BrandSignaturePalette {
   BrandSignaturePalette copyWithColor(Color next) =>
       BrandSignaturePalette.fromColor(next);
 
-  Map<String, Object> toJson() => <String, Object>{'argb': base.value};
+  Map<String, Object> toJson() => <String, Object>{
+    'argb': base.value,
+    'hex': hex,
+  };
 
   static BrandSignaturePalette fromJson(Object? raw) {
     if (raw is Map) {

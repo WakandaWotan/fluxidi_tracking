@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business/business_dashboard_kpi_loading.dart';
 import 'package:fluxidi_tracking/company/company_subscription_profile_repository.dart';
@@ -569,7 +570,9 @@ class CompanySessionStore {
 
   Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
-    final d = Directory('${base.path}${Platform.pathSeparator}company_session');
+    final d = Directory(
+      '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName('company_session')}',
+    );
     if (!await d.exists()) await d.create(recursive: true);
     return d;
   }

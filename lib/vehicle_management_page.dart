@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_fleet_operational.dart';
+import 'package:fluxidi_tracking/company/vehicle_tier_dropdown.dart';
 import 'package:fluxidi_tracking/company/extra_vehicle_addon_purchase.dart';
 import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
 import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
@@ -3207,30 +3208,56 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                         ],
                       ),
                       const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: tierId,
-                        style: TextStyle(
-                          color: _textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        iconEnabledColor: _textPrimary,
-                        iconDisabledColor: _textMuted,
-                        isExpanded: true,
-                        items: appConfig.enabledTiers
-                            .map(
-                              (t) => DropdownMenuItem(
-                                value: t.id,
-                                child: Text(
-                                  t.labelFor(_lang),
-                                  style: TextStyle(color: _textPrimary),
-                                ),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setLocalState(() => tierId = v);
-                        },
+                      Builder(
+                        builder: (_) {
+                          final tierDropdown = buildVehicleTierDropdownModel(
+                            enabledTiers: appConfig.enabledTiers
+                                .map(
+                                  (t) => (
+                                    id: t.id,
+                                    label: t.labelFor(_lang),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            storedTierId: tierId,
+                            unknownTierLabel: (id) => id == '*'
+                                ? _t(
+                                    nl: 'Niet ingesteld (*)',
+                                    en: 'Unset (*)',
+                                    fr: 'Non défini (*)',
+                                    es: 'Sin definir (*)',
+                                  )
+                                : _t(
+                                    nl: 'Opgeslagen waarde ($id)',
+                                    en: 'Stored value ($id)',
+                                    fr: 'Valeur enregistrée ($id)',
+                                    es: 'Valor guardado ($id)',
+                                  ),
+                          );
+                          return DropdownButtonFormField<String>(
+                            value: tierDropdown.value,
+                            style: TextStyle(
+                              color: _textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            iconEnabledColor: _textPrimary,
+                            iconDisabledColor: _textMuted,
+                            isExpanded: true,
+                            items: tierDropdown.items
+                                .map(
+                                  (item) => DropdownMenuItem(
+                                    value: item.id,
+                                    child: Text(
+                                      item.label,
+                                      style: TextStyle(color: _textPrimary),
+                                    ),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            onChanged: (v) {
+                              if (v == null) return;
+                              setLocalState(() => tierId = v);
+                            },
                         decoration: InputDecoration(
                           labelText: _t(
                             nl: 'Categorie',
@@ -3261,6 +3288,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                           ),
                         ),
                         dropdownColor: _dropdownBg,
+                      );
+                        },
                       ),
                       const SizedBox(height: 8),
                       Container(

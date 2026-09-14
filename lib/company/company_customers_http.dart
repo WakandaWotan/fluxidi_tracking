@@ -9,8 +9,12 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company/auth_failure_kind.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_customers_http_classify.dart';
+import 'package:fluxidi_tracking/company/local_synthetic_company_session.dart';
 
 bool companyCustomerErrorLooksOffline(Object error) {
   if (error is TimeoutException || error is SocketException) return true;
@@ -30,17 +34,20 @@ Never throwCompanyCustomerHttpError(Object error) {
   );
 }
 
-Map<String, dynamic> decodeCompanyCustomerJson(List<int> bytes) {
-  dynamic decoded;
+Map<String, dynamic>? tryDecodeCompanyCustomerJson(List<int> bytes) {
   try {
-    decoded = jsonDecode(utf8.decode(bytes));
-  } catch (_) {
-    decoded = null;
-  }
-  if (decoded is! Map) {
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+  } catch (_) {}
+  return null;
+}
+
+Map<String, dynamic> decodeCompanyCustomerJson(List<int> bytes) {
+  final decoded = tryDecodeCompanyCustomerJson(bytes);
+  if (decoded == null) {
     throw const CompanyCustomerException('invalid_payload');
   }
-  return Map<String, dynamic>.from(decoded);
+  return decoded;
 }
 
 CompanyCustomerException exceptionFromCustomerPayload(
@@ -77,10 +84,29 @@ Future<Map<String, dynamic>> companyCustomersHttpGet({
     final res = await http
         .get(uri, headers: await headers())
         .timeout(const Duration(seconds: 12));
-    final decoded = decodeCompanyCustomerJson(res.bodyBytes);
+    final decoded = tryDecodeCompanyCustomerJson(res.bodyBytes);
+    final loopback = isLoopbackBookingBaseUrl(kBookingBaseUrl);
     if (res.statusCode != 200) {
-      throw exceptionFromCustomerPayload(decoded, res.statusCode);
+      final kind = classifyCompanyCustomerHttpFailure(
+        statusCode: res.statusCode,
+        path: path,
+        decoded: decoded,
+        loopbackHost: loopback,
+        jsonBody: decoded != null,
+      );
+      debugPrint(
+        '[COMPANY_CUSTOMERS][GET] host=${describePublicAuthHost(kBookingBaseUrl)} '
+        'path=$path status=${res.statusCode} kind=$kind',
+      );
+      throw CompanyCustomerException(kind);
     }
+    if (decoded == null) {
+      throw const CompanyCustomerException('invalid_payload');
+    }
+    debugPrint(
+      '[COMPANY_CUSTOMERS][GET] host=${describePublicAuthHost(kBookingBaseUrl)} '
+      'path=$path status=${res.statusCode} kind=ok',
+    );
     return decoded;
   } catch (error) {
     throwCompanyCustomerHttpError(error);
@@ -117,9 +143,26 @@ Future<Map<String, dynamic>> companyCustomersHttpSend({
       default:
         throw const CompanyCustomerException('method_not_allowed');
     }
-    final decoded = decodeCompanyCustomerJson(res.bodyBytes);
+    final decoded = tryDecodeCompanyCustomerJson(res.bodyBytes);
     if (res.statusCode != 200 && res.statusCode != 201) {
-      throw exceptionFromCustomerPayload(decoded, res.statusCode);
+      final kind = classifyCompanyCustomerHttpFailure(
+        statusCode: res.statusCode,
+        path: path,
+        decoded: decoded,
+        loopbackHost: isLoopbackBookingBaseUrl(kBookingBaseUrl),
+        jsonBody: decoded != null,
+      );
+      debugPrint(
+        '[COMPANY_CUSTOMERS][SEND] host=${describePublicAuthHost(kBookingBaseUrl)} '
+        'path=$path status=${res.statusCode} kind=$kind',
+      );
+      if (decoded != null) {
+        throw exceptionFromCustomerPayload(decoded, res.statusCode);
+      }
+      throw CompanyCustomerException(kind);
+    }
+    if (decoded == null) {
+      throw const CompanyCustomerException('invalid_payload');
     }
     return decoded;
   } catch (error) {

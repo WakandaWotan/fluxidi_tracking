@@ -140,6 +140,9 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
       addresses: [
         for (final address in _addresses) address.toAddress(),
       ],
+      preferences: CompanyCustomerPreferences(
+        preferredLocale: _locale.text,
+      ),
     );
   }
 
@@ -162,6 +165,8 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
             ? kCompanyCustomersInvalidEmail.of(_lang)
             : fields.containsKey('phone')
             ? kCompanyCustomersInvalidPhone.of(_lang)
+            : fields.containsKey('vat_number')
+            ? kCompanyCustomersInvalidVat.of(_lang)
             : kCompanyCustomersSaveFailed.of(_lang);
       });
       return;
@@ -400,7 +405,11 @@ class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: kCompanyCustomersVat.of(_lang),
+                          errorText: _fieldErrors['vat_number'] == null
+                              ? null
+                              : kCompanyCustomersInvalidVat.of(_lang),
                         ),
+                        onChanged: (_) => setState(() {}),
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -474,49 +483,67 @@ class _AddressDraft {
   _AddressDraft({
     this.addressId = '',
     this.type = 'other',
+    String label = '',
     String line1 = '',
+    String line2 = '',
     String city = '',
     String postalCode = '',
     String countryCode = '',
-  }) : line1 = TextEditingController(text: line1),
+    String notes = '',
+  }) : label = TextEditingController(text: label),
+       line1 = TextEditingController(text: line1),
+       line2 = TextEditingController(text: line2),
        city = TextEditingController(text: city),
        postalCode = TextEditingController(text: postalCode),
-       countryCode = TextEditingController(text: countryCode);
+       countryCode = TextEditingController(text: countryCode),
+       notes = TextEditingController(text: notes);
 
   factory _AddressDraft.fromAddress(CompanyCustomerAddress address) {
     return _AddressDraft(
       addressId: address.addressId,
       type: address.type,
+      label: address.label,
       line1: address.line1,
+      line2: address.line2,
       city: address.city,
       postalCode: address.postalCode,
       countryCode: address.countryCode,
+      notes: address.notes,
     );
   }
 
   final String addressId;
   String type;
+  final TextEditingController label;
   final TextEditingController line1;
+  final TextEditingController line2;
   final TextEditingController city;
   final TextEditingController postalCode;
   final TextEditingController countryCode;
+  final TextEditingController notes;
 
   CompanyCustomerAddress toAddress() {
     return CompanyCustomerAddress(
       addressId: addressId,
       type: type,
+      label: label.text,
       line1: line1.text,
+      line2: line2.text,
       city: city.text,
       postalCode: postalCode.text,
       countryCode: countryCode.text,
+      notes: notes.text,
     );
   }
 
   void dispose() {
+    label.dispose();
     line1.dispose();
+    line2.dispose();
     city.dispose();
     postalCode.dispose();
     countryCode.dispose();
+    notes.dispose();
   }
 }
 
@@ -544,13 +571,23 @@ class _AddressEditor extends StatelessWidget {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     initialValue: draft.type,
-                    decoration: const InputDecoration(labelText: 'Type'),
-                    items: const [
-                      DropdownMenuItem(value: 'home', child: Text('home')),
-                      DropdownMenuItem(value: 'work', child: Text('work')),
-                      DropdownMenuItem(value: 'pickup', child: Text('pickup')),
-                      DropdownMenuItem(value: 'billing', child: Text('billing')),
-                      DropdownMenuItem(value: 'other', child: Text('other')),
+                    decoration: InputDecoration(
+                      labelText: kCompanyCustomersAddressType.of(language),
+                    ),
+                    items: [
+                      for (final type in const [
+                        'home',
+                        'work',
+                        'pickup',
+                        'billing',
+                        'other',
+                      ])
+                        DropdownMenuItem(
+                          value: type,
+                          child: Text(
+                            companyCustomerAddressTypeLabel(type, language),
+                          ),
+                        ),
                     ],
                     onChanged: (value) {
                       if (value != null) draft.type = value;
@@ -563,18 +600,49 @@ class _AddressEditor extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.label,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLabel.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: draft.line1,
-              decoration: const InputDecoration(labelText: 'line1'),
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLine1.of(language),
+              ),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.line2,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLine2.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: draft.city,
-              decoration: const InputDecoration(labelText: 'city'),
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressCity.of(language),
+              ),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: draft.postalCode,
-              decoration: const InputDecoration(labelText: 'postal_code'),
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressPostal.of(language),
+              ),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.notes,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressNotes.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               isExpanded: true,
               initialValue: () {
@@ -585,7 +653,9 @@ class _AddressEditor extends StatelessWidget {
                 }
                 return '';
               }(),
-              decoration: const InputDecoration(labelText: 'country_code'),
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressCountry.of(language),
+              ),
               items: [
                 const DropdownMenuItem<String>(
                   value: '',

@@ -78,7 +78,10 @@ class _CompanySubscriptionStatusPageState
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Dit is het bestaande abonnementsprofiel. Checkout, extra voertuig kopen en Mollie-betalingen blijven de native facturatieketen en zijn hier niet gestart.',
+                    'Dit is het bestaande GET /company/subscription/profile. '
+                    'Checkout, extra voertuig kopen en Mollie blijven CompanySubscriptionBillingPage in de app-shell. '
+                    'Een read-only browserpagina vervangt die facturatie niet. '
+                    'Op Flutter Windows-desktop hoort dezelfde billing-pagina via main.dart te openen.',
                   ),
                 ],
               ),

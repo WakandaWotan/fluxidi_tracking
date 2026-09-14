@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_gold_l10n.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_cycle.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
@@ -20,6 +21,9 @@ Future<void> showBusinessThemeSelectorSheet(BuildContext context) async {
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+    ),
     builder: (sheetContext) => const BusinessThemeSelectorSheet(),
   );
   if (result == true) {
@@ -46,84 +50,112 @@ class BusinessThemeSelectorSheet extends StatelessWidget {
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
       builder: (context, current, _) {
-        final palette = paletteForBusinessTheme(current);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Material(
-              key: kBusinessThemeSelectorSheetKey,
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(20),
+        return ValueListenableBuilder<BrandSignaturePalette>(
+          valueListenable: brandSignaturePaletteNotifier,
+          builder: (context, _, __) {
+            final palette = paletteForBusinessTheme(current);
+            final goldSelected =
+                current == BusinessThemeVariant.brandSignatureGold;
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final mediaH = MediaQuery.sizeOf(context).height;
+                final cap = mediaH * 0.72;
+                final bounded = constraints.maxHeight.isFinite &&
+                    constraints.maxHeight > 0 &&
+                    constraints.maxHeight < double.infinity;
+                final sheetHeight = bounded
+                    ? (constraints.maxHeight < cap
+                        ? constraints.maxHeight
+                        : cap)
+                    : cap;
+                return SizedBox(
+                  height: sheetHeight,
+                  child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      businessThemeSelectorTitle(),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: MediaQuery.sizeOf(context).height * 0.72,
-                      ),
-                      child: ListView(
-                        shrinkWrap: true,
-                        children: [
-                          for (final variant in BusinessThemeVariant.values)
-                            _ThemePreviewTile(
-                              variant: variant,
-                              selected: variant == current,
-                              onTap: () => previewBusinessTheme(variant),
-                            ),
-                        ],
-                      ),
-                    ),
-                    if (current == BusinessThemeVariant.brandSignatureGold) ...[
-                      const SizedBox(height: 8),
-                      TextButton(
-                        key: kBrandSignatureCustomizeStyleKey,
-                        onPressed: () =>
-                            Navigator.of(context).pop('customize'),
-                        child: Text(brandSignatureCustomizeStyleLabel()),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Material(
+                  key: kBusinessThemeSelectorSheetKey,
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            key: kBusinessThemeSelectorCancelKey,
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: Text(businessThemeSelectorCancelLabel()),
+                        Text(
+                          businessThemeSelectorTitle(),
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(height: 12),
                         Expanded(
-                          child: FilledButton(
-                            key: kBusinessThemeSelectorApplyKey,
-                            onPressed: () async {
-                              await applyBusinessThemePreset(current);
-                              if (context.mounted) {
-                                Navigator.of(context).pop(true);
-                              }
-                            },
-                            child: Text(businessThemeSelectorApplyLabel()),
+                          child: ListView(
+                            children: [
+                              for (final variant
+                                  in BusinessThemeVariant.values)
+                                _ThemePreviewTile(
+                                  variant: variant,
+                                  selected: variant == current,
+                                  onTap: () => previewBusinessTheme(variant),
+                                ),
+                            ],
                           ),
                         ),
-                      ],
+                        if (goldSelected) ...[
+                              const SizedBox(height: 8),
+                              TextButton(
+                                key: kBrandSignatureCustomizeStyleKey,
+                                onPressed: () =>
+                                    Navigator.of(context).pop('customize'),
+                                child: Text(
+                                  brandSignatureCustomizeStyleLabel(),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    key: kBusinessThemeSelectorCancelKey,
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: Text(
+                                      businessThemeSelectorCancelLabel(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: FilledButton(
+                                    key: kBusinessThemeSelectorApplyKey,
+                                    onPressed: () async {
+                                      await applyBusinessThemePreset(current);
+                                      if (context.mounted) {
+                                        Navigator.of(context).pop(true);
+                                      }
+                                    },
+                                    child: Text(
+                                      businessThemeSelectorApplyLabel(),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-          ),
+                );
+              },
+            );
+          },
         );
       },
     );

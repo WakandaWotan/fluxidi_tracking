@@ -16,6 +16,9 @@ import 'package:fluxidi_tracking/business_settings_sticky_save.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_place.dart';
+import 'package:fluxidi_tracking/company/company_fixed_prices_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_business_setup.dart';
 import 'package:fluxidi_tracking/limousine/limousine_business_setup_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_business_setup_page.dart';
@@ -33,6 +36,7 @@ import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/limousine/limousine_taxi_qr_isolation.dart';
 import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/company/booking_host_failure_text.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
 import 'package:fluxidi_tracking/payment/mollie_capability_status.dart';
@@ -80,12 +84,14 @@ class _SetupItem {
     required this.subtitle,
     required this.icon,
     required this.status,
+    this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
   final _SetupStatus status;
+  final VoidCallback? onTap;
 }
 
 class BusinessSettingsPage extends StatefulWidget {
@@ -365,6 +371,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   final Map<String, GlobalKey> _sectionAnchorKeys = <String, GlobalKey>{
     'official_company_details': GlobalKey(),
     'billit_peppol': GlobalKey(),
+    'airport_fixed_fares': GlobalKey(),
   };
   String? _highlightedSectionId;
   static const List<String> _airportFixedFareDirections = <String>[
@@ -477,6 +484,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _border.withOpacity(_isDark ? (_isCorporateBlue ? 0.72 : 0.55) : 0.92);
   Color get _inputFocusColor =>
       _isCleanProfessional ? _accent : _accent.withOpacity(0.92);
+
+  String _saveFailureText(Object error) {
+    return '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}. ${bookingHostFailureUserText(error, _t)}';
+  }
 
   String _t({
     required String nl,
@@ -2162,8 +2173,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       return true;
     } catch (e) {
       if (!mounted) return false;
-      final msg =
-          '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e';
+      final msg = _saveFailureText(e);
       setState(() {
         _cancellationPolicyError = msg;
         _cancellationPolicyStatus = null;
@@ -6243,8 +6253,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       // Local cache stays intact (saved above); just surface the existing
       // error message so the UI behaviour remains the same as before.
       setState(
-        () => _backendProfilesError =
-            '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e',
+        () => _backendProfilesError = _saveFailureText(e),
       );
       return false;
     } finally {
@@ -6426,8 +6435,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       // Local cache stays intact (saved above); just surface the existing
       // error message so the UI behaviour remains the same as before.
       setState(
-        () => _backendProfilesError =
-            '${_t(nl: 'Opslaan mislukt', en: 'Save failed', fr: 'Echec de l enregistrement', es: 'Error al guardar')}: $e',
+        () => _backendProfilesError = _saveFailureText(e),
       );
       return false;
     } finally {
@@ -7608,8 +7616,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final scope = _activeSettingsScope();
     final vat = _activeVatConfig();
     final failedParts = <String>[];
-    final saveAirportRules =
-        _airportFixedFaresDirty && !_airportFixedFaresLoading;
+    const saveAirportRules = false;
     final cancellationCandidate = _cancellationPolicyProfileFromFormOrNull();
     if (cancellationCandidate == null) {
       final msg = _t(
@@ -8341,21 +8348,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           ),
         ],
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          setState(() {
-            if (isExpanded) {
-              _expandedSections.remove(id);
-            } else {
-              _expandedSections.add(id);
-            }
-          });
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedSections.remove(id);
+                } else {
+                  _expandedSections.add(id);
+                }
+              });
+            },
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
@@ -8433,6 +8440,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ],
             ),
+          ),
             AnimatedSize(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOut,
@@ -8452,8 +8460,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   Widget _notice(String text, {bool isError = false}) {
@@ -9981,252 +9988,42 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Widget _airportFixedFareCard() {
     return _collapsibleSettingsCard(
       id: 'airport_fixed_fares',
-      icon: Icons.flight_takeoff_outlined,
-      title: _t(
-        nl: 'Luchthaven vaste tarieven',
-        en: 'Airport fixed fares',
-        fr: 'Tarifs fixes aéroport',
-        es: 'Tarifas fijas aeropuerto',
-      ),
-      subtitle: _t(
-        nl: 'Bedrijfsregels per luchthaven',
-        en: 'Company rules per airport',
-        fr: 'Règles entreprise par aéroport',
-        es: 'Reglas de empresa por aeropuerto',
-      ),
+      icon: Icons.sell_outlined,
+      title: kCompanyFixedPricesTitle.of(_lang),
+      subtitle: kCompanyFixedPricesSectionSubtitle.of(_lang),
       status: _airportFixedFaresSetupStatus(),
+      anchorKey: _sectionAnchorKeys['airport_fixed_fares'],
+      highlighted: _highlightedSectionId == 'airport_fixed_fares',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_airportFixedFaresLoading) ...[
-            const LinearProgressIndicator(),
-            const SizedBox(height: 10),
-          ],
-          if (_airportFixedFaresError != null) ...[
-            _notice(_airportFixedFaresError!, isError: true),
-            const SizedBox(height: 8),
-          ],
-          if (_airportFixedFaresStatus != null) ...[
-            _notice(_airportFixedFaresStatus!),
-            const SizedBox(height: 8),
-          ],
-          if ((_airportFixedFaresUpdatedAt ?? '').isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Dernière mise à jour', es: 'Última actualización')}: ${_airportFixedFaresUpdatedAt ?? ''}',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.64),
-                  fontSize: 11,
-                ),
-              ),
+          ListTile(
+            key: kCompanyFixedPricesAirportEntryKey,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.flight_takeoff_outlined, color: _accent),
+            title: Text(kCompanyFixedPricesAirports.of(_lang)),
+            subtitle: Text(kCompanyFixedPricesAirportsSubtitle.of(_lang)),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: _textSecondary,
             ),
-          if (_airportFixedFareRules.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _t(
-                  nl: 'Nog geen vaste luchthaventarieven ingesteld.',
-                  en: 'No airport fixed fare rules configured yet.',
-                  fr: 'Aucune règle de tarif fixe aéroport configurée.',
-                  es: 'Aún no hay reglas de tarifa fija de aeropuerto configuradas.',
-                ),
-                style: TextStyle(color: _textSecondary),
-              ),
+            onTap: () => _openCompanyFixedPrices(
+              catalog: CompanyFixedPricesCatalog.airport,
             ),
-          ..._airportFixedFareRules.asMap().entries.map((entry) {
-            final index = entry.key;
-            final rule = entry.value;
-            final airportIata = _airportRuleText(rule['airport_iata']);
-            final airportName = _airportRuleText(rule['airport_name']);
-            final direction = _airportDirectionLabel(
-              _airportRuleText(rule['direction']),
-            );
-            final zoneType = _airportZoneTypeLabel(
-              _airportRuleText(rule['zone_type']),
-            );
-            final zoneValue = _airportRuleText(rule['zone_value']);
-            final isRadiusRule =
-                _airportRuleText(rule['zone_type']).toLowerCase() == 'radius';
-            final zoneLabel = _airportRuleText(rule['zone_label']);
-            final radiusKm = _airportRulePrice(rule['radius_km']);
-            final radiusLabel = radiusKm == null
-                ? '?'
-                : radiusKm.toStringAsFixed(radiusKm % 1 == 0 ? 0 : 1);
-            final tier = _airportTierLabel(_airportRuleText(rule['tier']));
-            final price = _airportRulePrice(rule['price_incl_vat']) ?? 0;
-            final currency = _airportRuleText(
-              rule['currency'],
-              fallback: 'EUR',
-            );
-            final enabled = _airportRuleBool(rule['enabled'], fallback: true);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0D0F12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white.withOpacity(0.12)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          airportName.isNotEmpty
-                              ? '$airportName ($airportIata) - € ${price.toStringAsFixed(2)} $currency'
-                              : '$airportIata - € ${price.toStringAsFixed(2)} $currency',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: enabled
-                              ? const Color(0xFF12331F)
-                              : const Color(0xFF3A1010),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          enabled
-                              ? _t(
-                                  nl: 'Actief',
-                                  en: 'Active',
-                                  fr: 'Actif',
-                                  es: 'Activo',
-                                )
-                              : _t(
-                                  nl: 'Inactief',
-                                  en: 'Inactive',
-                                  fr: 'Inactif',
-                                  es: 'Inactivo',
-                                ),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    isRadiusRule
-                        ? '$direction - $zoneType: $zoneLabel ($radiusLabel km) - $tier'
-                        : '$direction - $zoneType: $zoneValue - $tier',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.74),
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: _airportFixedFaresSaving
-                            ? null
-                            : () => _editAirportFixedFareRule(index: index),
-                        icon: const Icon(Icons.edit_outlined, size: 16),
-                        label: Text(
-                          _t(
-                            nl: 'Bewerken',
-                            en: 'Edit',
-                            fr: 'Modifier',
-                            es: 'Editar',
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _airportFixedFaresSaving
-                            ? null
-                            : () {
-                                setState(() {
-                                  _airportFixedFaresError = null;
-                                  _airportFixedFaresStatus = null;
-                                  _airportFixedFareRules.removeAt(index);
-                                  _airportFixedFaresDirty = true;
-                                });
-                              },
-                        icon: const Icon(Icons.delete_outline, size: 16),
-                        label: Text(
-                          _t(
-                            nl: 'Verwijderen',
-                            en: 'Delete',
-                            fr: 'Supprimer',
-                            es: 'Eliminar',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          }),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed:
-                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
-                    ? null
-                    : () => _editAirportFixedFareRule(),
-                icon: const Icon(Icons.add),
-                label: Text(
-                  _t(
-                    nl: 'Regel toevoegen',
-                    en: 'Add rule',
-                    fr: 'Ajouter une règle',
-                    es: 'Agregar regla',
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed:
-                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
-                    ? null
-                    : () => _loadAirportFixedFareRules(showErrorSnack: true),
-                icon: const Icon(Icons.refresh),
-                label: Text(
-                  _t(
-                    nl: 'Vernieuwen',
-                    en: 'Refresh',
-                    fr: 'Actualiser',
-                    es: 'Actualizar',
-                  ),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed:
-                    (_airportFixedFaresLoading || _airportFixedFaresSaving)
-                    ? null
-                    : _saveAirportFixedFareRules,
-                icon: _airportFixedFaresSaving
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: Text(
-                  _t(
-                    nl: 'Regels opslaan',
-                    en: 'Save rules',
-                    fr: 'Enregistrer les règles',
-                    es: 'Guardar reglas',
-                  ),
-                ),
-              ),
-            ],
+          ),
+          ListTile(
+            key: kCompanyFixedPricesCityEntryKey,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.location_city_outlined, color: _accent),
+            title: Text(kCompanyFixedPricesCities.of(_lang)),
+            subtitle: Text(kCompanyFixedPricesCitiesSubtitle.of(_lang)),
+            trailing: Icon(
+              Icons.chevron_right_rounded,
+              color: _textSecondary,
+            ),
+            onTap: () => _openCompanyFixedPrices(
+              catalog: CompanyFixedPricesCatalog.city,
+            ),
           ),
         ],
       ),
@@ -10898,6 +10695,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         status: _pricingStatus(),
       ),
       _SetupItem(
+        title: kCompanyFixedPricesTitle.of(_lang),
+        subtitle: kCompanyFixedPricesSectionSubtitle.of(_lang),
+        icon: Icons.sell_outlined,
+        status: _SetupStatus.complete,
+        onTap: _openCompanyFixedPricesSection,
+      ),
+      _SetupItem(
         title: _t(
           nl: 'Annulatiebeleid',
           en: 'Cancellation policy',
@@ -10963,9 +10767,39 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  void _openCompanyFixedPricesSection() {
+    setState(() {
+      _expandedSections.add('airport_fixed_fares');
+      _highlightedSectionId = 'airport_fixed_fares';
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scrollToSection('airport_fixed_fares');
+    });
+    Future<void>.delayed(const Duration(milliseconds: 2200), () {
+      if (!mounted) return;
+      if (_highlightedSectionId == 'airport_fixed_fares') {
+        setState(() => _highlightedSectionId = null);
+      }
+    });
+  }
+
+  void _openCompanyFixedPrices({
+    required CompanyFixedPricesCatalog catalog,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CompanyFixedPricesPage(
+          language: _lang,
+          catalog: catalog,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSetupItemCard(_SetupItem item, {required double width}) {
     final statusColor = _statusColor(item.status);
-    return Container(
+    final card = Container(
       width: width,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -11015,6 +10849,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             style: TextStyle(color: _textMuted, fontSize: 11.2, height: 1.25),
           ),
         ],
+      ),
+    );
+    if (item.onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: item.onTap,
+        child: card,
       ),
     );
   }

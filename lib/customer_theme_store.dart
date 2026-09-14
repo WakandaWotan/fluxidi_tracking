@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'customer_theme_palette.dart';
@@ -18,7 +19,7 @@ const String _customerThemeFileName = 'customer_theme_v1.json';
 Future<File> _customerThemeFile() async {
   final base = await getApplicationDocumentsDirectory();
   final root = Directory(
-    '${base.path}${Platform.pathSeparator}$_customerThemeStateDirName',
+    '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName(_customerThemeStateDirName)}',
   );
   if (!await root.exists()) {
     await root.create(recursive: true);

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/company/auth_failure_kind.dart';
+import 'package:fluxidi_tracking/company/local_synthetic_company_session.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 
@@ -65,6 +67,106 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
     return '+${digits.substring(0, 2)}******${digits.substring(digits.length - 3)}';
   }
 
+  bool get _loopbackAuthHost =>
+      isLoopbackBookingBaseUrl(appConfig.bookingBaseUrl);
+
+  String _customerAuthErrorText(AuthFailureKind kind, {required bool verify}) {
+    switch (kind) {
+      case AuthFailureKind.wrongEnvironment:
+        return _t(
+          nl: 'Dit nummer hoort niet bij de lokale debug-Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Gebruik een synthetisch lokaal nummer of een productie-build.',
+          en: 'This number is not on the local debug Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Use a synthetic local number or a production build.',
+          fr: 'Ce numéro n’est pas sur le Worker local (${describePublicAuthHost(appConfig.bookingBaseUrl)}).',
+          es: 'Este número no está en el Worker local (${describePublicAuthHost(appConfig.bookingBaseUrl)}).',
+        );
+      case AuthFailureKind.localWorkerUnreachable:
+        return _t(
+          nl: 'De lokale Worker is niet bereikbaar. Start eerst de Worker op ${describePublicAuthHost(appConfig.bookingBaseUrl)}.',
+          en: 'The local Worker is unreachable. Start the Worker on ${describePublicAuthHost(appConfig.bookingBaseUrl)} first.',
+          fr: 'Le Worker local est injoignable. Démarrez le Worker sur ${describePublicAuthHost(appConfig.bookingBaseUrl)}.',
+          es: 'El Worker local no responde. Arranca el Worker en ${describePublicAuthHost(appConfig.bookingBaseUrl)}.',
+        );
+      case AuthFailureKind.networkError:
+        return _t(
+          nl: 'Geen verbinding met de aanmeldserver. Controleer het netwerk.',
+          en: 'No connection to the sign-in server. Check the network.',
+          fr: 'Pas de connexion au serveur. Vérifiez le réseau.',
+          es: 'Sin conexión con el servidor. Comprueba la red.',
+        );
+      case AuthFailureKind.localSmsUnavailable:
+        return _t(
+          nl: 'Deze omgeving kan geen sms versturen. Op de lokale Worker moet de debug-OTP aan staan.',
+          en: 'This environment cannot send SMS. The local Worker must enable debug OTP.',
+          fr: 'Cet environnement ne peut pas envoyer de SMS. Le Worker local doit activer l’OTP de debug.',
+          es: 'Este entorno no puede enviar SMS. El Worker local debe activar el OTP de debug.',
+        );
+      case AuthFailureKind.smsNotConfigured:
+        return _t(
+          nl: 'Sms versturen is tijdelijk niet beschikbaar. Probeer e-mail of later opnieuw.',
+          en: 'SMS sending is temporarily unavailable. Try email or try again later.',
+          fr: 'L’envoi de SMS est temporairement indisponible. Essayez l’e-mail ou réessayez plus tard.',
+          es: 'El envío de SMS no está disponible ahora. Prueba el correo o inténtalo más tarde.',
+        );
+      case AuthFailureKind.unsupportedPhoneRegion:
+        return _t(
+          nl: 'Dit landnummer wordt hier niet ondersteund.',
+          en: 'This country code is not supported here.',
+          fr: 'Cet indicatif n’est pas pris en charge ici.',
+          es: 'Este prefijo no está admitido aquí.',
+        );
+      case AuthFailureKind.rateLimited:
+        return _t(
+          nl: 'Te veel pogingen. Wacht even en probeer opnieuw.',
+          en: 'Too many attempts. Wait a moment and try again.',
+          fr: 'Trop de tentatives. Attendez un instant et réessayez.',
+          es: 'Demasiados intentos. Espera un momento e inténtalo de nuevo.',
+        );
+      case AuthFailureKind.invalidPhone:
+        return _t(
+          nl: 'Gebruik internationaal formaat, bijvoorbeeld +32469788891.',
+          en: 'Use international format, for example +32469788891.',
+          fr: 'Utilisez le format international, par exemple +32469788891.',
+          es: 'Usa formato internacional, por ejemplo +32469788891.',
+        );
+      case AuthFailureKind.emailNotLinked:
+        if (_loopbackAuthHost) {
+          return _t(
+            nl: 'Voor dit nummer is lokaal geen e-mail gekoppeld. Gebruik op deze debug-Worker “Code verzenden”: de sms-OTP verschijnt hier in het scherm. Echte productie-e-mail hoort niet bij 127.0.0.1:8788.',
+            en: 'No email is linked for this number on the local Worker. Use “Send code” on this debug Worker: the SMS OTP appears on this screen. Real production email does not belong on 127.0.0.1:8788.',
+            fr: 'Aucun e-mail n’est lié à ce numéro sur le Worker local. Utilisez « Envoyer le code » : l’OTP s’affiche ici. L’e-mail de production n’appartient pas à 127.0.0.1:8788.',
+            es: 'No hay correo vinculado a este número en el Worker local. Usa «Enviar código»: el OTP aparece aquí. El correo de producción no pertenece a 127.0.0.1:8788.',
+          );
+        }
+        return _t(
+          nl: 'Aan dit nummer is geen e-mail gekoppeld. Gebruik sms of koppel eerst een e-mail in je klantprofiel.',
+          en: 'No email is linked to this number. Use SMS or add an email in your customer profile first.',
+          fr: 'Aucun e-mail n’est lié à ce numéro. Utilisez le SMS ou ajoutez d’abord un e-mail dans votre profil client.',
+          es: 'Este número no tiene correo vinculado. Usa SMS o añade primero un correo en tu perfil de cliente.',
+        );
+      case AuthFailureKind.verificationFailed:
+        return _t(
+          nl: 'De code klopt niet of is verlopen. Vraag een nieuwe code.',
+          en: 'The code is incorrect or expired. Request a new code.',
+          fr: 'Le code est incorrect ou expiré. Demandez un nouveau code.',
+          es: 'El código es incorrecto o ha caducado. Solicita uno nuevo.',
+        );
+      default:
+        return verify
+            ? _t(
+                nl: 'Inloggen mislukt. Controleer code en probeer opnieuw.',
+                en: 'Login failed. Check the code and try again.',
+                fr: 'Connexion échouée. Vérifiez le code et réessayez.',
+                es: 'Inicio de sesión fallido. Verifica el código e inténtalo de nuevo.',
+              )
+            : _t(
+                nl: 'Code verzenden mislukt. Probeer opnieuw.',
+                en: 'Sending code failed. Please try again.',
+                fr: "L'envoi du code a échoué. Réessayez.",
+                es: 'No se pudo enviar el código. Inténtalo de nuevo.',
+              );
+    }
+  }
+
   Future<void> _start() async {
     if (_busy) return;
     final rawPhoneInput = _phoneCtrl.text;
@@ -121,16 +223,15 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       if (debugOtp.isNotEmpty) {
         debugPrint('[CUSTOMER_PHONE_LOGIN][DEBUG_OTP_VISIBLE] shown=true');
       }
-    } catch (_) {
+    } catch (err) {
       if (!mounted) return;
+      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
+      debugPrint(
+        '[CUSTOMER_PHONE_LOGIN][START_FAIL] kind=${authFailureCode(kind)} host=${describePublicAuthHost(appConfig.bookingBaseUrl)}',
+      );
       setState(() {
         _busy = false;
-        _error = _t(
-          nl: 'Code verzenden mislukt. Probeer opnieuw.',
-          en: 'Sending code failed. Please try again.',
-          fr: "L'envoi du code a échoué. Réessayez.",
-          es: 'No se pudo enviar el código. Inténtalo de nuevo.',
-        );
+        _error = _customerAuthErrorText(kind, verify: false);
       });
     }
   }
@@ -249,22 +350,13 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       });
     } catch (err) {
       if (!mounted) return;
-      final reason = err.toString().toLowerCase();
+      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
+      debugPrint(
+        '[CUSTOMER_EMAIL_LOGIN][START_FAIL] kind=${authFailureCode(kind)} host=${describePublicAuthHost(appConfig.bookingBaseUrl)}',
+      );
       setState(() {
         _busy = false;
-        _error = reason.contains('email_not_linked')
-            ? _t(
-                nl: 'Voor dit gsm-nummer is nog geen gekoppeld e-mailadres bevestigd.',
-                en: 'No linked email is verified for this phone number yet.',
-                fr: "Aucun e-mail lié n'est encore vérifié pour ce numéro.",
-                es: 'Aún no hay correo vinculado verificado para este número.',
-              )
-            : _t(
-                nl: 'E-mailcode verzenden mislukt. Probeer opnieuw.',
-                en: 'Sending email code failed. Please try again.',
-                fr: "L'envoi du code e-mail a échoué. Réessayez.",
-                es: 'No se pudo enviar el código por correo. Inténtalo de nuevo.',
-              );
+        _error = _customerAuthErrorText(kind, verify: false);
       });
     }
   }
@@ -328,19 +420,15 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       );
       if (!mounted) return;
       Navigator.of(context).pop<CustomerSession>(session);
-    } catch (_) {
+    } catch (err) {
       if (!mounted) return;
+      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
       debugPrint(
-        '[CUSTOMER_PHONE_LOGIN][VERIFY_FAIL] phone=${_maskPhoneForLog(phone)}',
+        '[CUSTOMER_PHONE_LOGIN][VERIFY_FAIL] phone=${_maskPhoneForLog(phone)} kind=${authFailureCode(kind)}',
       );
       setState(() {
         _busy = false;
-        _error = _t(
-          nl: 'Inloggen mislukt. Controleer code en probeer opnieuw.',
-          en: 'Login failed. Check the code and try again.',
-          fr: 'Connexion échouée. Vérifiez le code et réessayez.',
-          es: 'Inicio de sesión fallido. Verifica el código e inténtalo de nuevo.',
-        );
+        _error = _customerAuthErrorText(kind, verify: true);
       });
     }
   }
@@ -409,6 +497,30 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
                       ),
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.82),
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _loopbackAuthHost
+                          ? _t(
+                              nl: 'Lokale debug-Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Echte klantaccounts horen hier niet.',
+                              en: 'Local debug Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Real customer accounts do not belong here.',
+                              fr: 'Worker de debug local (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Les vrais comptes clients n’ont pas leur place ici.',
+                              es: 'Worker local de debug (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Las cuentas reales no pertenecen aquí.',
+                            )
+                          : _t(
+                              nl: 'Productie-aanmeldserver (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Je ontvangt een echte sms- of e-mailcode.',
+                              en: 'Production sign-in server (${describePublicAuthHost(appConfig.bookingBaseUrl)}). You will receive a real SMS or email code.',
+                              fr: 'Serveur de connexion production (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Vous recevrez un vrai code SMS ou e-mail.',
+                              es: 'Servidor de acceso de producción (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Recibirás un código real por SMS o correo.',
+                            ),
+                      style: TextStyle(
+                        color: _loopbackAuthHost
+                            ? const Color(0xFFE5B641)
+                            : Colors.white.withOpacity(0.72),
+                        fontSize: 12.2,
+                        fontWeight: FontWeight.w600,
                         height: 1.3,
                       ),
                     ),

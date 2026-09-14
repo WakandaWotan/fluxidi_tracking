@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 
 const String kCompanyAdminDriverViewLinkMethod = 'company_admin_driver_view';
 const String kStandaloneDriverLinkMethod = 'standalone_driver';
@@ -508,7 +509,7 @@ class DriverSessionStore {
   Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory(
-      '${base.path}${Platform.pathSeparator}driver_session',
+      '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName('driver_session')}',
     );
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;

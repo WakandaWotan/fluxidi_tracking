@@ -56,6 +56,9 @@ class AirportPage extends StatefulWidget {
     this.initialPickupLabel,
     this.initialPickupLatitude,
     this.initialPickupLongitude,
+    this.initialAirportIata,
+    this.initialToAirport,
+    this.initialDestinationAddress,
     this.allowPartnerChange = false,
     this.onChangePartnerRequested,
     this.allowAdminScopeFallback = false,
@@ -71,6 +74,9 @@ class AirportPage extends StatefulWidget {
   final String? initialPickupLabel;
   final double? initialPickupLatitude;
   final double? initialPickupLongitude;
+  final String? initialAirportIata;
+  final bool? initialToAirport;
+  final String? initialDestinationAddress;
   final bool allowPartnerChange;
   final AirportPartnerSelectionCallback? onChangePartnerRequested;
   final bool allowAdminScopeFallback;
@@ -493,6 +499,15 @@ class _AirportPageState extends State<AirportPage> {
     _selectedCompanyCode = _safeText(widget.selectedCompanyCode);
     _selectedCompanyName = _safeText(widget.selectedCompanyName);
     _selectedPartnerId = _safeText(widget.selectedPartnerId);
+    final requestedIata = _safeText(widget.initialAirportIata).toUpperCase();
+    if (requestedIata.isNotEmpty) {
+      for (final airport in _catalogAirports) {
+        if (airport.iata.trim().toUpperCase() != requestedIata) continue;
+        _selectedCountryCode = airport.countryCode;
+        _selectedAirportId = airport.id;
+        break;
+      }
+    }
     if (_filteredAirports.every(
       (airport) => airport.id != _selectedAirportId,
     )) {
@@ -514,11 +529,28 @@ class _AirportPageState extends State<AirportPage> {
       }
       _pickupPostcode = _extractLikelyPostcode(effectivePickupText);
     }
+    final requestedToAirport = widget.initialToAirport;
+    if (requestedToAirport != null) {
+      _selectedMode = requestedToAirport
+          ? _TransferMode.toAirport
+          : _TransferMode.fromAirport;
+    }
+    final destinationPrefill = _safeText(widget.initialDestinationAddress);
+    if (destinationPrefill.isNotEmpty) {
+      _destinationAddressController.text = destinationPrefill;
+      _destinationPostcode = _extractLikelyPostcode(destinationPrefill);
+    }
     _pickupAddressController.addListener(_handleSummaryInputChanged);
     _destinationAddressController.addListener(_handleSummaryInputChanged);
     _pickupDateTimeController.addListener(_handleSummaryInputChanged);
     _landingDateTimeController.addListener(_handleSummaryInputChanged);
     _flightNumberController.addListener(_handleSummaryInputChanged);
+    _flightDepartDateTimeController.addListener(_handleSummaryInputChanged);
+    _fromAirportPickupDateTimeController.addListener(
+      _handleSummaryInputChanged,
+    );
+    _returnFlightNumberController.addListener(_handleSummaryInputChanged);
+    _returnFlightDateTimeController.addListener(_handleSummaryInputChanged);
     _noteController.addListener(_handleSummaryInputChanged);
     _nameBoardController.addListener(_handleSummaryInputChanged);
   }
@@ -536,6 +568,15 @@ class _AirportPageState extends State<AirportPage> {
   final TextEditingController _returnAddressController =
       TextEditingController();
   final TextEditingController _flightNumberController = TextEditingController();
+  final TextEditingController _flightDepartDateTimeController =
+      TextEditingController();
+  final TextEditingController _fromAirportPickupDateTimeController =
+      TextEditingController();
+  final TextEditingController _returnFlightNumberController =
+      TextEditingController();
+  final TextEditingController _returnFlightDateTimeController =
+      TextEditingController();
+  String _pickupArrangement = 'scheduled';
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _nameBoardController = TextEditingController();
   late String _selectedTenantId;
@@ -565,6 +606,12 @@ class _AirportPageState extends State<AirportPage> {
     _pickupDateTimeController.removeListener(_handleSummaryInputChanged);
     _landingDateTimeController.removeListener(_handleSummaryInputChanged);
     _flightNumberController.removeListener(_handleSummaryInputChanged);
+    _flightDepartDateTimeController.removeListener(_handleSummaryInputChanged);
+    _fromAirportPickupDateTimeController.removeListener(
+      _handleSummaryInputChanged,
+    );
+    _returnFlightNumberController.removeListener(_handleSummaryInputChanged);
+    _returnFlightDateTimeController.removeListener(_handleSummaryInputChanged);
     _noteController.removeListener(_handleSummaryInputChanged);
     _nameBoardController.removeListener(_handleSummaryInputChanged);
     _pickupAddressController.dispose();
@@ -574,6 +621,10 @@ class _AirportPageState extends State<AirportPage> {
     _returnDateTimeController.dispose();
     _returnAddressController.dispose();
     _flightNumberController.dispose();
+    _flightDepartDateTimeController.dispose();
+    _fromAirportPickupDateTimeController.dispose();
+    _returnFlightNumberController.dispose();
+    _returnFlightDateTimeController.dispose();
     _noteController.dispose();
     _nameBoardController.dispose();
     super.dispose();
@@ -1117,6 +1168,57 @@ class _AirportPageState extends State<AirportPage> {
               ),
             ),
           ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourvluchtnummer (optioneel)',
+              en: 'Return flight number (optional)',
+              fr: 'Numéro de vol retour (optionnel)',
+              es: 'Número de vuelo de regreso (opcional)',
+            ),
+            controller: _returnFlightNumberController,
+            hint: _t(
+              nl: 'Bijv. SN205',
+              en: 'E.g. SN205',
+              fr: 'Ex. SN205',
+              es: 'Ej. SN205',
+            ),
+            icon: Icons.confirmation_number_outlined,
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourvlucht datum en tijd',
+              en: 'Return flight date and time',
+              fr: 'Date et heure du vol retour',
+              es: 'Fecha y hora del vuelo de regreso',
+            ),
+            controller: _returnFlightDateTimeController,
+            hint: _t(
+              nl: 'Bijv. 24/06/2026 - 20:40',
+              en: 'E.g. 24/06/2026 - 20:40',
+              fr: 'Ex. 24/06/2026 - 20:40',
+              es: 'Ej. 24/06/2026 - 20:40',
+            ),
+            icon: Icons.flight_land_rounded,
+            readOnly: true,
+            onTap: () => _pickAirportDateTime(_returnFlightDateTimeController),
+            suffixIcon: IconButton(
+              onPressed: () =>
+                  _pickAirportDateTime(_returnFlightDateTimeController),
+              tooltip: _t(
+                nl: 'Datum en tijd kiezen',
+                en: 'Choose date and time',
+                fr: "Choisir la date et l'heure",
+                es: 'Elegir fecha y hora',
+              ),
+              icon: Icon(
+                Icons.calendar_month_rounded,
+                color: _gold.withOpacity(0.92),
+                size: 18,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1397,6 +1499,71 @@ class _AirportPageState extends State<AirportPage> {
               ),
             ),
             const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Vluchtnummer (optioneel)',
+                en: 'Flight number (optional)',
+                fr: 'Numéro de vol (optionnel)',
+                es: 'Número de vuelo (opcional)',
+              ),
+              controller: _flightNumberController,
+              hint: _t(
+                nl: 'Bijv. SN204',
+                en: 'E.g. SN204',
+                fr: 'Ex. SN204',
+                es: 'Ej. SN204',
+              ),
+              icon: Icons.confirmation_number_outlined,
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Vertrekdatum en tijd van de vlucht',
+                en: 'Flight departure date and time',
+                fr: 'Date et heure de départ du vol',
+                es: 'Fecha y hora de salida del vuelo',
+              ),
+              controller: _flightDepartDateTimeController,
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 08:40',
+                en: 'E.g. 21/06/2026 - 08:40',
+                fr: 'Ex. 21/06/2026 - 08:40',
+                es: 'Ej. 21/06/2026 - 08:40',
+              ),
+              icon: Icons.flight_takeoff_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_flightDepartDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_flightDepartDateTimeController),
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Lokale tijd Europe/Brussels. Een vlucht kan op een andere kalenderdag aankomen. Landingstijd is geen ophaaltijd.',
+                en: 'Local time Europe/Brussels. A flight may arrive on another calendar day. Landing time is not pickup time.',
+                fr: 'Heure locale Europe/Brussels. Un vol peut arriver un autre jour. L’heure d’atterrissage n’est pas l’heure de prise en charge.',
+                es: 'Hora local Europe/Brussels. Un vuelo puede llegar otro día. La hora de aterrizaje no es la hora de recogida.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 10),
             _buildStepperRow(
               label: _t(
                 nl: 'Passagiers',
@@ -1565,6 +1732,98 @@ class _AirportPageState extends State<AirportPage> {
                 ),
               ),
             ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Lokale tijd Europe/Brussels. Landingstijd is geen ophaaltijd.',
+                en: 'Local time Europe/Brussels. Landing time is not pickup time.',
+                fr: 'Heure locale Europe/Brussels. L’heure d’atterrissage n’est pas l’heure de prise en charge.',
+                es: 'Hora local Europe/Brussels. La hora de aterrizaje no es la hora de recogida.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _pickupArrangement,
+              decoration: InputDecoration(
+                labelText: _t(
+                  nl: 'Ophaalregeling',
+                  en: 'Pickup arrangement',
+                  fr: 'Modalité de prise en charge',
+                  es: 'Acuerdo de recogida',
+                ),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'scheduled',
+                  child: Text(
+                    _t(
+                      nl: 'Aparte ophaaltijd',
+                      en: 'Separate pickup time',
+                      fr: 'Heure de prise en charge séparée',
+                      es: 'Hora de recogida aparte',
+                    ),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'after_landing',
+                  child: Text(
+                    _t(
+                      nl: 'Na landing (volgens bedrijfsregeling)',
+                      en: 'After landing (company arrangement)',
+                      fr: 'Après l’atterrissage (selon l’entreprise)',
+                      es: 'Tras el aterrizaje (según la empresa)',
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (next) {
+                _clearAirportQuote();
+                setState(() => _pickupArrangement = next ?? 'scheduled');
+              },
+            ),
+            if (_pickupArrangement == 'scheduled') ...[
+              const SizedBox(height: 10),
+              _buildTextField(
+                label: _t(
+                  nl: 'Ophaaldatum en tijd',
+                  en: 'Pickup date and time',
+                  fr: 'Date et heure de prise en charge',
+                  es: 'Fecha y hora de recogida',
+                ),
+                controller: _fromAirportPickupDateTimeController,
+                hint: _t(
+                  nl: 'Bijv. 21/06/2026 - 19:10',
+                  en: 'E.g. 21/06/2026 - 19:10',
+                  fr: 'Ex. 21/06/2026 - 19:10',
+                  es: 'Ej. 21/06/2026 - 19:10',
+                ),
+                icon: Icons.schedule_rounded,
+                readOnly: true,
+                onTap: () =>
+                    _pickAirportDateTime(_fromAirportPickupDateTimeController),
+                suffixIcon: IconButton(
+                  onPressed: () => _pickAirportDateTime(
+                    _fromAirportPickupDateTimeController,
+                  ),
+                  tooltip: _t(
+                    nl: 'Datum en tijd kiezen',
+                    en: 'Choose date and time',
+                    fr: "Choisir la date et l'heure",
+                    es: 'Elegir fecha y hora',
+                  ),
+                  icon: Icon(
+                    Icons.calendar_month_rounded,
+                    color: _gold.withOpacity(0.92),
+                    size: 18,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             _buildMeetAndGreetToggle(),
             if (_meetAndGreet) ...[
@@ -3045,6 +3304,15 @@ class _AirportPageState extends State<AirportPage> {
           es: 'Primero selecciona la fecha y hora de aterrizaje.',
         );
       }
+      if (_pickupArrangement == 'scheduled' &&
+          _fromAirportPickupDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies een aparte ophaaldatum en tijd. Landingstijd is geen ophaaltijd.',
+          en: 'Choose a separate pickup date and time. Landing time is not pickup time.',
+          fr: 'Choisissez une date et une heure de prise en charge séparées. L’atterrissage n’est pas la prise en charge.',
+          es: 'Elige una fecha y hora de recogida aparte. El aterrizaje no es la recogida.',
+        );
+      }
       if (_filteredAirports.isEmpty) {
         return _t(
           nl: 'Kies eerst een luchthaven.',
@@ -3153,7 +3421,10 @@ class _AirportPageState extends State<AirportPage> {
     final isToAirport = _selectedMode == _TransferMode.toAirport;
     final dateSource = isToAirport
         ? _pickupDateTimeController.text
-        : _landingDateTimeController.text;
+        : (_pickupArrangement == 'scheduled' &&
+                _fromAirportPickupDateTimeController.text.trim().isNotEmpty
+            ? _fromAirportPickupDateTimeController.text
+            : _landingDateTimeController.text);
     final parsedDate = _parseAirportDateTime(dateSource);
     if (parsedDate == null) {
       return null;
@@ -3190,6 +3461,14 @@ class _AirportPageState extends State<AirportPage> {
     }
     final note = _noteController.text.trim();
     final flightNumber = _flightNumberController.text.trim();
+    final flightAtSource = isToAirport
+        ? _flightDepartDateTimeController.text
+        : _landingDateTimeController.text;
+    final parsedFlightAt = _parseAirportDateTime(flightAtSource);
+    final returnFlightNumber = _returnFlightNumberController.text.trim();
+    final parsedReturnFlightAt = _parseAirportDateTime(
+      _returnFlightDateTimeController.text,
+    );
     final nameBoard = _nameBoardController.text.trim();
     const fixedFareTier = 'comfort';
     final direction = isToAirport ? 'to_airport' : 'from_airport';
@@ -3276,6 +3555,10 @@ class _AirportPageState extends State<AirportPage> {
       'airport_iata': selectedAirport.iata,
       'airport_name': selectedAirport.name,
       'airport_country': selectedAirport.countryName,
+      if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
+      if (parsedFlightAt != null) 'flight_at': _isoLikeLocal(parsedFlightAt),
+      'flight_timezone': 'Europe/Brussels',
+      'pickup_arrangement': isToAirport ? 'scheduled' : _pickupArrangement,
       if (hasDerivedZone) ...{
         'fixed_fare_zone_type': 'postcode',
         'fixedFareZoneType': 'postcode',
@@ -3338,6 +3621,9 @@ class _AirportPageState extends State<AirportPage> {
           'toPostcode': derivedPostcode,
         },
         if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
+        if (parsedFlightAt != null) 'flight_at': _isoLikeLocal(parsedFlightAt),
+        'flight_timezone': 'Europe/Brussels',
+        'pickup_arrangement': isToAirport ? 'scheduled' : _pickupArrangement,
         'meet_and_greet': _meetAndGreet,
         if (nameBoard.isNotEmpty) 'name_board': nameBoard,
       },
@@ -3356,6 +3642,11 @@ class _AirportPageState extends State<AirportPage> {
         'returnTime': _fmtTimeHm(parsedReturnDate),
         'return_pickup_iso': _isoLikeLocal(parsedReturnDate),
         'returnPickupIso': _isoLikeLocal(parsedReturnDate),
+        if (returnFlightNumber.isNotEmpty)
+          'return_flight_number': returnFlightNumber,
+        if (parsedReturnFlightAt != null)
+          'return_flight_at': _isoLikeLocal(parsedReturnFlightAt),
+        'return_airport_iata': selectedAirport.iata,
         if (returnPostcode.isNotEmpty) ...{
           'return_postcode': returnPostcode,
           'returnPostcode': returnPostcode,

@@ -3,6 +3,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'event_data_source.dart';
@@ -1287,16 +1288,20 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: mb.MapWidget(
-                    key: _mapWidgetKey,
-                    onMapCreated: _onMapCreated,
-                    textureView: true,
-                    styleUri: _isDarkTheme
-                        ? mb.MapboxStyles.DARK
-                        : mb.MapboxStyles.LIGHT,
-                    cameraOptions: mb.CameraOptions(
-                      center: _marketFallbackCenter(),
-                      zoom: 5.8,
+                  child: mapboxSurfaceOrUnsupported(
+                    unsupportedMessage:
+                        'De evenementenkaart ontbreekt op dit platform. De lijst blijft beschikbaar.',
+                    buildMap: () => mb.MapWidget(
+                      key: _mapWidgetKey,
+                      onMapCreated: _onMapCreated,
+                      textureView: true,
+                      styleUri: _isDarkTheme
+                          ? mb.MapboxStyles.DARK
+                          : mb.MapboxStyles.LIGHT,
+                      cameraOptions: mb.CameraOptions(
+                        center: _marketFallbackCenter(),
+                        zoom: 5.8,
+                      ),
                     ),
                   ),
                 ),

@@ -115,13 +115,13 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
         webFit: CompanyDashboardTileWebFit.blocked,
         blocker: LocalizedText(
           nl:
-              'Chiron opent ChironComplianceDashboardPage met native bestanden, sessieherstel en compliance-ketens uit de volledige app. Niet webcompatibel in deze aansluiting.',
+              'Chiron is ChironComplianceDashboardPage in de volledige app-shell. Een browser kan die pagina niet compileren (native bestanden, sessieherstel). Op Flutter Windows-desktop hoort dezelfde pagina via main.dart te openen, niet een vervangend scherm.',
           en:
-              'Chiron opens ChironComplianceDashboardPage with native files, session recovery and compliance chains from the full app. Not web-compatible in this integration.',
+              'Chiron is ChironComplianceDashboardPage in the full app shell. A browser cannot compile that page (native files, session recovery). Flutter Windows desktop should open the same page through main.dart, not a replacement screen.',
           fr:
-              'Chiron ouvre ChironComplianceDashboardPage avec fichiers natifs, reprise de session et chaînes de conformité de l’application complète. Pas compatible web dans cette intégration.',
+              'Chiron est ChironComplianceDashboardPage dans le shell complet. Un navigateur ne peut pas compiler cette page. Flutter Windows desktop doit ouvrir la même page via main.dart.',
           es:
-              'Chiron abre ChironComplianceDashboardPage con archivos nativos, recuperación de sesión y cadenas de cumplimiento de la app completa. No es compatible con web en esta integración.',
+              'Chiron es ChironComplianceDashboardPage en el shell completo. Un navegador no puede compilar esa página. Flutter Windows desktop debe abrir la misma página vía main.dart.',
         ),
       ),
       CompanyDashboardTileSpec(
@@ -157,13 +157,13 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
         webFit: CompanyDashboardTileWebFit.blocked,
         blocker: LocalizedText(
           nl:
-              'Chauffeur weergave is de rijcockpit: live kaart (Mapbox), gps, offline kaarten en navigatie. Een browser kan het administratieve chauffeursbeheer tonen, niet deze cockpit. Geen tweede cockpit.',
+              'Chauffeur weergave is de bestaande rijcockpit (Mapbox, gps, dart:io). De browser kan die cockpit niet compileren. mapbox_maps_flutter heeft geen Windows-plugin; op Flutter Windows-desktop is de app-shell wel de route, maar de kaart zelf vereist nog een platformadapter.',
           en:
-              'Driver view is the driving cockpit: live map (Mapbox), GPS, offline maps and navigation. A browser can show administrative driver management, not this cockpit. There is no second cockpit.',
+              'Driver view is the existing driving cockpit (Mapbox, GPS, dart:io). The browser cannot compile that cockpit. mapbox_maps_flutter has no Windows plugin; Flutter Windows desktop is still the app-shell route, but the map itself still needs a platform adapter.',
           fr:
-              'Vue chauffeur ouvre le cockpit chauffeur existant (Mapbox, geolocator, dart:io). Ce cockpit ne compile pas pour Flutter web. Il n’y a pas de second cockpit.',
+              'Vue chauffeur est le cockpit existant (Mapbox, GPS, dart:io). Le navigateur ne le compile pas. mapbox_maps_flutter n’a pas de plugin Windows.',
           es:
-              'Vista de conductor abre la cabina existente (Mapbox, geolocator, dart:io). Esa cabina no compila en Flutter web. No hay una segunda cabina.',
+              'Vista de conductor es la cabina existente (Mapbox, GPS, dart:io). El navegador no la compila. mapbox_maps_flutter no tiene plugin de Windows.',
         ),
       ),
       CompanyDashboardTileSpec(
@@ -183,13 +183,13 @@ const List<CompanyDashboardTileSpec> kCompanyDashboardTiles =
         webFit: CompanyDashboardTileWebFit.blocked,
         blocker: LocalizedText(
           nl:
-              'Vraagradar opent BusinessRegionalDemandPage (kaart/native vraagdata, part of de app-shell). Niet beschikbaar in deze webcompilatie.',
+              'Vraagradar is BusinessRegionalDemandPage in de app-shell (part of main.dart). Dat is een te onderzoeken compile-afhankelijkheid, geen productuitsluiting. De browser kan die unit niet laden; Flutter Windows-desktop via main.dart is de volledige route.',
           en:
-              'Demand radar opens BusinessRegionalDemandPage (map/native demand data, part of the app shell). Not available in this web compilation unit.',
+              'Demand radar is BusinessRegionalDemandPage in the app shell (part of main.dart). That is a compile dependency to investigate, not a product exclusion. The browser cannot load that unit; Flutter Windows desktop through main.dart is the full route.',
           fr:
-              'Radar demande ouvre BusinessRegionalDemandPage (carte/données natives, part du shell). Indisponible dans cette compilation web.',
+              'Radar demande est BusinessRegionalDemandPage (part de main.dart). Dépendance de compilation, pas une exclusion produit. Le navigateur ne charge pas cette unité.',
           es:
-              'Radar de demanda abre BusinessRegionalDemandPage (mapa/datos nativos, part del shell). No está disponible en esta compilación web.',
+              'Radar de demanda es BusinessRegionalDemandPage (part de main.dart). Dependencia de compilación, no exclusión de producto. El navegador no carga esa unidad.',
         ),
       ),
       CompanyDashboardTileSpec(

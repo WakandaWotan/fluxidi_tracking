@@ -267,6 +267,9 @@ CompanyCustomerImportTable parseCompanyCustomerVcard({
     'Address 2',
     'City 2',
     'Country 2',
+    'Postal code 2',
+    'Address type',
+    'Address type 2',
   ];
   final rows = <List<String>>[];
   final labels = <int>[];
@@ -331,6 +334,9 @@ CompanyCustomerImportTable parseCompanyCustomerVcard({
       secondAddress.line1,
       secondAddress.city,
       secondAddress.countryCode,
+      secondAddress.postalCode,
+      firstAddress.type,
+      secondAddress.type,
     ]);
     labels.add(i + 1);
   }

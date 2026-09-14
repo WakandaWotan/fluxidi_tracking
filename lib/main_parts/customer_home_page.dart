@@ -54,8 +54,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   Widget _customerLanguagePill({bool enforceMinTapTarget = false}) {
     final code = currentLanguageCode.toUpperCase();
     final pillVisual = Container(
-      height: 31,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      key: const ValueKey<String>('customer_home_language_pill'),
+      padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
       decoration: BoxDecoration(
         color: const Color(0xFF0E1524).withOpacity(0.9),
         borderRadius: BorderRadius.circular(999),
@@ -72,13 +72,15 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           const SizedBox(width: 5),
           Text(
             code,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.96),
+            style: const TextStyle(
+              inherit: false,
+              color: Color(0xF5FFFFFF),
               fontWeight: FontWeight.w800,
-              fontSize: 10.8,
+              fontSize: 11,
+              height: 1.0,
+              letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(width: 1),
           Icon(
             Icons.keyboard_arrow_down_rounded,
             size: 14,
@@ -92,6 +94,13 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
       color: const Color(0xFF111827),
       elevation: 8,
       padding: EdgeInsets.zero,
+      splashRadius: 22,
+      style: const ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        padding: WidgetStatePropertyAll<EdgeInsetsGeometry>(EdgeInsets.zero),
+        minimumSize: WidgetStatePropertyAll<Size>(Size.zero),
+      ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(color: kFluxidiYellow.withOpacity(0.35)),
@@ -103,9 +112,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
         PopupMenuItem(value: 'es', child: Text('🇪🇸 ES')),
       ],
       child: enforceMinTapTarget
-          ? SizedBox(
-              width: 44,
-              height: 44,
+          ? ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               child: Align(alignment: Alignment.topRight, child: pillVisual),
             )
           : pillVisual,
@@ -526,29 +534,24 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               ),
             ),
           ),
+          Positioned(
+            top: 9,
+            right: 16,
+            child: _customerLanguagePill(
+              enforceMinTapTarget: enforceLanguagePillTapTarget,
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 9, 16, 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Image.asset(
-                      _themePalette.isDark
-                          ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
-                          : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png',
-                      width: 166,
-                      fit: BoxFit.contain,
-                    ),
-                    const Spacer(),
-                    Align(
-                      alignment: Alignment.topRight,
-                      child: _customerLanguagePill(
-                        enforceMinTapTarget: enforceLanguagePillTapTarget,
-                      ),
-                    ),
-                  ],
+                Image.asset(
+                  _themePalette.isDark
+                      ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
+                      : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png',
+                  width: 166,
+                  fit: BoxFit.contain,
                 ),
                 const Spacer(),
                 Text(
@@ -810,7 +813,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   ),
                   maxLines: 2,
                   softWrap: true,
-                  overflow: TextOverflow.fade,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 6),
@@ -1244,6 +1247,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             ),
             BottomNavigationBarItem(
               icon: const Icon(
+                key: Key('customer_home_taxis_nav'),
                 Icons.directions_car_outlined,
                 size: navIconSize,
               ),

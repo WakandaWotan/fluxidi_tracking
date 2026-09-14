@@ -1,5 +1,6 @@
 // COMPANY-CUSTOMER-OPS-P0
 
+import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 
 const LocalizedText kCompanyCustomerQuoteCreate = LocalizedText(
@@ -14,6 +15,76 @@ const LocalizedText kCompanyCustomerQuoteTitle = LocalizedText(
   en: 'Quote',
   fr: 'Devis',
   es: 'Presupuesto',
+);
+
+const LocalizedText kCompanyCustomerQuotesTitle = LocalizedText(
+  nl: 'Offertes',
+  en: 'Quotes',
+  fr: 'Devis',
+  es: 'Presupuestos',
+);
+
+const LocalizedText kCompanyCustomerQuoteStateDraft = LocalizedText(
+  nl: 'Concept',
+  en: 'Draft',
+  fr: 'Brouillon',
+  es: 'Borrador',
+);
+
+const LocalizedText kCompanyCustomerQuoteStateSent = LocalizedText(
+  nl: 'Verzonden',
+  en: 'Sent',
+  fr: 'Envoyé',
+  es: 'Enviado',
+);
+
+const LocalizedText kCompanyCustomerQuoteStateAccepted = LocalizedText(
+  nl: 'Geaccepteerd',
+  en: 'Accepted',
+  fr: 'Accepté',
+  es: 'Aceptado',
+);
+
+const LocalizedText kCompanyCustomerQuoteDraftSaved = LocalizedText(
+  nl: 'Concept bewaard',
+  en: 'Draft saved',
+  fr: 'Brouillon enregistré',
+  es: 'Borrador guardado',
+);
+
+const LocalizedText kCompanyCustomerQuoteOpen = LocalizedText(
+  nl: 'Offerte openen',
+  en: 'Open quote',
+  fr: 'Ouvrir le devis',
+  es: 'Abrir presupuesto',
+);
+
+const LocalizedText kCompanyCustomerQuoteSendChannel = LocalizedText(
+  nl: 'Verzendkanaal',
+  en: 'Send channel',
+  fr: 'Canal d’envoi',
+  es: 'Canal de envío',
+);
+
+const LocalizedText kCompanyCustomerQuoteSendChannelEmail = LocalizedText(
+  nl: 'E-mail',
+  en: 'Email',
+  fr: 'E-mail',
+  es: 'Correo',
+);
+
+const LocalizedText kCompanyCustomerQuoteSendRecipient = LocalizedText(
+  nl: 'Ontvanger',
+  en: 'Recipient',
+  fr: 'Destinataire',
+  es: 'Destinatario',
+);
+
+const LocalizedText kCompanyCustomerQuotePhoneNotChannel = LocalizedText(
+  nl: 'Telefoon is een passagiersgegeven, geen verzendkanaal.',
+  en: 'Phone is a passenger field, not a send channel.',
+  fr: 'Le téléphone est une donnée passager, pas un canal d’envoi.',
+  es: 'El teléfono es un dato del pasajero, no un canal de envío.',
 );
 
 const LocalizedText kCompanyCustomerQuoteIssuer = LocalizedText(
@@ -59,10 +130,52 @@ const LocalizedText kCompanyCustomerQuoteDescription = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomerQuotePrice = LocalizedText(
-  nl: 'Prijs (bedrijfstarief)',
-  en: 'Price (company rate)',
-  fr: 'Prix (tarif entreprise)',
-  es: 'Precio (tarifa de empresa)',
+  nl: 'Offertebedrag',
+  en: 'Quote amount',
+  fr: 'Montant du devis',
+  es: 'Importe del presupuesto',
+);
+
+const LocalizedText kCompanyCustomerQuoteCurrency = LocalizedText(
+  nl: 'Valuta',
+  en: 'Currency',
+  fr: 'Devise',
+  es: 'Moneda',
+);
+
+const LocalizedText kCompanyCustomerQuoteIncluded = LocalizedText(
+  nl: 'Inbegrepen diensten',
+  en: 'Included services',
+  fr: 'Services inclus',
+  es: 'Servicios incluidos',
+);
+
+const LocalizedText kCompanyCustomerQuoteIncludedNone = LocalizedText(
+  nl: 'Geen extra ritopties gekozen.',
+  en: 'No extra ride options chosen.',
+  fr: 'Aucune option de trajet extra.',
+  es: 'No hay opciones extra.',
+);
+
+const LocalizedText kCompanyCustomerQuotePriceConditions = LocalizedText(
+  nl: 'Prijsvoorwaarden',
+  en: 'Price conditions',
+  fr: 'Conditions de prix',
+  es: 'Condiciones de precio',
+);
+
+const LocalizedText kCompanyCustomerQuoteViewRates = LocalizedText(
+  nl: 'Bedrijfstarieven bekijken',
+  en: 'View company rates',
+  fr: 'Voir les tarifs entreprise',
+  es: 'Ver tarifas de empresa',
+);
+
+const LocalizedText kCompanyCustomerQuoteRatesDisclaimer = LocalizedText(
+  nl: 'Dit zijn start-, kilometer-, minuut-, wacht- en bagagetarieven. Ze zijn geen vaste ritprijs en worden niet gebruikt om dit offertebedrag te berekenen. Ze gaan niet mee naar de klantofferte, e-mail of PDF.',
+  en: 'These are start, per-km, per-minute, waiting and bag rates. They are not a fixed ride price and are not used to calculate this quote amount. They are not added to the customer quote, email or PDF.',
+  fr: 'Ce sont des tarifs de prise en charge, au km, à la minute, d’attente et de bagages. Ce n’est pas un prix de trajet fixe et ils ne calculent pas ce devis. Ils n’apparaissent pas sur le devis client, l’e-mail ou le PDF.',
+  es: 'Estas son tarifas de salida, por km, por minuto, de espera y de equipaje. No son un precio fijo ni calculan este importe. No van al presupuesto, al correo ni al PDF.',
 );
 
 const LocalizedText kCompanyCustomerQuoteValidUntil = LocalizedText(
@@ -143,10 +256,10 @@ const LocalizedText kCompanyCustomerQuoteAdapterAccepted = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomerQuoteSent = LocalizedText(
-  nl: 'Offerte klaargezet voor lokale testverzending. Geen echte klantmail.',
-  en: 'Quote queued for local test delivery. No real customer email was sent.',
-  fr: 'Devis préparé pour un envoi de test local. Aucun e-mail client réel.',
-  es: 'Presupuesto preparado para envío de prueba local. No se envió correo real.',
+  nl: 'Testverzending — niet werkelijk verstuurd',
+  en: 'Test send — not actually delivered',
+  fr: 'Envoi de test — pas réellement envoyé',
+  es: 'Envío de prueba — no se envió de verdad',
 );
 
 const LocalizedText kCompanyCustomerQuoteAccepted = LocalizedText(
@@ -176,3 +289,308 @@ const LocalizedText kCompanyCustomerQuoteAssignmentPending = LocalizedText(
   fr: 'Le chauffeur et le véhicule doivent encore être assignés.',
   es: 'Aún hay que asignar conductor y vehículo.',
 );
+
+const LocalizedText kCompanyCustomerQuotePhone = LocalizedText(
+  nl: 'Telefoon passagier',
+  en: 'Passenger phone',
+  fr: 'Téléphone passager',
+  es: 'Teléfono del pasajero',
+);
+
+const LocalizedText kCompanyCustomerQuoteRideOptions = LocalizedText(
+  nl: 'Ritopties',
+  en: 'Ride options',
+  fr: 'Options de course',
+  es: 'Opciones del viaje',
+);
+
+const LocalizedText kCompanyCustomerQuoteService = LocalizedText(
+  nl: 'Dienst',
+  en: 'Service',
+  fr: 'Service',
+  es: 'Servicio',
+);
+
+const LocalizedText kCompanyCustomerQuoteTier = LocalizedText(
+  nl: 'Voertuigklasse',
+  en: 'Vehicle class',
+  fr: 'Classe de véhicule',
+  es: 'Clase de vehículo',
+);
+
+const LocalizedText kCompanyCustomerQuoteBags = LocalizedText(
+  nl: 'Bagage',
+  en: 'Bags',
+  fr: 'Bagages',
+  es: 'Equipaje',
+);
+
+const LocalizedText kCompanyCustomerQuoteWait = LocalizedText(
+  nl: 'Wachttijd (minuten)',
+  en: 'Waiting time (minutes)',
+  fr: 'Temps d’attente (minutes)',
+  es: 'Espera (minutos)',
+);
+
+const LocalizedText kCompanyCustomerQuoteFlight = LocalizedText(
+  nl: 'Vluchtnummer',
+  en: 'Flight number',
+  fr: 'Numéro de vol',
+  es: 'Número de vuelo',
+);
+
+const LocalizedText kCompanyCustomerQuoteAirportDirection = LocalizedText(
+  nl: 'Luchthavenrichting',
+  en: 'Airport direction',
+  fr: 'Sens aéroport',
+  es: 'Dirección aeropuerto',
+);
+
+const LocalizedText kCompanyCustomerQuoteFromAirport = LocalizedText(
+  nl: 'Vanaf de luchthaven',
+  en: 'From the airport',
+  fr: 'Depuis l’aéroport',
+  es: 'Desde el aeropuerto',
+);
+
+const LocalizedText kCompanyCustomerQuoteToAirport = LocalizedText(
+  nl: 'Naar de luchthaven',
+  en: 'To the airport',
+  fr: 'Vers l’aéroport',
+  es: 'Hacia el aeropuerto',
+);
+
+const LocalizedText kCompanyCustomerQuoteFlightAtOutbound = LocalizedText(
+  nl: 'Vertrekdatum en -tijd van de vlucht',
+  en: 'Flight departure date and time',
+  fr: 'Date et heure de départ du vol',
+  es: 'Fecha y hora de salida del vuelo',
+);
+
+const LocalizedText kCompanyCustomerQuoteFlightAtInbound = LocalizedText(
+  nl: 'Aankomstdatum en -tijd van de vlucht',
+  en: 'Flight arrival date and time',
+  fr: 'Date et heure d’arrivée du vol',
+  es: 'Fecha y hora de llegada del vuelo',
+);
+
+const LocalizedText kCompanyCustomerQuotePickupArrangement = LocalizedText(
+  nl: 'Ophaalregeling',
+  en: 'Pickup arrangement',
+  fr: 'Organisation de la prise en charge',
+  es: 'Organización de la recogida',
+);
+
+const LocalizedText kCompanyCustomerQuotePickupScheduled = LocalizedText(
+  nl: 'Afzonderlijke ophaaltijd',
+  en: 'Separate pickup time',
+  fr: 'Heure de prise en charge distincte',
+  es: 'Hora de recogida aparte',
+);
+
+const LocalizedText kCompanyCustomerQuotePickupAfterLanding = LocalizedText(
+  nl: 'Ophalen na landing (minuten)',
+  en: 'Pickup after landing (minutes)',
+  fr: 'Prise en charge après l’atterrissage (minutes)',
+  es: 'Recogida tras el aterrizaje (minutos)',
+);
+
+const LocalizedText kCompanyCustomerQuoteReturnAirport = LocalizedText(
+  nl: 'Retourluchthaven en vlucht',
+  en: 'Return airport and flight',
+  fr: 'Aéroport et vol retour',
+  es: 'Aeropuerto y vuelo de vuelta',
+);
+
+const LocalizedText kCompanyCustomerQuoteExtra = LocalizedText(
+  nl: 'Extra service',
+  en: 'Extra service',
+  fr: 'Service extra',
+  es: 'Servicio extra',
+);
+
+const LocalizedText kCompanyCustomerQuoteNotChosen = LocalizedText(
+  nl: 'Niet gekozen',
+  en: 'Not chosen',
+  fr: 'Non choisi',
+  es: 'No elegido',
+);
+
+const LocalizedText kCompanyCustomerQuoteVat = LocalizedText(
+  nl: 'Btw-behandeling',
+  en: 'VAT treatment',
+  fr: 'Traitement TVA',
+  es: 'Tratamiento de IVA',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatIncl = LocalizedText(
+  nl: 'Inclusief btw',
+  en: 'Including VAT',
+  fr: 'TVA comprise',
+  es: 'IVA incluido',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatExcl = LocalizedText(
+  nl: 'Exclusief btw',
+  en: 'Excluding VAT',
+  fr: 'TVA exclue',
+  es: 'IVA excluido',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatNone = LocalizedText(
+  nl: 'Geen btw',
+  en: 'No VAT',
+  fr: 'Pas de TVA',
+  es: 'Sin IVA',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatZero = LocalizedText(
+  nl: '0% btw',
+  en: '0% VAT',
+  fr: 'TVA 0 %',
+  es: 'IVA 0 %',
+);
+
+LocalizedText companyCustomerQuoteVatOption(String code) {
+  switch (code) {
+    case 'excl':
+      return kCompanyCustomerQuoteVatExcl;
+    case 'none':
+      return kCompanyCustomerQuoteVatNone;
+    case 'zero':
+      return kCompanyCustomerQuoteVatZero;
+    case 'incl':
+    default:
+      return kCompanyCustomerQuoteVatIncl;
+  }
+}
+
+const LocalizedText kCompanyCustomerQuotePublicDescriptionHint = LocalizedText(
+  nl: 'Deze tekst gaat mee op de offerte. Interne klantnotities worden hier niet ingevuld.',
+  en: 'This text goes on the quote. Internal customer notes are not copied here.',
+  fr: 'Ce texte figure sur le devis. Les notes internes client ne sont pas copiées.',
+  es: 'Este texto va en el presupuesto. Las notas internas no se copian.',
+);
+
+const LocalizedText kCompanyCustomerQuoteRateTitle = LocalizedText(
+  nl: 'Tarief',
+  en: 'Rate',
+  fr: 'Tarif',
+  es: 'Tarifa',
+);
+
+const LocalizedText kCompanyCustomerQuoteMeetAndGreet = LocalizedText(
+  nl: 'Meet-and-greet',
+  en: 'Meet and greet',
+  fr: 'Accueil personnalisé',
+  es: 'Recibimiento',
+);
+
+const LocalizedText kCompanyCustomerQuoteNameBoard = LocalizedText(
+  nl: 'Naambord',
+  en: 'Name board',
+  fr: 'Panneau nominatif',
+  es: 'Cartel con nombre',
+);
+
+const LocalizedText kCompanyCustomerQuoteAddressSuggested = LocalizedText(
+  nl: 'Uit voorstel',
+  en: 'From suggestion',
+  fr: 'Depuis une suggestion',
+  es: 'Desde una sugerencia',
+);
+
+const LocalizedText kCompanyCustomerQuoteAddressManual = LocalizedText(
+  nl: 'Handmatig adres',
+  en: 'Manual address',
+  fr: 'Adresse saisie',
+  es: 'Dirección manual',
+);
+
+const LocalizedText kCompanyCustomerQuoteAddressIncomplete = LocalizedText(
+  nl: 'Onvolledig adres',
+  en: 'Incomplete address',
+  fr: 'Adresse incomplète',
+  es: 'Dirección incompleta',
+);
+
+const LocalizedText kCompanyCustomerQuoteAddressRequired = LocalizedText(
+  nl: 'Voor verzending is een gekozen voorstel of een volledig handmatig adres nodig. Een concept mag een onvolledige bestemming houden.',
+  en: 'Sending needs a chosen suggestion or a complete manual address. A draft may keep an incomplete destination.',
+  fr: 'L’envoi exige une suggestion choisie ou une adresse manuelle complète. Un brouillon peut garder une destination incomplète.',
+  es: 'El envío necesita una sugerencia elegida o una dirección manual completa. El borrador puede guardar un destino incompleto.',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatPercent = LocalizedText(
+  nl: 'Btw',
+  en: 'VAT',
+  fr: 'TVA',
+  es: 'IVA',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatAmount = LocalizedText(
+  nl: 'Btw',
+  en: 'VAT',
+  fr: 'TVA',
+  es: 'IVA',
+);
+
+const LocalizedText kCompanyCustomerQuoteTotalIncl = LocalizedText(
+  nl: 'Totaal incl. btw',
+  en: 'Total incl. VAT',
+  fr: 'Total TTC',
+  es: 'Total IVA incl.',
+);
+
+const LocalizedText kCompanyCustomerQuoteAmountExcl = LocalizedText(
+  nl: 'Excl. btw',
+  en: 'Excl. VAT',
+  fr: 'Hors TVA',
+  es: 'IVA excl.',
+);
+
+const LocalizedText kCompanyCustomerQuoteVatRateMissing = LocalizedText(
+  nl: 'Btw-percentage ontbreekt. Er wordt geen totaal berekend.',
+  en: 'VAT percentage is missing. No total is calculated.',
+  fr: 'Le pourcentage de TVA manque. Aucun total n’est calculé.',
+  es: 'Falta el porcentaje de IVA. No se calcula un total.',
+);
+
+const LocalizedText kCompanyTripRouteAddress = LocalizedText(
+  nl: 'Adres → adres',
+  en: 'Address → address',
+  fr: 'Adresse → adresse',
+  es: 'Dirección → dirección',
+);
+
+const LocalizedText kCompanyTripRouteSwap = LocalizedText(
+  nl: 'Wissel vertrek en bestemming',
+  en: 'Swap origin and destination',
+  fr: 'Inverser départ et destination',
+  es: 'Invertir origen y destino',
+);
+
+const LocalizedText kCompanyAirportSearch = LocalizedText(
+  nl: 'Zoek luchthaven',
+  en: 'Search airport',
+  fr: 'Rechercher un aéroport',
+  es: 'Buscar aeropuerto',
+);
+
+const LocalizedText kCompanyAirportSearchHint = LocalizedText(
+  nl: 'Naam, plaats of luchthavencode',
+  en: 'Name, place or airport code',
+  fr: 'Nom, lieu ou code aéroport',
+  es: 'Nombre, lugar o código de aeropuerto',
+);
+
+const Key kCompanyTripRouteAddressKey = Key('company_trip_route_address');
+const Key kCompanyTripRouteToAirportKey = Key('company_trip_route_to_airport');
+const Key kCompanyTripRouteFromAirportKey = Key(
+  'company_trip_route_from_airport',
+);
+const Key kCompanyTripRouteSwapKey = Key('company_trip_route_swap');
+const Key kCompanyAirportSearchFieldKey = Key('company_airport_search_field');
+
+Key companyAirportSuggestionKey(String iata) =>
+    ValueKey<String>('company_airport_suggestion_${iata.trim().toUpperCase()}');

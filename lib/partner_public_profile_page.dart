@@ -14,6 +14,9 @@ import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'limousine/limousine_service_capability.dart';
+import 'nearby/public_fixed_prices.dart';
+import 'nearby/public_fixed_prices_page.dart';
+import 'nearby/stap3_flow_keys.dart';
 import 'nearby/public_partner_bookability.dart';
 import 'nearby/public_partner_identity.dart';
 import 'nearby/public_partner_market.dart';
@@ -364,6 +367,95 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           selectedCompanyCode: partnerId,
           selectedCompanyName: companyName,
           selectedPartnerId: partnerId,
+        ),
+      ),
+    );
+  }
+
+  /// A published fare carries an area, not a pin. Only a real coordinate is
+  /// worth prefilling; 0,0 would drop the customer in the ocean.
+  double? _usableCoordinate(double? value) {
+    if (value == null) return null;
+    if (value == 0) return null;
+    return value;
+  }
+
+  /// Opens the existing company-bound customer booking for one published fare.
+  /// The company, direction and destination travel along; the customer still
+  /// fills in the exact departure address, date and passengers.
+  void _openFixedPriceBooking(
+    PublicFixedPrice entry, {
+    required String companyName,
+  }) {
+    if (!_profileBookable) {
+      _showPartnerInactiveBookingMessage();
+      return;
+    }
+    final partnerId = widget.partnerId.trim();
+    if (partnerId.isEmpty) return;
+    if (entry.isAirport) {
+      final iata = entry.airportIata.isNotEmpty
+          ? entry.airportIata
+          : entry.origin.isAirport
+              ? entry.origin.airportIata
+              : entry.destination.airportIata;
+      final toAirport = entry.direction != 'from_airport';
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AirportPage(
+            bookingBaseUrl: kBookingBaseUrl,
+            selectedTenantId: partnerId,
+            selectedCompanyId: partnerId,
+            selectedCompanyCode: partnerId,
+            selectedCompanyName: companyName,
+            selectedPartnerId: partnerId,
+            initialAirportIata: iata,
+            initialToAirport: toAirport,
+            initialDestinationAddress: toAirport
+                ? null
+                : entry.destination.displayText,
+          ),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CalculatorPage(
+          bookingBaseUrl: kBookingBaseUrl,
+          mapboxToken: kMapboxToken,
+          persistToCustomerBookings: true,
+          onGoToStartPage: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: widget.customerHomeBuilder),
+              (route) => false,
+            );
+          },
+          publicPartnerId: partnerId,
+          publicPartnerName: companyName,
+          initialServiceId: 'passenger',
+          initialToAddress: entry.destination.displayText,
+          initialDestinationLabel: entry.destination.displayText,
+          initialToLat: _usableCoordinate(entry.destination.lat),
+          initialToLng: _usableCoordinate(entry.destination.lng),
+        ),
+      ),
+    );
+  }
+
+  void _openAllFixedPrices(
+    PublicFixedPriceCatalog catalog, {
+    required String companyName,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicFixedPricesAllPage(
+          companyName: companyName,
+          catalog: catalog,
+          onBook: (entry) {
+            Navigator.of(context).pop();
+            _openFixedPriceBooking(entry, companyName: companyName);
+          },
         ),
       ),
     );
@@ -860,6 +952,79 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           ),
           const SizedBox(height: 7),
           child,
+        ],
+      ),
+    );
+  }
+
+  Widget _fixedPricesSection(
+    PublicFixedPriceCatalog catalog, {
+    required String companyName,
+  }) {
+    final lang = appConfig.currentLanguage;
+    final palette = _themePalette;
+    final accent = _isDarkTheme ? _gold : _bronze;
+    final hasMore = catalog.airport.length > kPublicFixedPricesPreviewCount ||
+        catalog.city.length > kPublicFixedPricesPreviewCount;
+
+    List<Widget> group(String title, List<PublicFixedPrice> entries) {
+      if (entries.isEmpty) return const <Widget>[];
+      final shown = entries.take(kPublicFixedPricesPreviewCount);
+      return <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(top: 2, bottom: 7),
+          child: Text(
+            title,
+            style: TextStyle(
+              color: accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        for (final entry in shown)
+          PublicFixedPriceTile(
+            entry: entry,
+            language: lang,
+            palette: palette,
+            onBook: (value) =>
+                _openFixedPriceBooking(value, companyName: companyName),
+          ),
+      ];
+    }
+
+    return _section(
+      key: kPublicFixedPricesSectionKey,
+      kPublicFixedPricesTitle.of(lang),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            kPublicFixedPricesIntro.of(lang),
+            softWrap: true,
+            style: TextStyle(color: _textMuted, fontSize: 11.5),
+          ),
+          const SizedBox(height: 9),
+          ...group(kPublicFixedPricesAirports.of(lang), catalog.airport),
+          ...group(kPublicFixedPricesCities.of(lang), catalog.city),
+          if (hasMore)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: kPublicFixedPricesAllButtonKey,
+                onPressed: () =>
+                    _openAllFixedPrices(catalog, companyName: companyName),
+                icon: const Icon(Icons.list_alt_outlined, size: 16),
+                label: Text(
+                  '${kPublicFixedPricesAll.of(lang)} (${catalog.length})',
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: accent,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1402,6 +1567,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       p,
       fallback: widget.companyNameFallback,
     );
+    final fixedPrices = publicFixedPricesFromProfile(p);
     final tagline = _localizePublicDefaultTagline(
       _profileTextAny(p, const ['tagline']),
     );
@@ -1686,6 +1852,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                       ),
                     )
                   : ListView(
+                      key: kPartnerPublicProfileScrollKey,
+                      primary: true,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
                       children: [
                         if (heroPhotoUrl.isNotEmpty)
@@ -2532,6 +2700,11 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 ],
                               ],
                             ),
+                          ),
+                        if (!fixedPrices.isEmpty)
+                          _fixedPricesSection(
+                            fixedPrices,
+                            companyName: companyName,
                           ),
                         if (paymentMethods.isNotEmpty)
                           _section(

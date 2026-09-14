@@ -9,6 +9,14 @@ class ChauffeurLoginPage extends StatefulWidget {
   State<ChauffeurLoginPage> createState() => _ChauffeurLoginPageState();
 }
 
+class _BackendDriverLoginOutcome {
+  const _BackendDriverLoginOutcome.ok(this.login) : error = '';
+  const _BackendDriverLoginOutcome.fail(this.error) : login = null;
+
+  final _BackendDriverLoginResult? login;
+  final String error;
+}
+
 class _BackendDriverLoginResult {
   const _BackendDriverLoginResult({
     required this.tenantId,
@@ -269,57 +277,68 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       companyCode: enteredCompanyCode,
       driverCode: enteredDriverCode,
     );
-    if (backendLogin != null) {
+    if (backendLogin.login != null) {
+      final login = backendLogin.login!;
       if (widget.openedFromBusinessHome) {
         String? tokenExpiry;
-        if ((backendLogin.expiresInSeconds ?? 0) > 0) {
+        if ((login.expiresInSeconds ?? 0) > 0) {
           tokenExpiry = DateTime.now()
               .toUtc()
-              .add(Duration(seconds: backendLogin.expiresInSeconds!))
+              .add(Duration(seconds: login.expiresInSeconds!))
               .toIso8601String();
         }
         await _completeBusinessDriverViewLogin(
-          tenantId: backendLogin.tenantId,
-          companyId: backendLogin.companyId,
-          driverId: backendLogin.driverId,
-          employeeNumber: backendLogin.driverId,
-          fullName: backendLogin.driverName,
-          assignedVehicleId: backendLogin.assignedVehicleId,
-          driverPhotoUrl: backendLogin.driverPhotoUrl,
-          companyLogoUrl: backendLogin.companyLogoUrl,
-          vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
-          driverSessionToken: backendLogin.driverSessionToken,
+          tenantId: login.tenantId,
+          companyId: login.companyId,
+          driverId: login.driverId,
+          employeeNumber: login.driverId,
+          fullName: login.driverName,
+          assignedVehicleId: login.assignedVehicleId,
+          driverPhotoUrl: login.driverPhotoUrl,
+          companyLogoUrl: login.companyLogoUrl,
+          vehiclePhotoUrl: login.vehiclePhotoUrl,
+          driverSessionToken: login.driverSessionToken,
           driverSessionExpiresAtUtc: tokenExpiry,
         );
         return;
       }
       final resolvedBackendPhoto = _resolveStandaloneDriverPhotoForSave(
-        backendLogin.driverPhotoUrl,
+        login.driverPhotoUrl,
       );
       debugPrint(
-        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskLoginCode(backendLogin.driverId)} photo=${resolvedBackendPhoto == null ? 'missing' : 'present'} source=payload',
+        '[DRIVER_SESSION][STANDALONE_PHOTO] driver=${_maskLoginCode(login.driverId)} photo=${resolvedBackendPhoto == null ? 'missing' : 'present'} source=payload',
       );
       await DriverSessionStore.instance.saveBackendDriverLoginSession(
-        tenantId: backendLogin.tenantId,
-        companyId: backendLogin.companyId,
-        driverId: backendLogin.driverId,
-        driverName: backendLogin.driverName,
-        companyDisplayName: backendLogin.companyDisplayName,
+        tenantId: login.tenantId,
+        companyId: login.companyId,
+        driverId: login.driverId,
+        driverName: login.driverName,
+        companyDisplayName: login.companyDisplayName,
         employeeNumber: enteredDriverCode,
-        assignedVehicleId: backendLogin.assignedVehicleId,
+        assignedVehicleId: login.assignedVehicleId,
         driverPhotoUrl: resolvedBackendPhoto,
-        companyLogoUrl: backendLogin.companyLogoUrl,
-        vehiclePhotoUrl: backendLogin.vehiclePhotoUrl,
-        driverSessionToken: backendLogin.driverSessionToken,
-        expiresInSeconds: backendLogin.expiresInSeconds,
+        companyLogoUrl: login.companyLogoUrl,
+        vehiclePhotoUrl: login.vehiclePhotoUrl,
+        driverSessionToken: login.driverSessionToken,
+        expiresInSeconds: login.expiresInSeconds,
       );
       debugPrint(
-        '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(backendLogin.tenantId)} company=${_maskLoginCode(backendLogin.companyId)} driver=${_maskLoginCode(backendLogin.driverId)}',
+        '[DRIVER_LOGIN][BACKEND_SESSION_SAVE] tenant=${_maskLoginCode(login.tenantId)} company=${_maskLoginCode(login.companyId)} driver=${_maskLoginCode(login.driverId)}',
       );
       debugPrint(
-        '[DRIVER_LOGIN][OK] source=backend driver=${_maskLoginCode(backendLogin.driverId)}',
+        '[DRIVER_LOGIN][OK] source=backend driver=${_maskLoginCode(login.driverId)}',
       );
       await _openDriverHomeAfterLogin(fromBusiness: false);
+      return;
+    }
+    if (isLoopbackBookingBaseUrl(appConfig.bookingBaseUrl) ||
+        isLoopbackBookingBaseUrl(kBookingBaseUrl)) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _lookupError = _driverAuthErrorText(backendLogin.error);
+        });
+      }
       return;
     }
     debugPrint('[DRIVER_LOGIN][FALLBACK_LOCAL] reason=backend_failed');
@@ -412,14 +431,60 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     await _openDriverHomeAfterLogin(fromBusiness: false);
   }
 
-  Future<_BackendDriverLoginResult?> _loginDriverWithBackend({
+  String _driverAuthErrorText(String code) {
+    if (code == 'wrong_environment') {
+      return _t(
+        nl: 'Dit bedrijf staat niet op deze lokale debug-Worker (${describePublicAuthHost(kBookingBaseUrl)}). Gebruik een lokale chauffeurcode of een productie-build.',
+        en: 'This company is not on this local debug Worker (${describePublicAuthHost(kBookingBaseUrl)}). Use a local driver code or a production build.',
+        fr: 'Cette entreprise n’est pas sur ce Worker local (${describePublicAuthHost(kBookingBaseUrl)}).',
+        es: 'Esta empresa no está en este Worker local (${describePublicAuthHost(kBookingBaseUrl)}).',
+      );
+    }
+    if (code == 'local_worker_unreachable') {
+      return _t(
+        nl: 'De lokale Worker is niet bereikbaar. Start eerst de Worker op ${describePublicAuthHost(kBookingBaseUrl)}.',
+        en: 'The local Worker is unreachable. Start the Worker on ${describePublicAuthHost(kBookingBaseUrl)} first.',
+        fr: 'Le Worker local est injoignable.',
+        es: 'El Worker local no responde.',
+      );
+    }
+    if (code == 'network_error') {
+      return _t(
+        nl: 'Geen verbinding met de aanmeldserver. Controleer het netwerk.',
+        en: 'No connection to the sign-in server. Check the network.',
+        fr: 'Pas de connexion au serveur. Vérifiez le réseau.',
+        es: 'Sin conexión con el servidor. Comprueba la red.',
+      );
+    }
+    if (code == 'company_not_found') {
+      return _t(
+        nl: 'Bedrijf niet gevonden. Controleer de bedrijfscode.',
+        en: 'Company not found. Check the company ID.',
+        fr: 'Entreprise introuvable. Vérifiez le code entreprise.',
+        es: 'Empresa no encontrada. Comprueba el código de empresa.',
+      );
+    }
+    if (code == 'verification_failed') {
+      return _driverPairingInvalidText();
+    }
+    return _t(
+      nl: 'Chauffeurlogin mislukt. Controleer bedrijfscode en chauffeurcode.',
+      en: 'Driver login failed. Check the company ID and driver code.',
+      fr: 'Connexion chauffeur échouée. Vérifiez les codes.',
+      es: 'Inicio de conductor fallido. Comprueba los códigos.',
+    );
+  }
+
+  Future<_BackendDriverLoginOutcome> _loginDriverWithBackend({
     required String companyCode,
     required String driverCode,
   }) async {
     final normalizedCompanyCode = _normalizeCompanyCode(companyCode);
     final normalizedDriverCode = driverCode.trim();
+    final loopback = isLoopbackBookingBaseUrl(appConfig.bookingBaseUrl) ||
+        isLoopbackBookingBaseUrl(kBookingBaseUrl);
     if (normalizedCompanyCode.isEmpty || normalizedDriverCode.isEmpty) {
-      return null;
+      return const _BackendDriverLoginOutcome.fail('invalid_company_code');
     }
     debugPrint(
       '[DRIVER_LOGIN][BACKEND_REQ] company=${_maskLoginCode(normalizedCompanyCode)}',
@@ -513,25 +578,52 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
         debugPrint(
           '[DRIVER_LOGIN][BACKEND_OK] driver=${_maskLoginCode(driverId)}',
         );
-        return _BackendDriverLoginResult(
-          tenantId: tenantId,
-          companyId: companyId,
-          driverId: driverId,
-          driverName: driverName,
-          companyDisplayName: companyDisplayName,
-          assignedVehicleId: assignedVehicleId,
-          driverPhotoUrl: driverPhotoUrl,
-          companyLogoUrl: companyLogoUrl,
-          vehiclePhotoUrl: vehiclePhotoUrl,
-          driverSessionToken: driverSessionToken,
-          expiresInSeconds: expiresInSeconds,
+        return _BackendDriverLoginOutcome.ok(
+          _BackendDriverLoginResult(
+            tenantId: tenantId,
+            companyId: companyId,
+            driverId: driverId,
+            driverName: driverName,
+            companyDisplayName: companyDisplayName,
+            assignedVehicleId: assignedVehicleId,
+            driverPhotoUrl: driverPhotoUrl,
+            companyLogoUrl: companyLogoUrl,
+            vehiclePhotoUrl: vehiclePhotoUrl,
+            driverSessionToken: driverSessionToken,
+            expiresInSeconds: expiresInSeconds,
+          ),
         );
       }
-      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode}');
-      return null;
-    } catch (_) {
-      debugPrint('[DRIVER_LOGIN][BACKEND_FAIL] status=exception');
-      return null;
+      var companyResolvable = false;
+      if (loopback) {
+        try {
+          final resolveUri = Uri.parse(
+            '$kBookingBaseUrl/public/company/resolve?code=${Uri.encodeQueryComponent(normalizedCompanyCode)}',
+          );
+          final resolved = await http.get(resolveUri).timeout(
+            const Duration(seconds: 8),
+          );
+          companyResolvable = resolved.statusCode == 200;
+        } catch (_) {
+          companyResolvable = false;
+        }
+      }
+      final kind = classifyRemoteAuthFailure(
+        statusCode: response.statusCode,
+        error: (body['error'] ?? '').toString(),
+        loopbackHost: loopback,
+        companyResolvable: companyResolvable,
+      );
+      debugPrint(
+        '[DRIVER_LOGIN][BACKEND_FAIL] status=${response.statusCode} kind=${authFailureCode(kind)}',
+      );
+      return _BackendDriverLoginOutcome.fail(authFailureCode(kind));
+    } catch (err) {
+      final kind = classifyThrownAuthFailure(err, loopbackHost: loopback);
+      debugPrint(
+        '[DRIVER_LOGIN][BACKEND_FAIL] status=exception kind=${authFailureCode(kind)}',
+      );
+      return _BackendDriverLoginOutcome.fail(authFailureCode(kind));
     }
   }
 
@@ -1134,9 +1226,34 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
       if (response.statusCode == 200 && ok && role == 'driver') {
         return <String, dynamic>{'ok': true, 'payload': body};
       }
-      return <String, dynamic>{'ok': false};
-    } catch (_) {
-      return <String, dynamic>{'ok': false};
+      final loopback = isLoopbackBookingBaseUrl(kBookingBaseUrl);
+      var companyResolvable = false;
+      if (loopback) {
+        try {
+          final resolveUri = Uri.parse(
+            '$kBookingBaseUrl/public/company/resolve?code=${Uri.encodeQueryComponent(companyCode)}',
+          );
+          final resolved = await http.get(resolveUri).timeout(
+            const Duration(seconds: 8),
+          );
+          companyResolvable = resolved.statusCode == 200;
+        } catch (_) {
+          companyResolvable = false;
+        }
+      }
+      final kind = classifyRemoteAuthFailure(
+        statusCode: response.statusCode,
+        error: (body['error'] ?? '').toString(),
+        loopbackHost: loopback,
+        companyResolvable: companyResolvable,
+      );
+      return <String, dynamic>{'ok': false, 'error': authFailureCode(kind)};
+    } catch (err) {
+      final kind = classifyThrownAuthFailure(
+        err,
+        loopbackHost: isLoopbackBookingBaseUrl(kBookingBaseUrl),
+      );
+      return <String, dynamic>{'ok': false, 'error': authFailureCode(kind)};
     }
   }
 
@@ -1332,7 +1449,9 @@ class _ChauffeurLoginPageState extends State<ChauffeurLoginPage> {
     if (response['ok'] != true) {
       setState(() {
         _busy = false;
-        _lookupError = _driverPairingInvalidText();
+        _lookupError = _driverAuthErrorText(
+          (response['error'] ?? 'verification_failed').toString(),
+        );
       });
       return;
     }

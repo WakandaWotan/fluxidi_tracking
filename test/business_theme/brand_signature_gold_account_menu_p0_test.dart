@@ -325,7 +325,7 @@ void main() {
 
     test('Gold header reuses the same shared menu (compact), not a copy', () {
       expect(home.contains('accountMenu: _businessAccountMenuButton('), isTrue);
-      expect(home.contains('compact: true'), isTrue);
+      expect(home.contains('compact: !goldDesktopHeader'), isTrue);
     });
 
     test('primary company e-mail + identity come from the same state', () {

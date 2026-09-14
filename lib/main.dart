@@ -6,7 +6,13 @@ import 'dart:math' as math;
 import 'dart:ui' as ui show ImageByteFormat;
 
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb, kReleaseMode;
+    show
+        ValueListenable,
+        ValueNotifier,
+        defaultTargetPlatform,
+        kDebugMode,
+        kIsWeb,
+        kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
@@ -129,8 +135,20 @@ import 'package:fluxidi_tracking/company/booking_list_page_http.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_labels.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
-import 'package:fluxidi_tracking/company/company_customers_page.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
+import 'package:fluxidi_tracking/company/company_ops_api.dart';
+import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
+import 'package:fluxidi_tracking/company/brand_signature_gold_windows_layout.dart';
+import 'package:fluxidi_tracking/company/auth_failure_kind.dart';
+import 'package:fluxidi_tracking/company/local_synthetic_company_session.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
+import 'package:fluxidi_tracking/company/booking_host_failure_text.dart';
+import 'package:fluxidi_tracking/company/public_company_code.dart';
+import 'package:fluxidi_tracking/navigation/mapbox_platform_support.dart';
+import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:fluxidi_tracking/driver/trip_history_booking_detail_http.dart';
 import 'package:fluxidi_tracking/driver/trip_history_booking_detail_repository.dart';
 import 'package:fluxidi_tracking/payment/invoice_pdf_pending.dart';
@@ -2199,24 +2217,38 @@ Future<void> _prewarmLocalRideAssignmentForEntry(
   }
 }
 
+bool _nativeMapboxTokenBindSupported() {
+  final name = WidgetsBinding.instance.runtimeType.toString();
+  return !name.contains('TestWidgetsFlutterBinding') &&
+      !name.contains('IntegrationTest');
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   bindBookingListPageHttpTransport();
   bindBookingDocumentsPageHttpTransport();
   bindTripHistoryBookingDetailHttpTransport();
   assertFluxidiBookingEndpointGuards();
+  assertFluxidiRuntimeEnvGuards();
   _registerComplianceRegisterReceiptBridge();
   registerLocalRideAssignmentPrewarmHandler(
     _prewarmLocalRideAssignmentForEntry,
   );
   await loadBusinessThemePreference();
+  registerBusinessThemeBackendRemoteSync();
   await loadBusinessAppearancePreference();
+  await loadBusinessPublishedCustomerThemePreference();
   await loadBusinessHomeMobileLayoutPreference();
   await loadDriverHomeMobileLayoutPreference();
   await loadCompanyDriverViewThemePreference();
   await loadDriverAppThemePreference();
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
+  debugPrint(
+    '[AUTH_HOSTS] runtime=${fluxidiRuntimeKind.name} window=$kFluxidiWindowTitle booking=${describePublicAuthHost(kBookingBaseUrl)} tracking=${describePublicAuthHost(kWorkerBaseUrl)} nav=${describePublicAuthHost(kNavigationWorkerBaseUrl)}',
+  );
+  await discardMismatchedLocalSyntheticAuthSessions();
+  await tryBindLocalSyntheticCompanySession();
   if (kFluxidiE2eBuild) {
     final e2eReady = await tryFluxidiE2eAutoLogin();
     if (e2eReady) {
@@ -2308,8 +2340,12 @@ Future<void> main() async {
   if (kMapboxToken.trim().isEmpty) {
     // ignore: avoid_print
     print('⚠️ MAPBOX_TOKEN not set (using fallback routing).');
-  } else {
+  } else if (_nativeMapboxTokenBindSupported()) {
     mb.MapboxOptions.setAccessToken(kMapboxToken);
+  } else {
+    debugPrint(
+      '[MAPBOX] native setAccessToken skipped in widget/integration test; REST geocoding still uses MAPBOX_TOKEN',
+    );
   }
   // App-level Mollie return-to-app coordinator. Started here (not inside any
   // screen State) so deep links + lifecycle resume are handled regardless of
@@ -2555,7 +2591,7 @@ MaterialApp buildFluxidiRootMaterialApp({
 }) {
   return MaterialApp(
     debugShowCheckedModeBanner: false,
-    title: kAppTitle,
+    title: kFluxidiWindowTitle,
     theme: theme,
     // RELEASE-LANGUAGE-CONSISTENCY: Fluxidi app language wins over device.
     locale: resolveFluxidiAppLocale(),
@@ -2633,7 +2669,10 @@ class FluxidiDriverApp extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          textStyle: Typography.whiteMountainView.labelLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: Colors.black,
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -2643,7 +2682,10 @@ class FluxidiDriverApp extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          textStyle: Typography.whiteMountainView.labelLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
         ),
       ),
       snackBarTheme: const SnackBarThemeData(
@@ -2652,7 +2694,7 @@ class FluxidiDriverApp extends StatelessWidget {
     );
 
     final Widget startupTarget = _startInCompanyAdminHome
-        ? const BusinessHomePage()
+        ? const BusinessHomePage(key: Key('business_home_page'))
         : (_startInDriverHome
               ? const DriverHomePage()
               : const _CompanySessionRecoveryRoleEntryGate());
@@ -2665,7 +2707,9 @@ class FluxidiDriverApp extends StatelessWidget {
         theme: theme,
         home: FluxidiAppLockGatePage(
           target: startupTarget,
-          shouldGate: shouldGateStartupSession,
+          shouldGate:
+              shouldGateStartupSession &&
+              !shouldBindLocalSyntheticCompanySession(),
         ),
       ),
     );

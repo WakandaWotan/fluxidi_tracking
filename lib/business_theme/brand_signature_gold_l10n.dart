@@ -1,4 +1,3 @@
-import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 
 String brandSignatureGoldL10n({

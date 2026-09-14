@@ -1,6 +1,7 @@
 // COMPANY-CUSTOMER-OPS-P0B
 
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 
 const LocalizedText kCompanyCustomerImportTitle = LocalizedText(
   nl: 'Klanten importeren',
@@ -184,6 +185,13 @@ const LocalizedText kCompanyCustomerImportUnsupported = LocalizedText(
   es: 'Este formato o versión vCard no es compatible.',
 );
 
+const LocalizedText kCompanyCustomerImportSkippedColumns = LocalizedText(
+  nl: 'Deze kolommen worden niet geïmporteerd. Koppel ze of laat ze bewust overgeslagen.',
+  en: 'These columns will not be imported. Map them or leave them skipped on purpose.',
+  fr: 'Ces colonnes ne seront pas importées. Associez-les ou laissez-les ignorées.',
+  es: 'Estas columnas no se importarán. Asócialas o déjalas omitidas a propósito.',
+);
+
 const LocalizedText kCompanyCustomerImportSkipColumn = LocalizedText(
   nl: 'Overslaan',
   en: 'Skip',
@@ -225,3 +233,205 @@ const LocalizedText kCompanyCustomerImportMappingMismatch = LocalizedText(
   fr: 'L’association des colonnes ne correspond pas. Vérifiez-la avant de reprendre.',
   es: 'La asignación de columnas no coincide. Revísala antes de reanudar.',
 );
+
+const LocalizedText kCompanyCustomerImportLookupFailed = LocalizedText(
+  nl: 'Het bestand is gelezen, maar de servercontrole op bestaande klanten is mislukt.',
+  en: 'The file was read, but the server check for existing customers failed.',
+  fr: 'Le fichier a été lu, mais le contrôle serveur des clients existants a échoué.',
+  es: 'El archivo se leyó, pero falló la comprobación de clientes existentes en el servidor.',
+);
+
+const LocalizedText kCompanyCustomerImportCountFound = LocalizedText(
+  nl: 'Gevonden rijen',
+  en: 'Rows found',
+  fr: 'Lignes trouvées',
+  es: 'Filas encontradas',
+);
+
+const LocalizedText kCompanyCustomerImportCountValid = LocalizedText(
+  nl: 'Geldig',
+  en: 'Valid',
+  fr: 'Valides',
+  es: 'Válidas',
+);
+
+const LocalizedText kCompanyCustomerImportCountInvalid = LocalizedText(
+  nl: 'Ongeldig',
+  en: 'Invalid',
+  fr: 'Invalides',
+  es: 'No válidas',
+);
+
+const LocalizedText kCompanyCustomerImportCountMissing = LocalizedText(
+  nl: 'Naam of contact ontbreekt',
+  en: 'Missing name or contact',
+  fr: 'Nom ou contact manquant',
+  es: 'Falta nombre o contacto',
+);
+
+const LocalizedText kCompanyCustomerImportCountInFileDup = LocalizedText(
+  nl: 'Dubbel in dit bestand',
+  en: 'Duplicate in this file',
+  fr: 'Doublon dans ce fichier',
+  es: 'Duplicado en este archivo',
+);
+
+const LocalizedText kCompanyCustomerImportCountCompanyMatch = LocalizedText(
+  nl: 'Al bekend bij dit bedrijf',
+  en: 'Already at this company',
+  fr: 'Déjà connu de cette entreprise',
+  es: 'Ya conocido en esta empresa',
+);
+
+const LocalizedText kCompanyCustomerImportCountSelected = LocalizedText(
+  nl: 'Geselecteerd om te importeren',
+  en: 'Selected to import',
+  fr: 'Sélectionnées pour import',
+  es: 'Seleccionadas para importar',
+);
+
+const LocalizedText kCompanyCustomerImportCountAdded = LocalizedText(
+  nl: 'Toegevoegd',
+  en: 'Added',
+  fr: 'Ajoutés',
+  es: 'Añadidos',
+);
+
+const LocalizedText kCompanyCustomerImportCountSkipped = LocalizedText(
+  nl: 'Overgeslagen',
+  en: 'Skipped',
+  fr: 'Ignorés',
+  es: 'Omitidos',
+);
+
+const LocalizedText kCompanyCustomerImportCountFailed = LocalizedText(
+  nl: 'Mislukt',
+  en: 'Failed',
+  fr: 'Échoués',
+  es: 'Fallidos',
+);
+
+const LocalizedText kCompanyCustomerImportSourceRow = LocalizedText(
+  nl: 'Bestandsrij',
+  en: 'File row',
+  fr: 'Ligne du fichier',
+  es: 'Fila del archivo',
+);
+
+const LocalizedText kCompanyCustomerImportContactRequired = LocalizedText(
+  nl: 'E-mail of telefoon is verplicht.',
+  en: 'Email or phone is required.',
+  fr: 'L’e-mail ou le téléphone est obligatoire.',
+  es: 'El correo o el teléfono es obligatorio.',
+);
+
+const LocalizedText kCompanyCustomerImportNameRequired = LocalizedText(
+  nl: 'Naam is verplicht.',
+  en: 'A name is required.',
+  fr: 'Le nom est obligatoire.',
+  es: 'El nombre es obligatorio.',
+);
+
+const LocalizedText kCompanyCustomerImportEmailInvalid = LocalizedText(
+  nl: 'E-mailadres is ongeldig.',
+  en: 'The email address is invalid.',
+  fr: 'L’adresse e-mail n’est pas valable.',
+  es: 'El correo no es válido.',
+);
+
+const LocalizedText kCompanyCustomerImportPhoneInvalid = LocalizedText(
+  nl: 'Telefoonnummer is ongeldig.',
+  en: 'The phone number is invalid.',
+  fr: 'Le numéro de téléphone n’est pas valable.',
+  es: 'El teléfono no es válido.',
+);
+
+String companyCustomerImportFieldErrorText(
+  String field,
+  String code,
+  AppLanguage language,
+) {
+  switch ('$field:$code') {
+    case 'contact:required':
+      return kCompanyCustomerImportContactRequired.of(language);
+    case 'display_name:required':
+      return kCompanyCustomerImportNameRequired.of(language);
+    case 'email:invalid':
+      return kCompanyCustomerImportEmailInvalid.of(language);
+    case 'phone:invalid':
+      return kCompanyCustomerImportPhoneInvalid.of(language);
+    case 'vat_number:invalid':
+      return kCompanyCustomersInvalidVat.of(language);
+    default:
+      return '$field: $code';
+  }
+}
+
+String companyCustomerImportFieldLabel(String field, AppLanguage language) {
+  switch (field) {
+    case 'skip':
+      return kCompanyCustomerImportSkipColumn.of(language);
+    case 'display_name':
+      return kCompanyCustomersDisplayName.of(language);
+    case 'first_name':
+      return kCompanyCustomersFirstName.of(language);
+    case 'last_name':
+      return kCompanyCustomersLastName.of(language);
+    case 'email':
+      return kCompanyCustomersEmail.of(language);
+    case 'phone':
+      return kCompanyCustomersPhone.of(language);
+    case 'country_calling_code':
+      return kCompanyCustomersCallingCode.of(language);
+    case 'company_name':
+      return kCompanyCustomersCompanyName.of(language);
+    case 'vat_number':
+      return kCompanyCustomersVat.of(language);
+    case 'locale':
+      return kCompanyCustomersLocale.of(language);
+    case 'internal_notes':
+      return kCompanyCustomersInternalNotes.of(language);
+    case 'address_line1':
+      return kCompanyCustomersAddressStreet.of(language);
+    case 'address_house_number':
+      return kCompanyCustomersAddressNumber.of(language);
+    case 'address_line2':
+      return kCompanyCustomersAddressLine2.of(language);
+    case 'address_city':
+      return kCompanyCustomersAddressCity.of(language);
+    case 'address_postal_code':
+      return kCompanyCustomersAddressPostal.of(language);
+    case 'address_country':
+      return kCompanyCustomersAddressCountry.of(language);
+    case 'address_type':
+      return kCompanyCustomersAddressType.of(language);
+    case 'address_label':
+      return kCompanyCustomersAddressLabel.of(language);
+    case 'address_notes':
+      return kCompanyCustomersAddressNotes.of(language);
+    case 'address2_line1':
+      return '${kCompanyCustomersAddressStreet.of(language)} 2';
+    case 'address2_house_number':
+      return '${kCompanyCustomersAddressNumber.of(language)} 2';
+    case 'address2_line2':
+      return '${kCompanyCustomersAddressLine2.of(language)} 2';
+    case 'address2_city':
+      return '${kCompanyCustomersAddressCity.of(language)} 2';
+    case 'address2_postal_code':
+      return '${kCompanyCustomersAddressPostal.of(language)} 2';
+    case 'address2_country':
+      return '${kCompanyCustomersAddressCountry.of(language)} 2';
+    case 'address2_type':
+      return '${kCompanyCustomersAddressType.of(language)} 2';
+    case 'address2_label':
+      return '${kCompanyCustomersAddressLabel.of(language)} 2';
+    case 'address2_notes':
+      return '${kCompanyCustomersAddressNotes.of(language)} 2';
+    default:
+      return field;
+  }
+}
+
+String companyCustomerImportSourceRowLabel(int sourceIndex, AppLanguage language) {
+  return '${kCompanyCustomerImportSourceRow.of(language)} $sourceIndex';
+}

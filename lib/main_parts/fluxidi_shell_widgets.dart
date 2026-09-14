@@ -8,6 +8,7 @@ class FluxidiBackToStartButton extends StatelessWidget {
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
+        key: const Key('fluxidi_back_to_start'),
         onPressed: () {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const RoleEntryPage()),
@@ -238,20 +239,23 @@ class FluxidiFrame extends StatelessWidget {
                     ),
                   ),
                 );
+                    // Always keep a Theme ancestor so previewing Gold does
+                    // not insert/remove an InheritedWidget around the open
+                    // theme-selector route (that one-frame rebuild threw).
+                    final ThemeData overlayTheme;
                     if (goldOverlay != null) {
-                      framed = Theme(data: goldOverlay, child: framed);
+                      overlayTheme = goldOverlay;
                     } else if (chauffeurShellTheme ==
                         DriverThemeVariant.customHuisstijl) {
-                      framed = Theme(
-                        data: themeDataForBrandSignatureGold(
-                          brandSignatureBusinessPalette(
-                            driverBrandSignaturePaletteNotifier.value,
-                          ),
+                      overlayTheme = themeDataForBrandSignatureGold(
+                        brandSignatureBusinessPalette(
+                          driverBrandSignaturePaletteNotifier.value,
                         ),
-                        child: framed,
                       );
+                    } else {
+                      overlayTheme = Theme.of(context);
                     }
-                    return framed;
+                    return Theme(data: overlayTheme, child: framed);
                   },
                 );
               },

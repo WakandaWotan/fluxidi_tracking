@@ -3,35 +3,37 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_ops_session.dart' as ops_session;
 
 const String kCompanyCustomerOpsLocalDemoBaseUrl = String.fromEnvironment(
   'BOOKING_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8788',
+  defaultValue: '',
 );
 const String kCompanyCustomerOpsLocalDemoToken = String.fromEnvironment(
   'COMPANY_SESSION_TOKEN',
-  defaultValue: 'cst_local_demo_synthetic',
+  defaultValue: '',
 );
 const String kCompanyCustomerOpsLocalDemoCompanyId = String.fromEnvironment(
   'FLUXIDI_DEV_COMPANY_ID',
-  defaultValue: 'demo_company_p0',
+  defaultValue: '',
 );
 
 String companyOpsLocalDemoBase() {
   final raw = kCompanyCustomerOpsLocalDemoBaseUrl.trim();
-  return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
+  final resolved = raw.isNotEmpty ? raw : kBookingBaseUrl;
+  return resolved.endsWith('/')
+      ? resolved.substring(0, resolved.length - 1)
+      : resolved;
 }
 
 CompanyOpsLocalSession resolveCompanyOpsLocalSession() {
-  return companyOpsLocalSessionNotifier.value ??
-      const CompanyOpsLocalSession(
-        companyId: kCompanyCustomerOpsLocalDemoCompanyId,
-        sessionToken: kCompanyCustomerOpsLocalDemoToken,
-      );
+  return ops_session.resolveCompanyOpsLocalSession();
 }
 
 Future<Map<String, String>> _demoHeaders() async {
@@ -167,7 +169,15 @@ Future<Map<String, dynamic>> fetchCompanyOpsBusinessProfile() async {
       decoded['error']?.toString() ?? 'business_profile_failed',
     );
   }
-  return mergeCompanyOpsProfilePublicCodes(decoded);
+  final map = mergeCompanyOpsProfilePublicCodes(decoded);
+  final companyId = resolveCompanyOpsLocalSession().companyId.trim();
+  if (companyId.isNotEmpty) {
+    await hydrateBusinessThemeFromCompanyProfile(
+      companyId: companyId,
+      profile: map,
+    );
+  }
+  return map;
 }
 
 Map<String, dynamic> mergeCompanyOpsProfilePublicCodes(

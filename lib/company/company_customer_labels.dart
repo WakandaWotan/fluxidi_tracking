@@ -1,6 +1,7 @@
 // COMPANY-CUSTOMER-OPS-P0A
 
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_customer_models.dart';
 
 const LocalizedText kCompanyCustomersTitle = LocalizedText(
   nl: 'Klantenbeheer',
@@ -98,6 +99,27 @@ const LocalizedText kCompanyCustomersError = LocalizedText(
   en: 'Customers could not be loaded.',
   fr: 'Impossible de charger les clients.',
   es: 'No se pudieron cargar los clientes.',
+);
+
+const LocalizedText kCompanyCustomersWrongEnvironment = LocalizedText(
+  nl: 'Klantenbeheer bestaat niet op deze aanmeldserver. Gebruik de lokale Worker (127.0.0.1:8788), niet productie.',
+  en: 'Customer management is not on this sign-in server. Use the local Worker (127.0.0.1:8788), not production.',
+  fr: 'La gestion des clients n’existe pas sur ce serveur. Utilisez le Worker local (127.0.0.1:8788), pas la production.',
+  es: 'La gestión de clientes no está en este servidor. Usa el Worker local (127.0.0.1:8788), no producción.',
+);
+
+const LocalizedText kCompanyCustomersRouteMissing = LocalizedText(
+  nl: 'Deze lokale Worker kent de klantenroute niet. Start de juiste debug-Worker en probeer opnieuw.',
+  en: 'This local Worker does not expose the customers route. Start the correct debug Worker and try again.',
+  fr: 'Ce Worker local n’expose pas la route clients. Démarrez le bon Worker de debug et réessayez.',
+  es: 'Este Worker local no tiene la ruta de clientes. Arranca el Worker correcto e inténtalo de nuevo.',
+);
+
+const LocalizedText kCompanyCustomersUnauthorized = LocalizedText(
+  nl: 'Geen geldige bedrijfssessie voor klanten. Meld het bedrijf opnieuw aan en probeer opnieuw.',
+  en: 'No valid company session for customers. Sign the company in again and retry.',
+  fr: 'Aucune session entreprise valide pour les clients. Reconnectez l’entreprise et réessayez.',
+  es: 'No hay una sesión de empresa válida para clientes. Vuelve a entrar y reintenta.',
 );
 
 const LocalizedText kCompanyCustomersOffline = LocalizedText(
@@ -315,6 +337,192 @@ const LocalizedText kCompanyCustomersSelectHint = LocalizedText(
   en: 'Select a customer to see the details.',
   fr: 'Sélectionnez un client pour voir les détails.',
   es: 'Selecciona un cliente para ver los detalles.',
+);
+
+String companyCustomersExceptionText(
+  CompanyCustomerException error,
+  AppLanguage language,
+) {
+  switch (error.code) {
+    case 'missing_tenant_scope':
+      return kCompanyCustomersMissingScope.of(language);
+    case 'wrong_environment':
+      return kCompanyCustomersWrongEnvironment.of(language);
+    case 'route_missing':
+      return kCompanyCustomersRouteMissing.of(language);
+    case 'unauthorized':
+      return kCompanyCustomersUnauthorized.of(language);
+    default:
+      return error.offline
+          ? kCompanyCustomersOffline.of(language)
+          : kCompanyCustomersError.of(language);
+  }
+}
+
+const LocalizedText kCompanyCustomersNotFilled = LocalizedText(
+  nl: 'Niet ingevuld',
+  en: 'Not filled in',
+  fr: 'Non renseigné',
+  es: 'Sin rellenar',
+);
+
+const LocalizedText kCompanyCustomersNotesGroup = LocalizedText(
+  nl: 'Notities',
+  en: 'Notes',
+  fr: 'Notes',
+  es: 'Notas',
+);
+
+const LocalizedText kCompanyCustomersBookingsGroup = LocalizedText(
+  nl: 'Boekingen',
+  en: 'Bookings',
+  fr: 'Réservations',
+  es: 'Reservas',
+);
+
+const LocalizedText kCompanyCustomersNoQuotes = LocalizedText(
+  nl: 'Nog geen offertes voor deze klant.',
+  en: 'No quotes for this customer yet.',
+  fr: 'Aucun devis pour ce client.',
+  es: 'Aún no hay presupuestos para este cliente.',
+);
+
+const LocalizedText kCompanyCustomersQuotesError = LocalizedText(
+  nl: 'Offertes konden niet worden geladen.',
+  en: 'Quotes could not be loaded.',
+  fr: 'Impossible de charger les devis.',
+  es: 'No se pudieron cargar los presupuestos.',
+);
+
+const LocalizedText kCompanyCustomersNoBookings = LocalizedText(
+  nl: 'Nog geen gekoppelde boeking via offerte of agenda.',
+  en: 'No linked booking via quote or agenda yet.',
+  fr: 'Aucune réservation liée via devis ou agenda.',
+  es: 'Aún no hay reserva vinculada por presupuesto o agenda.',
+);
+
+const LocalizedText kCompanyCustomersContactPerson = LocalizedText(
+  nl: 'Contactpersoon',
+  en: 'Contact person',
+  fr: 'Personne de contact',
+  es: 'Persona de contacto',
+);
+
+const LocalizedText kCompanyCustomersAddressLine1 = LocalizedText(
+  nl: 'Straat en nummer',
+  en: 'Street and number',
+  fr: 'Rue et numéro',
+  es: 'Calle y número',
+);
+
+const LocalizedText kCompanyCustomersAddressStreet = LocalizedText(
+  nl: 'Straat',
+  en: 'Street',
+  fr: 'Rue',
+  es: 'Calle',
+);
+
+const LocalizedText kCompanyCustomersAddressNumber = LocalizedText(
+  nl: 'Huisnummer',
+  en: 'House number',
+  fr: 'Numéro',
+  es: 'Número',
+);
+
+const LocalizedText kCompanyCustomersAddressLine2 = LocalizedText(
+  nl: 'Adresregel 2',
+  en: 'Address line 2',
+  fr: 'Complément d’adresse',
+  es: 'Línea 2',
+);
+
+const LocalizedText kCompanyCustomersAddressCity = LocalizedText(
+  nl: 'Plaats',
+  en: 'City',
+  fr: 'Ville',
+  es: 'Ciudad',
+);
+
+const LocalizedText kCompanyCustomersAddressPostal = LocalizedText(
+  nl: 'Postcode',
+  en: 'Postal code',
+  fr: 'Code postal',
+  es: 'Código postal',
+);
+
+const LocalizedText kCompanyCustomersAddressCountry = LocalizedText(
+  nl: 'Land',
+  en: 'Country',
+  fr: 'Pays',
+  es: 'País',
+);
+
+const LocalizedText kCompanyCustomersAddressLabel = LocalizedText(
+  nl: 'Adreslabel',
+  en: 'Address label',
+  fr: 'Libellé d’adresse',
+  es: 'Etiqueta de dirección',
+);
+
+const LocalizedText kCompanyCustomersAddressNotes = LocalizedText(
+  nl: 'Adresnotitie',
+  en: 'Address note',
+  fr: 'Note d’adresse',
+  es: 'Nota de dirección',
+);
+
+const LocalizedText kCompanyCustomersAddressType = LocalizedText(
+  nl: 'Adrestype',
+  en: 'Address type',
+  fr: 'Type d’adresse',
+  es: 'Tipo de dirección',
+);
+
+String companyCustomerAddressTypeLabel(String type, AppLanguage language) {
+  switch (type.trim().toLowerCase()) {
+    case 'home':
+      return LocalizedText(
+        nl: 'Thuis',
+        en: 'Home',
+        fr: 'Domicile',
+        es: 'Casa',
+      ).of(language);
+    case 'work':
+      return LocalizedText(
+        nl: 'Werk',
+        en: 'Work',
+        fr: 'Travail',
+        es: 'Trabajo',
+      ).of(language);
+    case 'pickup':
+      return LocalizedText(
+        nl: 'Ophaaladres',
+        en: 'Pickup',
+        fr: 'Prise en charge',
+        es: 'Recogida',
+      ).of(language);
+    case 'billing':
+      return LocalizedText(
+        nl: 'Facturatie',
+        en: 'Billing',
+        fr: 'Facturation',
+        es: 'Facturación',
+      ).of(language);
+    default:
+      return LocalizedText(
+        nl: 'Overig',
+        en: 'Other',
+        fr: 'Autre',
+        es: 'Otro',
+      ).of(language);
+  }
+}
+
+const LocalizedText kCompanyCustomersInvalidVat = LocalizedText(
+  nl: 'Ondernemings- of btw-nummer is ongeldig.',
+  en: 'The company or VAT number is invalid.',
+  fr: 'Le numéro d’entreprise ou de TVA n’est pas valable.',
+  es: 'El NIF o IVA no es válido.',
 );
 
 const LocalizedText kCompanyCustomersConflict = LocalizedText(

@@ -9,11 +9,11 @@ void main() {
     ).readAsStringSync();
     expect(home.contains("nl: 'Klantenbeheer'"), isTrue);
     expect(home.contains('_openCompanyCustomers'), isTrue);
-    expect(home.contains('CompanyCustomersPage('), isTrue);
+    expect(home.contains('CompanyOpsWorkspacePage('), isTrue);
     expect(home.contains('issuerName:'), isTrue);
     expect(home.contains('onOpenBooking:'), isTrue);
     expect(home.contains('openCompanyBookingDetail('), isTrue);
-    expect(home.contains('CompanyBookingOpenedFrom.quote'), isTrue);
+    expect(home.contains('CompanyBookingOpenedFrom.bookingsList'), isTrue);
     expect(home.contains('const BusinessSettingsPage()'), isTrue);
     expect(home.contains('const VehicleManagementPage()'), isTrue);
     expect(home.contains('const CompanyDriverManagementPage()'), isTrue);

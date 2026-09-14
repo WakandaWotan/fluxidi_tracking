@@ -314,6 +314,19 @@ bool isUsableCompanyCustomerPhone(String normalized) {
   return digits.length >= 8 && digits.length <= 15;
 }
 
+/// Optional VAT / enterprise number. Empty is allowed. A filled value must
+/// look like a country-prefixed VAT or a 8–12 digit company number. Leading
+/// zeros are kept; no silent rewrite.
+bool isUsableCompanyCustomerVatNumber(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return true;
+  final compact = text.replaceAll(RegExp(r'[\s.\-/]'), '');
+  if (RegExp(r'^[A-Za-z]{2}[A-Za-z0-9]{8,12}$').hasMatch(compact)) {
+    return true;
+  }
+  return RegExp(r'^\d{8,12}$').hasMatch(compact);
+}
+
 Map<String, String> validateCompanyCustomerWrite(CompanyCustomerWrite write) {
   final fields = <String, String>{};
   final name = composeCompanyCustomerDisplayName(
@@ -339,6 +352,10 @@ Map<String, String> validateCompanyCustomerWrite(CompanyCustomerWrite write) {
       isUsableCompanyCustomerEmail(write.email) ||
       isUsableCompanyCustomerPhone(phone.normalized);
   if (!hasContact) fields['contact'] = 'required';
+  if (write.vatNumber.trim().isNotEmpty &&
+      !isUsableCompanyCustomerVatNumber(write.vatNumber)) {
+    fields['vat_number'] = 'invalid';
+  }
   return fields;
 }
 

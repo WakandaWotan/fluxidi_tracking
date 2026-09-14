@@ -5,12 +5,14 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_booking_link_page.dart';
+import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_bookings_page.dart';
-import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
+import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
@@ -18,6 +20,7 @@ import 'package:fluxidi_tracking/company/company_drivers_admin_page.dart';
 import 'package:fluxidi_tracking/company/company_fleet_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme_sync.dart';
 import 'package:fluxidi_tracking/company/company_settings_page.dart';
 import 'package:fluxidi_tracking/company/company_subscription_status_page.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
@@ -42,6 +45,8 @@ class CompanyDashboardPage extends StatefulWidget {
     this.onOpenBooking,
     this.bookingsPageLoader,
     this.bookingDetailLoader,
+    this.driversLoader,
+    this.vehiclesLoader,
     this.settingsProfileLoader,
     this.settingsProfileSaver,
   });
@@ -59,6 +64,8 @@ class CompanyDashboardPage extends StatefulWidget {
   bookingsPageLoader;
   final Future<Map<String, dynamic>> Function(String bookingId)?
       bookingDetailLoader;
+  final Future<List<Map<String, dynamic>>> Function()? driversLoader;
+  final Future<List<Map<String, dynamic>>> Function()? vehiclesLoader;
   final Future<Map<String, dynamic>> Function()? settingsProfileLoader;
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> profile)?
       settingsProfileSaver;
@@ -77,6 +84,7 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
   @override
   void initState() {
     super.initState();
+    registerCompanyOpsThemeRemoteSync();
     _loadDirectory();
     if (companyOpsLocalSessionNotifier.value != null) {
       _refreshIdentity();
@@ -127,7 +135,11 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
         profile: profile,
       );
       companyOpsIdentityNotifier.value = identity;
-      applyCompanyOpsHuisstijl(session.companyId);
+      bindBusinessThemeCompanyScope(session.companyId);
+      await hydrateBusinessThemeFromCompanyProfile(
+        companyId: session.companyId,
+        profile: profile,
+      );
     } catch (_) {
       if (!shouldApplyCompanyOpsIdentity(
         generation: generation,
@@ -157,7 +169,7 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
       companyId: entry.companyId,
       sessionToken: entry.sessionToken,
     );
-    applyCompanyOpsHuisstijl(entry.companyId);
+    bindBusinessThemeCompanyScope(entry.companyId);
     await _refreshIdentity();
     if (!isCurrentCompanyOpsGeneration(generation)) return;
   }
@@ -228,6 +240,8 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
               language: _lang,
               pageLoader: widget.bookingsPageLoader,
               detailLoader: widget.bookingDetailLoader,
+              driversLoader: widget.driversLoader,
+              vehiclesLoader: widget.vehiclesLoader,
             ),
           ),
         );
@@ -239,10 +253,10 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
         }
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => CompanyCustomersPage(
+            builder: (_) => CompanyOpsWorkspacePage(
               language: _lang,
               issuerName: identity.companyName,
-              repository: createCompanyCustomersRepository(),
+              customersRepository: createCompanyCustomersRepository(),
               sessionStore: createCompanyCustomerImportSessionStore(),
               onOpenBooking: widget.onOpenBooking ?? _openBookingFromQuote,
             ),
@@ -267,6 +281,8 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
       bookingId: bookingId,
       language: _lang,
       openedFrom: CompanyBookingOpenedFrom.quote,
+      driversLoader: widget.driversLoader ?? fetchCompanyOpsDrivers,
+      vehiclesLoader: widget.vehiclesLoader ?? fetchCompanyOpsVehicles,
     );
   }
 
@@ -426,12 +442,19 @@ class _CompanyDashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<BrandSignaturePalette>(
-      valueListenable: brandSignaturePaletteNotifier,
-      builder: (context, colors, _) {
-        final palette = paletteForBusinessTheme(
-          BusinessThemeVariant.brandSignatureGold,
-        );
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        return ValueListenableBuilder<BrandSignaturePalette>(
+          valueListenable: brandSignaturePaletteNotifier,
+          builder: (context, colors, __) {
+        final palette = paletteForBusinessTheme(variant);
+        final headerColor = variant == BusinessThemeVariant.brandSignatureGold
+            ? colors.header
+            : palette.surface;
+        final borderColor = variant == BusinessThemeVariant.brandSignatureGold
+            ? colors.border
+            : palette.border;
         final name = identity.companyName.trim();
         return SizedBox(
           key: kCompanyDashboardHeaderKey,
@@ -439,11 +462,11 @@ class _CompanyDashboardHeader extends StatelessWidget {
           width: double.infinity,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: colors.header,
+              color: headerColor,
               borderRadius: BorderRadius.circular(
                 kCompanyDashboardHeaderRadius,
               ),
-              border: Border.all(color: colors.border.withOpacity(0.72)),
+              border: Border.all(color: borderColor.withOpacity(0.72)),
             ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
@@ -484,6 +507,8 @@ class _CompanyDashboardHeader extends StatelessWidget {
               ),
             ),
           ),
+        );
+          },
         );
       },
     );
@@ -559,30 +584,129 @@ class _TileGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const spacing = 12.0;
-        final cardWidth =
-            (constraints.maxWidth - (spacing * (columns - 1))) / columns;
-        return Wrap(
-          key: kCompanyDashboardTileGridKey,
-          spacing: spacing,
-          runSpacing: spacing,
-          children: [
-            for (final tile in kCompanyDashboardTiles)
-              SizedBox(
-                width: cardWidth,
-                height: tileHeight,
-                child: BrandSignatureGoldActionCard(
-                  actionKey: tile.actionKey,
-                  title: tile.title.of(language),
-                  subtitle: tile.subtitle.of(language),
-                  onTap: () => onOpen(tile),
-                ),
-              ),
-          ],
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForBusinessTheme(variant);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const spacing = 12.0;
+            final cardWidth =
+                (constraints.maxWidth - (spacing * (columns - 1))) / columns;
+            return Wrap(
+              key: kCompanyDashboardTileGridKey,
+              spacing: spacing,
+              runSpacing: spacing,
+              children: [
+                for (final tile in kCompanyDashboardTiles)
+                  SizedBox(
+                    width: cardWidth,
+                    height: tileHeight,
+                    child: variant == BusinessThemeVariant.brandSignatureGold
+                        ? BrandSignatureGoldActionCard(
+                            actionKey: tile.actionKey,
+                            title: tile.title.of(language),
+                            subtitle: tile.subtitle.of(language),
+                            onTap: () => onOpen(tile),
+                          )
+                        : _SharedThemeActionCard(
+                            actionKey: tile.actionKey,
+                            title: tile.title.of(language),
+                            subtitle: tile.subtitle.of(language),
+                            palette: palette,
+                            onTap: () => onOpen(tile),
+                          ),
+                  ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+}
+
+class _SharedThemeActionCard extends StatelessWidget {
+  const _SharedThemeActionCard({
+    required this.actionKey,
+    required this.title,
+    required this.subtitle,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final String actionKey;
+  final String title;
+  final String subtitle;
+  final BusinessThemePalette palette;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: Key('brand_signature_action_$actionKey'),
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: palette.border.withOpacity(0.85)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(_iconForAction(actionKey), color: palette.accent, size: 28),
+              const Spacer(),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: palette.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+IconData _iconForAction(String actionKey) {
+  switch (actionKey) {
+    case 'settings':
+      return Icons.settings_outlined;
+    case 'payments':
+      return Icons.credit_card_outlined;
+    case 'vehicles':
+      return Icons.directions_car_outlined;
+    case 'chiron':
+      return Icons.verified_outlined;
+    case 'customers':
+      return Icons.groups_outlined;
+    case 'drivers':
+      return Icons.badge_outlined;
+    case 'demand_radar':
+      return Icons.radar_outlined;
+    case 'booking_link':
+      return Icons.qr_code_2_outlined;
+    case 'planning':
+      return Icons.calendar_month_outlined;
+    case 'ai_dispatch':
+      return Icons.people_alt_outlined;
+    default:
+      return Icons.grid_view_outlined;
   }
 }

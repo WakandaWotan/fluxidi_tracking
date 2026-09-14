@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/active_local_customer_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 class CustomerProfile {
@@ -423,7 +424,7 @@ class CustomerProfileStore {
   Future<Directory> _stateRootDir() async {
     final base = await getApplicationDocumentsDirectory();
     final dir = Directory(
-      '${base.path}${Platform.pathSeparator}customer_state',
+      '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName('customer_state')}',
     );
     if (!await dir.exists()) {
       await dir.create(recursive: true);

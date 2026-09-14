@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
+import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_parse.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session.dart';
@@ -16,6 +17,7 @@ class _FakeImportRepository extends CompanyCustomersRepository {
   _FakeImportRepository({
     this.failFirstBatch = false,
     this.expireImport = false,
+    this.lookupError,
   }) : super(
          scopeQuery: const <String, String>{
            'tenant_id': 'TA',
@@ -54,6 +56,7 @@ class _FakeImportRepository extends CompanyCustomersRepository {
 
   final bool failFirstBatch;
   final bool expireImport;
+  final CompanyCustomerException? lookupError;
   int lookupCalls = 0;
   int batchCalls = 0;
   final List<Map<String, dynamic>> batchRows = <Map<String, dynamic>>[];
@@ -64,6 +67,7 @@ class _FakeImportRepository extends CompanyCustomersRepository {
     required List<Map<String, String>> contacts,
   }) async {
     lookupCalls += 1;
+    if (lookupError != null) throw lookupError!;
     return const <CompanyCustomerImportCompanyMatch>[];
   }
 
@@ -175,7 +179,15 @@ void main() {
       await tester.ensureVisible(find.byKey(kCompanyCustomerImportNextKey));
       await tester.tap(find.byKey(kCompanyCustomerImportNextKey));
       await tester.pumpAndSettle();
-      expect(find.textContaining('2 / 2 / 0'), findsOneWidget);
+      expect(find.byKey(kCompanyCustomerImportReviewCountsKey), findsOneWidget);
+      expect(
+        find.text('${kCompanyCustomerImportCountFound.of(AppLanguage.nl)}: 2'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('${kCompanyCustomerImportCountValid.of(AppLanguage.nl)}: 2'),
+        findsOneWidget,
+      );
       await tester.ensureVisible(find.byKey(kCompanyCustomerImportStartKey));
       await tester.tap(find.byKey(kCompanyCustomerImportStartKey));
       await tester.pumpAndSettle();
@@ -393,5 +405,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyCustomerImportPageKey), findsOneWidget);
     expect(find.text(kCompanyCustomerImportPick.of(AppLanguage.nl)), findsOneWidget);
+  });
+
+  testWidgets('failed server preview is not a file-read error', (tester) async {
+    final repo = _FakeImportRepository(
+      lookupError: const CompanyCustomerException('wrong_environment'),
+    );
+    await _pumpImport(
+      tester,
+      repository: repo,
+      size: const Size(1440, 900),
+      file: _csvTwo(),
+    );
+    await tester.ensureVisible(find.byKey(kCompanyCustomerImportNextKey));
+    await tester.tap(find.byKey(kCompanyCustomerImportNextKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCustomerImportReviewCountsKey), findsOneWidget);
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+    expect(
+      find.text(kCompanyCustomerImportFileUnreadable.of(AppLanguage.nl)),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(kCompanyCustomerImportLookupFailed.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(kCompanyCustomersWrongEnvironment.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(find.text(companyCustomerImportSourceRowLabel(2, AppLanguage.nl)), findsOneWidget);
   });
 }

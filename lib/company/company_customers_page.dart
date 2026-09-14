@@ -2,12 +2,14 @@
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_agenda_http.dart';
+import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_customer_dossier.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
-import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
@@ -152,11 +154,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
       setState(() {
         _loading = false;
         _offline = error.offline;
-        _error = error.code == 'missing_tenant_scope'
-            ? kCompanyCustomersMissingScope.of(_lang)
-            : error.offline
-            ? kCompanyCustomersOffline.of(_lang)
-            : kCompanyCustomersError.of(_lang);
+        _error = companyCustomersExceptionText(error, _lang);
       });
     } catch (_) {
       if (!mounted) return;
@@ -188,9 +186,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
       if (!mounted) return;
       setState(() {
         _loadingMore = false;
-        _error = error.offline
-            ? kCompanyCustomersOffline.of(_lang)
-            : kCompanyCustomersError.of(_lang);
+        _error = companyCustomersExceptionText(error, _lang);
       });
     }
   }
@@ -289,9 +285,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = error.offline
-            ? kCompanyCustomersOffline.of(_lang)
-            : kCompanyCustomersError.of(_lang);
+        _error = companyCustomersExceptionText(error, _lang);
       });
     }
   }
@@ -392,8 +386,8 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
 
   @override
   Widget build(BuildContext context) {
-    return CompanyOpsThemedSurface(
-      child: Scaffold(
+    return CompanyOpsThemedScope(
+      builder: (context) => Scaffold(
       key: kCompanyCustomersPageKey,
       appBar: AppBar(title: Text(kCompanyCustomersTitle.of(_lang))),
       body: SafeArea(
@@ -459,13 +453,13 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
                               width: constraints.maxWidth < 1100
                                   ? 320
                                   : 380,
-                              child: _buildList(split: true),
+                              child: _buildList(context, split: true),
                             ),
                             const VerticalDivider(width: 1),
-                            Expanded(child: _buildDetailPane()),
+                            Expanded(child: _buildDetailPane(context)),
                           ],
                         )
-                      : _buildList(split: false),
+                      : _buildList(context, split: false),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -484,7 +478,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
     );
   }
 
-  Widget _buildList({required bool split}) {
+  Widget _buildList(BuildContext context, {required bool split}) {
     if (_loading) {
       return Center(child: Text(kCompanyCustomersLoading.of(_lang)));
     }
@@ -584,7 +578,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
     );
   }
 
-  Widget _buildDetailPane() {
+  Widget _buildDetailPane(BuildContext context) {
     return ColoredBox(
       key: kCompanyCustomersDetailPaneKey,
       color: Theme.of(context).colorScheme.surface,
@@ -717,8 +711,8 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CompanyOpsThemedSurface(
-      child: Scaffold(
+    return CompanyOpsThemedScope(
+      builder: (context) => Scaffold(
       appBar: AppBar(title: Text(kCompanyCustomersTitle.of(language))),
       body: customer == null
           ? Center(child: Text(kCompanyCustomersError.of(language)))
@@ -738,7 +732,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
   }
 }
 
-class _CompanyCustomerDetailBody extends StatelessWidget {
+class _CompanyCustomerDetailBody extends StatefulWidget {
   const _CompanyCustomerDetailBody({
     required this.language,
     required this.customer,
@@ -762,167 +756,94 @@ class _CompanyCustomerDetailBody extends StatelessWidget {
   final bool acting;
 
   @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text(
-          customer.displayName,
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        if (customer.companyName.isNotEmpty) Text(customer.companyName),
-        const SizedBox(height: 12),
-        if (customer.email.isNotEmpty) Text(customer.email),
-        if (customer.phone.isNotEmpty) Text(customer.phone),
-        if (customer.locale.isNotEmpty) Text(customer.locale),
-        if (customer.vatNumber.isNotEmpty) Text(customer.vatNumber),
-        const SizedBox(height: 16),
-        Text(kCompanyCustomersAddresses.of(language)),
-        for (final address in customer.addresses)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              [
-                address.type,
-                address.line1,
-                address.city,
-                address.postalCode,
-                address.countryCode,
-              ].where((part) => part.trim().isNotEmpty).join(' · '),
-            ),
-          ),
-        const SizedBox(height: 16),
-        Text(kCompanyCustomersInternalNotes.of(language)),
-        const SizedBox(height: 4),
-        Text(
-          customer.internalNotes.isEmpty ? '—' : customer.internalNotes,
-        ),
-        const SizedBox(height: 24),
-        _CompanyCustomerQuotesPanel(
-          repository: repository,
-          customer: customer,
-          language: language,
-          issuerName: issuerName,
-          onOpenBooking: onOpenBooking,
-        ),
-        const SizedBox(height: 24),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilledButton(
-              key: kCompanyCustomersEditButtonKey,
-              onPressed: acting ? null : onEdit,
-              child: Text(kCompanyCustomersEdit.of(language)),
-            ),
-            OutlinedButton(
-              key: kCompanyCustomersQuoteButtonKey,
-              onPressed: acting
-                  ? null
-                  : () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => CompanyCustomerQuotePage(
-                            repository: repository,
-                            customer: customer,
-                            language: language,
-                            issuerName: issuerName,
-                            onOpenBooking: onOpenBooking,
-                          ),
-                        ),
-                      );
-                    },
-              child: Text(kCompanyCustomerQuoteCreate.of(language)),
-            ),
-            if (customer.isArchived)
-              OutlinedButton(
-                key: kCompanyCustomersRestoreButtonKey,
-                onPressed: acting ? null : onRestore,
-                child: Text(kCompanyCustomersRestore.of(language)),
-              )
-            else
-              OutlinedButton(
-                key: kCompanyCustomersArchiveButtonKey,
-                onPressed: acting ? null : onArchive,
-                child: Text(kCompanyCustomersArchive.of(language)),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
+  State<_CompanyCustomerDetailBody> createState() =>
+      _CompanyCustomerDetailBodyState();
 }
 
-class _CompanyCustomerQuotesPanel extends StatefulWidget {
-  const _CompanyCustomerQuotesPanel({
-    required this.repository,
-    required this.customer,
-    required this.language,
-    this.issuerName,
-    this.onOpenBooking,
-  });
-
-  final CompanyCustomersRepository repository;
-  final CompanyCustomer customer;
-  final AppLanguage language;
-  final String? issuerName;
-  final void Function(String bookingId)? onOpenBooking;
-
-  @override
-  State<_CompanyCustomerQuotesPanel> createState() =>
-      _CompanyCustomerQuotesPanelState();
-}
-
-class _CompanyCustomerQuotesPanelState
-    extends State<_CompanyCustomerQuotesPanel> {
-  List<CompanyCustomerQuote> _quotes = const <CompanyCustomerQuote>[];
+class _CompanyCustomerDetailBodyState extends State<_CompanyCustomerDetailBody> {
+  int _quotesRevision = 0;
+  List<CompanyAgendaRide> _plannedRides = const <CompanyAgendaRide>[];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadPlannedRides();
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant _CompanyCustomerDetailBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.customer.customerId != widget.customer.customerId) {
+      _loadPlannedRides();
+    }
+  }
+
+  Future<void> _loadPlannedRides() async {
     try {
-      final items = await widget.repository.listQuotes(widget.customer.customerId);
+      final rides = await CompanyAgendaRepository().listPeriod(
+        companyAgendaLinkedBookingsPeriod(),
+      );
       if (!mounted) return;
-      setState(() => _quotes = items);
-    } catch (_) {}
+      setState(() {
+        _plannedRides = rides
+            .where((ride) => ride.customerId == widget.customer.customerId)
+            .toList();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _plannedRides = const <CompanyAgendaRide>[]);
+    }
+  }
+
+  Future<void> _openNewQuote() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => CompanyCustomerQuotePage(
+          repository: widget.repository,
+          customer: widget.customer,
+          language: widget.language,
+          issuerName: widget.issuerName,
+          onOpenBooking: widget.onOpenBooking,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _quotesRevision += 1);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(kCompanyCustomerQuoteTitle.of(widget.language)),
-        for (final quote in _quotes)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(
-              '${quote.state} · ${formatQuoteEuros(quote.enteredAmountCents, currency: quote.currency)}',
-            ),
-            subtitle: Text(
-              '${quote.pickup} → ${quote.dropoff}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            onTap: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => CompanyCustomerQuotePage(
-                    repository: widget.repository,
-                    customer: widget.customer,
-                    existing: quote,
-                    language: widget.language,
-                    issuerName: widget.issuerName,
-                    onOpenBooking: widget.onOpenBooking,
-                  ),
-                ),
-              );
-              await _load();
-            },
+    return CompanyCustomerDossier(
+      customer: widget.customer,
+      language: widget.language,
+      repository: widget.repository,
+      issuerName: widget.issuerName,
+      onOpenBooking: widget.onOpenBooking,
+      onEdit: widget.onEdit,
+      reloadToken: _quotesRevision,
+      plannedRides: _plannedRides,
+      actions: [
+        FilledButton(
+          key: kCompanyCustomersEditButtonKey,
+          onPressed: widget.acting ? null : widget.onEdit,
+          child: Text(kCompanyCustomersEdit.of(widget.language)),
+        ),
+        OutlinedButton(
+          key: kCompanyCustomersQuoteButtonKey,
+          onPressed: widget.acting ? null : _openNewQuote,
+          child: Text(kCompanyCustomerQuoteCreate.of(widget.language)),
+        ),
+        if (widget.customer.isArchived)
+          OutlinedButton(
+            key: kCompanyCustomersRestoreButtonKey,
+            onPressed: widget.acting ? null : widget.onRestore,
+            child: Text(kCompanyCustomersRestore.of(widget.language)),
+          )
+        else
+          OutlinedButton(
+            key: kCompanyCustomersArchiveButtonKey,
+            onPressed: widget.acting ? null : widget.onArchive,
+            child: Text(kCompanyCustomersArchive.of(widget.language)),
           ),
       ],
     );

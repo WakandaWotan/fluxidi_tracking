@@ -193,10 +193,11 @@ class _FluxidiAppLockGatePageState extends State<FluxidiAppLockGatePage> {
                           backgroundColor: accent,
                           foregroundColor: Colors.black,
                           padding: const EdgeInsets.symmetric(vertical: 13),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
+                          textStyle: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
                         ),
                         child: Text(
                           _t(

@@ -124,13 +124,17 @@ Uri limousineMapboxPlacesUri({
   required String query,
   required String token,
   String language = 'nl',
+  String? country = 'be',
 }) {
   final encoded = Uri.encodeComponent(query);
+  final countryPart = (country ?? '').trim().isEmpty
+      ? ''
+      : '&country=${Uri.encodeComponent(country!.trim())}';
   return Uri.parse(
     'https://$kLimousineMapboxGeocodingV5Host$kLimousineMapboxGeocodingV5PathPrefix$encoded.json'
     '?access_token=${Uri.encodeComponent(token)}'
     '&autocomplete=true'
-    '&country=be'
+    '$countryPart'
     '&language=${Uri.encodeComponent(language)}'
     '&limit=$kLimousineAddressMaxSuggestions',
   );
@@ -215,6 +219,7 @@ class LimousinePlaceLookup {
     http.Client? client,
     LimousinePlaceSearch? searchOverride,
     LimousinePlaceReverse? reverseOverride,
+    this.country = 'be',
   }) : token = (token ?? kMapboxToken).trim(),
        _client = client,
        _searchOverride = searchOverride,
@@ -222,6 +227,7 @@ class LimousinePlaceLookup {
        _ownsClient = client == null && searchOverride == null;
 
   final String token;
+  final String country;
   final http.Client? _client;
   final LimousinePlaceSearch? _searchOverride;
   final LimousinePlaceReverse? _reverseOverride;
@@ -232,7 +238,7 @@ class LimousinePlaceLookup {
   int reverseGeocodesStarted = 0;
 
   String _cacheKey(String query, String language) =>
-      '$language\u0001${limousineNormalizeAddressQuery(query)}';
+      '$language\u0001$country\u0001${limousineNormalizeAddressQuery(query)}';
 
   Future<LimousinePlaceLookupResult> search(
     String rawQuery, {
@@ -261,11 +267,14 @@ class LimousinePlaceLookup {
     String query,
     String language,
   ) async {
-    if (token.isEmpty) return const LimousinePlaceLookupResult();
+    if (token.isEmpty) {
+      return const LimousinePlaceLookupResult(hadError: true);
+    }
     final uri = limousineMapboxPlacesUri(
       query: query,
       token: token,
       language: language,
+      country: country,
     );
     final client = _client ?? http.Client();
     try {

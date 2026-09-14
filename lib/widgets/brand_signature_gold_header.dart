@@ -138,9 +138,9 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                     padding: kBrandSignatureGoldHeaderLogoPadding,
                     child:
                         logoChild ??
-                        _MonogramFallback(
+                        _GoldHeaderFallbackMark(
                           name: companyName,
-                          color: palette.textPrimary,
+                          color: brandSignatureReadableTextOn(colors.header),
                         ),
                   ),
                 ),
@@ -172,8 +172,10 @@ class _CompanyLogo extends StatelessWidget {
         fit: BoxFit.contain,
         alignment: Alignment.center,
         filterQuality: FilterQuality.high,
-        errorBuilder: (_, __, ___) =>
-            const _MonogramFallback(name: '', color: Color(0xFFF8F0D8)),
+        errorBuilder: (_, __, ___) => const _GoldHeaderFallbackMark(
+          name: '',
+          color: Color(0xFFF8F0D8),
+        ),
       );
     }
 
@@ -186,32 +188,40 @@ class _CompanyLogo extends StatelessWidget {
     if (!kIsWeb) {
       return image(provider: FileImage(File(ref)));
     }
-    return const _MonogramFallback(name: '', color: Color(0xFFF8F0D8));
+    return const _GoldHeaderFallbackMark(name: '', color: Color(0xFFF8F0D8));
   }
 }
 
-class _MonogramFallback extends StatelessWidget {
-  const _MonogramFallback({required this.name, required this.color});
+class _GoldHeaderFallbackMark extends StatelessWidget {
+  const _GoldHeaderFallbackMark({required this.name, required this.color});
 
   final String name;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final trimmed = name.trim();
-    final glyph = trimmed.isEmpty
-        ? 'B'
-        : String.fromCharCode(trimmed.runes.first).toUpperCase();
     return Center(
-      child: Text(
-        glyph,
+      child: Image.asset(
+        'assets/fluxidi/fluxidi_logo_horizontal_gold.png',
         key: kBrandSignatureGoldLogoFallbackKey,
-        style: TextStyle(
-          color: color,
-          fontSize: 72,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 1.2,
-        ),
+        fit: BoxFit.contain,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) {
+          final trimmed = name.trim();
+          final glyph = trimmed.isEmpty
+              ? 'B'
+              : String.fromCharCode(trimmed.runes.first).toUpperCase();
+          return Text(
+            glyph,
+            style: TextStyle(
+              color: color,
+              fontSize: 48,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+            ),
+          );
+        },
       ),
     );
   }

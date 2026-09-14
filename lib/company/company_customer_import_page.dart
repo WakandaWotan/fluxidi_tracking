@@ -6,12 +6,15 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_parse.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_read_io.dart'
+    if (dart.library.html) 'package:fluxidi_tracking/company/company_customer_import_read_web.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_xlsx.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_locale_options.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
 const Key kCompanyCustomerImportPageKey = Key('company_customer_import_page');
 const Key kCompanyCustomerImportChooseFileKey = Key(
@@ -35,6 +38,9 @@ const Key kCompanyCustomerImportCountryKey = Key(
 );
 const Key kCompanyCustomerImportRepickKey = Key(
   'company_customer_import_repick',
+);
+const Key kCompanyCustomerImportReviewCountsKey = Key(
+  'company_customer_import_review_counts',
 );
 
 typedef CompanyCustomerImportPicker =
@@ -151,44 +157,71 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
     );
     if (result == null || result.files.isEmpty) return null;
     final file = result.files.single;
-    final bytes = file.bytes;
+    var bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      bytes = await readCompanyCustomerImportPath(file.path);
+    }
     if (bytes == null || bytes.isEmpty) {
       throw const CompanyCustomerImportException('unreadable');
     }
     return CompanyCustomerImportPickedFile(name: file.name, bytes: bytes);
   }
 
-  String _errorText(Object error) {
+  String _importExceptionText(CompanyCustomerImportException error) {
+    switch (error.code) {
+      case 'limit_file':
+        return kCompanyCustomerImportLimitFile.of(_lang);
+      case 'limit_rows':
+        return kCompanyCustomerImportLimitRows.of(_lang);
+      case 'limit_xlsx':
+        return kCompanyCustomerImportLimitXlsx.of(_lang);
+      case 'formula':
+        return kCompanyCustomerImportFormula.of(_lang);
+      case 'unsupported':
+        return kCompanyCustomerImportUnsupported.of(_lang);
+      case 'file_mismatch':
+        return kCompanyCustomerImportFileMismatch.of(_lang);
+      case 'mapping_mismatch':
+        return kCompanyCustomerImportMappingMismatch.of(_lang);
+      case 'unreadable':
+        return kCompanyCustomerImportFileUnreadable.of(_lang);
+      default:
+        return error.detail.trim().isNotEmpty
+            ? error.detail
+            : kCompanyCustomersError.of(_lang);
+    }
+  }
+
+  String _previewErrorText(Object error) {
     if (error is CompanyCustomerImportException) {
-      switch (error.code) {
-        case 'limit_file':
-          return kCompanyCustomerImportLimitFile.of(_lang);
-        case 'limit_rows':
-          return kCompanyCustomerImportLimitRows.of(_lang);
-        case 'limit_xlsx':
-          return kCompanyCustomerImportLimitXlsx.of(_lang);
-        case 'formula':
-          return kCompanyCustomerImportFormula.of(_lang);
-        case 'unsupported':
-          return kCompanyCustomerImportUnsupported.of(_lang);
-        case 'file_mismatch':
-          return kCompanyCustomerImportFileMismatch.of(_lang);
-        case 'mapping_mismatch':
-          return kCompanyCustomerImportMappingMismatch.of(_lang);
-        default:
-          return kCompanyCustomerImportFileUnreadable.of(_lang);
-      }
+      return _importExceptionText(error);
     }
     if (error is CompanyCustomerException) {
-      if (error.offline) return kCompanyCustomersOffline.of(_lang);
       if (error.code == 'import_expired') {
         return kCompanyCustomerImportExpired.of(_lang);
       }
       if (error.code == 'import_not_found') {
         return kCompanyCustomerImportUnknown.of(_lang);
       }
+      return '${kCompanyCustomerImportLookupFailed.of(_lang)} ${companyCustomersExceptionText(error, _lang)}';
     }
-    return kCompanyCustomerImportFileUnreadable.of(_lang);
+    return kCompanyCustomerImportLookupFailed.of(_lang);
+  }
+
+  String _errorText(Object error) {
+    if (error is CompanyCustomerImportException) {
+      return _importExceptionText(error);
+    }
+    if (error is CompanyCustomerException) {
+      if (error.code == 'import_expired') {
+        return kCompanyCustomerImportExpired.of(_lang);
+      }
+      if (error.code == 'import_not_found') {
+        return kCompanyCustomerImportUnknown.of(_lang);
+      }
+      return companyCustomersExceptionText(error, _lang);
+    }
+    return kCompanyCustomersError.of(_lang);
   }
 
   Future<void> _openFile(
@@ -283,15 +316,20 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
           'country_calling_code': row.write.countryCallingCode,
         },
     ];
+    Object? previewError;
     final matches = <CompanyCustomerImportCompanyMatch>[];
-    for (var i = 0; i < contacts.length; i += 15) {
-      final end = i + 15 > contacts.length ? contacts.length : i + 15;
-      matches.addAll(
-        await widget.repository.lookupImportContacts(
-          importId: importId,
-          contacts: contacts.sublist(i, end),
-        ),
-      );
+    try {
+      for (var i = 0; i < contacts.length; i += 15) {
+        final end = i + 15 > contacts.length ? contacts.length : i + 15;
+        matches.addAll(
+          await widget.repository.lookupImportContacts(
+            importId: importId,
+            contacts: contacts.sublist(i, end),
+          ),
+        );
+      }
+    } catch (error) {
+      previewError = error;
     }
     final byRow = <String, List<CompanyCustomerImportCompanyMatch>>{};
     for (final match in matches) {
@@ -323,6 +361,9 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
           : null,
     );
     await _store.save(_session!);
+    if (previewError != null) {
+      throw previewError;
+    }
   }
 
   Future<void> _goNext() async {
@@ -357,7 +398,7 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
         await _loadCompanyMatches();
       } catch (error) {
         if (!mounted) return;
-        setState(() => _error = _errorText(error));
+        setState(() => _error = _previewErrorText(error));
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -499,7 +540,8 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CompanyOpsThemedScope(
+      builder: (context) => Scaffold(
       key: kCompanyCustomerImportPageKey,
       appBar: AppBar(
         title: Text(kCompanyCustomerImportTitle.of(_lang)),
@@ -536,6 +578,7 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -655,6 +698,7 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
         ),
         Text(kCompanyCustomerImportNoDefaultCountry.of(_lang)),
         const SizedBox(height: 12),
+        _skippedColumns(table.headers),
         for (var i = 0; i < table.headers.length; i += 1)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -670,9 +714,7 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
                       DropdownMenuItem<String>(
                         value: field,
                         child: Text(
-                          field == 'skip'
-                              ? kCompanyCustomerImportSkipColumn.of(_lang)
-                              : field,
+                          companyCustomerImportFieldLabel(field, _lang),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -704,7 +746,18 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
     return ListView(
       children: [
         Text(kCompanyCustomerImportReview.of(_lang)),
-        Text('$found / $valid / $invalid / $missing / $inFile / $company / $selected'),
+        const SizedBox(height: 8),
+        if (_table != null) _skippedColumns(_table!.headers),
+        _reviewCounts(
+          found: found,
+          valid: valid,
+          invalid: invalid,
+          missing: missing,
+          inFile: inFile,
+          company: company,
+          selected: selected,
+        ),
+        const SizedBox(height: 8),
         Text(kCompanyCustomerImportDupHint.of(_lang)),
         if (_needsPartialConfirm)
           CheckboxListTile(
@@ -722,21 +775,37 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${row.sourceIndex}  ${row.write.displayName.isEmpty ? row.write.firstName : row.write.displayName}',
+                    row.write.displayName.isEmpty
+                        ? row.write.firstName
+                        : row.write.displayName,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (row.write.email.isNotEmpty) Text(row.write.email, overflow: TextOverflow.ellipsis),
-                  if (row.write.phone.isNotEmpty) Text(row.write.phone, overflow: TextOverflow.ellipsis),
-                  if (row.fieldErrors.isNotEmpty)
-                    Text(row.fieldErrors.values.join(', ')),
+                  Text(companyCustomerImportSourceRowLabel(row.sourceIndex, _lang)),
+                  if (row.write.email.isNotEmpty)
+                    Text(row.write.email, overflow: TextOverflow.ellipsis),
+                  if (row.write.phone.isNotEmpty)
+                    Text(row.write.phone, overflow: TextOverflow.ellipsis),
+                  if (row.write.companyName.isNotEmpty)
+                    Text(row.write.companyName, overflow: TextOverflow.ellipsis),
+                  for (final entry in row.fieldErrors.entries)
+                    Text(
+                      companyCustomerImportFieldErrorText(
+                        entry.key,
+                        entry.value,
+                        _lang,
+                      ),
+                    ),
                   if (row.inFileDupSources.isNotEmpty)
-                    Text(row.inFileDupSources.join(', ')),
+                    Text(
+                      '${kCompanyCustomerImportCountInFileDup.of(_lang)}: ${row.inFileDupSources.join(', ')}',
+                    ),
                   for (final match in row.companyMatches)
                     Text(
-                      '${match.displayName} ${match.emailMasked} ${match.phoneMasked}',
+                      '${kCompanyCustomerImportCountCompanyMatch.of(_lang)}: ${match.displayName} ${match.emailMasked} ${match.phoneMasked}',
                       overflow: TextOverflow.ellipsis,
                     ),
-                  if (row.inFileDupSources.isNotEmpty || row.companyMatches.isNotEmpty)
+                  if (row.inFileDupSources.isNotEmpty ||
+                      row.companyMatches.isNotEmpty)
                     Wrap(
                       spacing: 8,
                       children: [
@@ -759,9 +828,10 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
                   CheckboxListTile(
                     value: row.selected && row.isValid,
                     onChanged: row.isValid
-                        ? (value) => setState(() => row.selected = value ?? false)
+                        ? (value) =>
+                            setState(() => row.selected = value ?? false)
                         : null,
-                    title: Text('${row.sourceIndex}'),
+                    title: Text(kCompanyCustomerImportCountSelected.of(_lang)),
                     dense: true,
                   ),
                 ],
@@ -772,10 +842,62 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
     );
   }
 
+  Widget _skippedColumns(List<String> headers) {
+    final skipped = companyCustomerImportSkippedHeaders(
+      headers: headers,
+      mappings: _mappings,
+    );
+    if (skipped.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(kCompanyCustomerImportSkippedColumns.of(_lang)),
+          const SizedBox(height: 4),
+          Text(skipped.join(', ')),
+        ],
+      ),
+    );
+  }
+
+  Widget _reviewCounts({
+    required int found,
+    required int valid,
+    required int invalid,
+    required int missing,
+    required int inFile,
+    required int company,
+    required int selected,
+  }) {
+    Widget line(LocalizedText label, int value) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Text('${label.of(_lang)}: $value'),
+      );
+    }
+
+    return Column(
+      key: kCompanyCustomerImportReviewCountsKey,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        line(kCompanyCustomerImportCountFound, found),
+        line(kCompanyCustomerImportCountValid, valid),
+        line(kCompanyCustomerImportCountInvalid, invalid),
+        line(kCompanyCustomerImportCountMissing, missing),
+        line(kCompanyCustomerImportCountInFileDup, inFile),
+        line(kCompanyCustomerImportCountCompanyMatch, company),
+        line(kCompanyCustomerImportCountSelected, selected),
+      ],
+    );
+  }
+
   Widget _progressBody() {
     return ListView(
       children: [
-        Text('$_added / $_skipped / $_failed'),
+        Text('${kCompanyCustomerImportCountAdded.of(_lang)}: $_added'),
+        Text('${kCompanyCustomerImportCountSkipped.of(_lang)}: $_skipped'),
+        Text('${kCompanyCustomerImportCountFailed.of(_lang)}: $_failed'),
         Text(kCompanyCustomerImportStopHint.of(_lang)),
       ],
     );
@@ -785,7 +907,9 @@ class CompanyCustomerImportPageState extends State<CompanyCustomerImportPage> {
     return ListView(
       key: kCompanyCustomerImportResultKey,
       children: [
-        Text('$_added / $_skipped / $_failed'),
+        Text('${kCompanyCustomerImportCountAdded.of(_lang)}: $_added'),
+        Text('${kCompanyCustomerImportCountSkipped.of(_lang)}: $_skipped'),
+        Text('${kCompanyCustomerImportCountFailed.of(_lang)}: $_failed'),
         for (final row in (_session?.outcomes.values ?? const <CompanyCustomerImportRowOutcome>[]))
           if (row.outcome == 'failed' || row.outcome == 'conflict')
             Text('${row.rowKey} ${row.error}'),

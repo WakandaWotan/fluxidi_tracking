@@ -66,6 +66,37 @@ const LimousineAcceptedBookingCustomer _customer =
     );
 
 void main() {
+  test('Windows customer-ops start scripts enable the card without flipping the source default',
+      () {
+    for (final path in const <String>[
+      'scripts/windows_start_env.ps1',
+    ]) {
+      expect(
+        File(path).readAsStringSync().contains(
+          'FLUXIDI_LIMOUSINE_MARKETPLACE_ENTRY=true',
+        ),
+        isTrue,
+        reason: path,
+      );
+    }
+    expect(
+      File('scripts/start_fluxidi_windows.ps1').readAsStringSync(),
+      contains('RuntimeEnv production'),
+    );
+    expect(
+      File('scripts/start_production_customer_ops_windows.ps1').readAsStringSync(),
+      contains('RuntimeEnv production'),
+    );
+    expect(
+      File('scripts/start_local_customer_ops_windows.ps1').readAsStringSync(),
+      contains('RuntimeEnv local_test'),
+    );
+    expect(
+      File('lib/limousine/limousine_customer_entry.dart').readAsStringSync(),
+      contains('defaultValue: false'),
+    );
+  });
+
   test('marketplace entry default remains OFF without a build define', () {
     expect(
       kLimousineMarketplaceCustomerEntryDefineKey,

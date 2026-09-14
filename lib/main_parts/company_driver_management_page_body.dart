@@ -54,6 +54,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   static final Set<String> _avatarPrecacheQueuedUrls = <String>{};
   static String _lastDriverPageLogSignature = '';
   static String _lastAdminDocVisibilitySignature = '';
+  static bool _driverLinkQrInFlight = false;
 
   String _t({
     required String nl,
@@ -63,6 +64,127 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   AppLanguage get _lang => appConfig.currentLanguage;
+
+  Map<String, dynamic> _agendaColorDriver(DriverProfile driver) {
+    return <String, dynamic>{
+      'driver_id': driver.id,
+      'display_name': driver.fullName,
+      'phone': driver.phone,
+      'is_active': driver.isActive,
+    };
+  }
+
+  String _driverAccountStatusLabel(bool isActive) {
+    return isActive
+        ? kCompanyDriverAccountOn.of(_lang)
+        : kCompanyDriverAccountOff.of(_lang);
+  }
+
+  Widget _driverAgendaColorAction(
+    DriverProfile driver, {
+    bool compact = false,
+  }) {
+    return CompanyDriverAgendaColorAction(
+      language: _lang,
+      compact: compact,
+      driver: _agendaColorDriver(driver),
+    );
+  }
+
+  Widget _compactCountChip({
+    required IconData icon,
+    required Color accent,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withOpacity(0.42)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: accent),
+          const SizedBox(width: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: accent,
+              fontWeight: FontWeight.w800,
+              fontSize: 14.5,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _textSecondary.withOpacity(0.94),
+              fontWeight: FontWeight.w600,
+              fontSize: 12.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _compactDriverCounts({
+    required int totalDrivers,
+    required int activeAccounts,
+    required int pausedDrivers,
+    required int inactiveAccounts,
+    required int gapDrivers,
+    required int expiringSoon,
+    required bool includeOperationalCounts,
+  }) {
+    final stats = <Widget>[
+      _compactCountChip(
+        icon: Icons.groups_rounded,
+        accent: _gold,
+        label: kCompanyDriversCountTotal.of(_lang),
+        value: '$totalDrivers',
+      ),
+      _compactCountChip(
+        icon: Icons.verified_user_outlined,
+        accent: Colors.greenAccent,
+        label: kCompanyDriversAccountsOn.of(_lang),
+        value: '$activeAccounts',
+      ),
+      if (includeOperationalCounts) ...[
+        _compactCountChip(
+          icon: Icons.pause_circle_outline_rounded,
+          accent: Colors.orangeAccent,
+          label: kCompanyDriversPaused.of(_lang),
+          value: '$pausedDrivers',
+        ),
+        _compactCountChip(
+          icon: Icons.person_off_outlined,
+          accent: _textMuted.withOpacity(0.9),
+          label: kCompanyDriversAccountsOff.of(_lang),
+          value: '$inactiveAccounts',
+        ),
+      ] else ...[
+        _compactCountChip(
+          icon: Icons.warning_amber_rounded,
+          accent: Colors.orangeAccent,
+          label: kCompanyDriversDocsAction.of(_lang),
+          value: '$gapDrivers',
+        ),
+        _compactCountChip(
+          icon: Icons.event_available_outlined,
+          accent: Colors.lightBlueAccent,
+          label: kCompanyDriversExpiring.of(_lang),
+          value: '$expiringSoon',
+        ),
+      ],
+    ];
+    return Wrap(spacing: 8, runSpacing: 8, children: stats);
+  }
 
   String _docsInOrderLabel(DriverDocumentComplianceSummary summary) {
     return _t(
@@ -290,13 +412,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }
 
   String _normalizePublicCompanyCodeForDriverQr(String raw) {
-    return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
+    return normalizePublicCompanyCode(raw);
   }
 
   bool _isValidPublicCompanyCodeForDriverQr(String value) {
-    final code = _normalizePublicCompanyCodeForDriverQr(value);
-    if (code.isEmpty) return false;
-    return RegExp(r'^FLX(?:-?[0-9]{4,12})$').hasMatch(code);
+    return isValidPublicCompanyCode(value);
   }
 
   String _resolvePublicCompanyCodeForDriverQr() {
@@ -1401,10 +1521,17 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     activeTrackColor: _gold.withOpacity(0.5),
                     onChanged: (v) => setDialogState(() => active = v),
                     title: Text(
-                      _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                      _driverAccountStatusLabel(active),
                       style: TextStyle(
                         color: _textPrimary,
                         fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      kCompanyDriverAccountToggleHint.of(_lang),
+                      style: TextStyle(
+                        color: _textMuted.withOpacity(0.92),
+                        fontSize: 11.8,
                       ),
                     ),
                   ),
@@ -1981,13 +2108,78 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     debugPrint(
       '[DRIVER_LINK_QR][SCOPE] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)}',
     );
-    debugPrint('[DRIVER_LINK_QR][CREATE_REQ]');
-    final created = await createDriverLinkCode(
-      driverId: driverId,
-      tenantId: scope.tenantId,
-      companyId: scope.companyId,
-      companyCode: publicCompanyCode,
-    );
+    if (_driverLinkQrInFlight) {
+      debugPrint('[DRIVER_LINK_QR][SKIP] reason=in_flight');
+      return;
+    }
+    _driverLinkQrInFlight = true;
+    final Map<String, dynamic>? created;
+    try {
+      debugPrint('[DRIVER_LINK_QR][CREATE_REQ]');
+      final createdFuture = createDriverLinkCode(
+        driverId: driverId,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        companyCode: publicCompanyCode,
+      );
+      if (context.mounted) {
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              createdFuture.whenComplete(() {
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+              });
+            });
+            return AlertDialog(
+              backgroundColor: _dialogBg,
+              content: Row(
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: _gold,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      _t(
+                        nl: 'Tijdelijke koppel-QR wordt gemaakt…',
+                        en: 'Creating temporary pairing QR…',
+                        fr: 'Création du QR de liaison temporaire…',
+                        es: 'Creando el QR temporal de vinculación…',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      }
+      created = await createdFuture;
+    } finally {
+      _driverLinkQrInFlight = false;
+    }
     final ok = created != null && created['ok'] == true;
     final hasPairing = (created?['pairing_code'] ?? '')
         .toString()
@@ -2140,7 +2332,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         )
         .length;
 
-    int effectiveMax = (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
+    int effectiveMax =
+        (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
     String limitSource = 'fallback';
 
     final scopeId = resolveActiveCompanyIdForFleetUi();
@@ -3148,153 +3341,6 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     return delta >= 0 && delta <= days;
   }
 
-  Widget _summaryMetric({
-    required IconData icon,
-    required Color accent,
-    required String label,
-    required String value,
-    String? subtitle,
-    bool compact = false,
-    // Phone-landscape KPI cards need to stay short, with smaller text and
-    // numbers that don't dominate the row. `dense` only takes effect when
-    // `compact == true` (tablet landscape compact path is unaffected).
-    bool dense = false,
-  }) {
-    final bool denseCompact = compact && dense;
-    final decoration = compact
-        ? BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: _isDark
-                  ? const [Color(0xFF090909), Color(0xFF101010)]
-                  : [_subPanelBg, _panelBg],
-            ),
-            borderRadius: BorderRadius.circular(denseCompact ? 12 : 14),
-            border: Border.all(
-              color: _border.withOpacity(_isDark ? 0.42 : 0.92),
-            ),
-          )
-        : BoxDecoration(
-            color: _panelBg,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _border.withOpacity(_isDark ? 0.34 : 0.9),
-            ),
-          );
-    final double iconBoxSize = denseCompact
-        ? 34
-        : compact
-        ? 56
-        : 28;
-    final double iconGlyphSize = denseCompact
-        ? 18
-        : compact
-        ? 28
-        : 15;
-    final double horizontalPadding = denseCompact
-        ? 10
-        : compact
-        ? 14
-        : 10;
-    final double verticalPadding = denseCompact
-        ? 8
-        : compact
-        ? 12
-        : 8;
-    final double labelFontSize = denseCompact
-        ? 11.4
-        : compact
-        ? 14.8
-        : 10.8;
-    final double valueFontSize = denseCompact
-        ? 18.5
-        : compact
-        ? 29
-        : 16;
-    final double labelValueGap = denseCompact
-        ? 1
-        : compact
-        ? 3
-        : 2;
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        horizontalPadding,
-        verticalPadding,
-        horizontalPadding,
-        verticalPadding,
-      ),
-      decoration: decoration,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: iconBoxSize,
-            height: iconBoxSize,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: accent.withOpacity(0.15),
-              border: Border.all(color: accent.withOpacity(0.52)),
-            ),
-            child: Icon(icon, size: iconGlyphSize, color: accent),
-          ),
-          SizedBox(
-            width: denseCompact
-                ? 8
-                : compact
-                ? 12
-                : 8,
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _textMuted.withOpacity(0.9),
-                    fontSize: labelFontSize,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: labelValueGap),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _textPrimary,
-                    fontWeight: FontWeight.w900,
-                    fontSize: valueFontSize,
-                  ),
-                ),
-                if (compact &&
-                    !denseCompact &&
-                    subtitle != null &&
-                    subtitle.trim().isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: _textMuted.withOpacity(0.88),
-                      fontSize: 12.8,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _landscapeDriverDetailLine({
     required IconData icon,
     required String label,
@@ -3550,7 +3596,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       child: SizedBox(
         // Extra height reserved for the Rapporten action that opens the
         // existing DriverKpiPage for this chauffeur.
-        height: 310,
+        height: 336,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3641,6 +3687,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   ),
                                 ),
                               ],
+                              const SizedBox(height: 8),
+                              _driverAgendaColorAction(driver),
                             ],
                           ),
                         ),
@@ -4001,21 +4049,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   }
 
   String _driverOperationalAvailabilityLabel(DriverProfile driver) {
-    if (!driver.isActive) {
-      return _t(
-        nl: 'Niet beschikbaar',
-        en: 'Not available',
-        fr: 'Indisponible',
-        es: 'No disponible',
-      );
-    }
+    if (!driver.isActive) return '';
     final availability = normalizeDriverAvailabilityState(
       driver.availabilityStatus,
       fallback: 'available',
     );
     switch (availability) {
       case 'paused':
-        return _t(nl: 'Pauze', en: 'Paused', fr: 'Pause', es: 'Pausa');
+        return kCompanyDriversPaused.of(_lang);
       case 'busy':
         return _t(nl: 'Bezet', en: 'Busy', fr: 'Occupé', es: 'Ocupado');
       case 'offline':
@@ -4026,12 +4067,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           es: 'Sin conexión',
         );
       default:
-        return _t(
-          nl: 'Beschikbaar',
-          en: 'Available',
-          fr: 'Disponible',
-          es: 'Disponible',
-        );
+        return '';
     }
   }
 
@@ -4137,66 +4173,6 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       }
     }
     return null;
-  }
-
-  Widget _portraitKpiChip({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color accent,
-  }) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 84),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: _panelBg,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: accent.withOpacity(0.42)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: accent.withOpacity(0.16),
-              shape: BoxShape.circle,
-              border: Border.all(color: accent.withOpacity(0.50)),
-            ),
-            child: Icon(icon, size: 20, color: accent),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _textSecondary.withOpacity(0.92),
-                    fontSize: 13.8,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  value,
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 20.0,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _openPortraitDriverManageSheet(
@@ -5175,139 +5151,14 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 10),
-                            Container(
-                              padding: const EdgeInsets.fromLTRB(
-                                11,
-                                10,
-                                11,
-                                10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _subPanelBg,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: _border.withOpacity(
-                                    _isDark ? 0.36 : 0.9,
-                                  ),
-                                ),
-                              ),
-                              child: useThreeColumnPortrait
-                                  ? Row(
-                                      children: [
-                                        Expanded(
-                                          child: _portraitKpiChip(
-                                            icon: Icons.groups_rounded,
-                                            accent: _gold,
-                                            label: _t(
-                                              nl: 'Totaal',
-                                              en: 'Total',
-                                              fr: 'Total',
-                                              es: 'Total',
-                                            ),
-                                            value: '$totalDrivers',
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: _portraitKpiChip(
-                                            icon: Icons.verified_user_outlined,
-                                            accent: Colors.greenAccent,
-                                            label: _t(
-                                              nl: 'Actief',
-                                              en: 'Active',
-                                              fr: 'Actifs',
-                                              es: 'Activos',
-                                            ),
-                                            value: '$activeDrivers',
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: _portraitKpiChip(
-                                            icon: Icons
-                                                .pause_circle_outline_rounded,
-                                            accent: Colors.orangeAccent,
-                                            label: _t(
-                                              nl: 'Pauze',
-                                              en: 'Paused',
-                                              fr: 'Pause',
-                                              es: 'Pausa',
-                                            ),
-                                            value: '$pausedDrivers',
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: _portraitKpiChip(
-                                            icon: Icons.person_off_outlined,
-                                            accent: _textMuted.withOpacity(0.9),
-                                            label: _t(
-                                              nl: 'Inactief',
-                                              en: 'Inactive',
-                                              fr: 'Inactifs',
-                                              es: 'Inactivos',
-                                            ),
-                                            value: '$inactiveDrivers',
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : GridView.count(
-                                      crossAxisCount: 2,
-                                      crossAxisSpacing: 8,
-                                      mainAxisSpacing: 8,
-                                      childAspectRatio: 1.9,
-                                      shrinkWrap: true,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
-                                      children: [
-                                        _portraitKpiChip(
-                                          icon: Icons.groups_rounded,
-                                          accent: _gold,
-                                          label: _t(
-                                            nl: 'Totaal',
-                                            en: 'Total',
-                                            fr: 'Total',
-                                            es: 'Total',
-                                          ),
-                                          value: '$totalDrivers',
-                                        ),
-                                        _portraitKpiChip(
-                                          icon: Icons.verified_user_outlined,
-                                          accent: Colors.greenAccent,
-                                          label: _t(
-                                            nl: 'Actief',
-                                            en: 'Active',
-                                            fr: 'Actifs',
-                                            es: 'Activos',
-                                          ),
-                                          value: '$activeDrivers',
-                                        ),
-                                        _portraitKpiChip(
-                                          icon: Icons
-                                              .pause_circle_outline_rounded,
-                                          accent: Colors.orangeAccent,
-                                          label: _t(
-                                            nl: 'Pauze',
-                                            en: 'Paused',
-                                            fr: 'Pause',
-                                            es: 'Pausa',
-                                          ),
-                                          value: '$pausedDrivers',
-                                        ),
-                                        _portraitKpiChip(
-                                          icon: Icons.person_off_outlined,
-                                          accent: _textMuted.withOpacity(0.9),
-                                          label: _t(
-                                            nl: 'Inactief',
-                                            en: 'Inactive',
-                                            fr: 'Inactifs',
-                                            es: 'Inactivos',
-                                          ),
-                                          value: '$inactiveDrivers',
-                                        ),
-                                      ],
-                                    ),
+                            _compactDriverCounts(
+                              totalDrivers: totalDrivers,
+                              activeAccounts: activeDrivers,
+                              pausedDrivers: pausedDrivers,
+                              inactiveAccounts: inactiveDrivers,
+                              gapDrivers: gapDrivers,
+                              expiringSoon: expiringSoon,
+                              includeOperationalCounts: true,
                             ),
                             const SizedBox(height: 8),
                             for (final d in visible) ...[
@@ -5321,19 +5172,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                       docsStore.complianceSummaryForDocuments(
                                         docs,
                                       );
-                                  final status = d.isActive
-                                      ? _t(
-                                          nl: 'Actief',
-                                          en: 'Active',
-                                          fr: 'Actif',
-                                          es: 'Activo',
-                                        )
-                                      : _t(
-                                          nl: 'Inactief',
-                                          en: 'Inactive',
-                                          fr: 'Inactif',
-                                          es: 'Inactivo',
-                                        );
+                                  final status = _driverAccountStatusLabel(
+                                    d.isActive,
+                                  );
                                   final availabilityLabel = d.isActive
                                       ? _driverOperationalAvailabilityLabel(d)
                                       : '';
@@ -5735,6 +5576,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                             ),
                                                           ),
                                                         ),
+                                                      const SizedBox(height: 8),
+                                                      _driverAgendaColorAction(
+                                                        d,
+                                                      ),
                                                     ],
                                                   ),
                                                 ),
@@ -6093,6 +5938,8 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                   ),
                                                 ),
                                               const SizedBox(height: 6),
+                                              _driverAgendaColorAction(d),
+                                              const SizedBox(height: 6),
                                               Text(
                                                 plate.isEmpty
                                                     ? vehicleName
@@ -6295,307 +6142,30 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                         math.max(10, media.padding.bottom + 6),
                       )
                     : const EdgeInsets.fromLTRB(14, 12, 14, 16);
-                final introPadding = isTabletLandscape
-                    ? const EdgeInsets.fromLTRB(14, 8, 14, 8)
-                    : isCompactLandscape
-                    ? const EdgeInsets.fromLTRB(12, 6, 12, 6)
-                    : const EdgeInsets.fromLTRB(14, 12, 14, 12);
-                final introTitleFontSize = isTabletLandscape
-                    ? 15.6
-                    : isCompactLandscape
-                    ? 13.6
-                    : 16.0;
-                final introSubtitleFontSize = isTabletLandscape
-                    ? 11.8
-                    : isCompactLandscape
-                    ? 10.8
-                    : 12.4;
 
                 return SafeArea(
                   top: false,
                   child: ListView(
                     padding: listPadding,
                     children: [
-                      Container(
-                        padding: introPadding,
-                        decoration: BoxDecoration(
-                          color: _panelBg,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: _border.withOpacity(_isDark ? 0.38 : 0.92),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _t(
-                                nl: 'Chauffeurs beheren',
-                                en: 'Manage drivers',
-                                fr: 'Gérer les chauffeurs',
-                                es: 'Gestionar conductores',
-                              ),
-                              style: TextStyle(
-                                color: _textPrimary,
-                                fontWeight: FontWeight.w900,
-                                fontSize: introTitleFontSize,
-                              ),
-                            ),
-                            SizedBox(
-                              height: isTabletLandscape || isCompactLandscape
-                                  ? 2
-                                  : 4,
-                            ),
-                            Text(
-                              _t(
-                                nl: 'Beheer chauffeurs, documenten en beschikbaarheid',
-                                en: 'Manage drivers, documents and availability',
-                                fr: 'Gérez les chauffeurs, documents et disponibilités',
-                                es: 'Gestiona conductores, documentos y disponibilidad',
-                              ),
-                              style: TextStyle(
-                                color: _textMuted.withOpacity(0.9),
-                                fontSize: introSubtitleFontSize,
-                              ),
-                            ),
-                          ],
-                        ),
+                      _compactDriverCounts(
+                        totalDrivers: totalDrivers,
+                        activeAccounts: activeDrivers,
+                        pausedDrivers: pausedDrivers,
+                        inactiveAccounts: inactiveDrivers,
+                        gapDrivers: gapDrivers,
+                        expiringSoon: expiringSoon,
+                        includeOperationalCounts: false,
                       ),
-                      SizedBox(height: isCompactLandscape ? 6 : 10),
-                      if (isTabletLandscape || isCompactLandscape)
-                        GridView.count(
-                          crossAxisCount: 4,
-                          crossAxisSpacing: isCompactLandscape ? 6 : 10,
-                          mainAxisSpacing: isCompactLandscape ? 6 : 10,
-                          childAspectRatio: isCompactLandscape ? 2.7 : 2.35,
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          children: [
-                            _summaryMetric(
-                              icon: Icons.groups_rounded,
-                              accent: _gold,
-                              label: isCompactLandscape
-                                  ? _t(
-                                      nl: 'Totaal',
-                                      en: 'Total',
-                                      fr: 'Total',
-                                      es: 'Total',
-                                    )
-                                  : _t(
-                                      nl: 'Totaal chauffeurs',
-                                      en: 'Total drivers',
-                                      fr: 'Total chauffeurs',
-                                      es: 'Total conductores',
-                                    ),
-                              value: '$totalDrivers',
-                              subtitle: isCompactLandscape
-                                  ? null
-                                  : _t(
-                                      nl: 'Alle geregistreerde chauffeurs',
-                                      en: 'All registered drivers',
-                                      fr: 'Tous les chauffeurs inscrits',
-                                      es: 'Todos los conductores registrados',
-                                    ),
-                              compact: true,
-                              dense: isCompactLandscape,
-                            ),
-                            _summaryMetric(
-                              icon: Icons.verified_user_outlined,
-                              accent: Colors.greenAccent,
-                              label: _t(
-                                nl: 'Actief',
-                                en: 'Active',
-                                fr: 'Actifs',
-                                es: 'Activos',
-                              ),
-                              value: '$activeDrivers',
-                              subtitle: isCompactLandscape
-                                  ? null
-                                  : _t(
-                                      nl: 'Momenteel actief',
-                                      en: 'Currently active',
-                                      fr: 'Actuellement actifs',
-                                      es: 'Actualmente activos',
-                                    ),
-                              compact: true,
-                              dense: isCompactLandscape,
-                            ),
-                            _summaryMetric(
-                              icon: Icons.warning_amber_rounded,
-                              accent: Colors.orangeAccent,
-                              label: isCompactLandscape
-                                  ? _t(
-                                      nl: 'Docs',
-                                      en: 'Docs',
-                                      fr: 'Docs',
-                                      es: 'Docs',
-                                    )
-                                  : _t(
-                                      nl: 'Documenten actie vereist',
-                                      en: 'Documents need action',
-                                      fr: 'Documents: action requise',
-                                      es: 'Documentos: acción requerida',
-                                    ),
-                              value: '$gapDrivers',
-                              subtitle: isCompactLandscape
-                                  ? null
-                                  : _t(
-                                      nl: 'Vereisen controle',
-                                      en: 'Require attention',
-                                      fr: 'Nécessitent une attention',
-                                      es: 'Requieren atención',
-                                    ),
-                              compact: true,
-                              dense: isCompactLandscape,
-                            ),
-                            _summaryMetric(
-                              icon: Icons.event_available_outlined,
-                              accent: Colors.lightBlueAccent,
-                              label: isCompactLandscape
-                                  ? _t(
-                                      nl: 'Vervalt',
-                                      en: 'Expiring',
-                                      fr: 'Expire',
-                                      es: 'Expira',
-                                    )
-                                  : _t(
-                                      nl: 'Binnenkort vervallen',
-                                      en: 'Expiring soon',
-                                      fr: 'Expiration proche',
-                                      es: 'Caducan pronto',
-                                    ),
-                              value: '$expiringSoon',
-                              subtitle: isCompactLandscape
-                                  ? null
-                                  : _t(
-                                      nl: 'Binnen 30 dagen',
-                                      en: 'Within 30 days',
-                                      fr: 'Dans les 30 jours',
-                                      es: 'Dentro de 30 días',
-                                    ),
-                              compact: true,
-                              dense: isCompactLandscape,
-                            ),
-                          ],
-                        )
-                      else
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: _subPanelBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: _gold.withOpacity(0.30)),
-                          ),
-                          child: GridView.count(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            childAspectRatio: 2.3,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            children: [
-                              _summaryMetric(
-                                icon: Icons.groups_rounded,
-                                accent: _gold,
-                                label: _t(
-                                  nl: 'Totaal chauffeurs',
-                                  en: 'Total drivers',
-                                  fr: 'Total chauffeurs',
-                                  es: 'Total conductores',
-                                ),
-                                value: '$totalDrivers',
-                                compact: false,
-                              ),
-                              _summaryMetric(
-                                icon: Icons.verified_user_outlined,
-                                accent: Colors.greenAccent,
-                                label: _t(
-                                  nl: 'Actief',
-                                  en: 'Active',
-                                  fr: 'Actifs',
-                                  es: 'Activos',
-                                ),
-                                value: '$activeDrivers',
-                                compact: false,
-                              ),
-                              _summaryMetric(
-                                icon: Icons.warning_amber_rounded,
-                                accent: Colors.orangeAccent,
-                                label: _t(
-                                  nl: 'Documenten actie vereist',
-                                  en: 'Documents need action',
-                                  fr: 'Documents: action requise',
-                                  es: 'Documentos: acción requerida',
-                                ),
-                                value: '$gapDrivers',
-                                compact: false,
-                              ),
-                              _summaryMetric(
-                                icon: Icons.event_available_outlined,
-                                accent: Colors.lightBlueAccent,
-                                label: _t(
-                                  nl: 'Binnenkort vervallen',
-                                  en: 'Expiring soon',
-                                  fr: 'Expiration proche',
-                                  es: 'Caducan pronto',
-                                ),
-                                value: '$expiringSoon',
-                                compact: false,
-                              ),
-                            ],
-                          ),
-                        ),
                       SizedBox(height: isCompactLandscape ? 6 : 8),
                       for (final d in visible) ...[
                         Builder(
                           builder: (context) {
-                            final status = d.isActive
-                                ? _t(
-                                    nl: 'Actief',
-                                    en: 'Active',
-                                    fr: 'Actif',
-                                    es: 'Activo',
-                                  )
-                                : _t(
-                                    nl: 'Inactief',
-                                    en: 'Inactive',
-                                    fr: 'Inactif',
-                                    es: 'Inactivo',
-                                  );
-                            final availabilityState =
-                                normalizeDriverAvailabilityState(
-                                  d.availabilityStatus,
-                                  fallback: 'available',
-                                );
-                            final operationalAvailabilityLabel = !d.isActive
-                                ? _t(
-                                    nl: 'Niet beschikbaar',
-                                    en: 'Not available',
-                                    fr: 'Indisponible',
-                                    es: 'No disponible',
-                                  )
-                                : (availabilityState == 'paused'
-                                      ? _t(
-                                          nl: 'Pauze',
-                                          en: 'Paused',
-                                          fr: 'Pause',
-                                          es: 'Pausa',
-                                        )
-                                      : (availabilityState == 'busy'
-                                            ? _t(
-                                                nl: 'Bezet',
-                                                en: 'Busy',
-                                                fr: 'Occupé',
-                                                es: 'Ocupado',
-                                              )
-                                            : (availabilityState == 'offline'
-                                                  ? _t(
-                                                      nl: 'Offline',
-                                                      en: 'Offline',
-                                                      fr: 'Hors ligne',
-                                                      es: 'Sin conexión',
-                                                    )
-                                                  : '')));
+                            final status = _driverAccountStatusLabel(
+                              d.isActive,
+                            );
+                            final operationalAvailabilityLabel =
+                                _driverOperationalAvailabilityLabel(d);
                             final docs =
                                 docsByDriverId[d.id.trim()] ??
                                 const <DriverDocument>[];
@@ -6822,6 +6392,15 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                         ),
                                       ),
                                     ),
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      top: isCompactLandscape ? 4 : 6,
+                                    ),
+                                    child: _driverAgendaColorAction(
+                                      d,
+                                      compact: isCompactLandscape,
+                                    ),
+                                  ),
                                   SizedBox(height: isCompactLandscape ? 6 : 8),
                                   _line(
                                     _t(

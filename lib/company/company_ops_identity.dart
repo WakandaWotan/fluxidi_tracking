@@ -3,7 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
-import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 
 class CompanyOpsLocalSession {
   const CompanyOpsLocalSession({
@@ -64,17 +64,9 @@ final ValueNotifier<CompanyOpsIdentity> companyOpsIdentityNotifier =
 
 int companyOpsContextGeneration = 0;
 
-BrandSignaturePalette companyOpsPaletteForCompany(String companyId) {
-  if (companyId.trim() == 'demo_company_p1') {
-    return BrandSignaturePalette.fromPosition(
-      kBrandSignatureMidnightPosition,
-    );
-  }
-  return BrandSignaturePalette.defaults;
-}
-
+/// Keeps the Windows route on the shared theme store. Does not invent a palette.
 void applyCompanyOpsHuisstijl(String companyId) {
-  brandSignaturePaletteNotifier.value = companyOpsPaletteForCompany(companyId);
+  bindBusinessThemeCompanyScope(companyId);
 }
 
 int beginCompanyOpsContextClear() {
@@ -86,7 +78,7 @@ int beginCompanyOpsContextClear() {
     companyName: '',
     logo: CompanyLogoRef.unset,
   );
-  applyCompanyOpsHuisstijl('');
+  bindBusinessThemeCompanyScope(null);
   try {
     final binding = PaintingBinding.instance;
     binding.imageCache.clear();

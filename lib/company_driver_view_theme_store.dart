@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'business_theme/brand_signature_palette.dart';
@@ -21,7 +22,7 @@ const String _companyThemeFileName = 'company_driver_view_theme_v1.json';
 Future<File> _companyDriverViewThemeFile() async {
   final base = await getApplicationDocumentsDirectory();
   final root = Directory(
-    '${base.path}${Platform.pathSeparator}$_companyThemeStateDirName',
+    '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName(_companyThemeStateDirName)}',
   );
   if (!await root.exists()) {
     await root.create(recursive: true);

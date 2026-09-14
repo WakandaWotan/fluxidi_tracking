@@ -8,6 +8,8 @@ import 'package:http_parser/http_parser.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
+import 'package:fluxidi_tracking/company/company_ops_session.dart'
+    show companyOpsSessionIsReady;
 
 export 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart'
     show
@@ -178,6 +180,9 @@ Future<String> uploadCompanyOpsPartnerMedia({
 }
 
 Future<List<Map<String, dynamic>>> fetchCompanyOpsVehicles() async {
+  if (!companyOpsSessionIsReady(resolveCompanyOpsLocalSession())) {
+    return const <Map<String, dynamic>>[];
+  }
   final uri = Uri.parse(
     '${companyOpsLocalDemoBase()}/admin/fleet/vehicles',
   ).replace(queryParameters: companyOpsScope());
@@ -230,6 +235,9 @@ Future<List<Map<String, dynamic>>> saveCompanyOpsVehicles(
 }
 
 Future<List<Map<String, dynamic>>> fetchCompanyOpsDrivers() async {
+  if (!companyOpsSessionIsReady(resolveCompanyOpsLocalSession())) {
+    return const <Map<String, dynamic>>[];
+  }
   final uri = Uri.parse(
     '${companyOpsLocalDemoBase()}/admin/company/drivers/index',
   ).replace(queryParameters: companyOpsScope());
@@ -321,4 +329,138 @@ int companyOpsMaxDrivers(Map<String, dynamic> profile) {
   final raw = profile['max_drivers'] ?? profile['maxDrivers'] ?? 1;
   if (raw is num) return raw.toInt();
   return int.tryParse(raw.toString()) ?? 1;
+}
+
+enum CompanyBookingCancelScope { fullRoundtrip, singleLeg }
+
+Future<void> cancelCompanyOpsBooking({
+  required String bookingId,
+  String parentBookingId = '',
+  String legId = '',
+  String legType = '',
+  CompanyBookingCancelScope scope = CompanyBookingCancelScope.fullRoundtrip,
+}) async {
+  final parent = parentBookingId.trim().isNotEmpty
+      ? parentBookingId.trim()
+      : bookingId.trim();
+  if (parent.isEmpty) {
+    throw const CompanyCustomerException('missing_booking_id');
+  }
+  final cancelSingleLeg =
+      scope == CompanyBookingCancelScope.singleLeg && legId.trim().isNotEmpty;
+  final scopeQuery = companyOpsScope();
+  final path = cancelSingleLeg
+      ? '/bookings/${Uri.encodeComponent(parent)}/legs/${Uri.encodeComponent(legId.trim())}/status'
+      : '/bookings/${Uri.encodeComponent(parent)}/status';
+  final uri = Uri.parse('${companyOpsLocalDemoBase()}$path').replace(
+    queryParameters: scopeQuery,
+  );
+  final payload = <String, dynamic>{
+    ...scopeQuery,
+    'booking_id': parent,
+    'parent_booking_id': parent,
+    'parentBookingId': parent,
+    'status': 'CANCELLED',
+    'actor_role': 'admin',
+    'actorRole': 'admin',
+    if (cancelSingleLeg) ...<String, dynamic>{
+      'leg_id': legId.trim(),
+      'legId': legId.trim(),
+      if (legType.trim().isNotEmpty) 'leg_type': legType.trim(),
+      if (legType.trim().isNotEmpty) 'legType': legType.trim(),
+      'cancel_scope': 'single_leg',
+      'cancelScope': 'single_leg',
+    } else ...<String, dynamic>{
+      'cancel_scope': 'full_roundtrip',
+      'cancelScope': 'full_roundtrip',
+    },
+  };
+  final res = await http
+      .post(
+        uri,
+        headers: await companyOpsHeaders(),
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 15));
+  final decoded = decodeCompanyOpsJson(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString().trim().isNotEmpty == true
+          ? decoded['error'].toString()
+          : 'http_${res.statusCode}',
+    );
+  }
+}
+
+Future<Map<String, dynamic>> fetchCompanyFixedPrices() async {
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/company/fixed-prices',
+  ).replace(queryParameters: companyOpsScope());
+  final res = await http
+      .get(uri, headers: await companyOpsHeaders())
+      .timeout(const Duration(seconds: 12));
+  final decoded = decodeCompanyOpsJson(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'fixed_prices_load_failed',
+    );
+  }
+  final doc = decoded['company_fixed_prices'];
+  if (doc is Map) return Map<String, dynamic>.from(doc);
+  return <String, dynamic>{'fallback': 'calculator', 'rules': <dynamic>[]};
+}
+
+Future<Map<String, dynamic>> saveCompanyFixedPrices(
+  Map<String, dynamic> document, {
+  String view = 'all',
+}) async {
+  final scope = companyOpsScope();
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/company/fixed-prices',
+  ).replace(queryParameters: scope);
+  final expected = document['updated_at']?.toString().trim() ?? '';
+  final res = await http
+      .post(
+        uri,
+        headers: await companyOpsHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'view': view,
+          if (expected.isNotEmpty) 'expected_updated_at': expected,
+          'company_fixed_prices': document,
+        }),
+      )
+      .timeout(const Duration(seconds: 15));
+  final decoded = decodeCompanyOpsJson(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'fixed_prices_save_failed',
+    );
+  }
+  final doc = decoded['company_fixed_prices'];
+  if (doc is Map) return Map<String, dynamic>.from(doc);
+  return document;
+}
+
+Future<Map<String, dynamic>> previewCompanyFixedPrice(
+  Map<String, dynamic> payload,
+) async {
+  final scope = companyOpsScope();
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/company/fixed-prices/preview',
+  ).replace(queryParameters: scope);
+  final res = await http
+      .post(
+        uri,
+        headers: await companyOpsHeaders(),
+        body: jsonEncode(<String, dynamic>{...scope, ...payload}),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = decodeCompanyOpsJson(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'fixed_price_preview_failed',
+    );
+  }
+  return decoded;
 }

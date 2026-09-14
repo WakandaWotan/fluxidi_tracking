@@ -3323,18 +3323,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[MAP][HOSTING_MODE] mode=HC textureView=true');
     final initialStyle = _styleForMode(_cameraMode);
     _activeMapStyleUri = initialStyle;
-    _stableMapWidget = mb.MapWidget(
-      key: const ValueKey('mapbox_map'),
-      onMapCreated: _onMapCreated,
-      textureView: kDriverMapTextureView,
-      androidHostingMode: kDriverMapHostingMode,
-      styleUri: initialStyle,
-      cameraOptions: mb.CameraOptions(
-        center: _mbPoint(
-          kDriverMapInitialCenterLon,
-          kDriverMapInitialCenterLat,
+    _stableMapWidget = mapboxSurfaceOrUnsupported(
+      unsupportedMessage:
+          'mapbox_maps_flutter heeft geen Windows-plugin. De bestaande '
+          'chauffeurcockpit blijft de route; alleen de kaartweergave ontbreekt.',
+      buildMap: () => mb.MapWidget(
+        key: const ValueKey('mapbox_map'),
+        onMapCreated: _onMapCreated,
+        textureView: kDriverMapTextureView,
+        androidHostingMode: kDriverMapHostingMode,
+        styleUri: initialStyle,
+        cameraOptions: mb.CameraOptions(
+          center: _mbPoint(
+            kDriverMapInitialCenterLon,
+            kDriverMapInitialCenterLat,
+          ),
+          zoom: kDriverMapInitialZoom,
         ),
-        zoom: kDriverMapInitialZoom,
       ),
     );
     appLanguageNotifier.addListener(_onAppLanguageChanged);

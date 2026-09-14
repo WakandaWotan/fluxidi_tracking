@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
@@ -92,7 +93,11 @@ void main() {
       mappings: suggestCompanyCustomerImportMappings(table.headers),
     );
     expect(prepared.every((row) => row.isValid), isTrue);
-    expect(prepared[0].write.addresses, hasLength(1));
+    expect(prepared[0].write.addresses, hasLength(2));
+    expect(prepared[0].write.addresses[0].line1, 'Kerkstraat 1');
+    expect(prepared[0].write.addresses[1].line1, 'Office 2');
+    expect(prepared[0].write.firstName, 'Anna');
+    expect(prepared[0].write.lastName, 'Berg');
   });
 
   test('unsupported vcard version is rejected', () {
@@ -336,5 +341,127 @@ void main() {
       ),
       CompanyCustomerImportFileMatch.fileMismatch,
     );
+  });
+
+  test('exact Fluxidi_demo_100_klanten.csv stays valid without phones', () {
+    final bytes = File(
+      'test/company/fixtures/Fluxidi_demo_100_klanten.csv',
+    ).readAsBytesSync();
+    final table = parseCompanyCustomerImportBytes(
+      bytes: bytes,
+      fileName: 'Fluxidi_demo_100_klanten.csv',
+    );
+    expect(table.rows, hasLength(100));
+    expect(table.headers, <String>[
+      'display_name',
+      'email',
+      'phone',
+      'company_name',
+      'customer_type',
+    ]);
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    expect(mappings, <String>[
+      'display_name',
+      'email',
+      'phone',
+      'company_name',
+      'skip',
+    ]);
+    final prepared = prepareCompanyCustomerImportRows(
+      table: table,
+      mappings: mappings,
+    );
+    expect(prepared, hasLength(100));
+    expect(prepared.every((row) => row.isValid), isTrue);
+    expect(prepared.every((row) => row.selected), isTrue);
+    expect(prepared.every((row) => row.write.phone.isEmpty), isTrue);
+    expect(prepared.every((row) => row.write.email.endsWith('@example.com')), isTrue);
+    expect(
+      prepared.where((row) => row.write.companyName.isEmpty).length,
+      50,
+    );
+    expect(
+      prepared.where((row) => row.write.companyName.isNotEmpty).length,
+      50,
+    );
+    expect(prepared.first.sourceIndex, 2);
+    expect(prepared.last.sourceIndex, 101);
+  });
+
+  test('full-field synthetic csv maps every supported field and keeps unknown columns', () {
+    final bytes = File(
+      'test/company/fixtures/Fluxidi_demo_klanten_volledige_velden.csv',
+    ).readAsBytesSync();
+    final table = parseCompanyCustomerImportBytes(
+      bytes: bytes,
+      fileName: 'Fluxidi_demo_klanten_volledige_velden.csv',
+    );
+    expect(table.rows, hasLength(5));
+    final mappings = suggestCompanyCustomerImportMappings(table.headers);
+    expect(
+      companyCustomerImportSkippedHeaders(
+        headers: table.headers,
+        mappings: mappings,
+      ),
+      <String>['legacy_crm_id', 'customer_type'],
+    );
+    expect(mappings.contains('skip'), isTrue);
+    expect(mappings.contains('first_name'), isTrue);
+    expect(mappings.contains('vat_number'), isTrue);
+    expect(mappings.contains('address_house_number'), isTrue);
+    expect(mappings.contains('address2_line1'), isTrue);
+    expect(mappings.contains('address2_notes'), isTrue);
+    final prepared = prepareCompanyCustomerImportRows(
+      table: table,
+      mappings: mappings,
+    );
+    expect(prepared, hasLength(5));
+
+    final private = prepared[0];
+    expect(private.isValid, isTrue);
+    expect(private.write.displayName, 'José Álvarez');
+    expect(private.write.firstName, 'José');
+    expect(private.write.lastName, 'Álvarez');
+    expect(private.write.phone, '+34600111222');
+    expect(private.write.countryCallingCode, '34');
+    expect(private.write.locale, 'es');
+    expect(private.write.companyName, isEmpty);
+    expect(private.write.internalNotes, contains('niet op de offerte'));
+    expect(private.write.preferences.preferredLocale, 'es');
+    expect(private.write.addresses, hasLength(2));
+    expect(private.write.addresses[0].line1, 'Calle Mayor 7');
+    expect(private.write.addresses[0].line2, 'Ático');
+    expect(private.write.addresses[1].type, 'work');
+
+    final business = prepared[1];
+    expect(business.isValid, isTrue);
+    expect(business.write.companyName, 'DEMO Wolkenhof Logistiek BV');
+    expect(business.write.firstName, 'Lina');
+    expect(business.write.lastName, 'Mwangi');
+    expect(business.write.displayName, 'Lina Mwangi');
+    expect(business.write.vatNumber, 'BE0123456749');
+    expect(business.write.phone, '0470123456');
+    expect(business.write.addresses[0].line2, 'Bus 012');
+    expect(business.write.addresses[1].type, 'billing');
+
+    final invalidVat = prepared[2];
+    expect(invalidVat.isValid, isFalse);
+    expect(invalidVat.fieldErrors['vat_number'], 'invalid');
+    expect(invalidVat.selected, isFalse);
+    expect(invalidVat.write.vatNumber, 'BE12');
+
+    final displayOnly = prepared[3];
+    expect(displayOnly.isValid, isTrue);
+    expect(displayOnly.write.displayName, "Dr. Jean-Luc O'Neill");
+    expect(displayOnly.write.firstName, isEmpty);
+    expect(displayOnly.write.lastName, isEmpty);
+    expect(displayOnly.write.phone, '+12025550147');
+    expect(displayOnly.write.addresses, hasLength(2));
+
+    final leadingZeros = prepared[4];
+    expect(leadingZeros.isValid, isTrue);
+    expect(leadingZeros.write.phone, '0470111222');
+    expect(leadingZeros.write.addresses[0].postalCode, '04000');
+    expect(leadingZeros.write.firstName, 'Marie-Claire');
   });
 }

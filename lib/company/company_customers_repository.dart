@@ -205,8 +205,9 @@ class CompanyCustomersRepository {
 
   Future<CompanyCustomerQuote> createQuote(
     String customerId,
-    CompanyCustomerQuoteWrite write,
-  ) async {
+    CompanyCustomerQuoteWrite write, {
+    String? idempotencyKey,
+  }) async {
     final decoded = await _sendTransport(
       method: 'POST',
       path:
@@ -214,6 +215,7 @@ class CompanyCustomersRepository {
       query: _scope(),
       body: <String, dynamic>{...write.toJson(), ..._scope()},
       headers: _headers,
+      idempotencyKey: idempotencyKey,
     );
     if (decoded['ok'] != true) {
       throw CompanyCustomerException(

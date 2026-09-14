@@ -6,12 +6,16 @@ import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_bookings_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
+import 'package:fluxidi_tracking/company/company_agenda_http.dart';
+import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
 import 'package:fluxidi_tracking/company/company_settings_page.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
@@ -32,6 +36,7 @@ void main() {
   });
 
   setUp(() {
+    resetBusinessThemePersistenceLatchForTest();
     companyOpsContextGeneration = 0;
     companyOpsLocalSessionNotifier.value = null;
     companyOpsIdentityNotifier.value = CompanyOpsIdentity.empty;
@@ -179,6 +184,8 @@ void main() {
                 'quote_id': 'cqq_711fd5c7c0095f21764a542d8b55b846',
               },
             },
+            driversLoader: () async => const <Map<String, dynamic>>[],
+            vehiclesLoader: () async => const <Map<String, dynamic>>[],
             settingsProfileLoader: () async => <String, dynamic>{
               'companyName': 'Fluxidi Demo Cars',
               'phone': '+3227110000',
@@ -188,10 +195,30 @@ void main() {
             onOpenCustomers: (context, identity) {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => CompanyCustomersPage(
+                  builder: (_) => CompanyOpsWorkspacePage(
                     language: AppLanguage.nl,
                     issuerName: identity.companyName,
-                    repository: repo,
+                    customersRepository: repo,
+                    agendaRepository: CompanyAgendaRepository(
+                      scopeResolver: () => const <String, String>{
+                        'tenant_id': 'demo_company_p0',
+                        'company_id': 'demo_company_p0',
+                      },
+                      listTransport: (_) async => const <CompanyAgendaRide>[],
+                      createTransport:
+                          ({
+                            required draft,
+                            required idempotencyKey,
+                          }) async {
+                            throw const CompanyAgendaException('unused');
+                          },
+                    ),
+                    driversLoader: () async => const <Map<String, dynamic>>[],
+                    vehiclesLoader: () async => const <Map<String, dynamic>>[],
+                    bookingDetailLoader: (id) async => <String, dynamic>{
+                      'ok': true,
+                      'booking_id': id,
+                    },
                   ),
                 ),
               );
@@ -251,7 +278,8 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('brand_signature_action_ai_dispatch')));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyCustomersPageKey), findsOneWidget);
+    expect(find.byKey(kCompanyOpsWorkspacePageKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersSearchFieldKey), findsOneWidget);
     expect(find.text(kCompanyCustomersTitle.of(AppLanguage.nl)), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();

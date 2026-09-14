@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 String normalizeCustomerSessionPhoneE164(String raw) {
@@ -122,7 +123,7 @@ class CustomerSessionStore {
   Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
     final root = Directory(
-      '${base.path}${Platform.pathSeparator}$_stateDirName',
+      '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName(_stateDirName)}',
     );
     if (!await root.exists()) {
       await root.create(recursive: true);

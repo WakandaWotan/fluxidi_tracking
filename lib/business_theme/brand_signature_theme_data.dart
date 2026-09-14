@@ -81,12 +81,20 @@ ThemeData themeDataForBrandSignatureGold(BusinessThemePalette palette) {
       style: FilledButton.styleFrom(
         backgroundColor: palette.accent,
         foregroundColor: palette.textOnAccent,
+        textStyle: text.labelLarge?.copyWith(
+          fontWeight: FontWeight.w800,
+          color: palette.textOnAccent,
+        ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: palette.textPrimary,
         side: BorderSide(color: palette.accent),
+        textStyle: text.labelLarge?.copyWith(
+          fontWeight: FontWeight.w800,
+          color: palette.textPrimary,
+        ),
       ),
     ),
     snackBarTheme: SnackBarThemeData(

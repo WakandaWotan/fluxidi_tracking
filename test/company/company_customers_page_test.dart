@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_customer_dossier.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
@@ -242,6 +243,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('phone tap opens a full dossier page', (tester) async {
+    final repo = _FakeCustomersRepository(
+      pages: <CompanyCustomerListPage>[
+        CompanyCustomerListPage(
+          items: <CompanyCustomerListItem>[_item('cus_1', 'Ada')],
+          hasMore: false,
+          nextCursor: null,
+          totalCount: 1,
+        ),
+      ],
+      detail: parseCompanyCustomer(<String, dynamic>{
+        'customer_id': 'cus_1',
+        'display_name': 'Ada Lovelace',
+        'first_name': 'Ada',
+        'last_name': 'Lovelace',
+        'status': 'active',
+        'revision': 1,
+        'email': 'ada@example.test',
+        'phone': '+32470000011',
+        'company_name': '',
+        'internal_notes': 'staff only',
+        'addresses': <dynamic>[
+          <String, dynamic>{
+            'type': 'home',
+            'line1': 'Kerkstraat 1',
+            'city': 'Gent',
+            'postal_code': '9000',
+            'country_code': 'BE',
+          },
+        ],
+      }),
+    );
+    await _pumpPage(tester, repository: repo, size: const Size(390, 844));
+    await tester.tap(find.byKey(const Key('company_customer_row_cus_1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCustomerDossierKey), findsOneWidget);
+    expect(find.text(kCompanyCustomersIdentityGroup.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.text(kCompanyCustomersContactGroup.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.text(kCompanyCustomersAddresses.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.textContaining('niet zichtbaar voor de klant'), findsOneWidget);
+    expect(find.textContaining('Kerkstraat 1'), findsOneWidget);
+    expect(find.textContaining('staff only'), findsOneWidget);
+    expect(find.textContaining(kCompanyCustomersNotFilled.of(AppLanguage.nl)), findsWidgets);
+  });
+
   testWidgets('tablet portrait and landscape expose a second pane', (
     tester,
   ) async {
@@ -269,7 +315,7 @@ void main() {
       expect(find.byKey(kCompanyCustomersImportButtonKey), findsOneWidget);
       await tester.tap(find.byKey(const Key('company_customer_row_cus_1')));
       await tester.pumpAndSettle();
-      expect(find.text('ada@example.test'), findsWidgets);
+      expect(find.textContaining('ada@example.test'), findsWidgets);
       expect(find.textContaining('niet zichtbaar voor de klant'), findsOneWidget);
     }
   });

@@ -9,7 +9,9 @@ import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
 import 'package:fluxidi_tracking/company/company_subscription_profile_repository.dart';
 import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:http/http.dart' as http;
@@ -4639,7 +4641,9 @@ DriverProfile _decodeDriver(
 
 Future<Directory> _tenantStateBaseDir() async {
   final base = await getApplicationDocumentsDirectory();
-  final dir = Directory('${base.path}${Platform.pathSeparator}tenant_state');
+  final dir = Directory(
+    '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName('tenant_state')}',
+  );
   if (!await dir.exists()) {
     await dir.create(recursive: true);
   }
@@ -6478,6 +6482,14 @@ Future<BackendBusinessProfile> fetchBackendBusinessProfile({
       mergedProfile[key] = topText;
     }
   }
+  final scopedCompanyId = (companyId ?? currentBusinessThemeCompanyId() ?? '')
+      .trim();
+  if (scopedCompanyId.isNotEmpty) {
+    await hydrateBusinessThemeFromCompanyProfile(
+      companyId: scopedCompanyId,
+      profile: mergedProfile,
+    );
+  }
   return BackendBusinessProfile.fromJson(mergedProfile);
 }
 
@@ -6485,6 +6497,7 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
   BackendBusinessProfile profile, {
   String? tenantId,
   String? companyId,
+  Map<String, dynamic>? extraProfileFields,
 }) async {
   final endpoint = _withAdminTenantCompanyScope(
     Uri.parse('${appConfig.bookingBaseUrl}$kAdminBusinessProfilePath'),
@@ -6502,7 +6515,10 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
         headers: auth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
-          'business_profile': profile.toJson(),
+          'business_profile': <String, dynamic>{
+            ...profile.toJson(),
+            ...?extraProfileFields,
+          },
         }),
       )
       .timeout(const Duration(seconds: 12));
@@ -6534,6 +6550,14 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
       mergedProfile[key] = topText;
     }
   }
+  final scopedCompanyId = (companyId ?? currentBusinessThemeCompanyId() ?? '')
+      .trim();
+  if (scopedCompanyId.isNotEmpty) {
+    await hydrateBusinessThemeFromCompanyProfile(
+      companyId: scopedCompanyId,
+      profile: mergedProfile,
+    );
+  }
   final parsed = BackendBusinessProfile.fromJson(mergedProfile);
   return parsed.copyWith(
     confirmationRequired:
@@ -6546,6 +6570,19 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
             .toString()
             .trim(),
   );
+}
+
+/// Persists a theme apply onto the existing business-profile contract.
+void registerBusinessThemeBackendRemoteSync() {
+  businessThemeCompanyRemoteSync = (companyId, themeDocument) async {
+    var current = localBackendBusinessProfileNotifier.value;
+    current ??= await fetchBackendBusinessProfile(companyId: companyId);
+    await saveBackendBusinessProfile(
+      current,
+      companyId: companyId,
+      extraProfileFields: themeDocument,
+    );
+  };
 }
 
 Future<BackendTaxProfile> fetchBackendTaxProfile({
@@ -9789,6 +9826,16 @@ Future<bool> hydrateCompanyStateFromBootstrap(
     if (businessMap.isNotEmpty) {
       backendBusinessProfile = BackendBusinessProfile.fromJson(businessMap);
       localBackendBusinessProfileNotifier.value = backendBusinessProfile;
+      final themeCompanyId = textAny(<dynamic>[
+        companyProfileNotifier.value?.companyId,
+        activeCompanySessionNotifier.value?.companyId,
+      ]);
+      if (themeCompanyId.isNotEmpty) {
+        await hydrateBusinessThemeFromCompanyProfile(
+          companyId: themeCompanyId,
+          profile: businessMap,
+        );
+      }
     }
     BackendTaxProfile? backendTaxProfile;
     if (taxMap.isNotEmpty) {

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
@@ -143,6 +145,51 @@ void main() {
     expect(source.contains('CalculatorPage._searchPlaces'), isTrue);
     expect(source.contains('CalculatorPage._reverseGeocode'), isTrue);
     expect(source.contains('debugPrint'), isFalse);
+  });
+
+  test('empty country omits the country filter', () {
+    final uri = limousineMapboxPlacesUri(
+      query: 'gent',
+      token: 'token',
+      country: '',
+    );
+    expect(uri.queryParameters.containsKey('country'), isFalse);
+    expect(uri.toString().contains('country='), isFalse);
+    expect(uri.toString().contains('proximity='), isFalse);
+  });
+
+  test('empty token is a config error; empty features are a real empty result', () async {
+    final missingToken = LimousinePlaceLookup(token: '');
+    addTearDown(missingToken.dispose);
+    final configError = await missingToken.search('gent');
+    expect(configError.hadError, isTrue);
+    expect(configError.suggestions, isEmpty);
+
+    final emptyClient = MockClient((request) async {
+      expect(request.url.queryParameters.containsKey('country'), isFalse);
+      return http.Response('{"type":"FeatureCollection","features":[]}', 200);
+    });
+    final emptyLookup = LimousinePlaceLookup(
+      token: 'token',
+      client: emptyClient,
+      country: '',
+    );
+    addTearDown(emptyLookup.dispose);
+    final empty = await emptyLookup.search('gent');
+    expect(empty.hadError, isFalse);
+    expect(empty.suggestions, isEmpty);
+
+    final failClient = MockClient((request) async {
+      return http.Response('unauthorized', 401);
+    });
+    final failLookup = LimousinePlaceLookup(
+      token: 'token',
+      client: failClient,
+      country: '',
+    );
+    addTearDown(failLookup.dispose);
+    final failed = await failLookup.search('gent');
+    expect(failed.hadError, isTrue);
   });
 
   test('incomplete fragments cannot be accepted silently', () {

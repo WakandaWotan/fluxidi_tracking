@@ -2,7 +2,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 
@@ -10,6 +13,7 @@ const Key kCompanyDriversAdminPageKey = Key('company_drivers_admin_page');
 const Key kCompanyDriversAddKey = Key('company_drivers_add');
 const Key kCompanyDriversNameKey = Key('company_drivers_name');
 const Key kCompanyDriversPhoneKey = Key('company_drivers_phone');
+const Key kCompanyDriversColorKey = Key('company_drivers_color');
 
 class CompanyDriversAdminPage extends StatefulWidget {
   const CompanyDriversAdminPage({
@@ -40,6 +44,7 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
   int _maxDrivers = 1;
   final _name = TextEditingController();
   final _phone = TextEditingController();
+  String _agendaColor = kCompanyDriverAgendaColorChoices.first;
 
   @override
   void initState() {
@@ -79,7 +84,24 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
     }
   }
 
+  AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
+
   bool get _atCapacity => _drivers.length >= _maxDrivers && _maxDrivers > 0;
+
+  Widget _colorChoices({
+    Key? key,
+    required String selected,
+    required ValueChanged<String> onSelect,
+  }) {
+    return KeyedSubtree(
+      key: key,
+      child: CompanyDriverAgendaColorChips(
+        selected: selected,
+        enabled: !_saving,
+        onSelect: onSelect,
+      ),
+    );
+  }
 
   Future<void> _add() async {
     if (_atCapacity) {
@@ -103,9 +125,11 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
         'display_name': name,
         'phone': _phone.text.trim(),
         'is_active': true,
+        'agenda_color': _agendaColor,
       });
       _name.clear();
       _phone.clear();
+      notifyCompanyDriverAgendaColorsChanged();
       if (mounted) setState(() => _saving = false);
       await _load();
     } on CompanyCustomerException catch (error) {
@@ -161,6 +185,22 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
                     for (final driver in _drivers)
                       Card(
                         child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: companyAgendaDriverLook(
+                              driver,
+                            ).color,
+                            child: Text(
+                              companyAgendaInitials(
+                                companyAgendaDriverName(driver),
+                              ),
+                              style: TextStyle(
+                                color: companyAgendaOnColor(
+                                  companyAgendaDriverLook(driver).color,
+                                ),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
                           title: Text(
                             (driver['display_name'] ??
                                     driver['displayName'] ??
@@ -168,9 +208,39 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
                                     '')
                                 .toString(),
                           ),
-                          subtitle: Text(
-                            (driver['phone'] ?? '').toString(),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text((driver['phone'] ?? '').toString()),
+                              TextButton(
+                                key: companyDriverAgendaColorActionKey(
+                                  companyAgendaDriverId(driver),
+                                ),
+                                onPressed: _saving
+                                    ? null
+                                    : () async {
+                                        final saved =
+                                            await showCompanyDriverAgendaColorPicker(
+                                              context: context,
+                                              driver: driver,
+                                              selected:
+                                                  (driver['agenda_color'] ??
+                                                          driver['agendaColor'] ??
+                                                          '')
+                                                      .toString(),
+                                              language: _lang,
+                                              companyDrivers: _drivers,
+                                              driverUpsert: widget.driverUpsert,
+                                            );
+                                        if (saved && mounted) await _load();
+                                      },
+                                child: Text(
+                                  kCompanyAgendaColorChange.of(_lang),
+                                ),
+                              ),
+                            ],
                           ),
+                          isThreeLine: true,
                           trailing: IconButton(
                             onPressed: _saving
                                 ? null
@@ -195,6 +265,14 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
                     decoration: const InputDecoration(
                       labelText: 'Telefoon (+landcode)',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(kCompanyAgendaColorLabel.of(_lang)),
+                  const SizedBox(height: 6),
+                  _colorChoices(
+                    key: kCompanyDriversColorKey,
+                    selected: _agendaColor,
+                    onSelect: (color) => setState(() => _agendaColor = color),
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 8),

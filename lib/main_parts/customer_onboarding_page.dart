@@ -300,6 +300,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                         ),
                         const SizedBox(height: 10),
                         OutlinedButton(
+                          key: const Key('customer_onboarding_later'),
                           onPressed: _saving ? null : _goToCustomerHome,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFE5B641),

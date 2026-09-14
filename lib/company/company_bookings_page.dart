@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_booking_list_item.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+import 'package:fluxidi_tracking/nearby/stap3_flow_keys.dart';
 
 const Key kCompanyBookingsPageKey = Key('company_bookings_page');
 const Key kCompanyBookingsFilterOpenKey = Key('company_bookings_filter_open');
@@ -18,6 +19,8 @@ class CompanyBookingsPage extends StatefulWidget {
     this.language,
     this.pageLoader,
     this.detailLoader,
+    this.driversLoader,
+    this.vehiclesLoader,
   });
 
   final AppLanguage? language;
@@ -27,6 +30,8 @@ class CompanyBookingsPage extends StatefulWidget {
   })?
   pageLoader;
   final Future<Map<String, dynamic>> Function(String bookingId)? detailLoader;
+  final Future<List<Map<String, dynamic>>> Function()? driversLoader;
+  final Future<List<Map<String, dynamic>>> Function()? vehiclesLoader;
 
   @override
   State<CompanyBookingsPage> createState() => _CompanyBookingsPageState();
@@ -156,12 +161,15 @@ class _CompanyBookingsPageState extends State<CompanyBookingsPage> {
                         final item = _visible[index];
                         return Card(
                           child: ListTile(
+                            key: companyBookingRowKey(item.bookingId),
                             title: Text(item.routeLabel),
                             subtitle: Text(
                               [
                                 if (item.customerName.isNotEmpty)
                                   item.customerName,
                                 if (item.pickupIso.isNotEmpty) item.pickupIso,
+                                if (item.amount != null)
+                                  '${item.currency} ${item.amount}',
                                 if (item.quoteId.isNotEmpty)
                                   'Offerte: ${item.quoteId}',
                                 'Status: ${item.statusText.isEmpty ? '—' : item.statusText}',
@@ -170,14 +178,23 @@ class _CompanyBookingsPageState extends State<CompanyBookingsPage> {
                               ].join('\n'),
                             ),
                             isThreeLine: true,
-                            onTap: () => openCompanyBookingDetail(
-                              context,
-                              bookingId: item.bookingId,
-                              language: _lang,
-                              loader: widget.detailLoader,
-                              openedFrom:
-                                  CompanyBookingOpenedFrom.bookingsList,
-                            ),
+                            onTap: () async {
+                              await openCompanyBookingDetail(
+                                context,
+                                bookingId: item.bookingId,
+                                language: _lang,
+                                loader: widget.detailLoader,
+                                driversLoader:
+                                    widget.driversLoader ??
+                                    fetchCompanyOpsDrivers,
+                                vehiclesLoader:
+                                    widget.vehiclesLoader ??
+                                    fetchCompanyOpsVehicles,
+                                openedFrom:
+                                    CompanyBookingOpenedFrom.bookingsList,
+                              );
+                              if (mounted) await _load(forceRefresh: true);
+                            },
                           ),
                         );
                       },

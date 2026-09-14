@@ -743,8 +743,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         kBookingBaseUrl,
         '/admin/dashboard/bookings-kpis',
       );
+      // Local synthetic companies live on the loopback booking Worker.
+      // Trip KPIs on the production tracking host then 401 and blank the
+      // counters; keep both legs on the same local host.
       final tripKpisUri = _withActiveBookingScope(
-        kWorkerBaseUrl,
+        isLoopbackBookingBaseUrl(kBookingBaseUrl)
+            ? kBookingBaseUrl
+            : kWorkerBaseUrl,
         '/admin/dashboard/trip-kpis',
         extraQuery: <String, String>{'month': month},
       );
@@ -1670,14 +1675,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final issuer = settingsName.isNotEmpty ? settingsName : profileName;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CompanyCustomersPage(
+        builder: (_) => CompanyOpsWorkspacePage(
           issuerName: issuer.isEmpty ? null : issuer,
           onOpenBooking: (bookingId) {
             openCompanyBookingDetail(
               context,
               bookingId: bookingId,
-              openedFrom: CompanyBookingOpenedFrom.quote,
+              openedFrom: CompanyBookingOpenedFrom.bookingsList,
               loader: _loadCompanyBookingDetail,
+              driversLoader: fetchCompanyOpsDrivers,
+              vehiclesLoader: fetchCompanyOpsVehicles,
             );
           },
         ),
@@ -3830,25 +3837,118 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  Widget _brandSignatureGoldWindowsFilledActions({
+    required BrandSignatureGoldWindowsDashboardMetrics metrics,
+    required bool isTabletLandscape,
+    required double cardHeight,
+    required double spacing,
+    required bool isDesktopWide,
+  }) {
+    return Expanded(
+      child: LayoutBuilder(
+        builder: (context, gridConstraints) {
+          final columns = brandSignatureGoldWindowsVisibleColumns(
+            gridConstraints.maxWidth,
+          );
+          final rows = columns >= kBrandSignatureGoldWindowsPreferredColumns
+              ? kBrandSignatureGoldWindowsPreferredRows
+              : (kBrandSignatureGoldWindowsTileCount / columns).ceil();
+          final rawTileHeight = rows <= 1
+              ? gridConstraints.maxHeight
+              : (gridConstraints.maxHeight -
+                      metrics.spacing * (rows - 1)) /
+                  rows;
+          final tileHeight = rawTileHeight
+              .clamp(
+                kBrandSignatureGoldWindowsMinTileHeight,
+                kBrandSignatureGoldWindowsMaxTileHeight,
+              )
+              .toDouble();
+          final tileWidth = columns <= 1
+              ? gridConstraints.maxWidth
+              : (gridConstraints.maxWidth -
+                      metrics.spacing * (columns - 1)) /
+                  columns;
+          final neededHeight =
+              tileHeight * rows + metrics.spacing * (rows - 1);
+          final fits =
+              rawTileHeight >= kBrandSignatureGoldWindowsMinTileHeight &&
+              neededHeight <= gridConstraints.maxHeight + 0.5;
+          final iconExtent = brandSignatureGoldWindowsIconExtent(
+            tileWidth: tileWidth,
+            tileHeight: tileHeight,
+            textScale: MediaQuery.textScalerOf(context).scale(14) / 14,
+          );
+          return _brandSignatureGoldQuickActions(
+            context: context,
+            isTabletLandscape: isTabletLandscape,
+            cardHeight: cardHeight,
+            spacing: spacing,
+            isDesktopWide: isDesktopWide,
+            windowsGridScrollable: !fits,
+            windowsGridExpandToParent: true,
+            windowsCompact: metrics.copyWith(
+              columns: columns,
+              tileWidth: tileWidth,
+              tileHeight: tileHeight,
+              iconExtent: iconExtent,
+              fitsWithoutScroll: fits,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _brandSignatureGoldQuickActions({
     required BuildContext context,
     required bool isTabletLandscape,
     required double cardHeight,
     required double spacing,
     bool isDesktopWide = false,
+    bool windowsGridScrollable = false,
+    bool windowsGridExpandToParent = false,
+    BrandSignatureGoldWindowsDashboardMetrics? windowsCompact,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = companyDashboardGoldTileColumns(
-          screenClass: isDesktopWide
-              ? FluxidiScreenClass.desktop
-              : isTabletLandscape
-              ? FluxidiScreenClass.tablet
-              : FluxidiScreenClass.phone,
-          isTabletLandscape: isTabletLandscape,
+        final mediaWidth = MediaQuery.sizeOf(context).width;
+        final columns = windowsCompact == null
+            ? companyDashboardGoldTileColumns(
+                screenClass: isDesktopWide
+                    ? FluxidiScreenClass.desktop
+                    : isTabletLandscape
+                    ? FluxidiScreenClass.tablet
+                    : FluxidiScreenClass.phone,
+                isTabletLandscape: isTabletLandscape,
+              )
+            : brandSignatureGoldWindowsVisibleColumns(
+                brandSignatureGoldWindowsAvailableWidth(
+                  constraintWidth: constraints.maxWidth,
+                  mediaWidth:
+                      mediaWidth -
+                      kBrandSignatureGoldWindowsListHorizontalPadding,
+                ),
+              );
+        final gap = windowsCompact?.spacing ?? spacing;
+        final availableWidth = brandSignatureGoldWindowsAvailableWidth(
+          constraintWidth: constraints.maxWidth,
+          mediaWidth: mediaWidth,
         );
-        final cardWidth =
-            (constraints.maxWidth - (spacing * (columns - 1))) / columns;
+        final cardWidth = brandSignatureGoldWindowsTileWidth(
+          availableWidth: availableWidth,
+          columns: columns,
+          spacing: gap,
+        );
+        final tileHeight = windowsCompact?.tileHeight ??
+            (cardHeight + kBrandSignatureGoldActionCardHeightBoost);
+        final iconExtent = windowsCompact == null
+            ? null
+            : brandSignatureGoldWindowsIconExtent(
+                tileWidth: cardWidth,
+                tileHeight: tileHeight,
+                textScale: MediaQuery.textScalerOf(context).scale(14) / 14,
+              );
         Widget card({
           required String actionKey,
           required String title,
@@ -3858,25 +3958,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           String? futureBadge,
           String? statusBadge,
         }) {
+          final tile = BrandSignatureGoldActionCard(
+            actionKey: actionKey,
+            title: title,
+            subtitle: subtitle,
+            onTap: onTap,
+            isFuture: isFuture,
+            futureBadge: futureBadge,
+            statusBadge: statusBadge,
+            padding: windowsCompact?.tilePadding,
+            iconExtent: iconExtent,
+            iconGap: windowsCompact?.iconGap,
+            titleFontSize: windowsCompact?.titleFontSize,
+            subtitleFontSize: windowsCompact?.subtitleFontSize,
+          );
           return SizedBox(
             width: cardWidth,
-            height: cardHeight + kBrandSignatureGoldActionCardHeightBoost,
-            child: BrandSignatureGoldActionCard(
-              actionKey: actionKey,
-              title: title,
-              subtitle: subtitle,
-              onTap: onTap,
-              isFuture: isFuture,
-              futureBadge: futureBadge,
-              statusBadge: statusBadge,
-            ),
+            height: tileHeight,
+            child: tile,
           );
         }
 
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
-          children: [
+        final tiles = <Widget>[
             card(
               actionKey: 'settings',
               title: _t(
@@ -3997,6 +4100,22 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               },
             ),
             card(
+              actionKey: 'ai_dispatch',
+              title: _t(
+                nl: 'Klantenbeheer',
+                en: 'Customer management',
+                fr: 'Gestion des clients',
+                es: 'Gestión de clientes',
+              ),
+              subtitle: _t(
+                nl: 'Bedrijfsklanten',
+                en: 'Company customers',
+                fr: 'Clients de l’entreprise',
+                es: 'Clientes de la empresa',
+              ),
+              onTap: () => _openCompanyCustomers(context),
+            ),
+            card(
               actionKey: 'drivers',
               title: _t(
                 nl: 'Chauffeur weergave',
@@ -4067,29 +4186,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               ),
               onTap: () => _openBusinessBookingsOverview(context),
             ),
-            card(
-              actionKey: 'ai_dispatch',
-              title: _t(
-                nl: 'Klantenbeheer',
-                en: 'Customer management',
-                fr: 'Gestion des clients',
-                es: 'Gestión de clientes',
-              ),
-              subtitle: _t(
-                nl: 'Bedrijfsklanten',
-                en: 'Company customers',
-                fr: 'Clients de l’entreprise',
-                es: 'Clientes de la empresa',
-              ),
-              onTap: () => _openCompanyCustomers(context),
-            ),
-          ],
+        ];
+        if (windowsCompact != null) {
+          return BrandSignatureGoldWindowsActionGrid(
+            columns: columns,
+            spacing: gap,
+            tileHeight: tileHeight,
+            scrollable: windowsGridScrollable,
+            expandToParent: true,
+            children: tiles,
+          );
+        }
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: tiles,
         );
       },
     );
   }
 
   Widget _quickActionCard({
+    Key? actionKey,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -4326,6 +4444,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
     if (!hasImageBackground) {
       return InkWell(
+        key: actionKey,
         borderRadius: BorderRadius.circular(15),
         onTap: active ? onTap : null,
         child: LayoutBuilder(
@@ -4360,6 +4479,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       );
     }
     return InkWell(
+      key: actionKey,
       borderRadius: BorderRadius.circular(15),
       onTap: active ? onTap : null,
       child: LayoutBuilder(
@@ -4514,12 +4634,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             // overflowing on narrow phones.
             final visualMobileCardHeight = clampDouble(W * 0.28, 100.0, 116.0);
             final visualMobileCardSpacing = 10.0;
+            final wideLandscapeHeader = isTabletLandscape && W >= 1100;
             final businessHeaderHeight = isTabletLandscape
-                // Slightly taller hero banner so tablet landscape no
-                // longer leaves a wide empty band at the bottom of the
-                // page. Phone portrait/landscape and tablet portrait
-                // branches are unchanged.
-                ? clampDouble(H * 0.22, 140.0, 200.0)
+                // Wide desktop windows need a taller min than phone-derived
+                // tablet landscape: the account chip + greeting overflow 140 px.
+                ? clampDouble(
+                    H * 0.22,
+                    wideLandscapeHeader ? 228.0 : 140.0,
+                    wideLandscapeHeader ? 280.0 : 200.0,
+                  )
                 : isTabletPortrait
                 ? clampDouble(H * 0.23, 300.0, 360.0)
                 : null;
@@ -4593,6 +4716,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             return ValueListenableBuilder<BusinessThemeVariant>(
               valueListenable: businessThemeNotifier,
               builder: (context, themeVariant, __) {
+                return LayoutBuilder(
+                  builder: (context, bodyConstraints) {
                 // Live flags from the same notifier that owns cards/artwork
                 // and the root canvas — never snapshot outside this builder.
                 final isExecutiveGold =
@@ -4601,6 +4726,54 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     themeVariant == BusinessThemeVariant.cleanProfessional;
                 final isBrandSignatureGold =
                     themeVariant == BusinessThemeVariant.brandSignatureGold;
+                final windowsGoldCompact =
+                    brandSignatureGoldWindowsCompactApplies(
+                      platform: Theme.of(context).platform,
+                      isWeb: kIsWeb,
+                      variant: themeVariant,
+                    );
+                final goldDesktopHeader = windowsGoldCompact ||
+                    FluxidiBreakpoints.classifyWidth(W) ==
+                        FluxidiScreenClass.desktop;
+                final goldHeaderHeight =
+                    brandSignatureGoldHeaderHeightForLayout(
+                  isTabletLandscape: isTabletLandscape,
+                  useTabletVisualMode: useTabletVisualMode,
+                  isDesktopWide: goldDesktopHeader,
+                );
+                final bodySize = Size(
+                  bodyConstraints.maxWidth,
+                  bodyConstraints.maxHeight.isFinite
+                      ? bodyConstraints.maxHeight
+                      : H,
+                );
+                final windowsGoldMetrics = windowsGoldCompact
+                    ? brandSignatureGoldWindowsDashboardMetrics(
+                        viewport: bodySize,
+                        headerHeight: goldHeaderHeight,
+                        textScale:
+                            MediaQuery.textScalerOf(context).scale(14) / 14,
+                        contentWidthOverride: math.max(
+                          0.0,
+                          bodyConstraints.maxWidth -
+                              kBrandSignatureGoldWindowsListHorizontalPadding,
+                        ),
+                      )
+                    : null;
+                final goldSectionGap =
+                    windowsGoldMetrics?.sectionGap ?? businessSectionGap;
+                final goldTitleGap =
+                    windowsGoldMetrics?.titleGap ??
+                    businessQuickActionsTitleGap;
+                final goldGridTopGap =
+                    windowsGoldMetrics?.gridTopGap ??
+                    businessQuickActionsGridTopGap;
+                final goldBackGap =
+                    windowsGoldMetrics?.backGap ?? businessBackButtonGap;
+                final goldListBottom =
+                    windowsGoldMetrics?.listPaddingBottom ??
+                    businessListBottomPadding;
+                final goldListTop = windowsGoldMetrics?.listPaddingTop ?? 12.0;
                 final businessHeaderAsset = _businessImageAsset(
                   executiveGoldAsset:
                       'assets/fluxidi/zakelijke_tablet_header_foto.webp',
@@ -4613,14 +4786,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   fluxidiNeonRushAsset:
                       'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.webp',
                 );
-                return ListView(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    12,
-                    16,
-                    businessListBottomPadding,
-                  ),
-                  children: [
+                final fillGold = windowsGoldCompact &&
+                    windowsGoldMetrics != null &&
+                    bodyConstraints.maxHeight.isFinite;
+                final homePadding = EdgeInsets.fromLTRB(
+                  16,
+                  goldListTop,
+                  16,
+                  goldListBottom,
+                );
+                final homeChildren = <Widget>[
                     if (isBrandSignatureGold)
                       ValueListenableBuilder<BusinessSettingsState>(
                         valueListenable: businessSettingsNotifier,
@@ -4645,13 +4820,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   ? settingsName
                                   : profileName;
                               return BrandSignatureGoldHeader(
-                                height: brandSignatureGoldHeaderHeightForLayout(
-                                  isTabletLandscape: isTabletLandscape,
-                                  useTabletVisualMode: useTabletVisualMode,
-                                  isDesktopWide:
-                                      FluxidiBreakpoints.classifyWidth(W) ==
-                                      FluxidiScreenClass.desktop,
-                                ),
+                                height: goldHeaderHeight,
                                 logoRef: resolution.ref,
                                 hasCompanyLogo: hasCompanyLogo,
                                 companyName: companyName,
@@ -4665,7 +4834,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 accountMenu: _businessAccountMenuButton(
                                   context,
                                   profile,
-                                  compact: true,
+                                  compact: !goldDesktopHeader,
                                 ),
                               );
                             },
@@ -4726,57 +4895,74 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             Positioned.fill(
                               child: Padding(
                                 padding: headerContentPadding,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    ValueListenableBuilder<
-                                      ActiveCompanySession?
-                                    >(
-                                      valueListenable:
-                                          activeCompanySessionNotifier,
-                                      builder: (context, _, __) =>
-                                          _topBar(context, profile),
-                                    ),
-                                    const Spacer(),
-                                    // Reserve space so greeting never
-                                    // collides with the theme-cycle chip
-                                    // at the lower-right of the header.
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        right: BusinessHomeHeaderThemeRegion
-                                            .textRightReserve,
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            _timeAwareGreeting(),
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: headerTitleFontSize,
+                                child: LayoutBuilder(
+                                  builder: (context, headerConstraints) {
+                                    return FittedBox(
+                                      alignment: Alignment.topLeft,
+                                      fit: BoxFit.scaleDown,
+                                      child: SizedBox(
+                                        width: headerConstraints.maxWidth,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ValueListenableBuilder<
+                                              ActiveCompanySession?
+                                            >(
+                                              valueListenable:
+                                                  activeCompanySessionNotifier,
+                                              builder: (context, _, __) =>
+                                                  _topBar(context, profile),
                                             ),
-                                          ),
-                                          SizedBox(height: headerTextBottomGap),
-                                          Text(
-                                            _t(
-                                              nl: 'Bedrijfsoverzicht',
-                                              en: 'Business overview',
-                                              fr: 'Aperçu de l’entreprise',
-                                              es: 'Resumen de empresa',
-                                            ),
-                                            style: TextStyle(
-                                              color: Colors.white.withOpacity(
-                                                0.78,
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 8,
+                                                right:
+                                                    BusinessHomeHeaderThemeRegion
+                                                        .textRightReserve,
                                               ),
-                                              fontSize: headerSubtitleFontSize,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    _timeAwareGreeting(),
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      fontSize:
+                                                          headerTitleFontSize,
+                                                    ),
+                                                  ),
+                                                  SizedBox(
+                                                    height:
+                                                        headerTextBottomGap,
+                                                  ),
+                                                  Text(
+                                                    _t(
+                                                      nl: 'Bedrijfsoverzicht',
+                                                      en: 'Business overview',
+                                                      fr: 'Aperçu de l’entreprise',
+                                                      es: 'Resumen de empresa',
+                                                    ),
+                                                    style: TextStyle(
+                                                      color: Colors.white
+                                                          .withOpacity(0.78),
+                                                      fontSize:
+                                                          headerSubtitleFontSize,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                        ],
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    );
+                                  },
                                 ),
                               ),
                             ),
@@ -4851,7 +5037,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                       ),
                     ],
-                    SizedBox(height: businessSectionGap),
+                    SizedBox(height: goldSectionGap),
                     // BUSINESS-DASHBOARD-KPI-LOADING-UX-1: subtle indicator
                     // while initial load / background refresh runs. Cards
                     // keep last successful values (or "—") — never flash 0.
@@ -5129,7 +5315,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         );
                       },
                     ),
-                    SizedBox(height: businessQuickActionsTitleGap),
+                    SizedBox(height: goldTitleGap),
                     Text(
                       _t(
                         nl: 'Snelle acties',
@@ -5184,17 +5370,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                       ),
                     ],
-                    SizedBox(height: businessQuickActionsGridTopGap),
+                    SizedBox(height: goldGridTopGap),
                     if (isBrandSignatureGold)
-                      _brandSignatureGoldQuickActions(
-                        context: context,
-                        isTabletLandscape: isTabletLandscape,
-                        cardHeight: businessQuickActionCardHeight,
-                        spacing: businessQuickActionSpacing,
-                        isDesktopWide:
-                            FluxidiBreakpoints.classifyWidth(W) ==
-                            FluxidiScreenClass.desktop,
-                      )
+                      fillGold
+                          ? _brandSignatureGoldWindowsFilledActions(
+                              metrics: windowsGoldMetrics!,
+                              isTabletLandscape: isTabletLandscape,
+                              cardHeight: businessQuickActionCardHeight,
+                              spacing: businessQuickActionSpacing,
+                              isDesktopWide:
+                                  FluxidiBreakpoints.classifyWidth(W) ==
+                                  FluxidiScreenClass.desktop,
+                            )
+                          : _brandSignatureGoldQuickActions(
+                              context: context,
+                              isTabletLandscape: isTabletLandscape,
+                              cardHeight: businessQuickActionCardHeight,
+                              spacing: businessQuickActionSpacing,
+                              isDesktopWide:
+                                  FluxidiBreakpoints.classifyWidth(W) ==
+                                  FluxidiScreenClass.desktop,
+                              windowsCompact: windowsGoldMetrics,
+                            )
                     else
                       LayoutBuilder(
                         builder: (context, constraints) {
@@ -5272,6 +5469,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   width: cardWidth,
                                   height: businessQuickActionCardHeight,
                                   child: _quickActionCard(
+                                    actionKey: const Key(
+                                      'brand_signature_action_planning',
+                                    ),
                                     icon: Icons.calendar_month_outlined,
                                     title: _t(
                                       nl: 'Boekingen',
@@ -5622,6 +5822,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   width: cardWidth,
                                   height: businessQuickActionCardHeight,
                                   child: _quickActionCard(
+                                    actionKey: const Key(
+                                      'brand_signature_action_planning',
+                                    ),
                                     icon: Icons.calendar_month_outlined,
                                     title: _t(
                                       nl: 'Boekingen',
@@ -5695,12 +5898,80 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           );
                         },
                       ),
-                    SizedBox(height: businessBackButtonGap),
+                ];
+                final backToStartButton =
                     businessThemeNotifier.value !=
-                            BusinessThemeVariant.executiveGold
-                        ? _businessBackToStartButton()
-                        : const FluxidiBackToStartButton(),
-                  ],
+                        BusinessThemeVariant.executiveGold
+                    ? _businessBackToStartButton()
+                    : const FluxidiBackToStartButton();
+                final view = View.of(context);
+                final homeWidth = brandSignatureGoldWindowsAvailableWidth(
+                  constraintWidth: bodyConstraints.maxWidth,
+                  mediaWidth: MediaQuery.sizeOf(context).width,
+                  viewWidth: view.devicePixelRatio > 0
+                      ? view.physicalSize.width / view.devicePixelRatio
+                      : 0,
+                );
+                Widget homeBody;
+                if (fillGold) {
+                  homeBody = Padding(
+                    padding: homePadding,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ...homeChildren,
+                        SizedBox(height: goldBackGap),
+                        backToStartButton,
+                      ],
+                    ),
+                  );
+                } else if (bodyConstraints.maxHeight.isFinite) {
+                  homeBody = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: ListView(
+                          padding: homePadding.copyWith(bottom: 8),
+                          children: homeChildren,
+                        ),
+                      ),
+                      ColoredBox(
+                        color: _businessThemePalette.background,
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            goldBackGap,
+                            16,
+                            goldListBottom,
+                          ),
+                          child: backToStartButton,
+                        ),
+                      ),
+                    ],
+                  );
+                } else {
+                  homeBody = ListView(
+                    padding: homePadding,
+                    children: [
+                      ...homeChildren,
+                      SizedBox(height: goldBackGap),
+                      backToStartButton,
+                    ],
+                  );
+                }
+                return ClipRect(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: SizedBox(
+                      width: homeWidth,
+                      height: bodyConstraints.maxHeight.isFinite
+                          ? bodyConstraints.maxHeight
+                          : null,
+                      child: homeBody,
+                    ),
+                  ),
+                );
+                  },
                 );
               },
             );
@@ -5715,6 +5986,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
+        key: const Key('fluxidi_back_to_start'),
         onPressed: () {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const RoleEntryPage()),
@@ -5729,10 +6001,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             fr: 'Retour à l’accueil',
             es: 'Volver a la pantalla inicial',
           ),
-          style: TextStyle(color: palette.accent, fontWeight: FontWeight.w700),
         ),
         style: OutlinedButton.styleFrom(
+          foregroundColor: palette.accent,
           backgroundColor: palette.background,
+          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
           side: BorderSide(color: palette.accent.withOpacity(0.72), width: 1.1),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),

@@ -346,7 +346,9 @@ class _BusinessRegionalDemandPageState
       _coverageLng! <= 180;
 
   bool get _canRenderCoverageMap =>
-      _hasCoverageCenter && kMapboxToken.trim().isNotEmpty;
+      _hasCoverageCenter &&
+      kMapboxToken.trim().isNotEmpty &&
+      kMapboxMapsPluginSupported;
 
   double _mapZoomForRadius(double radiusKm) {
     final r = radiusKm <= 0 ? 8.0 : radiusKm;
@@ -1032,7 +1034,15 @@ class _BusinessRegionalDemandPageState
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Text(
-                                          _hasCoverageCenter
+                                          _hasCoverageCenter &&
+                                                  !kMapboxMapsPluginSupported
+                                              ? _t(
+                                                  nl: 'De kaartplugin ontbreekt op Windows. De bestaande vraagradarlogica blijft beschikbaar; alleen de kaartweergave ontbreekt.',
+                                                  en: 'The map plugin is missing on Windows. Existing demand-radar logic stays available; only the map view is missing.',
+                                                  fr: 'Le plugin carte est absent sur Windows. La logique radar reste disponible ; seule la carte manque.',
+                                                  es: 'Falta el complemento de mapa en Windows. La lógica del radar sigue disponible; solo falta el mapa.',
+                                                )
+                                              : _hasCoverageCenter
                                               ? _t(
                                                   nl: 'Mapbox-token ontbreekt. Configureer de kaarttoegang om de kaart te tonen.',
                                                   en: 'Mapbox token is missing. Configure map access to show the map.',

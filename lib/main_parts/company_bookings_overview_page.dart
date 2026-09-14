@@ -45,6 +45,8 @@ class _CompanyBookingsOverviewPageState
   int _bookingsLoadGeneration = 0;
   String? _loadedBookingScopeKey;
   int? _bookingExactTotal;
+  List<Map<String, dynamic>> _fleetDrivers = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _fleetVehicles = const <Map<String, dynamic>>[];
 
   String _t({
     required String nl,
@@ -2128,7 +2130,51 @@ class _CompanyBookingsOverviewPageState
     _quoteRequestsVisible = widget.quoteRequestsVisible ?? false;
     unawaited(_refreshCreditAuthState());
     unawaited(_loadBookings());
+    unawaited(_loadAssignmentFleet());
     unawaited(_resolveQuoteRequestsVisibility());
+  }
+
+  Future<void> _loadAssignmentFleet() async {
+    try {
+      final results = await Future.wait<List<Map<String, dynamic>>>([
+        fetchCompanyOpsDrivers(),
+        fetchCompanyOpsVehicles(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _fleetDrivers = results[0];
+        _fleetVehicles = results[1];
+      });
+    } catch (_) {}
+  }
+
+  String _overviewDriverLabel(_CompanyBookingOverviewItem item) {
+    return companyAgendaResolvedDriverLabel(
+      item.assignedDriverText,
+      _fleetDrivers,
+    );
+  }
+
+  String _overviewVehicleLabel(_CompanyBookingOverviewItem item) {
+    return companyAgendaResolvedVehicleLabel(
+      item.assignedVehicleText,
+      _fleetVehicles,
+    );
+  }
+
+  Future<void> _openAssignmentDetail(_CompanyBookingOverviewItem item) async {
+    final bookingId = item.bookingId.trim();
+    if (bookingId.isEmpty) return;
+    await openCompanyBookingDetail(
+      context,
+      bookingId: bookingId,
+      language: appLanguageNotifier.value,
+      driversLoader: fetchCompanyOpsDrivers,
+      vehiclesLoader: fetchCompanyOpsVehicles,
+    );
+    if (!mounted) return;
+    await _loadBookings(forceRefresh: true);
+    await _loadAssignmentFleet();
   }
 
   Future<void> _resolveQuoteRequestsVisibility() async {
@@ -2424,14 +2470,15 @@ class _CompanyBookingsOverviewPageState
         _loading = false;
         _loadingMore = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       if (myGen != _bookingsLoadGeneration) return;
+      final code = authFailureCode(classifyBookingHostFailure(error));
       setState(() {
         if (_all.isEmpty) {
-          _errorCode = 'load_failed';
+          _errorCode = code;
         } else {
-          _pageErrorCode = 'load_failed';
+          _pageErrorCode = code;
           _failedBookingCursor = isNextPage ? request.cursor : '';
         }
         _loading = false;
@@ -2467,7 +2514,8 @@ class _CompanyBookingsOverviewPageState
   }
 
   String _friendlyError(String? code) {
-    switch ((code ?? '').trim()) {
+    final raw = (code ?? '').trim();
+    switch (raw) {
       case 'company_bookings_list_index_unavailable':
         return _t(
           nl: 'Boekingenoverzicht is tijdelijk niet beschikbaar. Index wordt voorbereid. Probeer straks opnieuw.',
@@ -2483,11 +2531,15 @@ class _CompanyBookingsOverviewPageState
           es: 'La vista de reservas se está actualizando. Vuelve a intentarlo en breve.',
         );
       default:
-        return _t(
-          nl: 'Boekingen laden is mislukt. Controleer je verbinding en probeer opnieuw.',
-          en: 'Failed to load bookings. Check your connection and try again.',
-          fr: 'Le chargement des réservations a échoué. Vérifiez votre connexion et réessayez.',
-          es: 'Error al cargar reservas. Revisa tu conexión y vuelve a intentarlo.',
+        return bookingHostFailureUserTextForKind(
+          classifyRemoteAuthFailure(
+            error: raw,
+            networkException:
+                raw == 'network_error' || raw == 'local_worker_unreachable',
+            loopbackHost: isLoopbackBookingBaseUrl(kBookingBaseUrl),
+          ),
+          _t,
+          rawCode: raw,
         );
     }
   }
@@ -2986,6 +3038,7 @@ class _CompanyBookingsOverviewPageState
     final pickupText = _formatPickup(item.pickupIso);
     final customerMissing = _isMissingValue(item.customerName);
     return Container(
+      key: Key('company_booking_row_${item.bookingId.trim()}'),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -3225,17 +3278,32 @@ class _CompanyBookingsOverviewPageState
                     ),
                   ),
                 Text(
-                  '${_t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor')}: ${item.assignedDriverText}',
+                  '${_t(nl: 'Chauffeur', en: 'Driver', fr: 'Chauffeur', es: 'Conductor')}: ${_overviewDriverLabel(item)}',
                   style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${item.assignedVehicleText}',
+                  '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${_overviewVehicleLabel(item)}',
                   style: TextStyle(color: tokens.textTertiary, fontSize: 11.4),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (item.bookingId.trim().isNotEmpty)
+                  TextButton(
+                    key: Key(
+                      'company_booking_overview_open_${item.bookingId.trim()}',
+                    ),
+                    onPressed: () => _openAssignmentDetail(item),
+                    child: Text(
+                      _t(
+                        nl: 'Toewijzing & details',
+                        en: 'Assignment & details',
+                        fr: 'Attribution et détails',
+                        es: 'Asignación y detalles',
+                      ),
+                    ),
+                  ),
                 if (item.serviceType.toLowerCase() == 'limousine')
                   Text(
                     _t(

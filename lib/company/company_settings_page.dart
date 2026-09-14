@@ -2,17 +2,25 @@
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company/company_customer_locale_options.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_place.dart';
+import 'package:fluxidi_tracking/company/company_fixed_prices_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+import 'package:fluxidi_tracking/company/fluxidi_about_this_app.dart';
+import 'package:fluxidi_tracking/widgets/business_theme_selector_sheet.dart';
 import 'package:image_picker/image_picker.dart';
 
 const Key kCompanySettingsPageKey = Key('company_settings_page');
 const Key kCompanySettingsNameKey = Key('company_settings_name');
 const Key kCompanySettingsSaveKey = Key('company_settings_save');
 const Key kCompanySettingsLogoKey = Key('company_settings_logo');
+const Key kCompanySettingsThemeKey = Key('company_settings_theme');
+const Key kCompanySettingsListKey = Key('company_settings_list');
 
 class CompanySettingsPage extends StatefulWidget {
   const CompanySettingsPage({
@@ -26,7 +34,7 @@ class CompanySettingsPage extends StatefulWidget {
   final AppLanguage? language;
   final Future<Map<String, dynamic>> Function()? profileLoader;
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> profile)?
-      profileSaver;
+  profileSaver;
   final VoidCallback? onSaved;
 
   @override
@@ -69,8 +77,18 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
       _error = null;
     });
     try {
-      final profile = await (widget.profileLoader ??
-          fetchCompanyOpsBusinessProfile)();
+      final profile =
+          await (widget.profileLoader ?? fetchCompanyOpsBusinessProfile)();
+      if (!mounted) return;
+      final companyId =
+          companyOpsLocalSessionNotifier.value?.companyId.trim() ?? '';
+      if (companyId.isNotEmpty) {
+        bindBusinessThemeCompanyScope(companyId);
+        await hydrateBusinessThemeFromCompanyProfile(
+          companyId: companyId,
+          profile: profile,
+        );
+      }
       if (!mounted) return;
       _apply(profile);
     } catch (_) {
@@ -84,10 +102,18 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
 
   void _apply(Map<String, dynamic> profile) {
     _profile = profile;
-    _name.text = _text(profile, const ['companyName', 'company_name', 'trading_name']);
+    _name.text = _text(profile, const [
+      'companyName',
+      'company_name',
+      'trading_name',
+    ]);
     _legal.text = _text(profile, const ['legalName', 'legal_name']);
     _phone.text = _text(profile, const ['phone']);
-    _email.text = _text(profile, const ['email', 'companyEmail', 'company_email']);
+    _email.text = _text(profile, const [
+      'email',
+      'companyEmail',
+      'company_email',
+    ]);
     _logoUrl.text = _text(profile, const ['publicLogoUrl', 'public_logo_url']);
     final country = _text(profile, const ['country']);
     setState(() {
@@ -141,10 +167,10 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
         ..['email'] = _email.text.trim()
         ..['country'] = _country
         ..['publicLogoUrl'] = _logoUrl.text.trim()
-        ..['public_logo_url'] = _logoUrl.text.trim();
-      final saved = await (widget.profileSaver ?? saveCompanyOpsBusinessProfile)(
-        next,
-      );
+        ..['public_logo_url'] = _logoUrl.text.trim()
+        ..addAll(encodeBusinessThemeForCompanyProfile());
+      final saved =
+          await (widget.profileSaver ?? saveCompanyOpsBusinessProfile)(next);
       if (!mounted) return;
       _apply(saved);
       final session = companyOpsLocalSessionNotifier.value;
@@ -174,6 +200,7 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
             ? const Center(child: CircularProgressIndicator())
             : CompanyOpsBoundedForm(
                 child: ListView(
+                  key: kCompanySettingsListKey,
                   padding: const EdgeInsets.all(16),
                   children: [
                     TextFormField(
@@ -204,9 +231,10 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      value: kCompanyCustomerCallingCodeOptions.any(
-                        (item) => item.countryCode == _country,
-                      )
+                      value:
+                          kCompanyCustomerCallingCodeOptions.any(
+                            (item) => item.countryCode == _country,
+                          )
                           ? _country
                           : 'BE',
                       decoration: const InputDecoration(labelText: 'Land'),
@@ -224,12 +252,25 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                       },
                     ),
                     const SizedBox(height: 16),
+                    ListTile(
+                      key: kCompanySettingsThemeKey,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.palette_outlined),
+                      title: const Text("Thema's & uitstraling"),
+                      subtitle: const Text(
+                        'Zelfde themakeuze als de bedrijfsapp. Een bewuste keuze wordt niet overschreven.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => showBusinessThemeSelectorSheet(context),
+                    ),
+                    const SizedBox(height: 8),
                     if (_logoUrl.text.trim().isNotEmpty)
                       Image.network(
                         key: kCompanySettingsLogoKey,
                         _logoUrl.text.trim(),
                         height: 72,
-                        errorBuilder: (_, __, ___) => const Text('Logo niet geladen'),
+                        errorBuilder: (_, __, ___) =>
+                            const Text('Logo niet geladen'),
                       ),
                     OutlinedButton(
                       onPressed: _saving ? null : _pickLogo,
@@ -246,10 +287,56 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                       child: Text(_saving ? 'Bewaren…' : 'Bewaren'),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      'Huisstijl gebruikt de bestaande Brand Signature-paletten. '
-                      'Publicatie van het partnerprofiel blijft dezelfde Worker-route.',
+                    Text(
+                      key: kCompanySettingsFixedPricesKey,
+                      kCompanyFixedPricesTitle.of(_lang),
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
+                    ListTile(
+                      key: kCompanyFixedPricesAirportEntryKey,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.flight_takeoff_outlined),
+                      title: Text(kCompanyFixedPricesAirports.of(_lang)),
+                      subtitle: Text(kCompanyFixedPricesAirportsSubtitle.of(_lang)),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => CompanyFixedPricesPage(
+                              language: _lang,
+                              catalog: CompanyFixedPricesCatalog.airport,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    ListTile(
+                      key: kCompanyFixedPricesCityEntryKey,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.location_city_outlined),
+                      title: Text(kCompanyFixedPricesCities.of(_lang)),
+                      subtitle: Text(kCompanyFixedPricesCitiesSubtitle.of(_lang)),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => CompanyFixedPricesPage(
+                              language: _lang,
+                              catalog: CompanyFixedPricesCatalog.city,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Thema, kleuren, logo en bedrijfsprofiel gebruiken dezelfde '
+                      'opslag als de app. Publicatie van het partnerprofiel blijft '
+                      'dezelfde bestaande route.',
+                    ),
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    FluxidiAboutThisApp(language: _lang),
                   ],
                 ),
               ),

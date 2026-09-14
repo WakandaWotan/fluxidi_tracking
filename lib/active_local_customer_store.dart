@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 class ActiveLocalCustomerStore {
@@ -31,7 +32,7 @@ class ActiveLocalCustomerStore {
   Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
     final root = Directory(
-      '${base.path}${Platform.pathSeparator}$_stateDirName',
+      '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName(_stateDirName)}',
     );
     if (!await root.exists()) {
       await root.create(recursive: true);

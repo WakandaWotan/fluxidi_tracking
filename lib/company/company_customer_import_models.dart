@@ -344,11 +344,23 @@ const List<String> kCompanyCustomerImportTargetFields = <String>[
   'locale',
   'internal_notes',
   'address_line1',
+  'address_house_number',
   'address_line2',
   'address_city',
   'address_postal_code',
   'address_country',
   'address_type',
+  'address_label',
+  'address_notes',
+  'address2_line1',
+  'address2_house_number',
+  'address2_line2',
+  'address2_city',
+  'address2_postal_code',
+  'address2_country',
+  'address2_type',
+  'address2_label',
+  'address2_notes',
 ];
 
 String? suggestCompanyCustomerImportMapping(String header) {
@@ -382,6 +394,7 @@ String? suggestCompanyCustomerImportMapping(String header) {
     'mobile': 'phone',
     'tel': 'phone',
     'country code': 'country_calling_code',
+    'country calling code': 'country_calling_code',
     'landnummer': 'country_calling_code',
     'calling code': 'country_calling_code',
     'company': 'company_name',
@@ -394,18 +407,56 @@ String? suggestCompanyCustomerImportMapping(String header) {
     'vat': 'vat_number',
     'btw': 'vat_number',
     'vat number': 'vat_number',
+    'btw nummer': 'vat_number',
+    'ondernemingsnummer': 'vat_number',
+    'ondernemings nummer': 'vat_number',
+    'kbo': 'vat_number',
+    'enterprise number': 'vat_number',
+    'company number': 'vat_number',
     'locale': 'locale',
     'taal': 'locale',
     'language': 'locale',
+    'preferred locale': 'locale',
+    'voorkeurstaal': 'locale',
     'notes': 'internal_notes',
     'notities': 'internal_notes',
     'note': 'internal_notes',
+    'internal notes': 'internal_notes',
+    'interne notities': 'internal_notes',
     'address': 'address_line1',
     'adres': 'address_line1',
     'street': 'address_line1',
     'straat': 'address_line1',
     'line1': 'address_line1',
+    'house number': 'address_house_number',
+    'huisnummer': 'address_house_number',
+    'nummer': 'address_house_number',
+    'number': 'address_house_number',
     'line2': 'address_line2',
+    'address line2': 'address_line2',
+    'address line 2': 'address_line2',
+    'adresregel 2': 'address_line2',
+    'address label': 'address_label',
+    'adreslabel': 'address_label',
+    'address notes': 'address_notes',
+    'adresnotitie': 'address_notes',
+    'address notes 2': 'address2_notes',
+    'address label 2': 'address2_label',
+    'adreslabel 2': 'address2_label',
+    'adresnotitie 2': 'address2_notes',
+    'street 2': 'address2_line1',
+    'straat 2': 'address2_line1',
+    'address 2': 'address2_line1',
+    'adres 2': 'address2_line1',
+    'house number 2': 'address2_house_number',
+    'huisnummer 2': 'address2_house_number',
+    'city 2': 'address2_city',
+    'plaats 2': 'address2_city',
+    'postal code 2': 'address2_postal_code',
+    'postcode 2': 'address2_postal_code',
+    'country 2': 'address2_country',
+    'land 2': 'address2_country',
+    'address type 2': 'address2_type',
     'city': 'address_city',
     'plaats': 'address_city',
     'stad': 'address_city',
@@ -427,35 +478,78 @@ List<String> suggestCompanyCustomerImportMappings(List<String> headers) {
   ];
 }
 
+List<String> companyCustomerImportSkippedHeaders({
+  required List<String> headers,
+  required List<String> mappings,
+}) {
+  final skipped = <String>[];
+  for (var i = 0; i < headers.length; i += 1) {
+    final mapping = i < mappings.length ? mappings[i] : 'skip';
+    if (mapping == 'skip' && headers[i].trim().isNotEmpty) {
+      skipped.add(headers[i].trim());
+    }
+  }
+  return skipped;
+}
+
+String companyCustomerImportJoinedStreet({
+  required String street,
+  required String houseNumber,
+}) {
+  final parts = <String>[
+    street.trim(),
+    houseNumber.trim(),
+  ].where((part) => part.isNotEmpty);
+  return parts.join(' ');
+}
+
+CompanyCustomerAddress? companyCustomerAddressFromImportValues(
+  Map<String, String> values, {
+  int slot = 1,
+}) {
+  final prefix = slot <= 1 ? 'address_' : 'address${slot}_';
+  String pick(String name) => values['$prefix$name']?.trim() ?? '';
+  final street = pick('line1');
+  final number = pick('house_number');
+  final line1 = companyCustomerImportJoinedStreet(
+    street: street,
+    houseNumber: number,
+  );
+  final line2 = pick('line2');
+  final city = pick('city');
+  final postal = pick('postal_code');
+  final country = pick('country');
+  final typeRaw = pick('type').toLowerCase();
+  final type = typeRaw.isEmpty ? 'other' : typeRaw;
+  final label = pick('label');
+  final notes = pick('notes');
+  if (line1.isEmpty &&
+      line2.isEmpty &&
+      city.isEmpty &&
+      postal.isEmpty &&
+      country.isEmpty) {
+    return null;
+  }
+  return CompanyCustomerAddress(
+    type: type,
+    label: label,
+    line1: line1,
+    line2: line2,
+    city: city,
+    postalCode: postal,
+    countryCode: country,
+    notes: notes,
+  );
+}
+
 CompanyCustomerWrite writeFromImportValues(
   Map<String, String> values, {
   String defaultCallingCode = '',
 }) {
-  final addresses = <CompanyCustomerAddress>[];
-  final line1 = values['address_line1']?.trim() ?? '';
-  final line2 = values['address_line2']?.trim() ?? '';
-  final city = values['address_city']?.trim() ?? '';
-  final postal = values['address_postal_code']?.trim() ?? '';
-  final country = values['address_country']?.trim() ?? '';
-  final type = (values['address_type']?.trim().toLowerCase() ?? '').isEmpty
-      ? 'other'
-      : values['address_type']!.trim().toLowerCase();
-  if (line1.isNotEmpty ||
-      line2.isNotEmpty ||
-      city.isNotEmpty ||
-      postal.isNotEmpty ||
-      country.isNotEmpty) {
-    addresses.add(
-      CompanyCustomerAddress(
-        type: type,
-        line1: line1,
-        line2: line2,
-        city: city,
-        postalCode: postal,
-        countryCode: country,
-      ),
-    );
-  }
+  final addresses = <CompanyCustomerAddress>[
+    ?companyCustomerAddressFromImportValues(values),
+    ?companyCustomerAddressFromImportValues(values, slot: 2),
+  ];
   return CompanyCustomerWrite(
     displayName: values['display_name'] ?? '',
     firstName: values['first_name'] ?? '',
@@ -470,6 +564,9 @@ CompanyCustomerWrite writeFromImportValues(
     locale: values['locale'] ?? '',
     internalNotes: values['internal_notes'] ?? '',
     addresses: addresses,
+    preferences: CompanyCustomerPreferences(
+      preferredLocale: values['locale'] ?? '',
+    ),
   );
 }
 

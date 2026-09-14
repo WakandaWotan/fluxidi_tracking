@@ -96,7 +96,7 @@ void main() {
 
   test('company Gold phone grid stays two columns and unscoped', () {
     final home = _businessHome();
-    expect(home, contains('final columns = isTabletLandscape ? 3 : 2;'));
+    expect(home, contains('companyDashboardGoldTileColumns('));
     expect(home, contains('BrandSignatureGoldActionCard('));
     expect(home, isNot(contains('phoneGoldIconBox')));
     expect(home, isNot(contains('kBrandSignatureGoldPhoneActionGridKey')));

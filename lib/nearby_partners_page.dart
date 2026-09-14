@@ -13,6 +13,7 @@ import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'nearby/nearby_partner_hero_media.dart';
 import 'nearby/public_partner_bookability.dart';
+import 'nearby/stap3_flow_keys.dart';
 import 'nearby/public_partner_market.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'partner_public_profile_page.dart';
@@ -1137,6 +1138,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           const SizedBox(width: 8),
           Expanded(
             child: OutlinedButton(
+              key: nearbyPartnerProfileKey(partnerId),
               onPressed: () => _openPartnerProfile(p),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _isDarkTheme
@@ -1343,6 +1345,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               children: [
                 Expanded(
                   child: OutlinedButton(
+                    key: nearbyPartnerProfileKey(partnerId),
                     onPressed: () => _openPartnerProfile(p),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: _isDarkTheme
@@ -1612,6 +1615,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   child: Column(
                     children: [
                       TextField(
+                        key: kNearbyPostalCodeFieldKey,
                         controller: _postalCodeCtrl,
                         style: TextStyle(color: _textPrimary, fontSize: 14),
                         cursorColor: _gold,
@@ -1665,6 +1669,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton(
+                          key: kNearbySearchPartnersKey,
                           onPressed: _searching ? null : _searchPartners,
                           style: FilledButton.styleFrom(
                             backgroundColor: _isDarkTheme ? _gold : _bronze,

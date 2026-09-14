@@ -806,10 +806,11 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
                           foregroundColor: Colors.white,
                           disabledBackgroundColor: _lockGold.withOpacity(0.5),
                           padding: const EdgeInsets.symmetric(vertical: 13),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
+                          textStyle: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                              ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),

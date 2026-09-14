@@ -1,0 +1,20 @@
+---
+description: Lokale UI-wijzigingen afronden via de Fluxidi — lokale test startkopie
+alwaysApply: true
+---
+
+# Fluxidi — lokale test startkopie
+
+Christophe opent de lokale app via het bureaubladicoon **Fluxidi — lokale test**, niet via `Fluxidi` (productie) en niet via een ander Flutter-venster.
+
+Een lokale UI-opdracht is pas klaar als die startkopie is bijgewerkt:
+
+1. Bronwijziging alleen, of hot reload in een ander venster, is onvoldoende.
+2. Bouw opnieuw met `scripts/start_fluxidi_lokale_test_windows.ps1` of `scripts/windows_start_env.ps1 -RuntimeEnv local_test`.
+3. Werk de volledige bundel `build/windows/starts/Fluxidi_lokale_test` bij, inclusief de bestaande lokale bureaubladsnelkoppeling.
+4. Die snelkoppeling moet via `scripts/launch_fluxidi_lokale_test_windows.ps1` de Worker op `http://127.0.0.1:8788` controleren en zo nodig starten. Persist in `workers/booking/.local-customer-ops-demo` niet wissen.
+5. Sluit alleen de verouderde lokale exe. Laat productie-`Fluxidi` onaangeraakt.
+6. Start daarna via dezelfde lokale bureaubladsnelkoppeling en controleer de wijziging in dat venster (titel **Fluxidi — lokale test**).
+7. Onder **Instellingen → Over deze app** moeten omgeving, bouwtijdstip en bronrevisie van díé kopie staan.
+
+Niet doen: productie-`Fluxidi` herbouwen, het productie-icoon herschrijven, of zeggen dat Christophe de wijziging kan gebruiken zolang alleen de bron of een debug-run is bijgewerkt.

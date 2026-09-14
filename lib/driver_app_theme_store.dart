@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'business_theme/brand_signature_palette.dart';
@@ -22,7 +23,7 @@ const String _driverAppThemeFileName = 'driver_app_theme_v1.json';
 Future<File> _driverAppThemeFile() async {
   final base = await getApplicationDocumentsDirectory();
   final root = Directory(
-    '${base.path}${Platform.pathSeparator}$_driverAppThemeStateDirName',
+    '${base.path}${Platform.pathSeparator}${fluxidiRuntimeStateDirName(_driverAppThemeStateDirName)}',
   );
   if (!await root.exists()) {
     await root.create(recursive: true);

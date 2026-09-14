@@ -57,6 +57,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
   flutter_lints: ^5.0.0
   # FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: typed Dart <-> Kotlin
   # HostApi for the native FollowPuck bridge. Runtime code depends only on

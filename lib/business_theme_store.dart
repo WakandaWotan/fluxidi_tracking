@@ -1,14 +1,13 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'business_theme/brand_signature_palette.dart';
+import 'business_theme_company_scope.dart';
 import 'business_theme_cycle.dart';
 import 'business_theme_palette.dart';
-import 'company_session_store.dart';
+import 'business_theme_persist.dart';
 import 'customer_theme_palette.dart';
 
 const BusinessThemeVariant _kDefaultBusinessTheme =
@@ -80,7 +79,6 @@ businessPublishedCustomerThemeNotifier = ValueNotifier<CustomerThemeVariant>(
   _kDefaultPublishedCustomerTheme,
 );
 
-const String _businessThemeStateDirName = 'business_state';
 const String _businessThemeFileName = 'business_theme_v1.json';
 const String _businessAppearanceFileName = 'business_appearance_v1.json';
 const String _publishedCustomerThemeFileName =
@@ -90,15 +88,12 @@ const String _businessHomeMobileLayoutFileName =
 const String _driverHomeMobileLayoutFileName =
     'driver_home_mobile_layout_v1.json';
 
-Future<File> _businessThemeFile(String fileName) async {
-  final base = await getApplicationDocumentsDirectory();
-  final root = Directory(
-    '${base.path}${Platform.pathSeparator}$_businessThemeStateDirName',
-  );
-  if (!await root.exists()) {
-    await root.create(recursive: true);
-  }
-  return File('${root.path}${Platform.pathSeparator}$fileName');
+Future<String?> _readBusinessThemeFile(String fileName) {
+  return readBusinessThemeFileContents(fileName);
+}
+
+Future<void> _writeBusinessThemeFile(String fileName, String contents) {
+  return writeBusinessThemeFileContents(fileName, contents);
 }
 
 BusinessThemeVariant _businessThemeVariantFromStorage(String raw) {
@@ -138,6 +133,21 @@ final Map<String, BusinessThemeVariant> _businessThemeByCompanyId =
     <String, BusinessThemeVariant>{};
 final Map<String, BrandSignaturePalette> _brandSignaturePaletteByCompanyId =
     <String, BrandSignaturePalette>{};
+final Map<String, CustomerThemeVariant> _publishedCustomerThemeByCompanyId =
+    <String, CustomerThemeVariant>{};
+final Map<String, DateTime> _themeUpdatedAtByCompanyId = <String, DateTime>{};
+String? _themeCompanyScopeOverride;
+bool _suppressCompanyThemeRemoteSync = false;
+
+typedef BusinessThemeCompanyRemoteSync =
+    Future<void> Function(
+      String companyId,
+      Map<String, dynamic> themeDocument,
+    );
+
+/// Optional hook so a theme apply can write the same company-profile document
+/// the Worker already stores. Omitted profile saves must not wipe this.
+BusinessThemeCompanyRemoteSync? businessThemeCompanyRemoteSync;
 
 bool _businessThemePreviewActive = false;
 BusinessThemeVariant? _previewCheckpointTheme;
@@ -150,10 +160,18 @@ bool _companyThemeListenerAttached = false;
 bool get isBusinessThemePreviewActive => _businessThemePreviewActive;
 
 String? currentBusinessThemeCompanyId() {
-  final sessionId = (activeCompanySessionNotifier.value?.companyId ?? '')
-      .trim();
-  if (sessionId.isNotEmpty) return sessionId;
-  return null;
+  final override = (_themeCompanyScopeOverride ?? '').trim();
+  if (override.isNotEmpty) return override;
+  return readActiveCompanySessionId();
+}
+
+/// Binds the shared theme store to a company without a second preference model.
+void bindBusinessThemeCompanyScope(String? companyId) {
+  final next = (companyId ?? '').trim();
+  _themeCompanyScopeOverride = next.isEmpty ? null : next;
+  if (!_businessThemePreviewActive) {
+    syncBusinessThemeForActiveCompany();
+  }
 }
 
 BusinessThemeVariant resolveStoredBusinessThemeForCompany(String? companyId) {
@@ -174,10 +192,19 @@ BrandSignaturePalette resolveStoredBrandSignaturePalette(String? companyId) {
   return BrandSignaturePalette.defaults;
 }
 
+CustomerThemeVariant resolveStoredPublishedCustomerTheme(String? companyId) {
+  final id = (companyId ?? '').trim();
+  if (id.isNotEmpty) {
+    final scoped = _publishedCustomerThemeByCompanyId[id];
+    if (scoped != null) return scoped;
+  }
+  return businessPublishedCustomerThemeNotifier.value;
+}
+
 void _attachCompanyThemeListener() {
   if (_companyThemeListenerAttached) return;
   _companyThemeListenerAttached = true;
-  activeCompanySessionNotifier.addListener(syncBusinessThemeForActiveCompany);
+  listenToActiveCompanySession(syncBusinessThemeForActiveCompany);
 }
 
 /// Cancels any leaked preview and activates the stored theme for the live
@@ -197,6 +224,8 @@ void syncBusinessThemeForActiveCompany() {
   brandSignaturePaletteNotifier.value = resolveStoredBrandSignaturePalette(
     companyId,
   );
+  businessPublishedCustomerThemeNotifier.value =
+      resolveStoredPublishedCustomerTheme(companyId);
 }
 
 /// Starts a reversible live preview. Persistence is unchanged until apply.
@@ -262,12 +291,11 @@ Future<void> _writeBusinessThemeVariantFile(
   BusinessThemeVariant variant,
 ) async {
   try {
-    final file = await _businessThemeFile(fileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await _writeBusinessThemeFile(fileName, jsonEncode(payload));
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
@@ -287,6 +315,20 @@ Map<String, Map<String, Object>> _encodeBrandSignaturePalettes() {
   };
 }
 
+Map<String, String> _encodePublishedCustomerThemes() {
+  return <String, String>{
+    for (final entry in _publishedCustomerThemeByCompanyId.entries)
+      entry.key: entry.value.name,
+  };
+}
+
+Map<String, String> _encodeThemeUpdatedAtByCompany() {
+  return <String, String>{
+    for (final entry in _themeUpdatedAtByCompanyId.entries)
+      entry.key: entry.value.toUtc().toIso8601String(),
+  };
+}
+
 Future<void> _writeBusinessThemeDocument({
   required BusinessThemeVariant liveVariant,
   required bool updateLegacyGlobal,
@@ -295,14 +337,15 @@ Future<void> _writeBusinessThemeDocument({
     if (updateLegacyGlobal) {
       _legacyGlobalBusinessTheme = liveVariant;
     }
-    final file = await _businessThemeFile(_businessThemeFileName);
     final payload = <String, dynamic>{
       'variant': _legacyGlobalBusinessTheme.name,
       'byCompanyId': _encodeThemeByCompany(),
       'brandSignaturePalettes': _encodeBrandSignaturePalettes(),
+      'publishedCustomerThemes': _encodePublishedCustomerThemes(),
+      'updatedAtByCompanyId': _encodeThemeUpdatedAtByCompany(),
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await _writeBusinessThemeFile(_businessThemeFileName, jsonEncode(payload));
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
@@ -326,8 +369,10 @@ Future<void> applyBusinessThemePreset(BusinessThemeVariant variant) async {
   final companyId = currentBusinessThemeCompanyId();
   if (companyId != null) {
     _businessThemeByCompanyId[companyId] = variant;
+    _themeUpdatedAtByCompanyId[companyId] = DateTime.now().toUtc();
   }
   await _persistActiveBusinessThemePreset();
+  await _syncCompanyThemeRemote(companyId);
 }
 
 Future<void> applyBrandSignaturePalette(BrandSignaturePalette palette) async {
@@ -337,8 +382,10 @@ Future<void> applyBrandSignaturePalette(BrandSignaturePalette palette) async {
   final companyId = currentBusinessThemeCompanyId();
   if (companyId != null) {
     _brandSignaturePaletteByCompanyId[companyId] = safe;
+    _themeUpdatedAtByCompanyId[companyId] = DateTime.now().toUtc();
   }
   await _persistActiveBusinessThemePreset();
+  await _syncCompanyThemeRemote(companyId);
 }
 
 bool _businessThemeWriteInFlight = false;
@@ -381,9 +428,17 @@ void resetBusinessThemePersistenceLatchForTest() {
   _legacyGlobalBusinessTheme = _kDefaultBusinessTheme;
   _businessThemeByCompanyId.clear();
   _brandSignaturePaletteByCompanyId.clear();
+  _publishedCustomerThemeByCompanyId.clear();
+  _themeUpdatedAtByCompanyId.clear();
+  _themeCompanyScopeOverride = null;
+  _suppressCompanyThemeRemoteSync = false;
+  businessThemeCompanyRemoteSync = null;
+  resetBusinessThemeFilePersistForTest();
   businessThemeNotifier.value = _kDefaultBusinessTheme;
   businessAppearanceNotifier.value = _kDefaultBusinessTheme;
   brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
+  businessPublishedCustomerThemeNotifier.value =
+      _kDefaultPublishedCustomerTheme;
 }
 
 Future<void> loadBusinessThemePreference() async {
@@ -391,35 +446,52 @@ Future<void> loadBusinessThemePreference() async {
   var restored = _kDefaultBusinessTheme;
   _businessThemeByCompanyId.clear();
   _brandSignaturePaletteByCompanyId.clear();
+  _publishedCustomerThemeByCompanyId.clear();
+  _themeUpdatedAtByCompanyId.clear();
   try {
-    final file = await _businessThemeFile(_businessThemeFileName);
-    if (await file.exists()) {
-      final raw = await file.readAsString();
-      if (raw.trim().isNotEmpty) {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map) {
-          restored = _businessThemeVariantFromStorage(
-            (decoded['variant'] ?? '').toString(),
-          );
-          final byCompany = decoded['byCompanyId'];
-          if (byCompany is Map) {
-            byCompany.forEach((key, value) {
-              final id = key.toString().trim();
-              if (id.isEmpty) return;
-              _businessThemeByCompanyId[id] = _businessThemeVariantFromStorage(
-                value.toString(),
-              );
-            });
-          }
-          final palettes = decoded['brandSignaturePalettes'];
-          if (palettes is Map) {
-            palettes.forEach((key, value) {
-              final id = key.toString().trim();
-              if (id.isEmpty) return;
-              _brandSignaturePaletteByCompanyId[id] =
-                  BrandSignaturePalette.fromJson(value);
-            });
-          }
+    final raw = await _readBusinessThemeFile(_businessThemeFileName);
+    if (raw != null && raw.trim().isNotEmpty) {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        restored = _businessThemeVariantFromStorage(
+          (decoded['variant'] ?? '').toString(),
+        );
+        final byCompany = decoded['byCompanyId'];
+        if (byCompany is Map) {
+          byCompany.forEach((key, value) {
+            final id = key.toString().trim();
+            if (id.isEmpty) return;
+            _businessThemeByCompanyId[id] = _businessThemeVariantFromStorage(
+              value.toString(),
+            );
+          });
+        }
+        final palettes = decoded['brandSignaturePalettes'];
+        if (palettes is Map) {
+          palettes.forEach((key, value) {
+            final id = key.toString().trim();
+            if (id.isEmpty) return;
+            _brandSignaturePaletteByCompanyId[id] =
+                BrandSignaturePalette.fromJson(value);
+          });
+        }
+        final publishedThemes = decoded['publishedCustomerThemes'];
+        if (publishedThemes is Map) {
+          publishedThemes.forEach((key, value) {
+            final id = key.toString().trim();
+            if (id.isEmpty) return;
+            _publishedCustomerThemeByCompanyId[id] =
+                _customerThemeVariantFromStorage(value.toString());
+          });
+        }
+        final updatedAtByCompany = decoded['updatedAtByCompanyId'];
+        if (updatedAtByCompany is Map) {
+          updatedAtByCompany.forEach((key, value) {
+            final id = key.toString().trim();
+            final parsed = DateTime.tryParse(value.toString());
+            if (id.isEmpty || parsed == null) return;
+            _themeUpdatedAtByCompanyId[id] = parsed.toUtc();
+          });
         }
       }
     }
@@ -438,6 +510,8 @@ Future<void> loadBusinessThemePreference() async {
   brandSignaturePaletteNotifier.value = resolveStoredBrandSignaturePalette(
     currentBusinessThemeCompanyId(),
   );
+  businessPublishedCustomerThemeNotifier.value =
+      resolveStoredPublishedCustomerTheme(currentBusinessThemeCompanyId());
 }
 
 /// Applies [variant] as a complete preset.
@@ -457,9 +531,9 @@ Future<void> loadBusinessAppearancePreference() async {
   businessAppearanceNotifier.value = preset;
   var storedMatchesPreset = false;
   try {
-    final file = await _businessThemeFile(_businessAppearanceFileName);
-    if (await file.exists()) {
-      final decoded = jsonDecode(await file.readAsString());
+    final raw = await _readBusinessThemeFile(_businessAppearanceFileName);
+    if (raw != null && raw.trim().isNotEmpty) {
+      final decoded = jsonDecode(raw);
       storedMatchesPreset =
           decoded is Map &&
           _businessThemeVariantFromStorage(
@@ -497,14 +571,8 @@ Future<BusinessThemeVariant> cycleBusinessThemePreference() async {
 
 Future<void> loadBusinessPublishedCustomerThemePreference() async {
   try {
-    final file = await _businessThemeFile(_publishedCustomerThemeFileName);
-    if (!await file.exists()) {
-      businessPublishedCustomerThemeNotifier.value =
-          _kDefaultPublishedCustomerTheme;
-      return;
-    }
-    final raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
+    final raw = await _readBusinessThemeFile(_publishedCustomerThemeFileName);
+    if (raw == null || raw.trim().isEmpty) {
       businessPublishedCustomerThemeNotifier.value =
           _kDefaultPublishedCustomerTheme;
       return;
@@ -528,28 +596,31 @@ Future<void> saveBusinessPublishedCustomerThemePreference(
   CustomerThemeVariant variant,
 ) async {
   businessPublishedCustomerThemeNotifier.value = variant;
+  final companyId = currentBusinessThemeCompanyId();
+  if (companyId != null) {
+    _publishedCustomerThemeByCompanyId[companyId] = variant;
+    _themeUpdatedAtByCompanyId[companyId] = DateTime.now().toUtc();
+  }
   try {
-    final file = await _businessThemeFile(_publishedCustomerThemeFileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await _writeBusinessThemeFile(
+      _publishedCustomerThemeFileName,
+      jsonEncode(payload),
+    );
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
+  await _persistActiveBusinessThemePreset();
+  await _syncCompanyThemeRemote(companyId);
 }
 
 Future<void> loadBusinessHomeMobileLayoutPreference() async {
   try {
-    final file = await _businessThemeFile(_businessHomeMobileLayoutFileName);
-    if (!await file.exists()) {
-      businessHomeMobileLayoutNotifier.value =
-          _kDefaultBusinessHomeMobileLayout;
-      return;
-    }
-    final raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
+    final raw = await _readBusinessThemeFile(_businessHomeMobileLayoutFileName);
+    if (raw == null || raw.trim().isEmpty) {
       businessHomeMobileLayoutNotifier.value =
           _kDefaultBusinessHomeMobileLayout;
       return;
@@ -573,12 +644,14 @@ Future<void> saveBusinessHomeMobileLayoutPreference(
 ) async {
   businessHomeMobileLayoutNotifier.value = variant;
   try {
-    final file = await _businessThemeFile(_businessHomeMobileLayoutFileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await _writeBusinessThemeFile(
+      _businessHomeMobileLayoutFileName,
+      jsonEncode(payload),
+    );
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
@@ -586,13 +659,8 @@ Future<void> saveBusinessHomeMobileLayoutPreference(
 
 Future<void> loadDriverHomeMobileLayoutPreference() async {
   try {
-    final file = await _businessThemeFile(_driverHomeMobileLayoutFileName);
-    if (!await file.exists()) {
-      driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
-      return;
-    }
-    final raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
+    final raw = await _readBusinessThemeFile(_driverHomeMobileLayoutFileName);
+    if (raw == null || raw.trim().isEmpty) {
       driverHomeMobileLayoutNotifier.value = _kDefaultDriverHomeMobileLayout;
       return;
     }
@@ -615,13 +683,168 @@ Future<void> saveDriverHomeMobileLayoutPreference(
 ) async {
   driverHomeMobileLayoutNotifier.value = variant;
   try {
-    final file = await _businessThemeFile(_driverHomeMobileLayoutFileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await _writeBusinessThemeFile(
+      _driverHomeMobileLayoutFileName,
+      jsonEncode(payload),
+    );
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
+}
+
+Map<String, dynamic> encodeBusinessThemeForCompanyProfile([String? companyId]) {
+  final id = (companyId ?? currentBusinessThemeCompanyId() ?? '').trim();
+  final variant = id.isEmpty
+      ? businessThemeNotifier.value
+      : resolveStoredBusinessThemeForCompany(id);
+  final palette = id.isEmpty
+      ? brandSignaturePaletteNotifier.value
+      : resolveStoredBrandSignaturePalette(id);
+  final published = id.isEmpty
+      ? businessPublishedCustomerThemeNotifier.value
+      : resolveStoredPublishedCustomerTheme(id);
+  final updatedAt =
+      (id.isNotEmpty ? _themeUpdatedAtByCompanyId[id] : null) ??
+      DateTime.now().toUtc();
+  return <String, dynamic>{
+    'business_theme': <String, dynamic>{
+      'variant': variant.name,
+      'updatedAt': updatedAt.toIso8601String(),
+      'brandSignaturePalette': palette.toJson(),
+      'publishedCustomerTheme': published.name,
+    },
+    'business_theme_variant': variant.name,
+    'business_theme_updated_at': updatedAt.toIso8601String(),
+    'published_customer_theme': published.name,
+  };
+}
+
+/// Adopts a company-profile theme when it is newer than the local scoped value.
+///
+/// An empty profile theme never overwrites a conscious local choice.
+Future<bool> hydrateBusinessThemeFromCompanyProfile({
+  required String companyId,
+  required Map<String, dynamic> profile,
+}) async {
+  final id = companyId.trim();
+  if (id.isEmpty) return false;
+  final document = _companyThemeDocumentFromProfile(profile);
+  if (document == null) return false;
+  final incomingAt = document.updatedAt;
+  final localAt = _themeUpdatedAtByCompanyId[id];
+  if (localAt != null &&
+      incomingAt != null &&
+      !incomingAt.isAfter(localAt)) {
+    return false;
+  }
+  if (localAt != null && incomingAt == null) return false;
+  _suppressCompanyThemeRemoteSync = true;
+  try {
+    _businessThemeByCompanyId[id] = document.variant;
+    if (document.palette != null) {
+      _brandSignaturePaletteByCompanyId[id] = document.palette!;
+    }
+    if (document.publishedCustomerTheme != null) {
+      _publishedCustomerThemeByCompanyId[id] = document.publishedCustomerTheme!;
+    }
+    if (incomingAt != null) {
+      _themeUpdatedAtByCompanyId[id] = incomingAt;
+    }
+    if (currentBusinessThemeCompanyId() == id && !_businessThemePreviewActive) {
+      businessThemeNotifier.value = document.variant;
+      businessAppearanceNotifier.value = document.variant;
+      brandSignaturePaletteNotifier.value = resolveStoredBrandSignaturePalette(
+        id,
+      );
+      businessPublishedCustomerThemeNotifier.value =
+          resolveStoredPublishedCustomerTheme(id);
+    }
+    await _persistActiveBusinessThemePreset();
+  } finally {
+    _suppressCompanyThemeRemoteSync = false;
+  }
+  return true;
+}
+
+Future<void> _syncCompanyThemeRemote(String? companyId) async {
+  if (_suppressCompanyThemeRemoteSync) return;
+  final id = (companyId ?? '').trim();
+  final sync = businessThemeCompanyRemoteSync;
+  if (id.isEmpty || sync == null) return;
+  try {
+    await sync(id, encodeBusinessThemeForCompanyProfile(id));
+  } catch (_) {
+    // Local store remains the live value when the profile write fails.
+  }
+}
+
+_CompanyThemeDocument? _companyThemeDocumentFromProfile(
+  Map<String, dynamic> profile,
+) {
+  final nested = profile['business_theme'];
+  final source = nested is Map
+      ? Map<String, dynamic>.from(nested)
+      : profile;
+  final variantRaw = (source['variant'] ??
+          source['business_theme_variant'] ??
+          profile['business_theme_variant'] ??
+          '')
+      .toString()
+      .trim();
+  if (variantRaw.isEmpty) return null;
+  final variant = _businessThemeVariantFromStorage(variantRaw);
+  if (variant.name != variantRaw &&
+      variant == _kDefaultBusinessTheme &&
+      variantRaw != BusinessThemeVariant.executiveGold.name) {
+    return null;
+  }
+  DateTime? updatedAt;
+  for (final key in const <String>[
+    'updatedAt',
+    'updated_at',
+    'business_theme_updated_at',
+  ]) {
+    final parsed = DateTime.tryParse(
+      (source[key] ?? profile[key] ?? '').toString(),
+    );
+    if (parsed != null) {
+      updatedAt = parsed.toUtc();
+      break;
+    }
+  }
+  final paletteRaw =
+      source['brandSignaturePalette'] ?? source['brand_signature_palette'];
+  final publishedRaw =
+      source['publishedCustomerTheme'] ??
+      source['published_customer_theme'] ??
+      profile['published_customer_theme'];
+  final publishedText = (publishedRaw ?? '').toString().trim();
+  return _CompanyThemeDocument(
+    variant: variant,
+    updatedAt: updatedAt,
+    palette: paletteRaw == null
+        ? null
+        : BrandSignaturePalette.fromJson(paletteRaw),
+    publishedCustomerTheme: publishedText.isEmpty
+        ? null
+        : _customerThemeVariantFromStorage(publishedText),
+  );
+}
+
+class _CompanyThemeDocument {
+  const _CompanyThemeDocument({
+    required this.variant,
+    required this.updatedAt,
+    required this.palette,
+    required this.publishedCustomerTheme,
+  });
+
+  final BusinessThemeVariant variant;
+  final DateTime? updatedAt;
+  final BrandSignaturePalette? palette;
+  final CustomerThemeVariant? publishedCustomerTheme;
 }

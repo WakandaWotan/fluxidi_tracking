@@ -26,8 +26,11 @@ import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/nearby/stap3_flow_keys.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
 import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -1285,6 +1288,10 @@ class _CalculatorPageState extends State<CalculatorPage> {
   Future<void> _openBookingConfirmation() async {
     final quote = _lastQuote;
     if (quote == null) return;
+    if (companyQuoteRequiresManualQuote(quote)) {
+      _showThemedSnackBar(kCompanyFixedPricesFallbackQuote.of(_lang));
+      return;
+    }
     final availability = _quoteAvailabilityValue(quote);
     if (availability == false) {
       _showThemedSnackBar(_availabilityUnavailableMessageForQuote(quote));
@@ -1612,6 +1619,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         itemBuilder: (context, i) {
           final s = list[i];
           return ListTile(
+            key: calculatorPlaceSuggestionKey(s.label),
             dense: true,
             title: Text(s.label, style: TextStyle(color: _calcTextPrimary)),
             subtitle: Text(
@@ -2068,8 +2076,9 @@ class _CalculatorPageState extends State<CalculatorPage> {
           ),
         ),
       ].whereType<MapEntry<String, String>>(),
-      if (parseNum(q['total_price_ex_vat']) != null ||
-          parseNum(q['price_ex_vat']) != null)
+      if (!companyQuoteRequiresManualQuote(q) &&
+          (parseNum(q['total_price_ex_vat']) != null ||
+              parseNum(q['price_ex_vat']) != null))
         MapEntry<String, String>(
           _labelFor(
             nl: 'Prijs excl. btw',
@@ -2079,14 +2088,16 @@ class _CalculatorPageState extends State<CalculatorPage> {
           ),
           '$_currencySymbol ${fmtNum(priceEx)}',
         ),
-      if (parseNum(q['total_price_vat']) != null ||
-          parseNum(q['price_vat']) != null)
+      if (!companyQuoteRequiresManualQuote(q) &&
+          (parseNum(q['total_price_vat']) != null ||
+              parseNum(q['price_vat']) != null))
         MapEntry<String, String>(
           _labelFor(nl: 'Btw', en: 'VAT', fr: 'TVA', es: 'IVA'),
           '$_currencySymbol ${fmtNum(priceVat)}',
         ),
-      if (parseNum(q['total_price_incl_vat']) != null ||
-          parseNum(q['price_incl_vat']) != null)
+      if (!companyQuoteRequiresManualQuote(q) &&
+          (parseNum(q['total_price_incl_vat']) != null ||
+              parseNum(q['price_incl_vat']) != null))
         MapEntry<String, String>(
           _labelFor(
             nl: 'Prijs incl. btw',
@@ -2210,6 +2221,54 @@ class _CalculatorPageState extends State<CalculatorPage> {
             ],
           ),
           const SizedBox(height: 9),
+          if (companyQuoteRequiresManualQuote(q))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                kCompanyFixedPricesFallbackQuote.of(_lang),
+                style: TextStyle(
+                  color: _calcTextPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+                softWrap: true,
+              ),
+            ),
+          if (companyFixedPriceSnapshotOf(q) != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: CompanyFixedPriceBreakdown(
+                language: _lang,
+                snapshot: companyFixedPriceSnapshotOf(q)!,
+              ),
+            )
+          else if (companyFixedPriceClarificationLines(
+            companyFixedPriceNeedsMoreDetail(q),
+            language: _lang,
+          ).isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                key: kCompanyFixedPricesClarificationKey,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in companyFixedPriceClarificationLines(
+                    companyFixedPriceNeedsMoreDetail(q),
+                    language: _lang,
+                  ))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        line,
+                        softWrap: true,
+                        style: TextStyle(
+                          color: _calcTextPrimary,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -2615,6 +2674,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   ),
                   const SizedBox(height: 6),
                   TextField(
+                    key: kCalculatorFromFieldKey,
                     controller: _fromCtrl,
                     style: TextStyle(color: _calcTextPrimary),
                     cursorColor: _calcAccent,
@@ -2896,6 +2956,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                         ),
                         const SizedBox(width: 6),
                         IconButton(
+                          key: kCalculatorPickupTimeKey,
                           onPressed: _pickDateTime,
                           icon: Icon(Icons.schedule, color: _calcAccent),
                         ),
@@ -2921,6 +2982,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                   ),
                   const SizedBox(height: 9),
                   _dropdown(
+                    key: kCalculatorTierFieldKey,
                     label: _s.calculatorTierLabel.of(_lang),
                     value: _tier,
                     items: _tiers
@@ -3062,6 +3124,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   GestureDetector(
+                    key: kCalculatorQuoteKey,
                     onTap: _loading ? null : _calculate,
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -3122,6 +3185,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
                             ? _bookCtaUnavailableLabel(_lastQuote!)
                             : _s.calculatorBookNowLabel.of(_lang);
                         return GestureDetector(
+                          key: kCalculatorBookKey,
                           onTap: _openBookingConfirmation,
                           child: Opacity(
                             opacity: quoteUnavailable ? 0.62 : 1,
@@ -3188,6 +3252,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
   }
 
   Widget _dropdown({
+    Key? key,
     required String label,
     required String value,
     required List<DropdownMenuItem<String>> items,
@@ -3206,6 +3271,7 @@ class _CalculatorPageState extends State<CalculatorPage> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
+          key: key,
           isExpanded: true,
           value: value,
           items: items,
@@ -3744,12 +3810,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             _input(
               _nameCtrl,
               widget.strings.bookingFullNameLabel.of(widget.language),
+              key: kBookingConfirmNameKey,
               icon: Icons.person_outline,
             ),
             const SizedBox(height: 8),
             _input(
               _phoneCtrl,
               widget.strings.bookingPhoneLabel.of(widget.language),
+              key: kBookingConfirmPhoneKey,
               keyboardType: TextInputType.phone,
               icon: Icons.phone_outlined,
             ),
@@ -3757,6 +3825,7 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             _input(
               _emailCtrl,
               widget.strings.bookingEmailLabel.of(widget.language),
+              key: kBookingConfirmEmailKey,
               keyboardType: TextInputType.emailAddress,
               icon: Icons.alternate_email,
             ),
@@ -4139,6 +4208,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
     );
     if (entitlementMsg != null) return entitlementMsg;
     final s = raw.trim().toLowerCase();
+    if (s.contains('price_changed')) {
+      return kCompanyFixedPricesPriceChanged.of(widget.language);
+    }
+    if (s.contains('route_config_missing') ||
+        s.contains('missing mapbox_token')) {
+      return kCompanyFixedPricesRouteConfigMissing.of(widget.language);
+    }
     if (s.contains('geen geschikt voertuig beschikbaar') ||
         s.contains('no suitable vehicle') ||
         s.contains('vehicle_capacity_exceeded')) {
@@ -5303,6 +5379,13 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
       // Keep website-compatible aliases
       'return_enabled': (widget.payload['return'] ?? false) == true,
       'extra_service_key': widget.payload['extra_service'] ?? 'NONE',
+      if (widget.quote['fixed_price_snapshot'] is Map)
+        'fixed_price_snapshot': widget.quote['fixed_price_snapshot'],
+      if (widget.quote['total_price_incl_vat'] != null ||
+          widget.quote['price_incl_vat'] != null)
+        'quoted_total_incl_vat':
+            widget.quote['total_price_incl_vat'] ??
+            widget.quote['price_incl_vat'],
       // Mollie return-to-app deep link. The Worker uses this to redirect the
       // browser back into the Fluxidi app after a successful payment.
       'return_url': kFluxidiPaymentReturnUrl,
@@ -5930,65 +6013,6 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
           _customerDetailsCard(),
           const SizedBox(height: 9),
           _billingDetailsSectionCard(),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: _submitting ? null : _onConfirmBooking,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: _gold.withOpacity(0.5)),
-                gradient: LinearGradient(
-                  colors: [
-                    _gold.withOpacity(0.95),
-                    _visualTheme.bronze.withOpacity(0.95),
-                  ],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: _gold.withOpacity(0.18),
-                    blurRadius: 16,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _submitting
-                        ? widget.strings.bookingSubmittingLabel.of(
-                            widget.language,
-                          )
-                        : widget.strings.bookingConfirmButtonLabel.of(
-                            widget.language,
-                          ),
-                    style: TextStyle(
-                      color: _actionOnGold,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    size: 18,
-                    color: _actionOnGold,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_submitState != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              _submitState!,
-              style: TextStyle(
-                color: _submitStateIsError ? _danger : _success,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
           if (_finalPricing != null) ...[
             const SizedBox(height: 9),
             _sectionCard(
@@ -6025,6 +6049,78 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
             ),
           ],
         ],
+      ),
+      bottomNavigationBar: Material(
+        color: _bg,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  key: kBookingConfirmButtonKey,
+                  onTap: _submitting ? null : _onConfirmBooking,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: _gold.withOpacity(0.5)),
+                      gradient: LinearGradient(
+                        colors: [
+                          _gold.withOpacity(0.95),
+                          _visualTheme.bronze.withOpacity(0.95),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _gold.withOpacity(0.18),
+                          blurRadius: 16,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _submitting
+                              ? widget.strings.bookingSubmittingLabel.of(
+                                  widget.language,
+                                )
+                              : widget.strings.bookingConfirmButtonLabel.of(
+                                  widget.language,
+                                ),
+                          style: TextStyle(
+                            color: _actionOnGold,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 18,
+                          color: _actionOnGold,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_submitState != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _submitState!,
+                    style: TextStyle(
+                      color: _submitStateIsError ? _danger : _success,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -6424,12 +6520,14 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   Widget _input(
     TextEditingController ctrl,
     String label, {
+    Key? key,
     TextInputType keyboardType = TextInputType.text,
     int maxLines = 1,
     IconData? icon,
     Widget? suffixIcon,
   }) {
     return TextField(
+      key: key,
       controller: ctrl,
       keyboardType: keyboardType,
       maxLines: maxLines,

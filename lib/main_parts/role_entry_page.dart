@@ -204,6 +204,7 @@ class RoleEntryPage extends StatelessWidget {
   }) => _tr(nl: nl, en: en, fr: fr, es: es);
 
   Widget _roleCard({
+    Key? key,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
@@ -237,6 +238,7 @@ class RoleEntryPage extends StatelessWidget {
     final double chevronGap = compact ? 2.0 : 4.0;
 
     return SizedBox(
+      key: key,
       height: height,
       child: Material(
         color: Colors.transparent,
@@ -578,6 +580,7 @@ class RoleEntryPage extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               OutlinedButton(
+                key: const Key('customer_entry_new'),
                 onPressed: () =>
                     Navigator.of(dialogContext).pop(_customerEntryNewIntent),
                 style: OutlinedButton.styleFrom(
@@ -1572,12 +1575,26 @@ class RoleEntryPage extends StatelessWidget {
         };
       }
       final error = _safePairingText(body['error']).toLowerCase();
-      if (response.statusCode == 404 || error == 'company_not_found') {
-        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
-      }
-      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
-    } catch (_) {
-      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+      return <String, dynamic>{
+        'ok': false,
+        'error': authFailureCode(
+          classifyRemoteAuthFailure(
+            statusCode: response.statusCode,
+            error: error,
+            loopbackHost: isLoopbackBookingBaseUrl(kBookingBaseUrl),
+          ),
+        ),
+      };
+    } catch (err) {
+      return <String, dynamic>{
+        'ok': false,
+        'error': authFailureCode(
+          classifyThrownAuthFailure(
+            err,
+            loopbackHost: isLoopbackBookingBaseUrl(kBookingBaseUrl),
+          ),
+        ),
+      };
     }
   }
 
@@ -2031,6 +2048,7 @@ class RoleEntryPage extends StatelessWidget {
     required String companyCode,
     required String pairingCode,
   }) async {
+    final loopback = isLoopbackBookingBaseUrl(kBookingBaseUrl);
     final uri = Uri.parse('$kBookingBaseUrl/public/company/link/verify');
     try {
       final response = await http
@@ -2054,13 +2072,27 @@ class RoleEntryPage extends StatelessWidget {
       if (response.statusCode == 200 && ok && role == 'companyAdmin') {
         return <String, dynamic>{'ok': true, 'payload': body};
       }
-      final error = _safePairingText(body['error']).toLowerCase();
-      if (error == 'company_not_found') {
-        return <String, dynamic>{'ok': false, 'error': 'company_not_found'};
+      var companyResolvable = false;
+      if (loopback) {
+        final resolved = await _resolveCompanyCode(companyCode);
+        companyResolvable = resolved['ok'] == true;
       }
-      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
-    } catch (_) {
-      return <String, dynamic>{'ok': false, 'error': 'verification_failed'};
+      final kind = classifyRemoteAuthFailure(
+        statusCode: response.statusCode,
+        error: _safePairingText(body['error']),
+        loopbackHost: loopback,
+        companyResolvable: companyResolvable,
+      );
+      debugPrint(
+        '[COMPANY_PAIRING][VERIFY_FAIL] status=${response.statusCode} kind=${authFailureCode(kind)} host=${describePublicAuthHost(kBookingBaseUrl)}',
+      );
+      return <String, dynamic>{'ok': false, 'error': authFailureCode(kind)};
+    } catch (err) {
+      final kind = classifyThrownAuthFailure(err, loopbackHost: loopback);
+      debugPrint(
+        '[COMPANY_PAIRING][VERIFY_FAIL] status=exception kind=${authFailureCode(kind)} host=${describePublicAuthHost(kBookingBaseUrl)}',
+      );
+      return <String, dynamic>{'ok': false, 'error': authFailureCode(kind)};
     }
   }
 
@@ -2194,12 +2226,60 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   String _companyPairingErrorText(String code) {
+    if (code == 'wrong_environment') {
+      return _t(
+        nl: 'Dit bedrijf staat niet op deze lokale debug-Worker. Deze exe praat met ${describePublicAuthHost(kBookingBaseUrl)}, niet met productie. Vraag een lokaal uitgegeven koppelcode of start een productie-build zonder lokale BOOKING_BASE_URL.',
+        en: 'This company is not on this local debug Worker. This exe talks to ${describePublicAuthHost(kBookingBaseUrl)}, not production. Use a locally issued pairing code or a production build without a local BOOKING_BASE_URL.',
+        fr: 'Cette entreprise n’est pas sur ce Worker de debug local. Cet exe parle à ${describePublicAuthHost(kBookingBaseUrl)}, pas à la production. Utilisez un code local ou un build production sans BOOKING_BASE_URL local.',
+        es: 'Esta empresa no está en este Worker local de debug. Este exe habla con ${describePublicAuthHost(kBookingBaseUrl)}, no con producción. Usa un código local o un build de producción sin BOOKING_BASE_URL local.',
+      );
+    }
+    if (code == 'local_worker_unreachable') {
+      return _t(
+        nl: 'De lokale Worker is niet bereikbaar. Start eerst de Worker op ${describePublicAuthHost(kBookingBaseUrl)}.',
+        en: 'The local Worker is unreachable. Start the Worker on ${describePublicAuthHost(kBookingBaseUrl)} first.',
+        fr: 'Le Worker local est injoignable. Démarrez d’abord le Worker sur ${describePublicAuthHost(kBookingBaseUrl)}.',
+        es: 'El Worker local no responde. Arranca primero el Worker en ${describePublicAuthHost(kBookingBaseUrl)}.',
+      );
+    }
+    if (code == 'network_error') {
+      return _t(
+        nl: 'Geen verbinding met de aanmeldserver. Controleer het netwerk en probeer opnieuw.',
+        en: 'No connection to the sign-in server. Check the network and try again.',
+        fr: 'Pas de connexion au serveur de connexion. Vérifiez le réseau et réessayez.',
+        es: 'Sin conexión con el servidor de acceso. Comprueba la red e inténtalo de nuevo.',
+      );
+    }
+    if (code == 'route_missing') {
+      if (isLoopbackBookingBaseUrl(kBookingBaseUrl)) {
+        return _t(
+          nl: 'Deze lokale Worker kent de koppelroute niet. Controleer of de juiste debug-Worker draait.',
+          en: 'This local Worker does not expose the pairing route. Check that the correct debug Worker is running.',
+          fr: 'Ce Worker local n’expose pas la route de liaison. Vérifiez le Worker de debug.',
+          es: 'Este Worker local no tiene la ruta de vinculación. Comprueba el Worker de debug.',
+        );
+      }
+      return _t(
+        nl: 'De aanmeldserver kent deze koppelroute niet. Probeer later opnieuw.',
+        en: 'The sign-in server does not expose this pairing route. Try again later.',
+        fr: 'Le serveur de connexion n’expose pas cette route. Réessayez plus tard.',
+        es: 'El servidor de acceso no tiene esta ruta. Inténtalo más tarde.',
+      );
+    }
     if (code == 'company_not_found') {
       return _t(
         nl: 'We vinden geen bedrijf met deze code. Controleer de code en probeer opnieuw.',
         en: 'We could not find a company with this code. Check the code and try again.',
         fr: 'Aucune entreprise trouvée avec ce code. Vérifiez le code et réessayez.',
         es: 'No encontramos una empresa con este código. Verifica el código e inténtalo de nuevo.',
+      );
+    }
+    if (code == 'invalid_company_code' || code == 'invalid_pairing_code') {
+      return _t(
+        nl: 'Ongeldige activatiecode. Gebruik bijvoorbeeld FLX-4821-123456.',
+        en: 'Invalid activation code. Use for example FLX-4821-123456.',
+        fr: 'Code d’activation invalide. Utilisez par exemple FLX-4821-123456.',
+        es: 'Código de activación no válido. Usa por ejemplo FLX-4821-123456.',
       );
     }
     if (code == 'verification_failed') {
@@ -3046,6 +3126,9 @@ class RoleEntryPage extends StatelessWidget {
                                           children: [
                                             Expanded(
                                               child: _roleCard(
+                                                key: const Key(
+                                                  'role_entry_customer',
+                                                ),
                                                 title: _t(
                                                   nl: 'Klant',
                                                   en: 'Customer',
@@ -3071,6 +3154,9 @@ class RoleEntryPage extends StatelessWidget {
                                             SizedBox(width: cardGap),
                                             Expanded(
                                               child: _roleCard(
+                                                key: const Key(
+                                                  'role_entry_business',
+                                                ),
                                                 title: _t(
                                                   nl: 'Bedrijf',
                                                   en: 'Business',
@@ -3124,6 +3210,9 @@ class RoleEntryPage extends StatelessWidget {
                                           child: SizedBox(
                                             width: roleCardWidth,
                                             child: _roleCard(
+                                              key: const Key(
+                                                'role_entry_customer',
+                                              ),
                                               title: _t(
                                                 nl: 'Klant',
                                                 en: 'Customer',
@@ -3150,6 +3239,9 @@ class RoleEntryPage extends StatelessWidget {
                                           child: SizedBox(
                                             width: roleCardWidth,
                                             child: _roleCard(
+                                              key: const Key(
+                                                'role_entry_business',
+                                              ),
                                               title: _t(
                                                 nl: 'Bedrijf',
                                                 en: 'Business',
@@ -3203,37 +3295,92 @@ class RoleEntryPage extends StatelessWidget {
                                       Center(
                                         child: SizedBox(
                                           width: reassuranceWidth,
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                          child: Column(
                                             children: [
-                                              Icon(
-                                                Icons.shield_outlined,
-                                                color: kFluxidiYellow
-                                                    .withOpacity(0.86),
-                                                size: 17,
-                                              ),
-                                              const SizedBox(width: 5),
-                                              Flexible(
-                                                child: Text(
-                                                  _t(
-                                                    nl: 'Keuze wordt onthouden.',
-                                                    en: 'Choice remembered.',
-                                                    fr: 'Choix mémorisé.',
-                                                    es: 'Elección recordada.',
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons.shield_outlined,
+                                                    color: kFluxidiYellow
+                                                        .withOpacity(0.86),
+                                                    size: 17,
                                                   ),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                                  const SizedBox(width: 5),
+                                                  Flexible(
+                                                    child: Text(
+                                                      _t(
+                                                        nl: 'Keuze wordt onthouden.',
+                                                        en: 'Choice remembered.',
+                                                        fr: 'Choix mémorisé.',
+                                                        es: 'Elección recordada.',
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: TextStyle(
+                                                        color: Colors.white
+                                                            .withOpacity(0.78),
+                                                        fontSize: 10.6,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              if (isLoopbackBookingBaseUrl(
+                                                kBookingBaseUrl,
+                                              )) ...[
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  _t(
+                                                    nl:
+                                                        'Lokale debug-Worker (${describePublicAuthHost(kBookingBaseUrl)}). Dit is geen productie. Echte bedrijfs-, klant- of chauffeurcodes horen hier niet.',
+                                                    en:
+                                                        'Local debug Worker (${describePublicAuthHost(kBookingBaseUrl)}). This is not production. Real company, customer or driver codes do not belong here.',
+                                                    fr:
+                                                        'Worker de debug local (${describePublicAuthHost(kBookingBaseUrl)}). Ce n’est pas la production. Les vrais codes n’ont pas leur place ici.',
+                                                    es:
+                                                        'Worker local de debug (${describePublicAuthHost(kBookingBaseUrl)}). Esto no es producción. Los códigos reales no pertenecen aquí.',
+                                                  ),
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                    color: kFluxidiYellow
+                                                        .withOpacity(0.92),
+                                                    fontSize: 10.4,
+                                                    fontWeight: FontWeight.w700,
+                                                    height: 1.25,
+                                                  ),
+                                                ),
+                                              ] else if (isProductionBookingHost(
+                                                kBookingBaseUrl,
+                                              )) ...[
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  _t(
+                                                    nl:
+                                                        'Productie-aanmeldserver (${describePublicAuthHost(kBookingBaseUrl)}). Gebruik je echte bedrijfscode plus een verse 6-cijferige toestelcode, of herstel als klant via gsm of e-mail.',
+                                                    en:
+                                                        'Production sign-in server (${describePublicAuthHost(kBookingBaseUrl)}). Use your real company code plus a fresh 6-digit device code, or restore as a customer via phone or email.',
+                                                    fr:
+                                                        'Serveur de connexion production (${describePublicAuthHost(kBookingBaseUrl)}). Utilisez votre vrai code entreprise plus un code appareil à 6 chiffres, ou récupérez en client via gsm ou e-mail.',
+                                                    es:
+                                                        'Servidor de acceso de producción (${describePublicAuthHost(kBookingBaseUrl)}). Usa tu código de empresa real más un código de dispositivo de 6 dígitos, o recupera como cliente por móvil o correo.',
+                                                  ),
                                                   textAlign: TextAlign.center,
                                                   style: TextStyle(
                                                     color: Colors.white
                                                         .withOpacity(0.78),
-                                                    fontSize: 10.6,
+                                                    fontSize: 10.4,
                                                     fontWeight: FontWeight.w600,
+                                                    height: 1.25,
                                                   ),
                                                 ),
-                                              ),
+                                              ],
                                             ],
                                           ),
                                         ),

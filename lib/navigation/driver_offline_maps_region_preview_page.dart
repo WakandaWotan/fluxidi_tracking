@@ -15,6 +15,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'driver_offline_maps_l10n.dart';
@@ -331,7 +332,10 @@ class _DriverOfflineMapRegionPreviewPageState
                     Positioned.fill(
                       child: widget.mapBuilder != null
                           ? widget.mapBuilder!(context, target)
-                          : mb.MapWidget(
+                          : mapboxSurfaceOrUnsupported(
+                              unsupportedMessage:
+                                  'Offline-kaartvoorbeeld ontbreekt op dit platform.',
+                              buildMap: () => mb.MapWidget(
                               key: Key(
                                 'offline_region_preview_map_${target.regionId}_$_styleIndex',
                               ),
@@ -354,6 +358,7 @@ class _DriverOfflineMapRegionPreviewPageState
                               ),
                               onMapCreated: _onMapCreated,
                               onCameraChangeListener: _onCameraChange,
+                            ),
                             ),
                     ),
                     Positioned(

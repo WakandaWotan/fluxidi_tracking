@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
+import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
 import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -522,17 +524,19 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         asBool(quote['fixed_fare_applied_return'])) {
       return true;
     }
-    if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
+    if (asText(quote['pricing_source']) == 'airport_fixed_fare' ||
+        asText(quote['pricing_source']) == 'company_fixed_price') {
       return true;
     }
     final breakdownRaw = quote['breakdown'];
     if (breakdownRaw is Map) {
       final breakdown = Map<String, dynamic>.from(breakdownRaw);
-      if (asText(breakdown['kind']) == 'airport_fixed_fare') {
+      if (asText(breakdown['kind']) == 'airport_fixed_fare' ||
+          asText(breakdown['kind']) == 'company_fixed_price') {
         return true;
       }
     }
-    return false;
+    return companyQuoteHasFixedPrice(quote);
   }
 
   String? _fixedFareRuleIdFromQuote(Map<String, dynamic> quote) {
@@ -568,6 +572,12 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       'airport_name': base['airport_name'],
       'airport_country': base['airport_country'],
       'flight_number': base['flight_number'],
+      'flight_at': base['flight_at'],
+      'flight_timezone': base['flight_timezone'] ?? 'Europe/Brussels',
+      'pickup_arrangement': base['pickup_arrangement'],
+      'return_airport_iata': base['return_airport_iata'],
+      'return_flight_number': base['return_flight_number'],
+      'return_flight_at': base['return_flight_at'],
       'meet_and_greet': base['meet_and_greet'] == true,
       'name_board': base['name_board'],
     };
@@ -639,6 +649,13 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
       ...billingCustomerFields,
       'quote': widget.quote,
       'airport_transfer': airportTransfer,
+      if (widget.quote['fixed_price_snapshot'] is Map)
+        'fixed_price_snapshot': widget.quote['fixed_price_snapshot'],
+      if (widget.quote['total_price_incl_vat'] != null ||
+          widget.quote['price_incl_vat'] != null)
+        'quoted_total_incl_vat':
+            widget.quote['total_price_incl_vat'] ??
+            widget.quote['price_incl_vat'],
     };
   }
 
@@ -1666,6 +1683,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
     final distance = _toNum(quote['distance_km']);
     final duration = _toNum(quote['duration_min']);
     final hasFixedFare = _isFixedAirportFareQuote(quote);
+    final fixedSnapshot = companyFixedPriceSnapshotOf(quote);
+    final requestQuoteRequired = companyQuoteRequiresManualQuote(quote);
     final fixedFareRuleId = _fixedFareRuleIdFromQuote(quote);
     bool quoteBool(dynamic value) {
       if (value is bool) return value;
@@ -1700,6 +1719,16 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
             es: 'Al aeropuerto',
           );
     final flightNumber = _fallback(payload['flight_number'], empty: '');
+    final flightAt = _fallback(payload['flight_at'], empty: '');
+    final pickupArrangement = _fallback(
+      payload['pickup_arrangement'],
+      empty: '',
+    );
+    final returnFlightNumber = _fallback(
+      payload['return_flight_number'],
+      empty: '',
+    );
+    final returnFlightAt = _fallback(payload['return_flight_at'], empty: '');
     final returnFrom = _fallback(payload['return_from'], empty: '');
     final returnTo = _fallback(payload['return_to'], empty: '');
     final returnDate = _fallback(payload['return_date'], empty: '');
@@ -2050,6 +2079,23 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                           ),
                           _fmtMoney(priceIncl),
                         ),
+                      if (requestQuoteRequired)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            kCompanyFixedPricesFallbackQuote.of(_appLanguage),
+                            softWrap: true,
+                            style: TextStyle(color: _textPrimary),
+                          ),
+                        ),
+                      if (fixedSnapshot != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: CompanyFixedPriceBreakdown(
+                            language: _appLanguage,
+                            snapshot: fixedSnapshot,
+                          ),
+                        ),
                       if (hasFixedFare) ...[
                         Padding(
                           padding: const EdgeInsets.only(bottom: 7),
@@ -2187,6 +2233,69 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                           ),
                           flightNumber,
                         ),
+                      if (flightAt.isNotEmpty)
+                        _summaryRow(
+                          _t(
+                            nl: 'Vlucht datum en tijd',
+                            en: 'Flight date and time',
+                            fr: 'Date et heure du vol',
+                            es: 'Fecha y hora del vuelo',
+                          ),
+                          flightAt,
+                        ),
+                      if (pickupArrangement.isNotEmpty)
+                        _summaryRow(
+                          _t(
+                            nl: 'Ophaalregeling',
+                            en: 'Pickup arrangement',
+                            fr: 'Modalité de prise en charge',
+                            es: 'Acuerdo de recogida',
+                          ),
+                          pickupArrangement == 'after_landing'
+                              ? _t(
+                                  nl: 'Na landing',
+                                  en: 'After landing',
+                                  fr: 'Après l’atterrissage',
+                                  es: 'Tras el aterrizaje',
+                                )
+                              : _t(
+                                  nl: 'Aparte ophaaltijd',
+                                  en: 'Separate pickup time',
+                                  fr: 'Heure séparée',
+                                  es: 'Hora de recogida aparte',
+                                ),
+                        ),
+                      if (returnFlightNumber.isNotEmpty)
+                        _summaryRow(
+                          _t(
+                            nl: 'Retourvluchtnummer',
+                            en: 'Return flight number',
+                            fr: 'Numéro de vol retour',
+                            es: 'Número de vuelo de regreso',
+                          ),
+                          returnFlightNumber,
+                        ),
+                      if (returnFlightAt.isNotEmpty)
+                        _summaryRow(
+                          _t(
+                            nl: 'Retourvlucht datum en tijd',
+                            en: 'Return flight date and time',
+                            fr: 'Date et heure du vol retour',
+                            es: 'Fecha y hora del vuelo de regreso',
+                          ),
+                          returnFlightAt,
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          kCompanyFixedPricesTimezone.of(_appLanguage),
+                          softWrap: true,
+                          style: TextStyle(
+                            color: _soft,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                       if (payload['meet_and_greet'] == true)
                         _summaryRow(
                           _t(

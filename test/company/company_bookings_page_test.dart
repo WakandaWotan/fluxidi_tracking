@@ -47,6 +47,8 @@ void main() {
                 'quote_id': 'cqq_711fd5c7c0095f21764a542d8b55b846',
               },
             },
+            driversLoader: () async => const <Map<String, dynamic>>[],
+            vehiclesLoader: () async => const <Map<String, dynamic>>[],
           ),
         ),
       ),
