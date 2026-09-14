@@ -24,6 +24,12 @@ import {
   parseCompanyRoundtripWrite,
   publicItemOverlapsPeriod,
   resolveAgendaLegTarget,
+  resolveBookingCurrency,
+  resolveBookingDurationMin,
+  resolveBookingPriceExVat,
+  resolveBookingPriceInclVat,
+  resolveBookingPriceVat,
+  resolveBookingPricingSource,
   resolveRoundtripDispatchMode,
 } from "./company_roundtrip.mjs";
 import {
@@ -364,12 +370,11 @@ function normalizeAgendaRideOptions(body) {
 
 function publicAgendaItem(record, bookingId) {
   const booking = record?.booking && typeof record.booking === "object" ? record.booking : {};
-  const durationMin = Number(record?.duration_min ?? booking.duration_min);
-  const durationUnknown =
-    record?.duration_unknown === true ||
-    booking.duration_unknown === true ||
-    !Number.isFinite(durationMin) ||
-    durationMin <= 0;
+  const durationMin = resolveBookingDurationMin(record);
+  const durationUnknown = durationMin == null;
+  const priceInclVat = resolveBookingPriceInclVat(record);
+  const priceExVat = resolveBookingPriceExVat(record);
+  const priceVat = resolveBookingPriceVat(record);
   return {
     booking_id: bookingId,
     customer_id: safeStr(record?.customer_id || booking.customer_id, 160),
@@ -388,7 +393,7 @@ function publicAgendaItem(record, bookingId) {
       record?.driver_accepted === true ||
       booking.assignment_accepted === true ||
       booking.driver_accepted === true,
-    duration_min: durationUnknown ? null : durationMin,
+    duration_min: durationMin,
     duration_unknown: durationUnknown,
     do_not_dispatch: record?.do_not_dispatch === true || booking.do_not_dispatch === true,
     revision: Number(record?.revision || booking.revision || 1) || 1,
@@ -402,8 +407,10 @@ function publicAgendaItem(record, bookingId) {
     ),
     source: safeStr(record?.source || booking.source, 64),
     passengers: Number(booking.pax || record?.pax || 1) || 1,
-    price_incl_vat: booking.price_incl_vat ?? record?.price_incl_vat ?? null,
-    currency: safeStr(booking.currency || record?.currency, 8) || "EUR",
+    price_incl_vat: priceInclVat,
+    price_ex_vat: priceExVat,
+    price_vat: priceVat,
+    currency: resolveBookingCurrency(record),
     service: safeStr(booking.service || record?.service, 32),
     tier: safeStr(booking.tier || record?.tier, 32),
     bags: Number(booking.bags ?? record?.bags ?? 0) || 0,
@@ -421,7 +428,7 @@ function publicAgendaItem(record, bookingId) {
       32,
     ),
     airport_direction: safeStr(booking.airport_direction || record?.airport_direction, 32),
-    pricing_source: safeStr(record?.pricing_source || booking.pricing_source, 40),
+    pricing_source: resolveBookingPricingSource(record),
     fixed_fare_rule_id: safeStr(record?.fixed_fare_rule_id || booking.fixed_fare_rule_id, 96),
     fixed_price_snapshot: record?.fixed_price_snapshot || booking.fixed_price_snapshot || null,
     extra: safeStr(booking.extra || record?.extra, 32),

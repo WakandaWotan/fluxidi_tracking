@@ -7,6 +7,8 @@ import {
   occupancyWindowsForRecord,
   occupancyWindowsFromTimes,
   parseCompanyRoundtripWrite,
+  resolveBookingDurationMin,
+  resolveBookingPriceInclVat,
   resolveRoundtripDispatchMode,
   shouldSplitOperationalReturnLeg,
 } from "./modules/company_roundtrip.mjs";
@@ -155,4 +157,37 @@ test("cancelled split return stays off the agenda and frees that occupancy", () 
   assert.equal(occupancy.windows.length, 1);
   assert.equal(occupancy.windows[0].start, Date.parse("2026-09-17T08:00:00.000Z"));
   assert.equal(occupancy.windows[0].end, Date.parse("2026-09-17T08:40:00.000Z"));
+});
+
+test("customer-app aliases keep duration and price for occupancy", () => {
+  const record = {
+    pickup_iso: "2026-09-15T08:00:00.000Z",
+    booking: {
+      pickup_iso: "2026-09-15T08:00:00.000Z",
+      duration_route_min: 38,
+      currency: "EUR",
+    },
+    quote: {
+      duration_min: 38,
+      pricing: { price_incl_vat: "46.70", currency: "EUR", pricing_source: "route_calc" },
+    },
+    operational_legs: [{ duration_min: 38, price_incl_vat: 46.7 }],
+  };
+  assert.equal(resolveBookingDurationMin(record), 38);
+  assert.equal(resolveBookingPriceInclVat(record), 46.7);
+  const occupancy = occupancyWindowsForRecord(record);
+  assert.equal(occupancy.unknown, false);
+  assert.equal(occupancy.windows[0].end, Date.parse("2026-09-15T08:38:00.000Z"));
+});
+
+test("legacy booking without duration stays unknown and does not crash", () => {
+  const record = {
+    pickup_iso: "2026-09-15T08:00:00.000Z",
+    booking: { pickup_iso: "2026-09-15T08:00:00.000Z" },
+  };
+  assert.equal(resolveBookingDurationMin(record), null);
+  assert.equal(resolveBookingPriceInclVat(record), null);
+  const occupancy = occupancyWindowsForRecord(record);
+  assert.equal(occupancy.unknown, true);
+  assert.equal(occupancy.windows.length, 0);
 });

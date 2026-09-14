@@ -14,6 +14,166 @@ export function parseDurationMin(value, fallback = null) {
   return Math.round(n);
 }
 
+export function firstPositiveDurationMin(values) {
+  for (const value of values) {
+    const parsed = parseDurationMin(value, null);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+function bookingMap(record) {
+  return record?.booking && typeof record.booking === "object" ? record.booking : {};
+}
+
+function quoteMap(record) {
+  return record?.quote && typeof record.quote === "object" ? record.quote : {};
+}
+
+function firstMoney(values) {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const n = Number(String(value).replace(",", "."));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+export function resolveBookingDurationMin(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  const legs = operationalLegsOf(record);
+  const outbound =
+    legs.find((leg) => String(leg?.leg_type || "").toLowerCase() === "outbound") ||
+    legs[0];
+  return firstPositiveDurationMin([
+    record?.duration_min,
+    record?.durationMin,
+    record?.duration_minutes,
+    record?.durationMinutes,
+    booking.duration_min,
+    booking.durationMin,
+    booking.duration_minutes,
+    booking.durationMinutes,
+    booking.duration_route_min,
+    booking.route_duration_min,
+    record?.duration_route_min,
+    record?.route_duration_min,
+    outbound?.duration_min,
+    outbound?.durationMin,
+    outbound?.duration_minutes,
+    outbound?.durationMinutes,
+    quote.duration_min,
+    quote.durationMin,
+    quote.duration_route_min,
+    quote.route_duration_min,
+    quote?.pricing_main?.breakdown?.duration_min,
+    record?.requested_duration_minutes,
+    booking.requested_duration_minutes,
+    quote.requested_duration_minutes,
+  ]);
+}
+
+export function resolveBookingReturnDurationMin(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  const returnLeg = operationalLegsOf(record).find(
+    (leg) => String(leg?.leg_type || "").toLowerCase() === "return",
+  );
+  return firstPositiveDurationMin([
+    record?.return_duration_min,
+    record?.returnDurationMin,
+    booking.return_duration_min,
+    booking.returnDurationMin,
+    returnLeg?.duration_min,
+    returnLeg?.durationMin,
+    quote?.return?.duration_min,
+    quote?.return?.durationMin,
+  ]);
+}
+
+export function resolveBookingPriceInclVat(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  const outbound =
+    operationalLegsOf(record).find(
+      (leg) => String(leg?.leg_type || "").toLowerCase() === "outbound",
+    ) || operationalLegsOf(record)[0];
+  return firstMoney([
+    booking.price_incl_vat,
+    record?.price_incl_vat,
+    booking.amount_incl_vat,
+    record?.amount_incl_vat,
+    booking.price,
+    record?.price,
+    booking.total_price,
+    record?.total_price,
+    outbound?.price_incl_vat,
+    outbound?.priceInclVat,
+    outbound?.amount_incl_vat,
+    quote?.pricing?.price_incl_vat,
+    quote?.pricing_main?.price_incl_vat,
+    quote?.price_incl_vat,
+  ]);
+}
+
+export function resolveBookingPriceExVat(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  const outbound =
+    operationalLegsOf(record).find(
+      (leg) => String(leg?.leg_type || "").toLowerCase() === "outbound",
+    ) || operationalLegsOf(record)[0];
+  return firstMoney([
+    booking.price_ex_vat,
+    record?.price_ex_vat,
+    booking.amount_ex_vat,
+    record?.amount_ex_vat,
+    outbound?.price_ex_vat,
+    quote?.pricing?.price_ex_vat,
+    quote?.pricing_main?.price_ex_vat,
+  ]);
+}
+
+export function resolveBookingPriceVat(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  const outbound =
+    operationalLegsOf(record).find(
+      (leg) => String(leg?.leg_type || "").toLowerCase() === "outbound",
+    ) || operationalLegsOf(record)[0];
+  return firstMoney([
+    booking.price_vat,
+    record?.price_vat,
+    booking.amount_vat,
+    record?.amount_vat,
+    outbound?.price_vat,
+    quote?.pricing?.price_vat,
+    quote?.pricing_main?.price_vat,
+  ]);
+}
+
+export function resolveBookingCurrency(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  return (
+    safeStr(booking.currency || record?.currency || quote?.currency || quote?.pricing?.currency, 8) ||
+    "EUR"
+  );
+}
+
+export function resolveBookingPricingSource(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  return safeStr(
+    record?.pricing_source ||
+      booking.pricing_source ||
+      quote.pricing_source ||
+      quote?.pricing?.pricing_source,
+    40,
+  );
+}
+
 export function normalizeReturnEnabled(body) {
   const explicit = !!(
     body?.return_enabled ??
@@ -263,7 +423,13 @@ export function occupancyWindowsForRecord(record) {
     for (const leg of legs) {
       if (!isCapacityBlockingLeg(leg)) continue;
       const pickup = firstText(leg, ["pickup_iso", "pickupIso"], 80);
-      const duration = leg.duration_min ?? leg.durationMin;
+      const duration = firstPositiveDurationMin([
+        leg.duration_min,
+        leg.durationMin,
+        String(leg?.leg_type || "").toLowerCase() === "return"
+          ? resolveBookingReturnDurationMin(record)
+          : resolveBookingDurationMin(record),
+      ]);
       const window = rideWindow(pickup, duration);
       if (!window.ok || window.durationUnknown) unknown = true;
       else windows.push(window);
@@ -272,14 +438,10 @@ export function occupancyWindowsForRecord(record) {
   }
   const pickupIso = firstText(record, ["pickup_iso", "pickupIso"], 80) ||
     firstText(booking, ["pickup_iso", "pickupIso", "pickupStartIso"], 80);
-  const durationMin = record?.duration_min ?? record?.durationMin ?? booking.duration_min ?? booking.durationMin;
+  const durationMin = resolveBookingDurationMin(record);
   const returnPickupIso = firstText(record, ["return_pickup_iso", "returnPickupIso"], 80) ||
     firstText(booking, ["return_pickup_iso", "returnPickupIso"], 80);
-  const returnDurationMin =
-    record?.return_duration_min ??
-    record?.returnDurationMin ??
-    booking.return_duration_min ??
-    booking.returnDurationMin;
+  const returnDurationMin = resolveBookingReturnDurationMin(record);
   return occupancyWindowsFromTimes({
     mode,
     pickupIso,
@@ -629,10 +791,7 @@ export function decorateAgendaItem(item, record, bookingId) {
   const returnTo = firstText(record, ["return_to", "returnTo"], 240) ||
     firstText(booking, ["return_to", "returnTo"], 240) ||
     safeStr(item?.from, 240);
-  const returnDuration = parseDurationMin(
-    record?.return_duration_min ?? booking.return_duration_min,
-    null,
-  );
+  const returnDuration = resolveBookingReturnDurationMin(record);
   const legs = Array.isArray(record?.operational_legs) ? record.operational_legs : [];
   const outboundLeg = legs.find((leg) => String(leg?.leg_type || "").toLowerCase() === "outbound");
   const returnLeg = legs.find((leg) => String(leg?.leg_type || "").toLowerCase() === "return");

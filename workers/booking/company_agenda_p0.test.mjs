@@ -719,3 +719,97 @@ test("cancelling one split leg keeps the other ride and frees that occupancy", a
   }, { idempotencyKey: "cancel-one-leg-gap" });
   assert.equal(freed.res.status, 201, JSON.stringify(freed.json));
 });
+
+test("customer-app booking aliases reach the agenda read-model and assign", async () => {
+  const kv = countingKV();
+  const env = envWith(kv);
+  const id = "2026-09-012";
+  const pickup = "2026-09-15T08:00:00.000Z";
+  const record = {
+    tenant_id: TENANT_A,
+    company_id: COMPANY_A,
+    pickup_iso: pickup,
+    booking: {
+      from: "Maarkedal",
+      to: "Ronse",
+      pickup_iso: pickup,
+      duration_route_min: 29,
+      currency: "EUR",
+      pricing_source: "route_calc",
+    },
+    quote: {
+      duration_min: 29,
+      pricing: {
+        price_incl_vat: "46.70",
+        price_ex_vat: "44.06",
+        price_vat: "2.64",
+        currency: "EUR",
+        pricing_source: "route_calc",
+      },
+    },
+    operational_legs: [{
+      duration_min: 29,
+      price_incl_vat: 46.7,
+      price_ex_vat: 44.06,
+      price_vat: 2.64,
+      pricing_source: "route_calc",
+    }],
+  };
+  await kv.put(`booking:${id}`, JSON.stringify(record));
+  await kv.put(
+    companyBookingsListIndexKey({ tenant_id: TENANT_A, company_id: COMPANY_A }),
+    JSON.stringify({ items: [{ booking_id: id, pickup_iso: pickup }] }),
+  );
+  const listed = await adminRequest(
+    env,
+    "/company/agenda/rides?from=2026-09-15T00:00:00.000Z&to=2026-09-16T00:00:00.000Z",
+  );
+  const json = await listed.json();
+  assert.equal(listed.status, 200);
+  assert.equal(json.items.length, 1);
+  assert.equal(json.items[0].duration_min, 29);
+  assert.equal(json.items[0].duration_unknown, false);
+  assert.equal(json.items[0].price_incl_vat, 46.7);
+  assert.equal(json.items[0].price_ex_vat, 44.06);
+  assert.equal(json.items[0].price_vat, 2.64);
+  assert.equal(json.items[0].currency, "EUR");
+  assert.equal(json.items[0].pricing_source, "route_calc");
+
+  const assigned = await assignAgendaRide(env, {
+    scope: { tenant_id: TENANT_A, company_id: COMPANY_A },
+    bookingId: id,
+    body: { assigned_driver_id: "drv_1" },
+  });
+  assert.equal(assigned.ok, true, JSON.stringify(assigned));
+  assert.equal(assigned.item.duration_min, 29);
+  assert.equal(assigned.item.price_incl_vat, 46.7);
+});
+
+test("legacy agenda booking without duration stays readable", async () => {
+  const kv = countingKV();
+  const env = envWith(kv);
+  const id = "legacy-no-duration";
+  const pickup = "2026-09-16T09:00:00.000Z";
+  await kv.put(
+    `booking:${id}`,
+    JSON.stringify({
+      tenant_id: TENANT_A,
+      company_id: COMPANY_A,
+      pickup_iso: pickup,
+      booking: { from: "Gent", to: "Brussel", pickup_iso: pickup },
+    }),
+  );
+  await kv.put(
+    companyBookingsListIndexKey({ tenant_id: TENANT_A, company_id: COMPANY_A }),
+    JSON.stringify({ items: [{ booking_id: id, pickup_iso: pickup }] }),
+  );
+  const listed = await adminRequest(
+    env,
+    "/company/agenda/rides?from=2026-09-16T00:00:00.000Z&to=2026-09-17T00:00:00.000Z",
+  );
+  const json = await listed.json();
+  assert.equal(listed.status, 200);
+  assert.equal(json.items[0].duration_unknown, true);
+  assert.equal(json.items[0].duration_min, null);
+  assert.equal(json.items[0].price_incl_vat, null);
+});
