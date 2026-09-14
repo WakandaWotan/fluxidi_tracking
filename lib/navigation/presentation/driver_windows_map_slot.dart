@@ -31,3 +31,32 @@ bool driverWindowsMapOverflows({
   return topChrome + mapHeight + rideInfoHeight + actionsHeight + bottomNav >
       viewportHeight + 0.5;
 }
+
+String formatDriverDashboardMoney(num amount, [String currency = 'EUR']) {
+  final value = amount.toDouble().toStringAsFixed(2).replaceAll('.', ',');
+  final cur = currency.toUpperCase();
+  if (cur == 'EUR' || cur == 'EURO' || cur == '€') return '€ $value';
+  if (cur.length <= 3) return '$cur $value';
+  return value;
+}
+
+/// Remaining map height inside the landscape "Volgende rit" card.
+double driverWindowsNextRideMapHeight({
+  required double paneHeight,
+  required double summaryHeight,
+  required double rideInfoHeight,
+  required double actionsHeight,
+  double gap = 10,
+  double cardPadding = 32,
+  double minHeight = 136,
+}) {
+  final available =
+      paneHeight -
+      summaryHeight -
+      gap -
+      rideInfoHeight -
+      actionsHeight -
+      cardPadding;
+  if (!available.isFinite) return minHeight;
+  return available < minHeight ? minHeight : available;
+}
