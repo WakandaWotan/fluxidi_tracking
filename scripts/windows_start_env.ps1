@@ -11,6 +11,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Write-Host ("{0} windows_start_env RuntimeEnv={1}" -f (Get-Date -Format o), $RuntimeEnv)
+if ([string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+  ${env:ProgramFiles(x86)} = 'C:\Program Files (x86)'
+  Write-Host 'Set ProgramFiles(x86) for Flutter Windows toolchain'
+}
 $flutter = 'C:\dev\flutter\bin\flutter.bat'
 if (-not (Test-Path $flutter)) { $flutter = 'flutter' }
 $repo = Split-Path $PSScriptRoot -Parent
@@ -130,9 +134,13 @@ if (-not $SkipBuild) {
   }
   Start-Sleep -Milliseconds 400
   Write-Host ("{0} Building Windows debug for {1}" -f (Get-Date -Format o), $shortcutName)
+  $prevFlutterEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   & $flutter build windows --debug @defines
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter build windows failed with $LASTEXITCODE"
+  $flutterCode = $LASTEXITCODE
+  $ErrorActionPreference = $prevFlutterEap
+  if ($flutterCode -ne 0) {
+    throw "flutter build windows failed with $flutterCode"
   }
 }
 
