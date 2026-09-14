@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
@@ -2129,6 +2130,10 @@ CompanyAgendaRideSummary companyAgendaRideSummary(
       if (ride.isUnassigned) kCompanyAgendaUnassigned.of(language),
       if (!ride.isUnassigned && driverName.isNotEmpty) driverName,
       if (ride.durationUnknown) kCompanyAgendaDurationUnknown.of(language),
+      if (!ride.durationUnknown && ride.durationMin != null)
+        formatCompanyBookingDurationMin(ride.durationMin!),
+      if (ride.priceInclVat != null)
+        formatCompanyBookingMoney(ride.priceInclVat!, ride.currency),
       if (ride.status.isNotEmpty) ride.status,
       if (!ride.rideOptions.isEmpty)
         formatCompanyRideOptionsSummary(ride.rideOptions, language: language),

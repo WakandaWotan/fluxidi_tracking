@@ -1,3 +1,4 @@
+import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/company/company_roundtrip.dart';
@@ -105,19 +106,9 @@ class CompanyAgendaRide {
       return '';
     }
 
-    int? duration;
-    final rawDuration = raw['duration_min'] ?? raw['durationMin'];
-    if (rawDuration is int) duration = rawDuration;
-    if (rawDuration is num) duration = rawDuration.round();
-    if (rawDuration is String) duration = int.tryParse(rawDuration);
-    final unknown =
-        raw['duration_unknown'] == true ||
-        duration == null ||
-        duration <= 0;
-    num? price;
-    final rawPrice = raw['price_incl_vat'] ?? raw['priceInclVat'];
-    if (rawPrice is num) price = rawPrice;
-    if (rawPrice is String) price = num.tryParse(rawPrice);
+    final duration = resolveCompanyBookingDurationMin(raw);
+    final unknown = duration == null;
+    final price = resolveCompanyBookingPriceInclVat(raw);
     return CompanyAgendaRide(
       bookingId: first(const ['booking_id', 'bookingId']),
       customerId: first(const ['customer_id', 'customerId']),
@@ -132,7 +123,7 @@ class CompanyAgendaRide {
         'assignedVehicleId',
       ]),
       durationUnknown: unknown,
-      durationMin: unknown ? null : duration,
+      durationMin: duration,
       doNotDispatch: raw['do_not_dispatch'] == true,
       assignmentAccepted:
           raw['assignment_accepted'] == true || raw['driver_accepted'] == true,
@@ -148,9 +139,7 @@ class CompanyAgendaRide {
       source: first(const ['source']),
       passengers: int.tryParse(first(const ['passengers', 'pax'])) ?? 1,
       priceInclVat: price,
-      currency: first(const ['currency']).isEmpty
-          ? 'EUR'
-          : first(const ['currency']),
+      currency: resolveCompanyBookingCurrency(raw),
       rideOptions: parseCompanyRideOptions(
         raw['ride_options'] ?? raw['rideOptions'] ?? raw,
       ),

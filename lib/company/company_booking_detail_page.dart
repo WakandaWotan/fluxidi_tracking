@@ -5,6 +5,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:fluxidi_tracking/company/company_agenda_http.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
@@ -135,8 +136,7 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
   }
 
   int? get _durationMin {
-    final raw = _text(const ['duration_min', 'durationMin']);
-    return int.tryParse(raw);
+    return resolveCompanyBookingDurationMin(_row);
   }
 
   CompanyRoundtripChoice get _roundtripChoice {
@@ -468,10 +468,9 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
     final to = _text(const ['to', 'dropoff']);
     final pickup = _text(const ['pickup_iso', 'pickupIso', 'start_at']);
     final pax = _text(const ['pax', 'passengers']);
-    final amount = _booking['price_incl_vat'] ?? _record['price'];
-    final currency = _text(const ['currency']).isEmpty
-        ? 'EUR'
-        : _text(const ['currency']);
+    final amount = resolveCompanyBookingPriceInclVat(_row);
+    final currency = resolveCompanyBookingCurrency(_row);
+    final durationMin = _durationMin;
     final status = _text(const ['status']);
     final rideOptions = parseCompanyRideOptions(
       _booking['ride_options'] ?? _record['ride_options'] ?? _booking,
@@ -529,9 +528,14 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                   ],
                   Text('Passagiers: ${pax.isEmpty ? '—' : pax}'),
                   Text(
-                    'Bedrag: $currency ${amount ?? '—'}',
+                    'Bedrag: ${amount == null ? '—' : formatCompanyBookingMoney(amount, currency)}',
                     key: const Key('company_booking_detail_amount'),
                   ),
+                  if (durationMin != null)
+                    Text(
+                      'Ritduur: ${formatCompanyBookingDurationMin(durationMin)}',
+                      key: const Key('company_booking_detail_duration'),
+                    ),
                   if (snapshot != null) ...[
                     const SizedBox(height: 8),
                     CompanyFixedPriceBreakdown(
