@@ -142,8 +142,12 @@ void main() {
       final home = File(
         'lib/main_parts/business_home_page_state.dart',
       ).readAsStringSync();
-      expect(home.contains('zakelijke_tablet_header_foto.webp'), isTrue);
+      expect(
+        File('lib/widgets/fluxidi_cover_photo_header.dart').readAsStringSync(),
+        contains('zakelijke_tablet_header_foto.webp'),
+      );
       expect(home.contains('else if (usesTabletHeader)'), isTrue);
+      expect(home.contains('FluxidiCoverPhotoHeader'), isTrue);
       expect(home.contains('if (isBrandSignatureGold)'), isTrue);
       expect(home.contains('_brandSignatureGoldQuickActions'), isTrue);
     });

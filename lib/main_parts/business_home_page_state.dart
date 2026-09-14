@@ -4634,18 +4634,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             // overflowing on narrow phones.
             final visualMobileCardHeight = clampDouble(W * 0.28, 100.0, 116.0);
             final visualMobileCardSpacing = 10.0;
-            final wideLandscapeHeader = isTabletLandscape && W >= 1100;
-            final businessHeaderHeight = isTabletLandscape
-                // Wide desktop windows need a taller min than phone-derived
-                // tablet landscape: the account chip + greeting overflow 140 px.
-                ? clampDouble(
-                    H * 0.22,
-                    wideLandscapeHeader ? 228.0 : 140.0,
-                    wideLandscapeHeader ? 280.0 : 200.0,
-                  )
-                : isTabletPortrait
-                ? clampDouble(H * 0.23, 300.0, 360.0)
-                : null;
+            final businessPhotoHeaderActionColumns = isTabletLandscape
+                ? 5
+                : isPhoneLandscape
+                ? 5
+                : 2;
             final businessQuickActionCardHeight = isTabletLandscape
                 // Proportionally taller quick action cards in tablet
                 // landscape so the 5-column row takes a larger share of
@@ -4774,18 +4767,41 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     windowsGoldMetrics?.listPaddingBottom ??
                     businessListBottomPadding;
                 final goldListTop = windowsGoldMetrics?.listPaddingTop ?? 12.0;
-                final businessHeaderAsset = _businessImageAsset(
-                  executiveGoldAsset:
-                      'assets/fluxidi/zakelijke_tablet_header_foto.webp',
-                  corporateBlueAsset:
-                      'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.webp',
-                  cleanProfessionalAsset:
-                      'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.webp',
-                  emeraldIvoryAsset:
-                      'assets/Emerald_Ivory_Company/company_header_emerald_ivory.webp',
-                  fluxidiNeonRushAsset:
-                      'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.webp',
+                final businessHeaderAsset = businessHomeHeaderPhotoAsset(
+                  variant: themeVariant,
+                  landscape: isTabletLandscape,
                 );
+                final businessHeaderSource = businessHomeHeaderSourceSize(
+                  businessHeaderAsset,
+                );
+                final businessHeaderMinHeight =
+                    businessHomeHeaderOverlayMinHeight(headerContentPadding);
+                final businessHeaderKpiHeight = businessHomeKpiBlockHeight(
+                  stacked:
+                      !isTabletLandscape && bodyConstraints.maxWidth < 430,
+                  compact: isTabletLandscape,
+                );
+                final businessHeaderActionRows =
+                    (10 / businessPhotoHeaderActionColumns).ceil();
+                final businessHeaderActionsHeight =
+                    businessHeaderActionRows *
+                        businessQuickActionCardHeight +
+                    (businessHeaderActionRows > 1
+                        ? (businessHeaderActionRows - 1) *
+                              businessQuickActionSpacing
+                        : 0.0);
+                final businessHeaderMaxHeight =
+                    businessHomePhotoHeaderAvailableHeight(
+                      bodyHeight: bodySize.height,
+                      listTop: goldListTop,
+                      sectionGap: goldSectionGap,
+                      kpiHeight: businessHeaderKpiHeight,
+                      titleGap: goldTitleGap,
+                      gridTopGap: goldGridTopGap,
+                      actionsHeight: businessHeaderActionsHeight,
+                      backGap: goldBackGap,
+                      listBottom: goldListBottom,
+                    );
                 final fillGold = windowsGoldCompact &&
                     windowsGoldMetrics != null &&
                     bodyConstraints.maxHeight.isFinite;
@@ -4842,143 +4858,109 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         },
                       )
                     else if (usesTabletHeader)
-                      Container(
-                        height: businessHeaderHeight,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: isExecutiveGold
-                                ? kFluxidiYellow.withOpacity(0.22)
-                                : _businessThemePalette.accent.withOpacity(
-                                    0.30,
-                                  ),
-                          ),
+                      FluxidiCoverPhotoHeader(
+                        assetName: businessHeaderAsset,
+                        sourceSize: businessHeaderSource,
+                        maxHeight: businessHeaderMaxHeight,
+                        minHeight: businessHeaderMinHeight,
+                        focalAlignment: businessHomeHeaderFocalAlignment(
+                          businessHeaderAsset,
                         ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            FluxidiDecodeSizedAssetImage(
-                              businessHeaderAsset,
-                              fit: BoxFit.cover,
-                              alignment: isTabletLandscape
-                                  ? const Alignment(0.25, 0.35)
-                                  : Alignment.center,
-                              errorBuilder: (_, __, ___) => const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Color(0xFF101010),
-                                      Color(0xFF07080C),
-                                    ],
+                        border: Border.all(
+                          color: isExecutiveGold
+                              ? kFluxidiYellow.withOpacity(0.22)
+                              : _businessThemePalette.accent.withOpacity(0.30),
+                        ),
+                        overlayGradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.12),
+                            Colors.black.withOpacity(0.22),
+                            Colors.black.withOpacity(0.58),
+                          ],
+                        ),
+                        overlay: Padding(
+                          padding: headerContentPadding,
+                          child: Stack(
+                            children: [
+                              Align(
+                                alignment: Alignment.topLeft,
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 48,
+                                    maxWidth: 160,
                                   ),
+                                  child: _businessHomeLogo(width: 140),
                                 ),
                               ),
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.black.withOpacity(0.12),
-                                      Colors.black.withOpacity(0.22),
-                                      Colors.black.withOpacity(0.58),
-                                    ],
+                              Align(
+                                alignment: Alignment.bottomLeft,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                    right: BusinessHomeHeaderThemeRegion
+                                        .textRightReserve,
                                   ),
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: Padding(
-                                padding: headerContentPadding,
-                                child: LayoutBuilder(
-                                  builder: (context, headerConstraints) {
-                                    return FittedBox(
-                                      alignment: Alignment.topLeft,
-                                      fit: BoxFit.scaleDown,
-                                      child: SizedBox(
-                                        width: headerConstraints.maxWidth,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            ValueListenableBuilder<
-                                              ActiveCompanySession?
-                                            >(
-                                              valueListenable:
-                                                  activeCompanySessionNotifier,
-                                              builder: (context, _, __) =>
-                                                  _topBar(context, profile),
-                                            ),
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                top: 8,
-                                                right:
-                                                    BusinessHomeHeaderThemeRegion
-                                                        .textRightReserve,
-                                              ),
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Text(
-                                                    _timeAwareGreeting(),
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight:
-                                                          FontWeight.w800,
-                                                      fontSize:
-                                                          headerTitleFontSize,
-                                                    ),
-                                                  ),
-                                                  SizedBox(
-                                                    height:
-                                                        headerTextBottomGap,
-                                                  ),
-                                                  Text(
-                                                    _t(
-                                                      nl: 'Bedrijfsoverzicht',
-                                                      en: 'Business overview',
-                                                      fr: 'Aperçu de l’entreprise',
-                                                      es: 'Resumen de empresa',
-                                                    ),
-                                                    style: TextStyle(
-                                                      color: Colors.white
-                                                          .withOpacity(0.78),
-                                                      fontSize:
-                                                          headerSubtitleFontSize,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _timeAwareGreeting(),
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: headerTitleFontSize,
                                         ),
                                       ),
-                                    );
-                                  },
+                                      SizedBox(height: headerTextBottomGap),
+                                      Text(
+                                        _t(
+                                          nl: 'Bedrijfsoverzicht',
+                                          en: 'Business overview',
+                                          fr: 'Aperçu de l’entreprise',
+                                          es: 'Resumen de empresa',
+                                        ),
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.78),
+                                          fontSize: headerSubtitleFontSize,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                            // FLUXIDI-BUSINESS-HEADER-THEME-CYCLE-SHORTCUT-P1-1:
-                            // lower-right of header, immediately above KPI.
-                            Positioned(
-                              right: headerContentPadding.right,
-                              bottom: headerContentPadding.bottom,
-                              child: BusinessThemeCycleButton(
-                                heroOverlay: true,
-                                onPressed: () => unawaited(
-                                  showBusinessThemeSelectorSheet(context),
+                              Align(
+                                alignment: Alignment.topRight,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ValueListenableBuilder<
+                                      ActiveCompanySession?
+                                    >(
+                                      valueListenable:
+                                          activeCompanySessionNotifier,
+                                      builder: (context, _, __) =>
+                                          _businessAccountMenuButton(
+                                            context,
+                                            profile,
+                                          ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    BusinessThemeCycleButton(
+                                      heroOverlay: true,
+                                      onPressed: () => unawaited(
+                                        showBusinessThemeSelectorSheet(
+                                          context,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       )
                     else ...[
