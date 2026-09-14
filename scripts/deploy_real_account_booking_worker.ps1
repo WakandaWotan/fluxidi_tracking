@@ -13,22 +13,26 @@ if (-not $IApproveProductionDeploy) {
 
 $worker = 'C:\_flutter_work\fluxidi_customer_ops_worker_p0\workers\booking'
 $config = 'wrangler.real-account-release.toml'
+$configPath = Join-Path $worker $config
 $outDir = 'C:\_flutter_work\fluxidi_customer_ops_client_p0\.qa-local\real-account'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+if (-not (Test-Path -LiteralPath $configPath)) {
+  throw "Missing release config: $configPath"
+}
 Set-Location -LiteralPath $worker
 
 node --check .\fluxidi_booking_worker.js
 if ($LASTEXITCODE -ne 0) { throw "node --check failed: $LASTEXITCODE" }
 
 Write-Host 'Saving current deployments before overwrite...'
-wrangler deployments list --config ".\$config" |
+wrangler deployments list --config $configPath |
   Out-File -FilePath (Join-Path $outDir 'worker_deployments_before.txt') -Encoding utf8
 
 Write-Host "Deploying fluxidi-booking-api with $config --keep-vars..."
-wrangler deploy --config ".\$config" --keep-vars
+wrangler deploy --config $configPath --keep-vars
 if ($LASTEXITCODE -ne 0) { throw "wrangler deploy failed: $LASTEXITCODE" }
 
-wrangler deployments list --config ".\$config" |
+wrangler deployments list --config $configPath |
   Out-File -FilePath (Join-Path $outDir 'worker_deployments_after.txt') -Encoding utf8
 
 Write-Host 'Post-deploy route check (no tokens): agenda should be 401, not 404'
