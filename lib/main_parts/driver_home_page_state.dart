@@ -3593,6 +3593,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           session?.driverId.trim() ??
           _effectiveActiveDriverIdForRideScope();
       if (driverId.isEmpty) return;
+      final heartbeatToken = (session?.driverSessionToken ?? '').trim();
+      if (heartbeatToken.isNotEmpty) {
+        unawaited(syncPublicDriverHeartbeat(driverSessionToken: heartbeatToken));
+      }
 
       var source = 'local';
       var resolvedStatus = normalizeDriverAvailabilityState(
@@ -35816,41 +35820,59 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _mapPlaceholder({required String title, required String subtitle}) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          radius: 1.2,
-          colors: [Color(0xFF141B2F), Color(0xFF070A10)],
-        ),
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Container(
-            margin: const EdgeInsets.all(18),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF141B2F),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white12),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mapHeight = driverWindowsMapSlotHeight(
+          viewportHeight: constraints.maxHeight,
+          topChrome: 0,
+          bottomNav: 0,
+        );
+        return SizedBox(
+          key: const ValueKey<String>('driver_windows_map_slot'),
+          height: mapHeight.isFinite ? mapHeight : constraints.maxHeight,
+          width: constraints.maxWidth,
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: RadialGradient(
+                radius: 1.2,
+                colors: [Color(0xFF141B2F), Color(0xFF070A10)],
+              ),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141B2F),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(subtitle, style: const TextStyle(color: Colors.white70)),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

@@ -15,6 +15,8 @@ import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/company/company_roundtrip.dart';
+import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
+import 'package:fluxidi_tracking/company/company_dispatch.dart';
 
 const Key kCompanyBookingDetailPageKey = Key('company_booking_detail_page');
 const Key kCompanyAgendaAssignButtonKey = Key('company_agenda_assign_button');
@@ -246,12 +248,17 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
   }
 
   String _agendaExceptionText(CompanyAgendaException error) {
-    return switch (error.code) {
-      'assignment_overlap' => kCompanyAgendaOverlap.of(_lang),
-      'assignment_availability_unknown' =>
-        kCompanyAgendaAvailabilityUnknown.of(_lang),
-      _ => kCompanyAgendaSaveFailed.of(_lang),
-    };
+    return companyAgendaAssignmentExceptionText(error, _lang);
+  }
+
+  String get _currentDriverId =>
+      _legOrRecordText(const ['assigned_driver_id', 'assignedDriverId']);
+
+  List<Map<String, dynamic>> get _alternativeDrivers {
+    return companyDispatchAlternativeDrivers(
+      drivers: _drivers,
+      currentDriverId: _currentDriverId,
+    );
   }
 
   String? _overlapCheckText(CompanyAgendaOverlapCheck check) {
@@ -612,29 +619,67 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
           ),
           const SizedBox(height: 8),
         ],
+        if (_currentDriverId.isNotEmpty) ...[
+          Text(
+            '${kCompanyAgendaCurrentDriver.of(_lang)}: ${_driverLabel(_currentDriverId)}',
+            key: kCompanyAgendaCurrentDriverKey,
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (_alternativeDrivers.isEmpty && _currentDriverId.isNotEmpty)
+          Text(
+            kCompanyAgendaNoOtherDriver.of(_lang),
+            key: kCompanyAgendaNoOtherDriverKey,
+          )
+        else if (_alternativeDrivers.isNotEmpty)
         KeyedSubtree(
           key: kCompanyAgendaAssignDriverKey,
           child: DropdownButtonFormField<String>(
           key: ValueKey<String>(
-            'company_agenda_assign_driver_${_drivers.length}_${_driverId ?? ''}',
+            'company_agenda_assign_driver_${_alternativeDrivers.length}_${_driverId ?? ''}',
           ),
-          initialValue: _existingValue(_driverId, _driverIds),
+          initialValue: _existingValue(
+            _driverId,
+            [
+              for (final driver in _alternativeDrivers)
+                companyAgendaDriverId(driver),
+            ],
+          ),
           isExpanded: true,
           decoration: InputDecoration(
             labelText: kCompanyAgendaDriver.of(_lang),
           ),
           hint: Text(kCompanyAgendaDriver.of(_lang)),
           items: [
-            for (final driver in _drivers)
+            for (final driver in _alternativeDrivers)
               DropdownMenuItem<String>(
                 value: companyAgendaDriverId(driver),
                 enabled: companyAgendaDriverIsActive(driver),
                 child: Text(_driverChoiceLabel(driver)),
               ),
           ],
-          onChanged: choicesEnabled && _hasRegisteredDrivers
+          onChanged: choicesEnabled && _alternativeDrivers.isNotEmpty
               ? (value) {
-                  setState(() => _driverId = value);
+                  setState(() {
+                    _driverId = value;
+                    final linked = _vehicles
+                        .where(
+                          (vehicle) =>
+                              companyAgendaVehicleIsSuitable(
+                                vehicle,
+                                passengers: _passengers,
+                              ) &&
+                              ((vehicle['assigned_driver_id'] ??
+                                          vehicle['assignedDriverId'] ??
+                                          '')
+                                      .toString() ==
+                                  (value ?? '')),
+                        )
+                        .toList();
+                    if (linked.length == 1) {
+                      _vehicleId = companyAgendaVehicleId(linked.first);
+                    }
+                  });
                   _previewOverlap();
                 }
               : null,

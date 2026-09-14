@@ -8,6 +8,9 @@ import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart'
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+import 'package:fluxidi_tracking/company/company_driver_roster.dart';
+
+const Key kCompanyDriversRosterKey = Key('company_drivers_roster');
 
 const Key kCompanyDriversAdminPageKey = Key('company_drivers_admin_page');
 const Key kCompanyDriversAddKey = Key('company_drivers_add');
@@ -162,6 +165,101 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
     }
   }
 
+  Future<void> _editRoster(Map<String, dynamic> driver) async {
+    var days = companyDriverRosterDaysFrom(
+      driver['weekly_roster'] is Map
+          ? Map<String, dynamic>.from(driver['weekly_roster'] as Map)
+          : null,
+    );
+    final saved = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          key: kCompanyDriversRosterKey,
+          title: const Text('Werkuren'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Tijdzone: Europe/Brussels'),
+                  for (final day in kCompanyDriverRosterDays)
+                    Row(
+                      children: [
+                        SizedBox(width: 40, child: Text(day)),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: (days[day]?.isNotEmpty ?? false)
+                                ? '${days[day]!.first.start}-${days[day]!.first.end}'
+                                : '',
+                            decoration: const InputDecoration(
+                              hintText: '09:00-17:00 of 22:00-06:00',
+                            ),
+                            onChanged: (value) {
+                              final parts = value.split('-');
+                              if (parts.length != 2) {
+                                days[day] = const <CompanyRosterBlock>[];
+                                return;
+                              }
+                              days[day] = [
+                                CompanyRosterBlock(
+                                  start: parts[0].trim(),
+                                  end: parts[1].trim(),
+                                ),
+                              ];
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  TextButton(
+                    onPressed: () {
+                      days = companyDriverCopyRosterDay(
+                        days: days,
+                        fromDay: 'mon',
+                        toDays: const ['tue', 'wed', 'thu', 'fri'],
+                      );
+                    },
+                    child: const Text('Kopieer maandag naar weekdagen'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuleer'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                context,
+                companyDriverRosterToJson(days: days),
+              ),
+              child: const Text('Bewaar'),
+            ),
+          ],
+        );
+      },
+    );
+    if (saved == null) return;
+    setState(() => _saving = true);
+    try {
+      await (widget.driverUpsert ?? upsertCompanyOpsDriver)(<String, dynamic>{
+        ...driver,
+        'weekly_roster': saved,
+      });
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Werkuren bewaren mislukt.';
+        _saving = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return CompanyOpsThemedSurface(
@@ -241,13 +339,28 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
                             ],
                           ),
                           isThreeLine: true,
-                          trailing: IconButton(
-                            onPressed: _saving
-                                ? null
-                                : () => _delete(
-                                    (driver['driver_id'] ?? '').toString(),
-                                  ),
-                            icon: const Icon(Icons.delete_outline),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                key: Key(
+                                  'company_drivers_roster_${companyAgendaDriverId(driver)}',
+                                ),
+                                tooltip: 'Werkuren',
+                                onPressed: _saving
+                                    ? null
+                                    : () => _editRoster(driver),
+                                icon: const Icon(Icons.schedule),
+                              ),
+                              IconButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () => _delete(
+                                        (driver['driver_id'] ?? '').toString(),
+                                      ),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
                           ),
                         ),
                       ),

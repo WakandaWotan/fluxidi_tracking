@@ -48,6 +48,53 @@ void main() {
     expect(ride.priceInclVat, 46.7);
   });
 
+  test('live FLX-00001 bookings keep known duration and price', () {
+    const cases = <(String, int, num)>[
+      ('2026-09-012', 29, 46.7),
+      ('2026-09-008', 41, 104.6),
+      ('2026-09-011', 33, 58.4),
+    ];
+    for (final row in cases) {
+      final raw = <String, dynamic>{
+        'booking_id': row.$1,
+        'record': <String, dynamic>{
+          'booking': <String, dynamic>{
+            'duration_route_min': row.$2,
+            'currency': 'EUR',
+          },
+          'quote': <String, dynamic>{
+            'duration_min': row.$2,
+            'pricing': <String, dynamic>{
+              'price_incl_vat': row.$3.toStringAsFixed(2),
+              'currency': 'EUR',
+              'pricing_source': 'route_calc',
+            },
+          },
+          'operational_legs': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'duration_min': row.$2,
+              'price_incl_vat': row.$3,
+            },
+          ],
+        },
+      };
+      expect(resolveCompanyBookingDurationMin(raw), row.$2, reason: row.$1);
+      expect(resolveCompanyBookingPriceInclVat(raw), row.$3, reason: row.$1);
+      expect(resolveCompanyBookingCurrency(raw), 'EUR', reason: row.$1);
+      final ride = CompanyAgendaRide.fromMap(<String, dynamic>{
+        'booking_id': row.$1,
+        'duration_route_min': row.$2,
+        'price_incl_vat': row.$3.toStringAsFixed(2),
+        'currency': 'EUR',
+        'pricing_source': 'route_calc',
+        'pickup_iso': '2026-09-15T08:00:00.000Z',
+      });
+      expect(ride.durationUnknown, isFalse, reason: row.$1);
+      expect(ride.durationMin, row.$2, reason: row.$1);
+      expect(ride.priceInclVat, row.$3, reason: row.$1);
+    }
+  });
+
   test('legacy booking without duration stays readable', () {
     final ride = CompanyAgendaRide.fromMap(<String, dynamic>{
       'booking_id': 'legacy',

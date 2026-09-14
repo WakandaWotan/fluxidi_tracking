@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
+import 'package:fluxidi_tracking/company/company_dispatch.dart';
 
 const Key kCompanyDriversNowPaneKey = Key('company_drivers_now_pane');
 const Key kCompanyDriversNowListKey = Key('company_drivers_now_list');
@@ -50,6 +51,8 @@ class CompanyDriverNowRow {
     this.updatedAtUtc,
     this.currentRide,
     this.nextRide,
+    this.presenceLabel = '',
+    this.liveConnected = false,
   });
 
   final String driverId;
@@ -61,13 +64,16 @@ class CompanyDriverNowRow {
   final DateTime? updatedAtUtc;
   final CompanyDriverNowRideRef? currentRide;
   final CompanyDriverNowRideRef? nextRide;
+  final String presenceLabel;
+  final bool liveConnected;
 
   bool get workStatusIsCurrent =>
-      freshness == CompanyDriverNowFreshness.recent &&
-      workStatusRaw.trim().isNotEmpty;
+      liveConnected ||
+      presenceLabel.isNotEmpty ||
+      (freshness == CompanyDriverNowFreshness.recent &&
+          workStatusRaw.trim().isNotEmpty);
 
-  /// Presence is not a live signal. Never treat availability as online.
-  bool get hasLiveConnection => false;
+  bool get hasLiveConnection => liveConnected;
 }
 
 const List<String> kCompanyDriverOperationalUpdatedKeys = <String>[
@@ -193,20 +199,32 @@ CompanyDriverNowRow _rowForDriver({
   }
 
   final updatedAt = companyDriverUpdatedAtUtc(driver);
+  final lastSeen = DateTime.tryParse(
+    (driver['last_seen_at'] ?? driver['lastSeenAt'] ?? '').toString(),
+  )?.toUtc();
+  final live = companyDispatchIsLive(
+    lastSeenUtc: lastSeen,
+    nowUtc: nowUtc,
+  );
+  final presenceLabel = (driver['presence_label'] ?? driver['presenceLabel'] ?? '')
+      .toString()
+      .trim();
   return CompanyDriverNowRow(
     driverId: look.driverId,
     displayName: look.displayName,
     color: look.color,
     photoUrl: look.photoUrl,
     freshness: companyDriverNowFreshness(
-      updatedAtUtc: updatedAt,
+      updatedAtUtc: lastSeen ?? updatedAt,
       nowUtc: nowUtc,
       staleAfter: staleAfter,
     ),
     workStatusRaw: look.availabilityStatus.trim(),
-    updatedAtUtc: updatedAt,
+    updatedAtUtc: lastSeen ?? updatedAt,
     currentRide: current == null ? null : _rideRef(current),
     nextRide: next == null ? null : _rideRef(next),
+    presenceLabel: presenceLabel,
+    liveConnected: live,
   );
 }
 
@@ -695,6 +713,11 @@ class _CompanyDriverNowCard extends StatelessWidget {
   }
 
   String _workStatusText() {
+    final labeled = companyDispatchPresenceLabelText(
+      row.presenceLabel,
+      language,
+    );
+    if (labeled.isNotEmpty) return labeled;
     if (row.freshness == CompanyDriverNowFreshness.missing) {
       return kCompanyDriversNowNoLiveData.of(language);
     }
@@ -703,12 +726,15 @@ class _CompanyDriverNowCard extends StatelessWidget {
     }
     switch (row.workStatusRaw.trim().toLowerCase()) {
       case 'available':
-        return kCompanyDriversNowWorkAvailable.of(language);
+        return kCompanyDriverPresenceAvailable.of(language);
       case 'busy':
-        return kCompanyDriversNowWorkBusy.of(language);
+      case 'on_trip':
+        return kCompanyDriverPresenceOnTrip.of(language);
+      case 'paused':
+        return kCompanyDriverPresencePaused.of(language);
       case 'offline':
       case 'unavailable':
-        return kCompanyDriversNowWorkUnavailable.of(language);
+        return kCompanyDriverPresenceOfflineWork.of(language);
       default:
         return row.workStatusRaw;
     }

@@ -62,11 +62,33 @@ String companyAgendaAssignmentExceptionText(
   AppLanguage language,
 ) {
   return switch (error.code) {
-    'assignment_overlap' => kCompanyAgendaOverlap.of(language),
+    'assignment_overlap' || 'assignment_vehicle_overlap' =>
+      kCompanyAgendaOverlap.of(language),
     'assignment_availability_unknown' => kCompanyAgendaAvailabilityUnknown.of(
       language,
     ),
     'price_changed' => kCompanyAgendaPriceChanged.of(language),
+    'assignment_driver_inactive' => kCompanyAgendaDriverInactiveAssign.of(
+      language,
+    ),
+    'assignment_driver_blocked' => kCompanyAgendaDriverBlocked.of(language),
+    'assignment_driver_not_scheduled' => kCompanyAgendaDriverNotScheduled.of(
+      language,
+    ),
+    'assignment_driver_paused' => kCompanyAgendaDriverPaused.of(language),
+    'assignment_driver_on_trip' => kCompanyAgendaDriverOnTrip.of(language),
+    'assignment_driver_offline' ||
+    'assignment_driver_not_live' => kCompanyAgendaDriverNotLive.of(language),
+    'assignment_driver_no_vehicle' ||
+    'assignment_vehicle_unavailable' => kCompanyAgendaDriverNoVehicle.of(
+      language,
+    ),
+    'assignment_vehicle_busy' => kCompanyAgendaVehicleBusy.of(language),
+    'assignment_vehicle_choice_required' =>
+      kCompanyAgendaVehicleChoiceRequired.of(language),
+    'route_required' => kCompanyAgendaRouteRequired.of(language),
+    'pickup_iso_required' => kCompanyAgendaPickupRequired.of(language),
+    'customer_required' => kCompanyAgendaCustomerRequired.of(language),
     _ => kCompanyAgendaSaveFailed.of(language),
   };
 }

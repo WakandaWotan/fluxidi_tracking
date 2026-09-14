@@ -37,6 +37,7 @@ class CompanyAgendaRide {
     this.occupancyWaitMin,
     this.occupancyUnknown = false,
     this.returnPickupIso = '',
+    this.assignmentWarning = '',
   });
 
   final String bookingId;
@@ -69,6 +70,7 @@ class CompanyAgendaRide {
   final int? occupancyWaitMin;
   final bool occupancyUnknown;
   final String returnPickupIso;
+  final String assignmentWarning;
 
   String get collectionId {
     final row = agendaItemId.trim();
@@ -167,6 +169,47 @@ class CompanyAgendaRide {
         'return_pickup_iso',
         'returnPickupIso',
       ]),
+      assignmentWarning: first(const [
+        'assignment_warning',
+        'assignmentWarning',
+      ]),
+    );
+  }
+
+  CompanyAgendaRide copyWithAssignmentWarning(String warning) {
+    if (warning.trim().isEmpty && assignmentWarning.isEmpty) return this;
+    return CompanyAgendaRide(
+      bookingId: bookingId,
+      customerId: customerId,
+      customerName: customerName,
+      fromAddress: fromAddress,
+      toAddress: toAddress,
+      pickupIso: pickupIso,
+      status: status,
+      assignedDriverId: assignedDriverId,
+      assignedVehicleId: assignedVehicleId,
+      durationUnknown: durationUnknown,
+      durationMin: durationMin,
+      doNotDispatch: doNotDispatch,
+      assignmentAccepted: assignmentAccepted,
+      revision: revision,
+      phoneConfirmedAt: phoneConfirmedAt,
+      phoneConfirmedBy: phoneConfirmedBy,
+      source: source,
+      passengers: passengers,
+      priceInclVat: priceInclVat,
+      currency: currency,
+      rideOptions: rideOptions,
+      agendaItemId: agendaItemId,
+      parentBookingId: parentBookingId,
+      legId: legId,
+      legType: legType,
+      linkedAgendaItemId: linkedAgendaItemId,
+      roundtripChoice: roundtripChoice,
+      occupancyWaitMin: occupancyWaitMin,
+      occupancyUnknown: occupancyUnknown,
+      returnPickupIso: returnPickupIso,
+      assignmentWarning: warning.trim(),
     );
   }
 }
@@ -222,6 +265,10 @@ class CompanyRidePlanDraft {
     this.returnToLon,
     this.returnToPlaceId = '',
     this.fixedPriceSnapshot,
+    this.distanceKm,
+    this.pricingSource = '',
+    this.currency = 'EUR',
+    this.durationRouteMin,
   });
 
   final CompanyCustomer customer;
@@ -256,6 +303,10 @@ class CompanyRidePlanDraft {
   final double? returnToLon;
   final String returnToPlaceId;
   final Map<String, dynamic>? fixedPriceSnapshot;
+  final num? distanceKm;
+  final String pricingSource;
+  final String currency;
+  final int? durationRouteMin;
 
   CompanyRidePlanDraft copyWith({
     DateTime? pickupLocal,
@@ -294,6 +345,11 @@ class CompanyRidePlanDraft {
     bool clearReturnPickup = false,
     Map<String, dynamic>? fixedPriceSnapshot,
     bool clearFixedPriceSnapshot = false,
+    num? distanceKm,
+    String? pricingSource,
+    String? currency,
+    int? durationRouteMin,
+    bool clearQuoteMetrics = false,
   }) {
     return CompanyRidePlanDraft(
       customer: customer,
@@ -340,6 +396,14 @@ class CompanyRidePlanDraft {
       fixedPriceSnapshot: clearFixedPriceSnapshot
           ? null
           : (fixedPriceSnapshot ?? this.fixedPriceSnapshot),
+      distanceKm: clearQuoteMetrics ? null : (distanceKm ?? this.distanceKm),
+      pricingSource: clearQuoteMetrics
+          ? ''
+          : (pricingSource ?? this.pricingSource),
+      currency: currency ?? this.currency,
+      durationRouteMin: clearQuoteMetrics
+          ? null
+          : (durationRouteMin ?? this.durationRouteMin),
     );
   }
 }

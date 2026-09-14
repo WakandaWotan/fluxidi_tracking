@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/company/company_agenda_scope_io.dart'
 
 const String kCompanyAgendaRidesPath = '/company/agenda/rides';
 const String kCompanyAgendaOverlapPath = '/company/agenda/overlap';
+const String kCompanyAgendaQuotePathAlias = '/company/agenda/quote';
 
 /// Period page size advertised to the Worker. Never inferred from item count.
 const int kCompanyAgendaHttpPageLimit = 200;
@@ -230,6 +231,13 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
     'passengers': draft.passengers,
     if (price != null) 'price_incl_vat': price,
     if (duration != null && duration > 0) 'duration_min': duration,
+    if (draft.durationRouteMin != null && draft.durationRouteMin! > 0)
+      'duration_route_min': draft.durationRouteMin,
+    if (draft.distanceKm != null && draft.distanceKm! > 0)
+      'distance_km': draft.distanceKm,
+    if (draft.pricingSource.trim().isNotEmpty)
+      'pricing_source': draft.pricingSource.trim(),
+    if (draft.currency.trim().isNotEmpty) 'currency': draft.currency.trim(),
     if (draft.driverId.trim().isNotEmpty)
       'assigned_driver_id': draft.driverId.trim(),
     if (draft.vehicleId.trim().isNotEmpty)
@@ -322,8 +330,14 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       );
     }
     final item = decoded['item'];
+    final warning = decoded['assignment_warning'];
+    final warningCode = warning is Map
+        ? (warning['error']?.toString() ?? '')
+        : '';
     if (item is Map) {
-      return CompanyAgendaRide.fromMap(Map<String, dynamic>.from(item));
+      return CompanyAgendaRide.fromMap(
+        Map<String, dynamic>.from(item),
+      ).copyWithAssignmentWarning(warningCode);
     }
     final bookingId = decoded['booking_id']?.toString() ?? '';
     if (bookingId.isEmpty) {
@@ -341,6 +355,7 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       assignedVehicleId: draft.vehicleId,
       durationUnknown: duration == null || duration <= 0,
       durationMin: duration,
+      assignmentWarning: warningCode,
     );
   } catch (error) {
     throwCompanyAgendaHttpError(error);

@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/company/company_drivers_now.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_form_date_time.dart';
 import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
+import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 
 class _FakeCustomersRepository extends CompanyCustomersRepository {
   _FakeCustomersRepository({this.pages, this.detail})
@@ -194,6 +195,15 @@ Future<void> _pumpWorkspace(
               driversLoader ?? () async => const <Map<String, dynamic>>[],
           vehiclesLoader:
               vehiclesLoader ?? () async => const <Map<String, dynamic>>[],
+          planQuoteTransport: (request) async => CompanyPlanQuoteResult(
+            fingerprint: request.fingerprint,
+            distanceKm: 34.2,
+            durationMin: 29,
+            priceInclVat: 46.7,
+            currency: 'EUR',
+            pricingSource: 'route_calc',
+            priceAvailable: true,
+          ),
           bookingDetailLoader: (id) async => <String, dynamic>{
             'ok': true,
             'booking_id': id,
@@ -1026,5 +1036,32 @@ void main() {
     await tester.tap(find.byKey(kCompanyDriversNowAllKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyDriversNowAllKey), findsNothing);
+  });
+
+  testWidgets('phone back keeps the filled plan and save works without a driver', (
+    tester,
+  ) async {
+    final agenda = _FakeAgendaRepository();
+    await _pumpWorkspace(
+      tester,
+      size: const Size(390, 844),
+      customers: customers(),
+      agenda: agenda,
+    );
+    await tester.tap(find.text('Ada Lovelace'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel-Zuid');
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Brussel-Zuid'), findsOneWidget);
+    await _fillPlanPickup(tester);
+    await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
+    await tester.pumpAndSettle();
+    expect(agenda.createCalls, 1);
+    expect(agenda.lastDriverId, '');
   });
 }

@@ -33,7 +33,8 @@ import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
-import 'package:fluxidi_tracking/company/company_fixed_price_suggestion.dart';
+import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/company/company_plan_quote_panel.dart';
 import 'package:fluxidi_tracking/company/company_rate_card_hint.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/company/company_ride_options_form.dart';
@@ -98,6 +99,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
     this.sessionStore,
     this.onOpenBooking,
     this.initialAnchor,
+    this.planQuoteTransport,
   });
 
   final CompanyCustomersRepository? customersRepository;
@@ -111,6 +113,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
   final CompanyCustomerImportSessionStore? sessionStore;
   final void Function(String bookingId)? onOpenBooking;
   final DateTime? initialAnchor;
+  final CompanyPlanQuoteTransport? planQuoteTransport;
 
   @override
   State<CompanyOpsWorkspacePage> createState() =>
@@ -173,6 +176,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   int _passengers = 1;
   CompanyRideOptions _rideOptions = const CompanyRideOptions();
   Map<String, dynamic>? _fixedPriceSnapshot;
+  late final CompanyPlanQuoteCoordinator _planQuote;
+  Timer? _planQuoteDebounce;
+  CompanyPlanQuoteResult? _planQuoteResult;
+  bool _planQuoteLoading = false;
+  String? _planQuoteError;
+  bool _manualPriceLocked = false;
   CompanyRoundtripChoice _roundtripChoice = CompanyRoundtripChoice.single;
   DateTime? _agendaMoment;
   DateTime? _planPickupLocal;
@@ -229,9 +238,15 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     activeCompanySessionNotifier.addListener(_onCompanyScopeChanged);
     companyProfileNotifier.addListener(_onCompanyScopeChanged);
     companyDriverAgendaColorsTick.addListener(_onAgendaColorsChanged);
+    _planQuote = CompanyPlanQuoteCoordinator(
+      transport: widget.planQuoteTransport ?? fetchCompanyAgendaQuote,
+    );
     _durationCtrl.addListener(_onPlanAssignmentInputsChanged);
+    _priceCtrl.addListener(_onManualPriceEdited);
     _fromAddress.addListener(_onPlanAddressChanged);
     _toAddress.addListener(_onPlanAddressChanged);
+    _returnFromAddress.addListener(_onPlanAddressChanged);
+    _returnToAddress.addListener(_onPlanAddressChanged);
     _reloadCustomers();
     _reloadAgenda();
     _reloadFleet();
@@ -240,7 +255,103 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   void _onPlanAddressChanged() {
     if (!mounted) return;
-    setState(() => _fixedPriceSnapshot = null);
+    setState(() {
+      _fixedPriceSnapshot = null;
+      _planQuoteResult = null;
+      _planQuoteError = null;
+    });
+    _schedulePlanQuote();
+  }
+
+  void _onManualPriceEdited() {
+    if (_priceCtrl.text.trim().isNotEmpty) {
+      _manualPriceLocked = true;
+    }
+  }
+
+  void _schedulePlanQuote() {
+    _planQuoteDebounce?.cancel();
+    if (_draft == null) return;
+    _planQuoteDebounce = Timer(kCompanyPlanQuoteDebounce, () {
+      unawaited(_refreshPlanQuote());
+    });
+  }
+
+  Future<void> _refreshPlanQuote({bool force = false}) async {
+    final request = companyPlanQuoteRequestFromAddresses(
+      from: _fromAddress.value,
+      to: _toAddress.value,
+      pickupLocal: _planPickupLocal ?? _draft?.pickupLocal,
+      options: _rideOptions,
+      passengers: _passengers,
+      returnEnabled: _roundtripChoice != CompanyRoundtripChoice.single,
+      returnPickupLocal: _returnPickupLocal,
+      returnFrom: _returnFromAddress.value,
+      returnTo: _returnToAddress.value,
+    );
+    if (request == null) {
+      if (!mounted) return;
+      setState(() {
+        _planQuoteLoading = false;
+        if (force) _planQuoteError = null;
+      });
+      return;
+    }
+    if (!force &&
+        _planQuote.cached?.fingerprint == request.fingerprint &&
+        _planQuote.cached != null) {
+      if (!mounted) return;
+      setState(() {
+        _planQuoteResult = _planQuote.cached;
+        _planQuoteLoading = false;
+        _planQuoteError = null;
+      });
+      _applyAutomaticDuration(_planQuote.cached);
+      return;
+    }
+    if (force) _planQuote.invalidate();
+    if (!mounted) return;
+    setState(() {
+      _planQuoteLoading = true;
+      _planQuoteError = null;
+      if (_planQuoteResult?.fingerprint != request.fingerprint) {
+        _planQuoteResult = null;
+        _fixedPriceSnapshot = null;
+      }
+    });
+    try {
+      final result = await _planQuote.quote(request);
+      if (!mounted) return;
+      if (result.fingerprint != request.fingerprint) return;
+      setState(() {
+        _planQuoteResult = result;
+        _planQuoteLoading = false;
+        _planQuoteError = null;
+        _fixedPriceSnapshot = result.fixedPriceSnapshot;
+      });
+      _applyAutomaticDuration(result);
+    } on CompanyAgendaException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _planQuoteLoading = false;
+        _planQuoteError = error.code.trim().isEmpty
+            ? 'De route kon niet worden berekend. De ingevulde ritgegevens blijven bewaard.'
+            : error.code;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _planQuoteLoading = false;
+        _planQuoteError = kCompanyAgendaRouteRetry.of(_lang);
+      });
+    }
+  }
+
+  void _applyAutomaticDuration(CompanyPlanQuoteResult? result) {
+    if (result == null || result.durationMin == null) return;
+    final next = '${result.durationMin}';
+    if (_durationCtrl.text.trim() == next) return;
+    _durationCtrl.text = next;
   }
 
   Future<void> _restoreAgendaPrefs() async {
@@ -265,17 +376,21 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _planQuoteDebounce?.cancel();
     activeCompanySessionNotifier.removeListener(_onCompanyScopeChanged);
     companyProfileNotifier.removeListener(_onCompanyScopeChanged);
     companyDriverAgendaColorsTick.removeListener(_onAgendaColorsChanged);
     _search.dispose();
     _fromAddress.removeListener(_onPlanAddressChanged);
     _toAddress.removeListener(_onPlanAddressChanged);
+    _returnFromAddress.removeListener(_onPlanAddressChanged);
+    _returnToAddress.removeListener(_onPlanAddressChanged);
     _fromAddress.dispose();
     _toAddress.dispose();
     _returnFromAddress.dispose();
     _returnToAddress.dispose();
     _placeLookup.dispose();
+    _priceCtrl.removeListener(_onManualPriceEdited);
     _priceCtrl.dispose();
     _durationCtrl.removeListener(_onPlanAssignmentInputsChanged);
     _durationCtrl.dispose();
@@ -509,6 +624,13 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   Future<void> _beginPlan({CompanyCustomer? customer, DateTime? pickup}) async {
     final chosen = customer ?? _selected;
+    if (chosen != null &&
+        _draft != null &&
+        _draft!.customer.customerId == chosen.customerId &&
+        pickup == null) {
+      setState(() => _phoneSurface = _WorkspacePhoneSurface.form);
+      return;
+    }
     if (chosen == null || chosen.isArchived) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -553,6 +675,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       _passengers = 1;
       _rideOptions = const CompanyRideOptions();
       _fixedPriceSnapshot = null;
+      _planQuote.invalidate();
+      _planQuoteResult = null;
+      _planQuoteError = null;
+      _planQuoteLoading = false;
+      _manualPriceLocked = false;
       _roundtripChoice = CompanyRoundtripChoice.single;
       _returnPickupLocal = null;
       _noteCtrl.text = '';
@@ -583,6 +710,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       }
     });
     unawaited(_previewPlanOverlap());
+    _schedulePlanQuote();
   }
 
   int get _stepDays => _view == CompanyAgendaView.week ? 7 : 1;
@@ -745,7 +873,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final from = fromValue.displayText.trim();
     final to = toValue.displayText.trim();
     if (from.isEmpty || to.isEmpty) {
-      setState(() => _formError = kCompanyAgendaSaveFailed.of(_lang));
+      setState(() => _formError = kCompanyAgendaRouteRequired.of(_lang));
       return;
     }
     if (_planPickupLocal == null) {
@@ -782,8 +910,19 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         clearFromCoords: !fromSelected,
         clearToCoords: !toSelected,
         passengers: _passengers,
-        priceText: _priceCtrl.text,
+        priceText: _manualPriceLocked
+            ? _priceCtrl.text
+            : (_planQuoteResult?.priceAvailable == true
+                  ? (_planQuoteResult!.priceInclVat?.toString() ??
+                        _priceCtrl.text)
+                  : _priceCtrl.text),
         durationText: _durationCtrl.text,
+        distanceKm: _planQuoteResult?.distanceKm,
+        pricingSource: _manualPriceLocked
+            ? 'manual'
+            : (_planQuoteResult?.pricingSource ?? ''),
+        currency: _planQuoteResult?.currency ?? 'EUR',
+        durationRouteMin: _planQuoteResult?.durationMin,
         driverId: _planDriverId.trim(),
         vehicleId: _planVehicleId.trim(),
         rideOptions: _rideOptions,
@@ -845,6 +984,16 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         context,
       ).showSnackBar(SnackBar(content: Text(kCompanyAgendaSaved.of(_lang))));
       await _openBooking(companyAgendaRideDetailId(ride), ride: ride);
+      if (!mounted) return;
+      if (ride.assignmentWarning.trim().isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${kCompanyAgendaSavedUnassigned.of(_lang)} ${companyAgendaAssignmentExceptionText(CompanyAgendaException(ride.assignmentWarning), _lang)}',
+            ),
+          ),
+        );
+      }
     } on CompanyAgendaException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -995,7 +1144,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   onPressed: () {
                     setState(() {
                       if (_phoneSurface == _WorkspacePhoneSurface.form) {
-                        _cancelDraft();
+                        _phoneSurface = _WorkspacePhoneSurface.customers;
                       } else if (_phoneSurface ==
                           _WorkspacePhoneSurface.detail) {
                         _phoneSurface = _WorkspacePhoneSurface.customers;
@@ -1856,6 +2005,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                       }
                     });
                     unawaited(_previewPlanOverlap());
+                    _schedulePlanQuote();
                   },
                 ),
                 const SizedBox(height: 12),
@@ -1868,7 +2018,9 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                     setState(() {
                       _rideOptions = next;
                       _fixedPriceSnapshot = null;
+                      _planQuoteResult = null;
                     });
+                    _schedulePlanQuote();
                   },
                   savedAddresses: draft.customer.addresses,
                   pickupInputKey: kCompanyAgendaFromFieldKey,
@@ -1951,13 +2103,19 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                     const Spacer(),
                     IconButton(
                       onPressed: _passengers > 1
-                          ? () => setState(() => _passengers -= 1)
+                          ? () {
+                              setState(() => _passengers -= 1);
+                              _schedulePlanQuote();
+                            }
                           : null,
                       icon: const Icon(Icons.remove),
                     ),
                     Text('$_passengers'),
                     IconButton(
-                      onPressed: () => setState(() => _passengers += 1),
+                      onPressed: () {
+                        setState(() => _passengers += 1);
+                        _schedulePlanQuote();
+                      },
                       icon: const Icon(Icons.add),
                     ),
                   ],
@@ -1968,31 +2126,18 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   value: _rideOptions,
                   showAirportRouteFields: false,
                   showReturnAirportFields: false,
-                  onChanged: (next) => setState(() => _rideOptions = next),
+                  onChanged: (next) {
+                    setState(() => _rideOptions = next);
+                    _schedulePlanQuote();
+                  },
                 ),
                 const SizedBox(height: 8),
-                CompanyFixedPriceSuggestion(
+                CompanyPlanQuotePanel(
                   language: _lang,
-                  from: _fromAddress.value.displayText,
-                  to: _toAddress.value.displayText,
-                  fromCity: _fromAddress.value.displayText,
-                  toCity: _toAddress.value.displayText,
-                  airportIata: _rideOptions.airportIata,
-                  airportDirection: _rideOptions.airportDirection,
-                  passengers: _passengers,
-                  tier: _rideOptions.tier,
-                  pickupLat: _fromAddress.value.lat,
-                  pickupLon: _fromAddress.value.lon,
-                  dropoffLat: _toAddress.value.lat,
-                  dropoffLon: _toAddress.value.lon,
-                  hasManualAmount: _priceCtrl.text.trim().isNotEmpty,
-                  onApply: (snapshot) {
-                    final total = snapshot['total_incl_vat'];
-                    setState(() {
-                      _fixedPriceSnapshot = snapshot;
-                      if (total != null) _priceCtrl.text = total.toString();
-                    });
-                  },
+                  loading: _planQuoteLoading,
+                  result: _planQuoteResult,
+                  error: _planQuoteError,
+                  onRetry: () => unawaited(_refreshPlanQuote(force: true)),
                 ),
                 if (_fixedPriceSnapshot != null) ...[
                   const SizedBox(height: 8),
@@ -2037,12 +2182,36 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   ),
                 ],
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _durationCtrl,
-                  keyboardType: TextInputType.number,
+                InputDecorator(
                   decoration: InputDecoration(
                     labelText: kCompanyAgendaDuration.of(_lang),
+                    border: const OutlineInputBorder(),
                   ),
+                  child: Text(
+                    _planQuoteResult?.durationMin != null
+                        ? '${_planQuoteResult!.durationMin} min'
+                        : (_durationCtrl.text.trim().isEmpty
+                              ? '—'
+                              : '${_durationCtrl.text.trim()} min'),
+                  ),
+                ),
+                ExpansionTile(
+                  key: kCompanyPlanQuoteManualDurationKey,
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(kCompanyAgendaManualDuration.of(_lang)),
+                  subtitle: Text(
+                    kCompanyAgendaManualDurationHint.of(_lang),
+                    softWrap: true,
+                  ),
+                  children: [
+                    TextField(
+                      controller: _durationCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: kCompanyAgendaManualDuration.of(_lang),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 if (_planChoicesStatus != null) ...[

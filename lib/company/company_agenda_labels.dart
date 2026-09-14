@@ -134,10 +134,24 @@ const LocalizedText kCompanyAgendaAssign = LocalizedText(
 );
 
 const LocalizedText kCompanyAgendaUnassign = LocalizedText(
-  nl: 'Vrijmaken',
-  en: 'Unassign',
-  fr: 'Libérer',
-  es: 'Liberar',
+  nl: 'Toewijzing verwijderen',
+  en: 'Remove assignment',
+  fr: 'Retirer l’attribution',
+  es: 'Quitar asignación',
+);
+
+const LocalizedText kCompanyAgendaCurrentDriver = LocalizedText(
+  nl: 'Huidige chauffeur',
+  en: 'Current driver',
+  fr: 'Chauffeur actuel',
+  es: 'Conductor actual',
+);
+
+const LocalizedText kCompanyAgendaNoOtherDriver = LocalizedText(
+  nl: 'Geen andere chauffeur beschikbaar voor dit tijdstip',
+  en: 'No other driver is available at this time',
+  fr: 'Aucun autre chauffeur n’est disponible à cet horaire',
+  es: 'No hay otro conductor disponible a esta hora',
 );
 
 const LocalizedText kCompanyAgendaAssigned = LocalizedText(
@@ -309,17 +323,45 @@ const LocalizedText kCompanyAgendaPassengers = LocalizedText(
 );
 
 const LocalizedText kCompanyAgendaPrice = LocalizedText(
-  nl: 'Prijs (optioneel)',
-  en: 'Price (optional)',
-  fr: 'Prix (facultatif)',
-  es: 'Precio (opcional)',
+  nl: 'Handmatige totaalprijs',
+  en: 'Manual total price',
+  fr: 'Prix total manuel',
+  es: 'Precio total manual',
 );
 
 const LocalizedText kCompanyAgendaDuration = LocalizedText(
-  nl: 'Duur in minuten (leeg = onbekend)',
-  en: 'Duration in minutes (empty = unknown)',
-  fr: 'Durée en minutes (vide = inconnue)',
-  es: 'Duración en minutos (vacío = desconocida)',
+  nl: 'Berekende ritduur',
+  en: 'Calculated duration',
+  fr: 'Durée calculée',
+  es: 'Duración calculada',
+);
+
+const LocalizedText kCompanyAgendaRouteCalculating = LocalizedText(
+  nl: 'Route berekenen…',
+  en: 'Calculating route…',
+  fr: 'Calcul de l’itinéraire…',
+  es: 'Calculando la ruta…',
+);
+
+const LocalizedText kCompanyAgendaRouteRetry = LocalizedText(
+  nl: 'Route opnieuw berekenen',
+  en: 'Recalculate route',
+  fr: 'Recalculer l’itinéraire',
+  es: 'Recalcular la ruta',
+);
+
+const LocalizedText kCompanyAgendaManualDuration = LocalizedText(
+  nl: 'Handmatige ritduur (uitzondering)',
+  en: 'Manual duration (exception)',
+  fr: 'Durée manuelle (exception)',
+  es: 'Duración manual (excepción)',
+);
+
+const LocalizedText kCompanyAgendaManualDurationHint = LocalizedText(
+  nl: 'Alleen gebruiken wanneer de berekende ritduur aantoonbaar fout is. Dit overschrijft de route-engine niet stilzwijgend.',
+  en: 'Use only when the calculated duration is clearly wrong. This does not silently replace the routing engine.',
+  fr: 'À utiliser seulement si la durée calculée est clairement fausse.',
+  es: 'Úselo solo cuando la duración calculada sea claramente incorrecta.',
 );
 
 const LocalizedText kCompanyAgendaDriver = LocalizedText(
@@ -376,6 +418,132 @@ const LocalizedText kCompanyAgendaPriceChanged = LocalizedText(
   en: 'The price changed. Review the new total and save again.',
   fr: 'Le prix a changé. Vérifiez le nouveau total et enregistrez à nouveau.',
   es: 'El precio cambió. Revisa el nuevo total y guarda de nuevo.',
+);
+
+const LocalizedText kCompanyAgendaDriverInactiveAssign = LocalizedText(
+  nl: 'Deze chauffeur is niet actief.',
+  en: 'This driver is not active.',
+  fr: 'Ce chauffeur n’est pas actif.',
+  es: 'Este conductor no está activo.',
+);
+
+const LocalizedText kCompanyAgendaDriverBlocked = LocalizedText(
+  nl: 'Deze chauffeur is geblokkeerd.',
+  en: 'This driver is blocked.',
+  fr: 'Ce chauffeur est bloqué.',
+  es: 'Este conductor está bloqueado.',
+);
+
+const LocalizedText kCompanyAgendaDriverNotScheduled = LocalizedText(
+  nl: 'Deze chauffeur werkt niet op het geplande tijdstip.',
+  en: 'This driver is not scheduled at the planned time.',
+  fr: 'Ce chauffeur n’est pas planifié à l’heure prévue.',
+  es: 'Este conductor no está programado a esa hora.',
+);
+
+const LocalizedText kCompanyAgendaDriverPaused = LocalizedText(
+  nl: 'Deze chauffeur staat op pauze.',
+  en: 'This driver is paused.',
+  fr: 'Ce chauffeur est en pause.',
+  es: 'Este conductor está en pausa.',
+);
+
+const LocalizedText kCompanyAgendaDriverOnTrip = LocalizedText(
+  nl: 'Deze chauffeur is al bezig met een rit.',
+  en: 'This driver is already on a ride.',
+  fr: 'Ce chauffeur est déjà en course.',
+  es: 'Este conductor ya está en un viaje.',
+);
+
+const LocalizedText kCompanyAgendaDriverNotLive = LocalizedText(
+  nl: 'Deze chauffeur heeft geen recente live verbinding.',
+  en: 'This driver has no recent live connection.',
+  fr: 'Ce chauffeur n’a pas de connexion live récente.',
+  es: 'Este conductor no tiene conexión en vivo reciente.',
+);
+
+const LocalizedText kCompanyAgendaDriverNoVehicle = LocalizedText(
+  nl: 'Deze chauffeur heeft geen vrij gekoppeld voertuig.',
+  en: 'This driver has no free linked vehicle.',
+  fr: 'Ce chauffeur n’a pas de véhicule lié libre.',
+  es: 'Este conductor no tiene un vehículo vinculado libre.',
+);
+
+const LocalizedText kCompanyAgendaVehicleBusy = LocalizedText(
+  nl: 'Dit voertuig hoort bij een andere actieve shift of rit.',
+  en: 'This vehicle belongs to another active shift or ride.',
+  fr: 'Ce véhicule appartient à une autre vacation ou course active.',
+  es: 'Este vehículo pertenece a otro turno o viaje activo.',
+);
+
+const LocalizedText kCompanyAgendaVehicleChoiceRequired = LocalizedText(
+  nl: 'Kies een van de vrije voertuigen van deze chauffeur.',
+  en: 'Choose one of this driver’s free vehicles.',
+  fr: 'Choisissez un des véhicules libres de ce chauffeur.',
+  es: 'Elige uno de los vehículos libres de este conductor.',
+);
+
+const LocalizedText kCompanyAgendaRouteRequired = LocalizedText(
+  nl: 'Vul een geldig vertrek en bestemming in.',
+  en: 'Enter a valid pickup and destination.',
+  fr: 'Saisissez un départ et une destination valides.',
+  es: 'Introduce un origen y un destino válidos.',
+);
+
+const LocalizedText kCompanyAgendaCustomerRequired = LocalizedText(
+  nl: 'Kies eerst een klant.',
+  en: 'Choose a customer first.',
+  fr: 'Choisissez d’abord un client.',
+  es: 'Elige primero un cliente.',
+);
+
+const LocalizedText kCompanyAgendaSavedUnassigned = LocalizedText(
+  nl: 'Rit bewaard zonder chauffeur. De toewijzing is niet doorgegaan.',
+  en: 'Ride saved without a driver. The assignment did not go through.',
+  fr: 'Course enregistrée sans chauffeur. L’attribution n’a pas abouti.',
+  es: 'Viaje guardado sin conductor. La asignación no se aplicó.',
+);
+
+const LocalizedText kCompanyDriverPresenceAvailable = LocalizedText(
+  nl: 'Beschikbaar',
+  en: 'Available',
+  fr: 'Disponible',
+  es: 'Disponible',
+);
+
+const LocalizedText kCompanyDriverPresenceOnTrip = LocalizedText(
+  nl: 'Bezig met rit',
+  en: 'On a ride',
+  fr: 'En course',
+  es: 'En viaje',
+);
+
+const LocalizedText kCompanyDriverPresenceScheduledNoLive = LocalizedText(
+  nl: 'Gepland actief · geen live verbinding',
+  en: 'Scheduled active · no live connection',
+  fr: 'Actif planifié · pas de connexion live',
+  es: 'Activo planificado · sin conexión en vivo',
+);
+
+const LocalizedText kCompanyDriverPresencePaused = LocalizedText(
+  nl: 'Pauze',
+  en: 'Paused',
+  fr: 'Pause',
+  es: 'Pausa',
+);
+
+const LocalizedText kCompanyDriverPresenceOfflineWork = LocalizedText(
+  nl: 'Niet aan het werk',
+  en: 'Not working',
+  fr: 'Pas en service',
+  es: 'Fuera de servicio',
+);
+
+const LocalizedText kCompanyDriverPresenceLost = LocalizedText(
+  nl: 'Verbinding verloren',
+  en: 'Connection lost',
+  fr: 'Connexion perdue',
+  es: 'Conexión perdida',
 );
 
 const LocalizedText kCompanyAgendaSaveFailed = LocalizedText(

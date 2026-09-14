@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/company/company_agenda_http.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
+import 'package:fluxidi_tracking/company/company_dispatch.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 
 class _AssignAgendaRepository extends CompanyAgendaRepository {
@@ -362,5 +363,49 @@ void main() {
       find.text(kCompanyAgendaNoRegisteredDrivers.of(AppLanguage.nl)),
       findsNothing,
     );
+  });
+
+  testWidgets('current driver is shown separately and not as an alternative', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'agb_current',
+          language: AppLanguage.nl,
+          loader: (id) async => <String, dynamic>{
+            'ok': true,
+            'record': <String, dynamic>{
+              'booking_id': id,
+              'customer_name': 'Grace Hopper',
+              'from': 'A',
+              'to': 'B',
+              'assigned_driver_id': 'drv_karel',
+              'duration_min': 40,
+            },
+          },
+          driversLoader: () async => <Map<String, dynamic>>[
+            <String, dynamic>{
+              'driver_id': 'drv_karel',
+              'display_name': 'Karel Peeters',
+              'is_active': true,
+            },
+            <String, dynamic>{
+              'driver_id': 'drv_amira',
+              'display_name': 'Amira Hassan',
+              'is_active': true,
+            },
+          ],
+          vehiclesLoader: () async => const <Map<String, dynamic>>[],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaCurrentDriverKey), findsOneWidget);
+    expect(find.textContaining('Karel Peeters'), findsWidgets);
+    await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Amira Hassan').hitTestable(), findsWidgets);
+    expect(find.text(kCompanyAgendaNoOtherDriver.of(AppLanguage.nl)), findsNothing);
   });
 }
