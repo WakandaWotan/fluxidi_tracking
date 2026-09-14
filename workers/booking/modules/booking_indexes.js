@@ -92,6 +92,7 @@ import {
   _dashboardBoolLike,
 } from "./booking_identity.js";
 import { _flattenBookingForRidesListWithOperationalLegs } from "./booking_read_model.js";
+import { indexRoundtripFields } from "./company_roundtrip.mjs";
 
 /* ---- Private, byte-identical duplicates of main pure helpers --------
  * Behavior-identical to `_toMsOrZero` and `_normalizeCustomerIdentityId` in
@@ -177,6 +178,7 @@ export function bookingAssignmentIndexItemFromRecord(bookingId, rec) {
     sort_ts: sortTs,
     pickup_iso: pickupIso,
     updated_at: updatedAt,
+    ...indexRoundtripFields(rec),
   };
 }
 
@@ -202,6 +204,13 @@ export async function readScopedAssignmentBookingIndex(env, key) {
           sort_ts: Number.isFinite(sortTsRaw) ? Math.max(0, Math.trunc(sortTsRaw)) : 0,
           pickup_iso: safeStr(item?.pickup_iso ?? item?.pickupIso, 80),
           updated_at: safeStr(item?.updated_at ?? item?.updatedAt, 80),
+          return_pickup_iso: safeStr(item?.return_pickup_iso ?? item?.returnPickupIso, 80),
+          return_duration_min: Number.isFinite(Number(item?.return_duration_min))
+            ? Number(item.return_duration_min)
+            : null,
+          occupancy_end_iso: safeStr(item?.occupancy_end_iso ?? item?.occupancyEndIso, 80),
+          occupancy_unknown: item?.occupancy_unknown === true,
+          roundtrip_dispatch_mode: safeStr(item?.roundtrip_dispatch_mode ?? item?.roundtripDispatchMode, 40),
         };
       })
       .filter((entry) => !!entry);
@@ -652,6 +661,17 @@ export function bookingListIndexItemFromRecord(bookingId, rec) {
   );
   const assignedDriverId = safeStr(_indexBookingAssignedDriverId(rec), 96);
   const assignedVehicleId = safeStr(_indexBookingAssignedVehicleId(rec), 128);
+  const durationMin = Number(
+    rec?.duration_min ??
+      rec?.durationMin ??
+      bookingObj?.duration_min ??
+      bookingObj?.durationMin,
+  );
+  const durationUnknown =
+    rec?.duration_unknown === true ||
+    bookingObj?.duration_unknown === true ||
+    !Number.isFinite(durationMin) ||
+    durationMin <= 0;
   return {
     booking_id: safeBookingId,
     sort_ts: sortTs,
@@ -663,6 +683,9 @@ export function bookingListIndexItemFromRecord(bookingId, rec) {
     planning_reference: planningReference || null,
     assigned_driver_id: assignedDriverId || null,
     assigned_vehicle_id: assignedVehicleId || null,
+    duration_min: durationUnknown ? null : durationMin,
+    duration_unknown: durationUnknown,
+    ...indexRoundtripFields(rec),
   };
 }
 
@@ -781,6 +804,16 @@ export async function saveScopedAssignmentBookingIndex(env, key, indexObj) {
         : 0,
       pickup_iso: safeStr(entry?.pickup_iso ?? entry?.pickupIso, 80),
       updated_at: safeStr(entry?.updated_at ?? entry?.updatedAt, 80),
+      return_pickup_iso: safeStr(entry?.return_pickup_iso ?? entry?.returnPickupIso, 80),
+      return_duration_min: Number.isFinite(Number(entry?.return_duration_min))
+        ? Number(entry.return_duration_min)
+        : null,
+      occupancy_end_iso: safeStr(entry?.occupancy_end_iso ?? entry?.occupancyEndIso, 80),
+      occupancy_unknown: entry?.occupancy_unknown === true,
+      roundtrip_dispatch_mode: safeStr(
+        entry?.roundtrip_dispatch_mode ?? entry?.roundtripDispatchMode,
+        40,
+      ),
     }));
   const byId = new Map();
   for (const item of deduped) byId.set(item.booking_id, item);

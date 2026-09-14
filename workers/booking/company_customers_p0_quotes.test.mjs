@@ -70,7 +70,7 @@ function envWith(kv, extra = {}) {
   return env;
 }
 
-async function adminRequest(env, path, { method = "GET", body, tenant = TENANT_A, company = COMPANY_A } = {}) {
+async function adminRequest(env, path, { method = "GET", body, tenant = TENANT_A, company = COMPANY_A, headers = {} } = {}) {
   const url = new URL(`https://example.test${path}`);
   if (method === "GET") {
     url.searchParams.set("tenant_id", tenant);
@@ -82,6 +82,7 @@ async function adminRequest(env, path, { method = "GET", body, tenant = TENANT_A
       headers: {
         "x-admin-token": ADMIN,
         "Content-Type": "application/json",
+        ...headers,
       },
       body: method === "GET"
         ? undefined
@@ -118,6 +119,14 @@ function quoteBody(extras = {}) {
     valid_until: extras.valid_until || "2026-09-25T00:00:00.000Z",
     passenger_email: extras.passenger_email,
     issuer_name: extras.issuer_name,
+    pickup_lat: extras.pickup_lat,
+    pickup_lon: extras.pickup_lon,
+    pickup_place_id: extras.pickup_place_id,
+    dropoff_lat: extras.dropoff_lat,
+    dropoff_lon: extras.dropoff_lon,
+    dropoff_place_id: extras.dropoff_place_id,
+    vat_rate: extras.vat_rate,
+    ride_options: extras.ride_options,
   };
 }
 
@@ -129,6 +138,28 @@ test("quote paths do not collide with customer ids", () => {
   assert.equal(one.action, "send");
   const pub = matchPublicCustomerQuotePath("/public/customer-quotes/tok/accept");
   assert.equal(pub.action, "accept");
+});
+
+test("create quote reuses the same idempotency key", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "idem@p0quote.test" });
+  const path = `/company/customers/${customer.customer_id}/quotes`;
+  const first = await adminRequest(env, path, {
+    method: "POST",
+    body: quoteBody({ passenger_email: "idem@p0quote.test" }),
+    headers: { "Idempotency-Key": "quote-retry-1" },
+  });
+  assert.equal(first.status, 201, await first.clone().text());
+  const id = (await first.json()).quote.quote_id;
+  const second = await adminRequest(env, path, {
+    method: "POST",
+    body: quoteBody({ passenger_email: "idem@p0quote.test" }),
+    headers: { "Idempotency-Key": "quote-retry-1" },
+  });
+  assert.equal(second.status, 200, await second.clone().text());
+  assert.equal((await second.json()).quote.quote_id, id);
+  const listed = await adminRequest(env, path);
+  assert.equal((await listed.json()).items.length, 1);
 });
 
 test("draft can be saved without email and reopened", async () => {
@@ -148,6 +179,31 @@ test("draft can be saved without email and reopened", async () => {
   const reopened = (await got.json()).quote;
   assert.equal(reopened.pickup, "Station Antwerpen");
   assert.equal(reopened.entered_amount_cents, 8000);
+});
+
+test("draft keeps structured pickup coordinates for booking handoff", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "", phone: "+32470000080" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({
+      passenger_email: "",
+      pickup_lat: 51.2194,
+      pickup_lon: 4.4025,
+      pickup_place_id: "place.kunstlaan",
+      dropoff_lat: 51.2172,
+      dropoff_lon: 4.4211,
+      dropoff_place_id: "place.centraal",
+    }),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quote = (await created.json()).quote;
+  assert.equal(quote.pickup_lat, 51.2194);
+  assert.equal(quote.pickup_place_id, "place.kunstlaan");
+  const got = await adminRequest(env, `/company/customer-quotes/${quote.quote_id}`);
+  const reopened = (await got.json()).quote;
+  assert.equal(reopened.pickup_lat, 51.2194);
+  assert.equal(reopened.dropoff_lon, 4.4211);
 });
 
 test("quote issuer prefers the company-supplied name over the env fallback", async () => {
@@ -194,8 +250,29 @@ test("send requires email, uses the test adapter, and GET does not accept", asyn
   const html = await view.text();
   assert.match(html, /Fluxidi Demo Cars/);
   assert.match(html, /EUR 80.00/);
+  assert.match(html, /id="vat"/);
+  assert.match(html, /Geldig tot/);
+  assert.equal(html.includes("Starttarief"), false);
+  assert.equal(html.includes("Per km"), false);
+  assert.equal(html.includes("Toegepast"), false);
+  assert.equal(html.includes("pricing_per_km"), false);
   assert.match(html, /id="accept"/);
   assert.match(html, /new URL\("accept"/);
+  const mailJson = JSON.stringify(env.CUSTOMER_QUOTE_MAIL_SINK[0]);
+  assert.equal(mailJson.includes("Starttarief"), false);
+  assert.equal(mailJson.includes("Per km"), false);
+  assert.equal(mailJson.includes("Toegepast"), false);
+  const pdf = await worker.fetch(
+    new Request(`https://example.test/public/customer-quotes/${token}/pdf`),
+    env,
+    {},
+  );
+  assert.equal(pdf.status, 200);
+  const pdfHtml = await pdf.text();
+  assert.match(pdfHtml, /EUR 80.00/);
+  assert.equal(pdfHtml.includes("Starttarief"), false);
+  assert.equal(pdfHtml.includes("Per km"), false);
+  assert.equal(pdfHtml.includes("Toegepast"), false);
   const company = await adminRequest(env, `/company/customer-quotes/${quoteId}`);
   assert.equal((await company.json()).quote.state, "viewed");
   const getAccept = await worker.fetch(
@@ -488,4 +565,268 @@ test("adapter failure keeps draft; adapter accept is not proven delivery", async
   assert.equal(sentBody.test_send, false);
   assert.equal(sentBody.quote.delivery, "adapter_accepted");
   assert.notEqual(sentBody.delivery, "delivered");
+});
+
+test("ride options survive draft reopen and accepted booking", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "ride@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: {
+      ...quoteBody({
+        passenger_email: "ride@p0quote.test",
+        pickup_lat: 51.2194,
+        pickup_lon: 4.4025,
+        pickup_place_id: "place.kunstlaan",
+        dropoff_lat: 51.2172,
+        dropoff_lon: 4.4211,
+        dropoff_place_id: "place.centraal",
+      }),
+      ride_options: {
+        service: "airport",
+        tier: "comfort",
+        bags: 2,
+        wait_min: 15,
+        flight_number: "sn1234",
+        airport_direction: "from_airport",
+        extra: "drinks",
+        meet_and_greet: true,
+        name_board: "MWANGI",
+      },
+    },
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quote = (await created.json()).quote;
+  assert.equal(quote.ride_options.service, "airport");
+  assert.equal(quote.ride_options.tier, "comfort");
+  assert.equal(quote.ride_options.bags, 2);
+  assert.equal(quote.ride_options.wait_min, 15);
+  assert.equal(quote.ride_options.flight_number, "SN1234");
+  assert.equal(quote.ride_options.meet_and_greet, true);
+  assert.equal(quote.ride_options.name_board, "MWANGI");
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quote.quote_id}/send`, { method: "POST" })).json();
+  const accepted = await acceptQuote(env, sent.quote.public_token);
+  assert.equal(accepted.status, 200);
+  const bookingId = (await accepted.json()).booking_id;
+  const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${bookingId}`));
+  assert.equal(booking.booking.tier, "comfort");
+  assert.equal(booking.booking.bags, 2);
+  assert.equal(booking.booking.wait_min, 15);
+  assert.equal(booking.booking.flight_number, "SN1234");
+  assert.equal(booking.booking.meet_and_greet, true);
+  assert.equal(booking.booking.name_board, "MWANGI");
+  assert.equal(booking.booking.note, "Airport transfer");
+  assert.equal(booking.quote.inputs.service, "airport");
+  assert.equal(booking.booking.pickup_lat, 51.2194);
+  assert.equal(booking.booking.pickup_place_id, "place.kunstlaan");
+  assert.equal(booking.pickup_lat, 51.2194);
+  assert.equal(booking.booking.from_lat, 51.2194);
+  assert.equal(booking.booking.dropoff_lon, 4.4211);
+});
+
+test("incomplete destination can stay on a draft but send is blocked", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "gent@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({
+      passenger_email: "gent@p0quote.test",
+      dropoff: "gent",
+    }),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quoteId = (await created.json()).quote.quote_id;
+  const refused = await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" });
+  assert.equal(refused.status, 400);
+  const refusedBody = await refused.json();
+  assert.equal(refusedBody.error, "invalid_quote");
+  assert.equal(refusedBody.fields.dropoff, "incomplete");
+  const patched = await adminRequest(env, `/company/customer-quotes/${quoteId}`, {
+    method: "PATCH",
+    body: { dropoff: "Korenmarkt 1, Gent", revision: 1 },
+  });
+  assert.equal(patched.status, 200);
+  const sent = await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" });
+  assert.equal(sent.status, 200, await sent.clone().text());
+});
+
+test("public quote uses translated ride options and excl VAT totals", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "labels@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({
+      passenger_email: "labels@p0quote.test",
+      entered_amount_cents: 11000,
+      vat_treatment: "excl",
+      vat_rate: 6,
+      description: "Transfer Madrid-Gent",
+      ride_options: {
+        service: "business",
+        tier: "premium",
+        extra: "worktable",
+      },
+    }),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quoteId = (await created.json()).quote.quote_id;
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" })).json();
+  const view = await worker.fetch(
+    new Request(`https://example.test/public/customer-quotes/${sent.quote.public_token}`),
+    env,
+    {},
+  );
+  const html = await view.text();
+  assert.match(html, /Zakelijk · Premium · Werktafel \(laptop\)/);
+  assert.match(html, /Inbegrepen diensten/);
+  assert.match(html, /Prijsvoorwaarden/);
+  assert.match(html, /Transfer Madrid-Gent/);
+  assert.equal(html.includes("business · premium · worktable"), false);
+  assert.equal(html.includes("id=\"ride-options\">business"), false);
+  assert.match(html, /Exclusief btw/);
+  assert.match(html, /Btw 6%/);
+  assert.match(html, /Btw EUR 6.60/);
+  assert.match(html, /Totaal incl. btw EUR 116.60/);
+  assert.equal(html.includes("21%"), false);
+  const pdf = await worker.fetch(
+    new Request(`https://example.test/public/customer-quotes/${sent.quote.public_token}/pdf`),
+    env,
+    {},
+  );
+  const pdfHtml = await pdf.text();
+  assert.match(pdfHtml, /Zakelijk · Premium · Werktafel \(laptop\)/);
+  assert.match(pdfHtml, /Totaal incl. btw EUR 116.60/);
+  const accepted = await acceptQuote(env, sent.quote.public_token);
+  assert.equal(accepted.status, 200);
+  const bookingId = (await accepted.json()).booking_id;
+  const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${bookingId}`));
+  assert.equal(booking.booking.vat_treatment, "excl");
+  assert.equal(booking.booking.vat_rate, 6);
+  assert.equal(booking.booking.price_ex_vat, 110);
+  assert.equal(booking.booking.price_vat, 6.6);
+  assert.equal(booking.booking.price_incl_vat, 116.6);
+  assert.equal(booking.quote.pricing.price_incl_vat, 116.6);
+  assert.equal(booking.price_incl_vat, 116.6);
+});
+
+test("excl VAT without a rate does not store the entered amount as incl", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "norate@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: quoteBody({
+      passenger_email: "norate@p0quote.test",
+      entered_amount_cents: 11000,
+      vat_treatment: "excl",
+    }),
+  });
+  const quoteId = (await created.json()).quote.quote_id;
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quoteId}/send`, { method: "POST" })).json();
+  const html = await (
+    await worker.fetch(
+      new Request(`https://example.test/public/customer-quotes/${sent.quote.public_token}`),
+      env,
+      {},
+    )
+  ).text();
+  assert.match(html, /Btw-percentage ontbreekt/);
+  assert.equal(html.includes("21%"), false);
+  assert.equal(html.includes("116.60"), false);
+  const accepted = await acceptQuote(env, sent.quote.public_token);
+  const bookingId = (await accepted.json()).booking_id;
+  const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${bookingId}`));
+  assert.equal(booking.booking.vat_treatment, "excl");
+  assert.equal(booking.booking.price_incl_vat, null);
+  assert.notEqual(booking.booking.price_incl_vat, 110);
+});
+
+test("return quote keeps both legs and accept stays the same booking", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "return@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: {
+      ...quoteBody({
+        passenger_email: "return@p0quote.test",
+        pickup: "Leuven station, Leuven",
+        dropoff: "Brussel Centraal, Brussel",
+        start_at: "2026-09-18T09:00:00.000Z",
+        entered_amount_cents: 22000,
+        description: "gekoppelde retourofferte",
+      }),
+      return_enabled: true,
+      roundtrip_dispatch_mode: "split_no_wait",
+      return_pickup_iso: "2026-09-18T15:00:00.000Z",
+      return_from: "Brussel Centraal, Brussel",
+      return_to: "Leuven station, Leuven",
+      return_duration_min: 45,
+    },
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quote = (await created.json()).quote;
+  assert.equal(quote.return_enabled, true);
+  assert.equal(quote.roundtrip_dispatch_mode, "split_no_wait");
+  assert.equal(quote.return_from, "Brussel Centraal, Brussel");
+  assert.equal(quote.return_to, "Leuven station, Leuven");
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quote.quote_id}/send`, { method: "POST" })).json();
+  const html = await (
+    await worker.fetch(
+      new Request(`https://example.test/public/customer-quotes/${sent.quote.public_token}`),
+      env,
+      {},
+    )
+  ).text();
+  assert.match(html, /Heenrit/);
+  assert.match(html, /Terugrit/);
+  assert.match(html, /volledige opdracht/);
+  const first = await acceptQuote(env, sent.quote.public_token);
+  const second = await acceptQuote(env, sent.quote.public_token);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstId = (await first.json()).booking_id;
+  const secondId = (await second.json()).booking_id;
+  assert.equal(firstId, secondId);
+  const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${firstId}`));
+  assert.equal(booking.roundtrip_dispatch_mode, "split_no_wait");
+  assert.equal(booking.return_enabled, true);
+  assert.equal(booking.wait_min, 0);
+  assert.equal(Array.isArray(booking.operational_legs), true);
+  assert.equal(booking.operational_legs.length, 2);
+});
+
+test("return quote keeps a different return address after accept", async () => {
+  const env = envWith(countingKV());
+  const customer = await createCustomer(env, { email: "return-adres@p0quote.test" });
+  const created = await adminRequest(env, `/company/customers/${customer.customer_id}/quotes`, {
+    method: "POST",
+    body: {
+      ...quoteBody({
+        passenger_email: "return-adres@p0quote.test",
+        pickup: "Leuven station, Leuven",
+        dropoff: "Brussel Centraal, Brussel",
+        start_at: "2026-09-18T10:30:00.000Z",
+        entered_amount_cents: 18000,
+        description: "gekoppelde retourofferte afwijkend adres",
+      }),
+      return_enabled: true,
+      roundtrip_dispatch_mode: "split_no_wait",
+      return_pickup_iso: "2026-09-18T16:30:00.000Z",
+      return_from: "Antwerpen Centraal, Antwerpen",
+      return_to: "Gent-Sint-Pieters station, Gent",
+      return_duration_min: 50,
+    },
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  const quote = (await created.json()).quote;
+  assert.equal(quote.return_from, "Antwerpen Centraal, Antwerpen");
+  assert.equal(quote.return_to, "Gent-Sint-Pieters station, Gent");
+  const sent = await (await adminRequest(env, `/company/customer-quotes/${quote.quote_id}/send`, { method: "POST" })).json();
+  const accepted = await acceptQuote(env, sent.quote.public_token);
+  assert.equal(accepted.status, 200);
+  const bookingId = (await accepted.json()).booking_id;
+  const booking = JSON.parse(env.BOOKING_KV.store.get(`booking:${bookingId}`));
+  assert.equal(booking.return_from, "Antwerpen Centraal, Antwerpen");
+  assert.equal(booking.return_to, "Gent-Sint-Pieters station, Gent");
+  assert.equal(booking.booking.return_from, "Antwerpen Centraal, Antwerpen");
+  assert.equal(booking.booking.return_to, "Gent-Sint-Pieters station, Gent");
 });

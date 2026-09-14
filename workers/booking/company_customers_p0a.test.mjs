@@ -230,7 +230,7 @@ test("create get update archive restore roundtrip", async () => {
     phone: "+442071838750",
     locale: "en-GB",
     company_name: "Analytical Engines",
-    vat_number: "GB123",
+    vat_number: "GB123456789",
     internal_notes: "Not visible to the customer",
     addresses: [{ type: "billing", line1: "St James", city: "London", country_code: "GB" }],
     preferences: { version: 1, preferred_locale: "en-GB" },
@@ -357,6 +357,16 @@ test("validation rejects missing contact, bad email, and import source", async (
   });
   assert.equal(imported.res.status, 400);
   assert.equal(imported.json.fields.source, "manual_only");
+
+  const badVat = await createViaHttp(env, {
+    display_name: "Foutief Dossier",
+    email: "fout.dossier.p0@example.test",
+    company_name: "DEMO Ongeldig BTW",
+    vat_number: "BE12",
+  });
+  assert.equal(badVat.res.status, 400);
+  assert.equal(badVat.json.error, "invalid_customer");
+  assert.equal(badVat.json.fields.vat_number, "invalid");
 });
 
 test("same-company duplicate is a warning, never a block", async () => {

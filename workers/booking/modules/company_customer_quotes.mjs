@@ -21,6 +21,18 @@ import {
   normalizeCustomerPhone,
   normalizeCustomerScope,
 } from "./company_customers.mjs";
+import {
+  applyCompanyRoundtripFields,
+  formatQuoteRoundtripHtml,
+  parseCompanyRoundtripWrite,
+  quoteRoundtripPublicFields,
+  quoteWriteRoundtripValue,
+} from "./company_roundtrip.mjs";
+import {
+  companyFixedPriceTotalsDiffer,
+  resolveCompanyFixedPrice,
+  stampCompanyFixedPriceSnapshot,
+} from "./company_fixed_prices.mjs";
 
 export const CUSTOMER_QUOTE_STATES = Object.freeze({
   DRAFT: "draft",
@@ -39,7 +51,138 @@ export const CUSTOMER_QUOTE_DELIVERY = Object.freeze({
 });
 
 const VAT_TREATMENTS = new Set(["incl", "excl", "none", "zero"]);
+const RIDE_SERVICES = new Set(["airport", "passenger", "business", "courier", "care", "event"]);
+const RIDE_TIERS = new Set(["comfort", "private", "premium"]);
+const RIDE_EXTRAS = new Set(["none", "drinks", "worktable"]);
+const RIDE_DIRECTIONS = new Set(["from_airport", "to_airport"]);
 const QUOTE_LIST_MAX = 40;
+
+const RIDE_OPTION_LABELS_NL = Object.freeze({
+  airport: "Luchthaven",
+  passenger: "Personenvervoer",
+  business: "Zakelijk",
+  courier: "Spoedkoerier",
+  care: "Zorgvervoer",
+  event: "Evenement",
+  comfort: "Comfort",
+  private: "Private",
+  premium: "Premium",
+  drinks: "Drankservice (water/fris — alcohol op aanvraag)",
+  worktable: "Werktafel (laptop)",
+  from_airport: "Vanaf de luchthaven",
+  to_airport: "Naar de luchthaven",
+});
+
+const VAT_TREATMENT_LABELS_NL = Object.freeze({
+  incl: "Inclusief btw",
+  excl: "Exclusief btw",
+  none: "Geen btw",
+  zero: "0% btw",
+});
+
+export function quoteAddressIsComplete(text) {
+  const value = clip(text, 200);
+  if (!value) return false;
+  if (value.length < 3) return false;
+  if (/^[1-9]\d{3}$/.test(value)) return false;
+  if (!/[A-Za-zÀ-ÿ]/.test(value)) return false;
+  if (!/[\s,]/.test(value) && value.length < 12) return false;
+  if (value.length < 8) return false;
+  if (!/[\s,]/.test(value)) return false;
+  return true;
+}
+
+function rideOptionLabelNl(id) {
+  const key = clip(id, 32).toLowerCase();
+  if (!key) return "";
+  return RIDE_OPTION_LABELS_NL[key] || "";
+}
+
+export function formatQuoteRideOptionsNl(options) {
+  const src = options && typeof options === "object" ? options : {};
+  const bags = Number(src.bags);
+  const wait = Number(src.wait_min ?? src.waitMin);
+  const parts = [
+    rideOptionLabelNl(src.service),
+    rideOptionLabelNl(src.tier),
+    Number.isInteger(bags) && bags > 0 ? `${bags} bagage` : "",
+    Number.isInteger(wait) && wait > 0 ? `${wait} min` : "",
+    rideOptionLabelNl(src.airport_direction || src.airportDirection),
+    clip(src.flight_number || src.flightNumber, 16).toUpperCase(),
+    rideOptionLabelNl(src.extra),
+    src.meet_and_greet === true || src.meetAndGreet === true ? "Meet-and-greet" : "",
+    clip(src.name_board || src.nameBoard, 80),
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+export function computeQuoteVatBreakdown(record) {
+  const cents = Number(record?.entered_amount_cents);
+  const treatment = clip(record?.vat_treatment, 12).toLowerCase();
+  const rateRaw = record?.vat_rate;
+  const rate = Number(rateRaw);
+  const hasRate = Number.isFinite(rate) && rate > 0 && rate <= 100;
+  if (!Number.isInteger(cents) || cents < 0) {
+    return {
+      treatment,
+      entered_cents: null,
+      vat_rate: null,
+      rate_missing: false,
+      excl_cents: null,
+      vat_cents: null,
+      incl_cents: null,
+    };
+  }
+  if (treatment === "none" || treatment === "zero") {
+    return {
+      treatment,
+      entered_cents: cents,
+      vat_rate: treatment === "zero" ? 0 : null,
+      rate_missing: false,
+      excl_cents: cents,
+      vat_cents: 0,
+      incl_cents: cents,
+    };
+  }
+  if (!hasRate) {
+    return {
+      treatment: treatment || "incl",
+      entered_cents: cents,
+      vat_rate: null,
+      rate_missing: true,
+      excl_cents: null,
+      vat_cents: null,
+      incl_cents: null,
+    };
+  }
+  if (treatment === "excl") {
+    const vatCents = Math.round((cents * rate) / 100);
+    return {
+      treatment,
+      entered_cents: cents,
+      vat_rate: rate,
+      rate_missing: false,
+      excl_cents: cents,
+      vat_cents: vatCents,
+      incl_cents: cents + vatCents,
+    };
+  }
+  const exclCents = Math.round((cents * 100) / (100 + rate));
+  return {
+    treatment: treatment || "incl",
+    entered_cents: cents,
+    vat_rate: rate,
+    rate_missing: false,
+    excl_cents: exclCents,
+    vat_cents: cents - exclCents,
+    incl_cents: cents,
+  };
+}
+
+function eurosFromCents(cents) {
+  if (!Number.isInteger(cents) || cents < 0) return null;
+  return Math.round(cents) / 100;
+}
 
 function nowIso(env) {
   const forced = Number(env?.CUSTOMER_NOW_MS);
@@ -64,6 +207,22 @@ export function companyCustomerQuoteKey(scope, quoteId) {
   const id = safeStr(quoteId);
   if (!s.hasScope || !id) return "";
   return `tenant:${s.tenant_id}:company:${s.company_id}:customer-quote:v1:${id}`;
+}
+
+export function companyCustomerQuoteIdempotencyKey(scope, hashed) {
+  const s = normalizeCustomerScope(scope);
+  const raw = safeStr(hashed);
+  if (!s.hasScope || !raw) return "";
+  return `tenant:${s.tenant_id}:company:${s.company_id}:customer-quotes:idem:v1:${raw}`;
+}
+
+function readQuoteIdempotencyKey(request, body) {
+  const header = safeStr(
+    request?.headers?.get?.("Idempotency-Key") ||
+      request?.headers?.get?.("idempotency-key"),
+  );
+  if (header) return clip(header, 200);
+  return clip(body?.idempotency_key || body?.idempotencyKey, 200);
 }
 
 export function companyCustomerQuoteListKey(scope, customerId) {
@@ -101,11 +260,87 @@ function asInt(value) {
   return n;
 }
 
+function normalizeRideOptions(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const bags = asInt(src.bags);
+  const wait = asInt(src.wait_min ?? src.waitMin);
+  const service = clip(src.service || src.service_id, 32).toLowerCase();
+  const tier = clip(src.tier || src.vehicle_tier || src.tier_id, 32).toLowerCase();
+  const extra = clip(src.extra || src.extra_option, 32).toLowerCase();
+  const direction = clip(src.airport_direction || src.airportDirection, 32).toLowerCase();
+  return {
+    service: RIDE_SERVICES.has(service) ? service : "",
+    tier: RIDE_TIERS.has(tier) ? tier : "",
+    bags: bags != null && bags >= 0 && bags <= 8 ? bags : 0,
+    wait_min: wait != null && wait >= 0 && wait <= 240 ? wait : 0,
+    flight_number: clip(src.flight_number || src.flightNumber, 16).toUpperCase(),
+    airport_direction: RIDE_DIRECTIONS.has(direction) ? direction : "",
+    extra: RIDE_EXTRAS.has(extra) && extra !== "none" ? extra : "",
+    meet_and_greet: src.meet_and_greet === true || src.meetAndGreet === true,
+    name_board: clip(src.name_board || src.nameBoard, 80),
+    airport_iata: clip(src.airport_iata || src.airportIata, 8).toUpperCase(),
+    airport_country: clip(src.airport_country || src.airportCountry, 8).toUpperCase(),
+    flight_at: clip(src.flight_at || src.flightAt, 40),
+    pickup_arrangement: clip(
+      src.pickup_arrangement || src.pickupArrangement,
+      32,
+    ).toLowerCase(),
+    pickup_after_min: asInt(src.pickup_after_min ?? src.pickupAfterMin) || 0,
+    flight_timezone: clip(src.flight_timezone || src.flightTimezone, 64) || "Europe/Brussels",
+    return_airport_iata: clip(
+      src.return_airport_iata || src.returnAirportIata,
+      8,
+    ).toUpperCase(),
+    return_flight_number: clip(
+      src.return_flight_number || src.returnFlightNumber,
+      16,
+    ).toUpperCase(),
+    return_flight_at: clip(src.return_flight_at || src.returnFlightAt, 40),
+    return_pickup_arrangement: clip(
+      src.return_pickup_arrangement || src.returnPickupArrangement,
+      32,
+    ).toLowerCase(),
+  };
+}
+
+function stampRideFields(target, options, note) {
+  if (!target || !options) return target;
+  if (options.service) target.service = options.service;
+  if (options.tier) target.tier = options.tier;
+  if (options.bags != null) target.bags = options.bags;
+  if (options.wait_min != null) target.wait_min = options.wait_min;
+  if (options.flight_number) target.flight_number = options.flight_number;
+  if (options.airport_direction) target.airport_direction = options.airport_direction;
+  if (options.extra) target.extra = options.extra;
+  if (options.meet_and_greet) target.meet_and_greet = true;
+  if (options.name_board) target.name_board = options.name_board;
+  if (options.airport_iata) target.airport_iata = options.airport_iata;
+  if (options.flight_at) target.flight_at = options.flight_at;
+  if (options.pickup_arrangement) target.pickup_arrangement = options.pickup_arrangement;
+  if (note) target.note = clip(note, 500);
+  target.ride_options = options;
+  return target;
+}
+
+function snapshotFromBody(body) {
+  const raw = body?.fixed_price_snapshot || body?.fixedPriceSnapshot;
+  if (!raw || typeof raw !== "object") return null;
+  const ruleId = safeStr(raw.fixed_fare_rule_id || raw.fixedFareRuleId, 96);
+  if (!ruleId) return null;
+  return raw;
+}
+
 function parseAmountCents(value) {
   if (value == null || value === "") return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 99_999_999) return null;
   return n;
+}
+
+function optionalCoord(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function validateQuoteWrite(body, { partial = false } = {}) {
@@ -156,6 +391,15 @@ function validateQuoteWrite(body, { partial = false } = {}) {
     fields.valid_until = "invalid";
   }
   if (Object.keys(fields).length) return { ok: false, fields };
+  const roundtrip = quoteWriteRoundtripValue({
+    ...body,
+    pickup,
+    dropoff,
+    start_at: startAt,
+  });
+  if (!roundtrip.ok) {
+    return { ok: false, fields: { ...fields, ...roundtrip.fields } };
+  }
   return {
     ok: true,
     value: {
@@ -174,6 +418,14 @@ function validateQuoteWrite(body, { partial = false } = {}) {
       vat_rate: vatRateRaw == null || vatRateRaw === "" ? null : Number(vatRateRaw),
       valid_until: validUntil,
       issuer_name: issuerName,
+      pickup_lat: optionalCoord(body?.pickup_lat ?? body?.pickupLat),
+      pickup_lon: optionalCoord(body?.pickup_lon ?? body?.pickupLon),
+      pickup_place_id: clip(body?.pickup_place_id ?? body?.pickupPlaceId, 80),
+      dropoff_lat: optionalCoord(body?.dropoff_lat ?? body?.dropoffLat),
+      dropoff_lon: optionalCoord(body?.dropoff_lon ?? body?.dropoffLon),
+      dropoff_place_id: clip(body?.dropoff_place_id ?? body?.dropoffPlaceId, 80),
+      ride_options: normalizeRideOptions(body?.ride_options ?? body?.rideOptions),
+      ...roundtrip.value,
     },
   };
 }
@@ -198,6 +450,12 @@ function publicQuote(record, { includeToken = false } = {}) {
     vat_treatment: record.vat_treatment || "",
     vat_rate: record.vat_rate,
     valid_until: record.valid_until || "",
+    pickup_lat: optionalCoord(record.pickup_lat),
+    pickup_lon: optionalCoord(record.pickup_lon),
+    pickup_place_id: record.pickup_place_id || "",
+    dropoff_lat: optionalCoord(record.dropoff_lat),
+    dropoff_lon: optionalCoord(record.dropoff_lon),
+    dropoff_place_id: record.dropoff_place_id || "",
     created_at: record.created_at,
     updated_at: record.updated_at,
     sent_at: record.sent_at || null,
@@ -208,6 +466,11 @@ function publicQuote(record, { includeToken = false } = {}) {
     delivery: record.delivery || "",
     delivery_proven: false,
     test_send: record.delivery === CUSTOMER_QUOTE_DELIVERY.TEST_ADAPTER || record.test_send === true,
+    ride_options: record.ride_options || normalizeRideOptions(record),
+    pricing_source: record.pricing_source || "",
+    fixed_fare_rule_id: record.fixed_fare_rule_id || "",
+    fixed_price_snapshot: record.fixed_price_snapshot || null,
+    ...quoteRoundtripPublicFields(record),
   };
   if (includeToken && record.public_token) out.public_token = record.public_token;
   return out;
@@ -231,6 +494,8 @@ function publicCustomerQuoteView(record, brand) {
     vat_rate: record.vat_rate,
     valid_until: record.valid_until || "",
     accepted: record.state === CUSTOMER_QUOTE_STATES.ACCEPTED,
+    ride_options: record.ride_options || normalizeRideOptions(record),
+    ...quoteRoundtripPublicFields(record),
   };
 }
 
@@ -288,14 +553,33 @@ function markExpiredIfNeeded(record, now) {
   return record;
 }
 
-export async function createCompanyCustomerQuote(env, { scope, customerId, body }) {
+export async function createCompanyCustomerQuote(env, { scope, customerId, body, request }) {
   const s = normalizeCustomerScope(scope);
   if (!s.hasScope) return { ok: false, status: 400, error: "missing_tenant_scope" };
   const id = safeStr(customerId);
   if (!id) return { ok: false, status: 404, error: "not_found" };
   const customer = await kvGetJson(env.BOOKING_KV, companyCustomerRecordKey(s, id));
   if (!customer?.customer_id) return { ok: false, status: 404, error: "not_found" };
+  const rawIdem = readQuoteIdempotencyKey(request, body);
+  let hashed = "";
+  if (rawIdem) {
+    hashed = await sha256Hex(`${s.tenant_id}|${s.company_id}|quote_create|${rawIdem}`);
+    const existing = await kvGetJson(
+      env.BOOKING_KV,
+      companyCustomerQuoteIdempotencyKey(s, hashed),
+    );
+    if (existing?.quote_id) {
+      const record = markExpiredIfNeeded(
+        await loadQuote(env.BOOKING_KV, s, existing.quote_id),
+        nowIso(env),
+      );
+      if (record?.quote_id && record.customer_id === customer.customer_id) {
+        return { ok: true, status: 200, body: { ok: true, quote: publicQuote(record) } };
+      }
+    }
+  }
   const validated = validateQuoteWrite({
+    ...body,
     passenger_name: body?.passenger_name || customer.display_name,
     passenger_email: body?.passenger_email ?? customer.email,
     passenger_phone: body?.passenger_phone ?? customer.phone,
@@ -303,6 +587,12 @@ export async function createCompanyCustomerQuote(env, { scope, customerId, body 
     pickup: body?.pickup,
     dropoff: body?.dropoff,
     start_at: body?.start_at,
+    pickup_lat: body?.pickup_lat ?? body?.pickupLat,
+    pickup_lon: body?.pickup_lon ?? body?.pickupLon,
+    pickup_place_id: body?.pickup_place_id ?? body?.pickupPlaceId,
+    dropoff_lat: body?.dropoff_lat ?? body?.dropoffLat,
+    dropoff_lon: body?.dropoff_lon ?? body?.dropoffLon,
+    dropoff_place_id: body?.dropoff_place_id ?? body?.dropoffPlaceId,
     passengers: body?.passengers ?? 1,
     description: body?.description,
     entered_amount_cents: body?.entered_amount_cents,
@@ -311,6 +601,7 @@ export async function createCompanyCustomerQuote(env, { scope, customerId, body 
     vat_rate: body?.vat_rate,
     valid_until: body?.valid_until,
     issuer_name: issuerName(env, body),
+    ride_options: body?.ride_options ?? body?.rideOptions,
   });
   if (!validated.ok) {
     return { ok: false, status: 400, error: "invalid_quote", fields: validated.fields };
@@ -333,8 +624,19 @@ export async function createCompanyCustomerQuote(env, { scope, customerId, body 
     public_token: null,
     public_token_hash: null,
   };
+  const createdSnapshot = snapshotFromBody(body);
+  if (createdSnapshot) {
+    record.pricing_source = createdSnapshot.pricing_source || "company_fixed_price";
+    record.fixed_fare_rule_id = createdSnapshot.fixed_fare_rule_id;
+    record.fixed_price_snapshot = createdSnapshot;
+  }
   await saveQuote(env.BOOKING_KV, s, record);
   await appendQuoteId(env.BOOKING_KV, s, customer.customer_id, record.quote_id);
+  if (hashed) {
+    await kvPutJson(env.BOOKING_KV, companyCustomerQuoteIdempotencyKey(s, hashed), {
+      quote_id: record.quote_id,
+    });
+  }
   return { ok: true, status: 201, body: { ok: true, quote: publicQuote(record) } };
 }
 
@@ -388,6 +690,12 @@ export async function updateCompanyCustomerQuote(env, { scope, quoteId, body }) 
     issuer_name: validated.value.issuer_name || record.issuer_name,
     updated_at: now,
   });
+  const updatedSnapshot = snapshotFromBody(body);
+  if (updatedSnapshot) {
+    record.pricing_source = updatedSnapshot.pricing_source || "company_fixed_price";
+    record.fixed_fare_rule_id = updatedSnapshot.fixed_fare_rule_id;
+    record.fixed_price_snapshot = updatedSnapshot;
+  }
   await saveQuote(env.BOOKING_KV, s, record);
   return { ok: true, status: 200, body: { ok: true, quote: publicQuote(record) } };
 }
@@ -458,6 +766,12 @@ export async function sendCompanyCustomerQuote(env, { scope, quoteId, publicBase
   }
   if (record.entered_amount_cents == null) {
     return { ok: false, status: 400, error: "invalid_quote", fields: { entered_amount_cents: "required" } };
+  }
+  const addressFields = {};
+  if (!quoteAddressIsComplete(record.pickup)) addressFields.pickup = "incomplete";
+  if (!quoteAddressIsComplete(record.dropoff)) addressFields.dropoff = "incomplete";
+  if (Object.keys(addressFields).length) {
+    return { ok: false, status: 400, error: "invalid_quote", fields: addressFields };
   }
   const currency = clip(record.currency, 3).toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) {
@@ -542,11 +856,29 @@ function quoteHtml(record, { acceptEnabled = false } = {}) {
   const amount = Number(record.entered_amount_cents || 0) / 100;
   const currency = record.currency || "EUR";
   const issuer = record.issuer_name || "";
+  const vat = computeQuoteVatBreakdown(record);
+  const vatLabel = VAT_TREATMENT_LABELS_NL[vat.treatment] || "";
+  const rideSummary = formatQuoteRideOptionsNl(record.ride_options);
+  const description = clip(record.description, 500);
   const accept = acceptEnabled
     ? `<button type="button" id="accept">Accepteren</button><script>document.getElementById("accept").addEventListener("click",async()=>{const r=await fetch(new URL("accept", location.href.endsWith("/") ? location.href : location.href + "/"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({confirm:true})});const j=await r.json();if(j.ok){document.getElementById("accept").replaceWith(Object.assign(document.createElement("p"),{id:"accepted",textContent:"Geaccepteerd"}));}});</script>`
     : record.state === CUSTOMER_QUOTE_STATES.ACCEPTED
       ? `<p id="accepted">Geaccepteerd</p>`
       : `<p id="closed">${record.state}</p>`;
+  const vatLines = [];
+  if (vatLabel) vatLines.push(`<p id="vat">${vatLabel}</p>`);
+  if (vat.rate_missing) {
+    vatLines.push(`<p id="vat-missing">Btw-percentage ontbreekt. Er wordt geen totaal berekend.</p>`);
+  } else if (vat.vat_rate > 0) {
+    vatLines.push(`<p id="vat-rate">Btw ${vat.vat_rate}%</p>`);
+    if (vat.treatment === "excl" && vat.vat_cents != null && vat.incl_cents != null) {
+      vatLines.push(`<p id="vat-amount">Btw ${currency} ${(vat.vat_cents / 100).toFixed(2)}</p>`);
+      vatLines.push(`<p id="vat-total">Totaal incl. btw ${currency} ${(vat.incl_cents / 100).toFixed(2)}</p>`);
+    } else if (vat.treatment === "incl" && vat.excl_cents != null && vat.vat_cents != null) {
+      vatLines.push(`<p id="vat-excl">Excl. btw ${currency} ${(vat.excl_cents / 100).toFixed(2)}</p>`);
+      vatLines.push(`<p id="vat-amount">Btw ${currency} ${(vat.vat_cents / 100).toFixed(2)}</p>`);
+    }
+  }
   return `<!doctype html><html lang="nl"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Offerte ${issuer}</title>
 <style>body{font-family:sans-serif;margin:24px;color:#111}h1{font-size:1.4rem}.price{font-size:1.8rem;font-weight:700}button{min-height:44px;padding:12px 20px}</style>
 </head><body>
@@ -555,9 +887,11 @@ function quoteHtml(record, { acceptEnabled = false } = {}) {
 <p>${record.passenger_name || ""}</p>
 <p>${record.pickup || ""} → ${record.dropoff || ""}</p>
 <p>${record.start_at || ""} · ${record.passengers || 1} pax</p>
-<p>${record.description || ""}</p>
+${formatQuoteRoundtripHtml(record)}
+${rideSummary ? `<p id="included-services-label">Inbegrepen diensten</p><p id="ride-options">${rideSummary}</p>` : ""}
+${description ? `<p id="price-conditions-label">Prijsvoorwaarden</p><p id="price-conditions">${description}</p>` : ""}
 <p class="price" id="price">${currency} ${amount.toFixed(2)}</p>
-${record.vat_treatment ? `<p id="vat">${record.vat_treatment}</p>` : ""}
+${vatLines.join("")}
 <p>Geldig tot ${record.valid_until || ""}</p>
 ${accept}
 </body></html>`;
@@ -611,12 +945,76 @@ function buildAcceptedQuoteBookingRecord(quote, bookingId, now) {
   const dropoff = quote.dropoff || "";
   const pickupIso = quote.start_at || "";
   const pax = Number(quote.passengers || 1);
-  const euros = quoteAmountEuros(quote.entered_amount_cents);
+  const vat = computeQuoteVatBreakdown(quote);
+  const euros = vat.incl_cents != null
+    ? eurosFromCents(vat.incl_cents)
+    : vat.treatment === "excl"
+      ? null
+      : quoteAmountEuros(quote.entered_amount_cents);
+  const exclEuros = vat.excl_cents != null ? eurosFromCents(vat.excl_cents) : null;
+  const vatEuros = vat.vat_cents != null ? eurosFromCents(vat.vat_cents) : null;
   const currency = quote.currency || "EUR";
   const customerName = quote.passenger_name || "";
   const customerEmail = quote.passenger_email || "";
   const customerPhone = quote.passenger_phone || "";
-  return {
+  const rideOptions = quote.ride_options || normalizeRideOptions(quote);
+  const booking = {
+    tenant_id: quote.tenant_id,
+    company_id: quote.company_id,
+    from: pickup,
+    to: dropoff,
+    pickup_iso: pickupIso,
+    pickupStartIso: pickupIso,
+    pickup_lat: optionalCoord(quote.pickup_lat),
+    pickup_lon: optionalCoord(quote.pickup_lon),
+    pickup_place_id: quote.pickup_place_id || "",
+    dropoff_lat: optionalCoord(quote.dropoff_lat),
+    dropoff_lon: optionalCoord(quote.dropoff_lon),
+    dropoff_place_id: quote.dropoff_place_id || "",
+    from_lat: optionalCoord(quote.pickup_lat),
+    from_lon: optionalCoord(quote.pickup_lon),
+    to_lat: optionalCoord(quote.dropoff_lat),
+    to_lon: optionalCoord(quote.dropoff_lon),
+    pax,
+    customer_name: customerName,
+    customer_email: customerEmail,
+    customer_phone: customerPhone,
+    customer: {
+      name: customerName,
+      email: customerEmail,
+      phone: customerPhone,
+    },
+    currency,
+    vat_treatment: vat.treatment || "",
+    vat_rate: vat.vat_rate,
+    price_ex_vat: exclEuros,
+    price_vat: vatEuros,
+    price_incl_vat: euros,
+    status: "PENDING",
+    source: "company_customer_quote",
+    quote_id: quote.quote_id,
+    do_not_dispatch: true,
+    note: quote.description || "",
+  };
+  stampRideFields(booking, rideOptions, quote.description);
+  booking.inputs = { ...rideOptions, pax, note: quote.description || "" };
+  const quoteSnap = {
+    from: pickup,
+    to: dropoff,
+    pickup_iso: pickupIso,
+    quote_id: quote.quote_id,
+    inputs: { ...rideOptions, pax },
+    pricing: {
+      vat_treatment: vat.treatment || "",
+      vat_rate: vat.vat_rate,
+      price_ex_vat: exclEuros,
+      price_vat: vatEuros,
+      price_incl_vat: euros,
+      currency,
+    },
+  };
+  stampRideFields(quoteSnap, rideOptions, quote.description);
+  const record = {
     booking_id: bookingId,
     tenant_id: quote.tenant_id,
     company_id: quote.company_id,
@@ -632,42 +1030,34 @@ function buildAcceptedQuoteBookingRecord(quote, bookingId, now) {
     planning_reference: quote.quote_id,
     public_booking_reference: quote.quote_id,
     pickup_iso: pickupIso,
+    pickup_lat: optionalCoord(quote.pickup_lat),
+    pickup_lon: optionalCoord(quote.pickup_lon),
+    pickup_place_id: quote.pickup_place_id || "",
+    dropoff_lat: optionalCoord(quote.dropoff_lat),
+    dropoff_lon: optionalCoord(quote.dropoff_lon),
+    dropoff_place_id: quote.dropoff_place_id || "",
+    vat_treatment: vat.treatment || "",
+    vat_rate: vat.vat_rate,
+    price_ex_vat: exclEuros,
+    price_vat: vatEuros,
+    price_incl_vat: euros,
     created_at: now,
     updated_at: now,
-    booking: {
-      tenant_id: quote.tenant_id,
-      company_id: quote.company_id,
-      from: pickup,
-      to: dropoff,
-      pickup_iso: pickupIso,
-      pickupStartIso: pickupIso,
-      pax,
-      customer_name: customerName,
-      customer_email: customerEmail,
-      customer_phone: customerPhone,
-      customer: {
-        name: customerName,
-        email: customerEmail,
-        phone: customerPhone,
-      },
-      currency,
-      price_incl_vat: euros,
-      status: "PENDING",
-      source: "company_customer_quote",
-      quote_id: quote.quote_id,
-      do_not_dispatch: true,
-    },
-    quote: {
-      from: pickup,
-      to: dropoff,
-      pickup_iso: pickupIso,
-      quote_id: quote.quote_id,
-      pricing: {
-        price_incl_vat: euros,
-        currency,
-      },
-    },
+    booking,
+    quote: quoteSnap,
   };
+  stampRideFields(record, rideOptions, quote.description);
+  const parsed = parseCompanyRoundtripWrite({
+    ...quote,
+    pickup_iso: pickupIso,
+    from: pickup,
+    to: dropoff,
+  });
+  if (parsed.ok) applyCompanyRoundtripFields(record, parsed, { bookingId, now });
+  if (quote.fixed_price_snapshot) {
+    stampCompanyFixedPriceSnapshot(record, quote.fixed_price_snapshot);
+  }
+  return record;
 }
 
 async function persistAcceptedQuoteOnCompanyBookingsList(env, quote, now) {
@@ -733,6 +1123,35 @@ export async function acceptPublicCustomerQuote(env, { token, confirm = false })
   ) {
     return { ok: false, status: 409, error: "quote_not_acceptable" };
   }
+  if (!alreadyAccepted && record.fixed_price_snapshot?.fixed_fare_rule_id) {
+    const live = await resolveCompanyFixedPrice(env, loaded.scope, {
+      from: record.pickup,
+      to: record.dropoff,
+      pickup_lat: record.pickup_lat,
+      pickup_lon: record.pickup_lon,
+      dropoff_lat: record.dropoff_lat,
+      dropoff_lon: record.dropoff_lon,
+      pax: record.passengers,
+      bags: record.ride_options?.bags,
+      tier: record.ride_options?.tier,
+      airport_iata: record.ride_options?.airport_iata,
+      airport_direction: record.ride_options?.airport_direction,
+    });
+    const storedTotal =
+      Number(record.fixed_price_snapshot.total_incl_vat) ||
+      Number(record.entered_amount_cents || 0) / 100;
+    if (
+      !live.matched ||
+      companyFixedPriceTotalsDiffer(storedTotal, live.snapshot?.total_incl_vat)
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        error: "price_changed",
+        snapshot: live.snapshot,
+      };
+    }
+  }
   const persist = await persistAcceptedQuoteOnCompanyBookingsList(env, record, now);
   if (!persist.ok) {
     return {
@@ -792,6 +1211,7 @@ export async function serveCompanyCustomerQuotesHttp({
   route,
   body,
   scope,
+  request,
 }) {
   if (route.kind === "customer_quotes" && method === "GET") {
     const result = await listCompanyCustomerQuotes(env, { scope, customerId: route.customerId });
@@ -803,6 +1223,7 @@ export async function serveCompanyCustomerQuotesHttp({
       scope,
       customerId: route.customerId,
       body: body || {},
+      request,
     });
     if (!result.ok) return json(errorBody(result), result.status);
     return json(result.body, result.status);

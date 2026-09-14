@@ -298,6 +298,13 @@ export function isCompanyActiveListRow(row, nowMs = Date.now()) {
   return pickupTs >= cutoffMs;
 }
 
+export function isCompanyOpenListRow(row, nowMs = Date.now()) {
+  const status = safeStr(row?.status, 40);
+  if (status === "COMPLETED" || status === "CANCELLED") return false;
+  if (status === "PENDING") return true;
+  return isCompanyActiveListRow(row, nowMs);
+}
+
 export function isDriverActiveListRow(row, nowMs = Date.now()) {
   const status = safeStr(row?.status, 40);
   if (status === "COMPLETED" || status === "CANCELLED") return false;
@@ -1282,7 +1289,7 @@ async function listFromMarker({
         const stillActive =
           actorKind === "driver" || actorKind === "vehicle" || view === "dispatch"
             ? isDriverActiveListRow(row, nowMs)
-            : isCompanyActiveListRow(row, nowMs);
+            : isCompanyOpenListRow(row, nowMs);
         if (!stillActive) continue;
       }
       items.push(row);
@@ -1328,7 +1335,7 @@ async function listFromMarker({
 
 export async function tryListCompanyBookingsProjected(
   env,
-  { limit = 50, includeHistory = false, cursor = "", tenantScope = null } = {},
+  { limit = 50, includeHistory = false, cursor = "", tenantScope = null, nowMs = Date.now() } = {},
 ) {
   if (!tenantScope?.hasScope) return { useLegacy: true };
   if (!env?.BOOKING_KV) return { useLegacy: true };
@@ -1345,7 +1352,9 @@ export async function tryListCompanyBookingsProjected(
     logProjectionIssue("corrupt", { health: "corrupt" });
     return { ok: false, error: "bookings_list_projection_unavailable", degraded: true };
   }
-  const view = includeHistory ? "all" : "active";
+  const hasAll = Array.isArray(read.marker?.views?.all?.pages) &&
+    read.marker.views.all.pages.length > 0;
+  const view = hasAll || includeHistory ? "all" : "active";
   const rawCursor = safeStr(cursor, 4000);
   let parsedCursor = null;
   if (rawCursor) {
@@ -1368,6 +1377,7 @@ export async function tryListCompanyBookingsProjected(
     scopeKind: "company",
     scope,
     expireActive: !includeHistory,
+    nowMs,
   });
   if (listed.ok === false && listed.corrupt) {
     logProjectionIssue("corrupt", { health: "missing_page" });

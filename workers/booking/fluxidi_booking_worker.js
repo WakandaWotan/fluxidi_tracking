@@ -133,6 +133,10 @@ import {
   stampBusinessProfileRecord,
 } from "./modules/business_profile_revision.mjs";
 import {
+  preserveBusinessThemeFields,
+  projectBusinessThemeFields,
+} from "./modules/business_profile_theme.mjs";
+import {
   resolveGooglePlacesCountry,
   buildGooglePlacesTextQuery,
   mapGooglePlacesAddressParts,
@@ -794,9 +798,26 @@ import {
 } from "./modules/company_customers.mjs";
 import { serveCompanyCustomerImportHttp } from "./modules/company_customers_import.mjs";
 import {
+  matchCompanyAgendaPath,
+  serveCompanyAgendaHttp,
+} from "./modules/company_agenda.mjs";
+import {
   serveCompanyCustomerQuotesHttp,
   servePublicCustomerQuoteHttp,
 } from "./modules/company_customer_quotes.mjs";
+import {
+  matchCompanyFixedPricesPath,
+  normalizeCompanyFixedPriceRule,
+  normalizeCompanyFixedPricesDocument,
+  resolveCompanyFixedPrice,
+  serveCompanyFixedPricesHttp,
+  stampCompanyFixedPriceSnapshot,
+  companyFixedPriceTotalsDiffer,
+  loadCompanyFixedPricesDocument,
+  saveCompanyFixedPricesDocument,
+  mergeLegacyAirportFixedFaresSave,
+  loadPublicCompanyFixedPrices,
+} from "./modules/company_fixed_prices.mjs";
 import { CompanyCustomerImportCoordinatorDO } from "./modules/company_customer_import_coordinator.mjs";
 export { CompanyCustomerImportCoordinatorDO };
 import {
@@ -11436,7 +11457,7 @@ function preserveServerOwnedBusinessProfilePaymentFields(existingProfile, incomi
     out.billit_auto_create_environment = billitAutoCreateEnvironment;
     out.billitAutoCreateEnvironment = billitAutoCreateEnvironment;
   }
-  return out;
+  return preserveBusinessThemeFields(existing, out);
 }
 
 async function updateBusinessProfileMollieMetadata(env, scope, metadata = {}) {
@@ -15174,6 +15195,7 @@ function normalizeBusinessProfile(input = {}) {
         DEFAULT_BUSINESS_PROFILE.mollie_token_ref,
       160,
     ),
+    ...projectBusinessThemeFields(source),
   };
 }
 
@@ -23438,6 +23460,29 @@ async function handleOperatorMintDriverSessionForOperator(request, env) {
 // BW-M7A: _normalizeDriverAvailabilityStatus, _driverAvailabilityAllowsDispatch
 // moved to ./modules/driver_ops.js (imported above).
 
+function _driverAgendaColor(entry) {
+  const raw = String(entry?.agenda_color ?? entry?.agendaColor ?? "").trim();
+  if (/^#?[0-9a-fA-F]{3,8}$/.test(raw)) {
+    return raw.startsWith("#") ? raw : `#${raw}`;
+  }
+  return "";
+}
+
+function _driverAgendaPhotoUrl(entry) {
+  const raw = String(
+    entry?.driver_photo_url ??
+      entry?.driverPhotoUrl ??
+      entry?.public_portrait_url ??
+      entry?.publicPortraitUrl ??
+      entry?.profile_photo_url ??
+      entry?.profilePhotoUrl ??
+      "",
+  ).trim();
+  const safe = _normalizeSafeRemoteMediaRef(raw);
+  if (safe) return safe;
+  return raw.startsWith("/local/media/") ? raw : "";
+}
+
 async function _loadDriverIndexRecord(env, scope) {
   if (!env?.BOOKING_KV) return null;
   const key = _companyDriverIndexKey(scope);
@@ -23492,14 +23537,9 @@ async function _loadDriverIndexRecord(env, scope) {
         entry.assigned_vehicle_id ?? entry.assignedVehicleId,
         96,
       ),
-      driver_photo_url: _normalizeSafeRemoteMediaRef(
-        entry.driver_photo_url ??
-          entry.driverPhotoUrl ??
-          entry.public_portrait_url ??
-          entry.publicPortraitUrl ??
-          entry.profile_photo_url ??
-          entry.profilePhotoUrl,
-      ),
+      agenda_color: _driverAgendaColor(entry),
+      agendaColor: _driverAgendaColor(entry),
+      driver_photo_url: _driverAgendaPhotoUrl(entry),
       driverPhotoUrl: _normalizeSafeRemoteMediaRef(
         entry.driverPhotoUrl ??
           entry.driver_photo_url ??
@@ -28706,14 +28746,26 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   const toPoint = readExplicitCoordinatePair(body, "to");
 
   // Route WITH waypoints + per-leg breakdown
-  const routeOut = await routeFromTextsWithStopsDetailed({
-    fromText: body.from,
-    toText: body.to,
-    fromPoint,
-    toPoint,
-    stopsTexts: stops,
-    token: env.MAPBOX_TOKEN
-  });
+  if (!_mapboxTokenOrEmpty(env)) {
+    return _missingMapboxConfigResult();
+  }
+  let routeOut;
+  try {
+    routeOut = await routeFromTextsWithStopsDetailed({
+      fromText: body.from,
+      toText: body.to,
+      fromPoint,
+      toPoint,
+      stopsTexts: stops,
+      token: env.MAPBOX_TOKEN
+    });
+  } catch (err) {
+    const msg = String(err?.message || err || "");
+    if (msg.includes("route_config_missing") || msg.includes("MAPBOX_TOKEN")) {
+      return _missingMapboxConfigResult();
+    }
+    throw err;
+  }
   const route_source =
     routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
       ? "coordinates"
@@ -28832,7 +28884,38 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     fixed_fare_rule_id: null,
     pricing: null,
   };
-  if (quoteFixedFareEligible) {
+  let quoteRequestQuoteRequired = false;
+  let quoteFixedPriceNeedsDetail = [];
+  if (quoteExplicitScopeAllowed) {
+    const companyFixedQuote = await resolveCompanyFixedPrice(env, quoteScope, {
+      ...body,
+      distance_km,
+      road_distance_km: distance_km,
+    }, {
+      vatRate: vat_rate,
+      nowIso: mainWhen,
+    });
+    if (
+      companyFixedQuote.matched !== true &&
+      Array.isArray(companyFixedQuote.needs_more_detail) &&
+      companyFixedQuote.needs_more_detail.length > 0
+    ) {
+      quoteFixedPriceNeedsDetail = companyFixedQuote.needs_more_detail;
+    }
+    if (companyFixedQuote.matched === true) {
+      fixedFareQuoteResult = companyFixedQuote;
+    } else if (quoteFixedFareEligible) {
+      fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
+        pricingProfile,
+        fallbackVatRate: vat_rate,
+        returnRequested: quoteReturnRequested,
+        allowReturnRequested: true,
+      });
+    } else if (companyFixedQuote.request_quote_required === true) {
+      quoteRequestQuoteRequired = true;
+      fixedFareQuoteResult = companyFixedQuote;
+    }
+  } else if (quoteFixedFareEligible) {
     fixedFareQuoteResult = await resolveAirportFixedFare(env, quoteScope, body, {
       pricingProfile,
       fallbackVatRate: vat_rate,
@@ -28840,8 +28923,12 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       allowReturnRequested: true,
     });
   }
-  const quoteMainUsesFixedFare = quoteFixedFareEligible && fixedFareQuoteResult.matched === true;
-  const quoteMainPricingSource = quoteMainUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+  const quoteMainUsesFixedFare = fixedFareQuoteResult.matched === true;
+  const quoteMainPricingSource = quoteMainUsesFixedFare
+    ? (fixedFareQuoteResult.pricing_source || "airport_fixed_fare")
+    : quoteRequestQuoteRequired
+      ? "request_quote"
+      : "route_calc";
   const quoteMainFixedFareApplied = quoteMainUsesFixedFare;
   const quoteMainFixedFareRuleId = quoteMainUsesFixedFare
     ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
@@ -28850,6 +28937,14 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   // Pricing: server truth
   const mainPricing = quoteMainUsesFixedFare
     ? fixedFareQuoteResult.pricing
+    : quoteRequestQuoteRequired
+    ? {
+        price_ex_vat: null,
+        price_vat: null,
+        price_incl_vat: null,
+        note: "Geen vaste prijs van toepassing. Vraag een offerte aan.",
+        breakdown: { kind: "request_quote" },
+      }
     : calcPrice({
       distance_km,
       duration_min: duration_route_min,
@@ -28943,7 +29038,60 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           body?.returnPostalCode,
         24,
       );
-      if (quoteFixedFareEligible) {
+      if (quoteExplicitScopeAllowed) {
+        const companyReturnQuote = await resolveCompanyFixedPrice(env, quoteScope, {
+          ...body,
+          from: rf,
+          to: rt,
+          pickup_lat: returnFromLat,
+          pickup_lng: returnFromLng,
+          dropoff_lat: returnToLat,
+          dropoff_lng: returnToLng,
+          airport_direction: returnDirection,
+          airport_iata:
+            body.return_airport_iata ||
+            body.returnAirportIata ||
+            body.airport_iata,
+          road_distance_km: retDistance_km,
+          return_enabled: false,
+        }, {
+          vatRate: vat_rate,
+          nowIso: retWhen,
+        });
+        if (companyReturnQuote.matched === true && companyReturnQuote.pricing) {
+          if (fixedFareQuoteResult.snapshot?.price_covers === "full_assignment") {
+            retPricing = {
+              price_ex_vat: 0,
+              price_vat: 0,
+              price_incl_vat: 0,
+              note: "Inbegrepen in de volledige heen-/terugopdracht.",
+            };
+            quoteReturnFallbackReason = "included_in_full_assignment";
+          } else {
+            retPricing = companyReturnQuote.pricing;
+            quoteReturnFallbackReason = "company_fixed_price";
+          }
+          quoteReturnUsesFixedFare = true;
+          quoteReturnExplicitFixedFareMatched = true;
+          quoteReturnFixedFareRuleId = companyReturnQuote.fixed_fare_rule_id || null;
+          quoteReturnPricingSource = companyReturnQuote.pricing_source || "company_fixed_price";
+        } else if (
+          fixedFareQuoteResult.snapshot?.price_covers === "full_assignment" &&
+          quoteMainFixedFareApplied
+        ) {
+          retPricing = {
+            price_ex_vat: 0,
+            price_vat: 0,
+            price_incl_vat: 0,
+            note: "Inbegrepen in de volledige heen-/terugopdracht.",
+          };
+          quoteReturnUsesFixedFare = true;
+          quoteReturnFixedFareRuleId = quoteMainFixedFareRuleId;
+          quoteReturnPricingSource = quoteMainPricingSource;
+          quoteReturnFallbackReason = "included_in_full_assignment";
+        }
+      }
+      if (quoteFixedFareEligible && !quoteReturnUsesFixedFare) {
         const returnFixedFarePayload = {
           ...body,
           from: rf,
@@ -29075,12 +29223,12 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     const n = Number(String(value ?? "0").replace(",", "."));
     return Number.isFinite(n) ? n : 0;
   }
-  const mainEx = moneyNumber(mainPricing.price_ex_vat);
-  const mainVat = moneyNumber(mainPricing.price_vat);
-  const mainIncl = moneyNumber(mainPricing.price_incl_vat);
-  const retEx = returnQuote ? moneyNumber(returnQuote.price_ex_vat) : 0;
-  const retVat = returnQuote ? moneyNumber(returnQuote.price_vat) : 0;
-  const retIncl = returnQuote ? moneyNumber(returnQuote.price_incl_vat) : 0;
+  const mainEx = quoteRequestQuoteRequired ? null : moneyNumber(mainPricing.price_ex_vat);
+  const mainVat = quoteRequestQuoteRequired ? null : moneyNumber(mainPricing.price_vat);
+  const mainIncl = quoteRequestQuoteRequired ? null : moneyNumber(mainPricing.price_incl_vat);
+  const retEx = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_ex_vat);
+  const retVat = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_vat);
+  const retIncl = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_incl_vat);
   const availabilityMode = _availabilityMode(env);
   const quoteScopeMask = _bookingIntentScopeMask({
     tenant_id: quoteScope?.tenant_id,
@@ -29394,10 +29542,12 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     : quoteMainFixedFareApplied;
   const quotePricingSource = quoteRoundtripEnabled
     ? (quoteMainFixedFareApplied && quoteReturnUsesFixedFare
-      ? "airport_fixed_fare"
+      ? (quoteMainPricingSource === quoteReturnPricingSource
+        ? quoteMainPricingSource
+        : "mixed_fixed_price")
       : (quoteMainFixedFareApplied || quoteReturnUsesFixedFare
-        ? "mixed_airport_fixed_fare"
-        : "route_calc"))
+        ? "mixed_fixed_price"
+        : quoteMainPricingSource))
     : quoteMainPricingSource;
   const quoteFixedFareRuleId = quoteRoundtripEnabled
     ? (quoteMainFixedFareRuleId && quoteReturnFixedFareRuleId
@@ -29435,20 +29585,23 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       duration_min: duration_route_min,
       legs,
 
-      price_ex_vat: mainPricing.price_ex_vat,
-      price_vat: mainPricing.price_vat,
-      price_incl_vat: mainPricing.price_incl_vat,
-      price_ex_vat_main: mainPricing.price_ex_vat,
-      price_vat_main: mainPricing.price_vat,
-      price_incl_vat_main: mainPricing.price_incl_vat,
-      price_ex_vat_return: returnQuote?.price_ex_vat ?? null,
-      price_vat_return: returnQuote?.price_vat ?? null,
-      price_incl_vat_return: returnQuote?.price_incl_vat ?? null,
+      price_ex_vat: quoteRequestQuoteRequired ? null : mainPricing.price_ex_vat,
+      price_vat: quoteRequestQuoteRequired ? null : mainPricing.price_vat,
+      price_incl_vat: quoteRequestQuoteRequired ? null : mainPricing.price_incl_vat,
+      price_ex_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_ex_vat,
+      price_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_vat,
+      price_incl_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_incl_vat,
+      price_ex_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_ex_vat ?? null),
+      price_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_vat ?? null),
+      price_incl_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_incl_vat ?? null),
       note: mainPricing.note,
       pricing_profile: pricingProfile,
       pricing_source: quotePricingSource,
+      request_quote_required: quoteRequestQuoteRequired === true,
+      fixed_price_snapshot: fixedFareQuoteResult.snapshot || null,
       fixed_fare_applied: quoteFixedFareApplied,
       fixed_fare_rule_id: quoteFixedFareRuleId,
+      fixed_price_needs_more_detail: quoteFixedPriceNeedsDetail,
       pricing_source_main: quoteMainPricingSource,
       pricing_source_return: returnQuote?.pricing_source ?? "route_calc",
       fixed_fare_applied_main: quoteMainFixedFareApplied,
@@ -29457,9 +29610,9 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       fixed_fare_rule_id_return: quoteReturnFixedFareRuleId,
 
       // totals (main + optional return)
-      total_price_ex_vat: round2(mainEx + retEx),
-      total_price_vat: round2(mainVat + retVat),
-      total_price_incl_vat: round2(mainIncl + retIncl),
+      total_price_ex_vat: quoteRequestQuoteRequired ? null : round2((mainEx || 0) + (retEx || 0)),
+      total_price_vat: quoteRequestQuoteRequired ? null : round2((mainVat || 0) + (retVat || 0)),
+      total_price_incl_vat: quoteRequestQuoteRequired ? null : round2((mainIncl || 0) + (retIncl || 0)),
 
       return: returnQuote,
       breakdown: mainPricing.breakdown,
@@ -29850,6 +30003,14 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
       existingDriver.public_portrait_url ??
       existingDriver.publicPortraitUrl,
   );
+  const hasAgendaColorInput =
+    Object.prototype.hasOwnProperty.call(body, "agenda_color") ||
+    Object.prototype.hasOwnProperty.call(body, "agendaColor");
+  const resolvedAgendaColor = _driverAgendaColor(
+    hasAgendaColorInput
+      ? { agenda_color: body.agenda_color ?? body.agendaColor }
+      : existingDriver,
+  );
   const existingHash = sanitizeTenantString(existingDriver.driver_code_hash, 200).toLowerCase();
   const existingSalt = sanitizeTenantString(existingDriver.driver_code_salt, 120);
   let nextDriverCodeHash = existingHash;
@@ -29880,6 +30041,8 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     availabilityStatus: resolvedAvailabilityStatus,
     driver_status: resolvedAvailabilityStatus,
     assigned_vehicle_id: assignedVehicleId,
+    agenda_color: resolvedAgendaColor,
+    agendaColor: resolvedAgendaColor,
     driver_photo_url: resolvedDriverPhotoUrl,
     driverPhotoUrl: resolvedDriverPhotoUrl,
     public_portrait_url: resolvedDriverPhotoUrl,
@@ -45328,7 +45491,10 @@ export default {
         }
         const statusCode = out?.ok === true
           ? 200
-          : (out?.error === "payment_checkout_unavailable" ? 502 : 400);
+          : out?.error === "payment_checkout_unavailable" ? 502
+          : out?.error === "route_config_missing" ? 503
+          : out?.error === "price_changed" ? 409
+          : 400;
         return json(out, statusCode);
       }
 
@@ -45553,12 +45719,31 @@ export default {
               entry.assigned_vehicle_id ?? entry.assignedVehicleId,
               96,
             ),
-            driver_photo_url: _normalizeSafeRemoteMediaRef(
-              entry.driver_photo_url ??
-                entry.driverPhotoUrl ??
-                entry.public_portrait_url ??
-                entry.publicPortraitUrl,
-            ),
+            agenda_color: (() => {
+              const raw = String(entry.agenda_color ?? entry.agendaColor ?? "")
+                .trim();
+              if (/^#?[0-9a-fA-F]{3,8}$/.test(raw)) {
+                return raw.startsWith("#") ? raw : `#${raw}`;
+              }
+              return "";
+            })(),
+            driver_photo_url: (() => {
+              const safe = _normalizeSafeRemoteMediaRef(
+                entry.driver_photo_url ??
+                  entry.driverPhotoUrl ??
+                  entry.public_portrait_url ??
+                  entry.publicPortraitUrl,
+              );
+              if (safe) return safe;
+              const local = String(
+                entry.driver_photo_url ??
+                  entry.driverPhotoUrl ??
+                  entry.public_portrait_url ??
+                  entry.publicPortraitUrl ??
+                  "",
+              ).trim();
+              return local.startsWith("/local/media/") ? local : "";
+            })(),
           }))
           .filter((row) => row.driver_id);
         return json(
@@ -45874,6 +46059,69 @@ export default {
       // =========================
       // COMPANY CUSTOMER OPS P0A
       // =========================
+      const companyAgendaRoute = matchCompanyAgendaPath(url.pathname);
+      if (companyAgendaRoute) {
+        let agendaBody = null;
+        if (request.method === "POST" || request.method === "PATCH") {
+          try {
+            agendaBody = await request.json();
+          } catch {
+            agendaBody = {};
+          }
+        }
+        const scopedAgendaRoute = requireExplicitBookingRouteScope({
+          request,
+          url,
+          body: agendaBody,
+        });
+        if (!scopedAgendaRoute.ok) return scopedAgendaRoute.response;
+        const agendaAuth = await _requireAdminOrCompanySessionAuth({
+          request,
+          url,
+          env,
+          tenantScope: scopedAgendaRoute.scope,
+        });
+        if (!agendaAuth.ok) return agendaAuth.response;
+        return await serveCompanyAgendaHttp({
+          env,
+          method: request.method,
+          route: companyAgendaRoute,
+          url,
+          body: agendaBody,
+          request,
+        });
+      }
+      const companyFixedPricesRoute = matchCompanyFixedPricesPath(url.pathname);
+      if (companyFixedPricesRoute) {
+        let fixedPricesBody = null;
+        if (request.method === "POST" || request.method === "PATCH") {
+          try {
+            fixedPricesBody = await request.json();
+          } catch {
+            fixedPricesBody = {};
+          }
+        }
+        const scopedFixedPrices = requireExplicitBookingRouteScope({
+          request,
+          url,
+          body: fixedPricesBody,
+        });
+        if (!scopedFixedPrices.ok) return scopedFixedPrices.response;
+        const fixedPricesAuth = await _requireAdminOrCompanySessionAuth({
+          request,
+          url,
+          env,
+          tenantScope: scopedFixedPrices.scope,
+        });
+        if (!fixedPricesAuth.ok) return fixedPricesAuth.response;
+        return await serveCompanyFixedPricesHttp({
+          env,
+          method: request.method,
+          route: companyFixedPricesRoute,
+          body: fixedPricesBody,
+          scope: scopedFixedPrices.scope,
+        });
+      }
       const companyCustomerRoute = matchCompanyCustomersPath(url.pathname);
       if (companyCustomerRoute) {
         let customerBody = null;
@@ -45945,6 +46193,7 @@ export default {
               method: request.method,
               route: companyCustomerRoute,
               body: customerBody,
+              request,
               scope: scopedCustomerRoute.scope,
             });
           }
@@ -47765,12 +48014,20 @@ export default {
           );
           return portraitUrl ? count + 1 : count;
         }, 0);
+        const fixedPriceScope = await resolvePublicPartnerBookingScope(env, partnerId);
+        const publicFixedPrices = fixedPriceScope.ok
+          ? await loadPublicCompanyFixedPrices(env, {
+              tenant_id: fixedPriceScope.tenant_id,
+              company_id: fixedPriceScope.company_id,
+            })
+          : null;
         return json(
           {
             ok: true,
             profile: {
               ...profile,
               drivers,
+              ...(publicFixedPrices ? { fixed_prices: publicFixedPrices } : {}),
             },
             profiles_source: sanitizeTenantString(profileResult.meta?.profiles_source, 48) || "unknown",
             projection_updated_at: sanitizeTenantString(
@@ -48299,24 +48556,11 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
-        const key = buildScopedAirportFixedFaresKey(explicitScope);
-        const emptyDocument = { version: 1, updated_at: null, rules: [] };
-        if (!key) {
-          return json({
-            ok: true,
-            key: "",
-            airport_fixed_fares: emptyDocument,
-          }, 200);
-        }
-        const raw = await env.BOOKING_KV.get(key, { type: "json" });
-        const airport_fixed_fares =
-          raw && typeof raw === "object"
-            ? _normalizeAirportFixedFaresDocument(raw)
-            : emptyDocument;
+        const loaded = await loadCompanyFixedPricesDocument(env, explicitScope);
         return json({
           ok: true,
-          key,
-          airport_fixed_fares,
+          key: loaded.key,
+          airport_fixed_fares: loaded.document,
         }, 200);
       }
 
@@ -48339,7 +48583,14 @@ export default {
         if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
         const incomingScopeCheck = _validateSettingsPayloadScope(incoming, explicitScope);
         if (!incomingScopeCheck.ok) return json(incomingScopeCheck, 400);
-        const validated = _validateAirportFixedFaresForAdmin(incoming);
+        const airportOnlyIncoming = {
+          ...(incoming && typeof incoming === "object" ? incoming : {}),
+          rules: (Array.isArray(incoming?.rules) ? incoming.rules : []).filter((rule) => {
+            const kind = String(rule?.kind || "").toLowerCase();
+            return kind === "airport" || !!(rule?.airport_iata || rule?.airportIata);
+          }),
+        };
+        const validated = _validateAirportFixedFaresForAdmin(airportOnlyIncoming);
         if (!validated.ok) {
           return json({
             ok: false,
@@ -48348,6 +48599,13 @@ export default {
           }, 400);
         }
         const saved = await _saveScopedAirportFixedFares(env, incoming, explicitScope);
+        if (saved?.error === "stale_fixed_prices") {
+          return json({
+            ok: false,
+            error: "stale_fixed_prices",
+            airport_fixed_fares: saved.airport_fixed_fares,
+          }, 409);
+        }
         return json({
           ok: true,
           key: saved.key,
@@ -51094,6 +51352,23 @@ export default {
           const assignedDriverId = String(
             body?.driver_id || body?.assigned_driver_id || body?.assignedDriverId || "",
           ).trim();
+          const assignPickupIso = safeStr(
+            rec?.pickup_iso || rec?.booking?.pickup_iso || rec?.booking?.pickupStartIso,
+            80,
+          );
+          const assignDurationMin =
+            rec?.duration_min ?? rec?.booking?.duration_min ?? rec?.durationMin ?? null;
+          const assignOverlap = await checkAssignmentOverlap(env, {
+            scope: tenantScope,
+            driverId: assignedDriverId,
+            vehicleId,
+            pickupIso: assignPickupIso,
+            durationMin: assignDurationMin,
+            excludeBookingId: bookingId,
+          });
+          if (!assignOverlap.ok) {
+            return json(assignOverlap, 409);
+          }
           if (assignedDriverId) {
             rec.assigned_driver_id = assignedDriverId;
             rec.assignedDriverId = assignedDriverId;
@@ -67207,6 +67482,29 @@ function readMollieCheckoutUrlFromPaymentResult(pay) {
   );
 }
 
+// The airport and flight facts live on the in-flight booking object. Both the
+// persisted record and its nested booking projection need them, otherwise an
+// airport ride loses its flight after saving.
+function _airportFlightRecordFields(booking) {
+  if (!booking || typeof booking !== "object") return {};
+  const out = {};
+  for (const key of [
+    "airport_iata",
+    "flight_number",
+    "flight_at",
+    "flight_timezone",
+    "pickup_arrangement",
+    "return_airport_iata",
+    "return_flight_number",
+    "return_flight_at",
+  ]) {
+    const value = booking[key];
+    if (value === undefined || value === null || value === "") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 async function handleBooking(payload, env, request, options = {}) {
   let allocatorReservationAcquired = false;
   let bookingPersisted = false;
@@ -67923,6 +68221,13 @@ async function handleBooking(payload, env, request, options = {}) {
     // LIMOUSINE-MARKETPLACE-P2C1: reuse the route already computed by the
     // Limousine pre-flight so the same authoritative distance/duration is used
     // and Mapbox is not called twice.
+    if (!_limousineAccepted && !_limousineRouteCache && !_mapboxTokenOrEmpty(env)) {
+      return {
+        ok: false,
+        error: "route_config_missing",
+        message: "Routeberekening is niet geconfigureerd. Er is geen boekbare prijs beschikbaar.",
+      };
+    }
     const routeOut = _limousineRouteCache || (_limousineAccepted
       ? {
           route: { distance: 0, duration: 0 },
@@ -68076,7 +68381,26 @@ async function handleBooking(payload, env, request, options = {}) {
       fixed_fare_rule_id: null,
       pricing: null,
     };
-    if (bookingFixedFareEligible) {
+    if (bookingExplicitScopeAllowed) {
+      const companyFixedBooking = await resolveCompanyFixedPrice(env, tenantContext, {
+        ...payload,
+        road_distance_km: payload?.distance_km ?? payload?.road_distance_km,
+      }, {
+        vatRate: vat_rate,
+      });
+      if (companyFixedBooking.matched === true) {
+        fixedFareBookingResult = companyFixedBooking;
+      } else if (bookingFixedFareEligible) {
+        fixedFareBookingResult = await resolveAirportFixedFare(env, tenantContext, payload, {
+          pricingProfile,
+          fallbackVatRate: vat_rate,
+          returnRequested: bookingReturnRequested,
+          allowReturnRequested: true,
+        });
+      } else if (companyFixedBooking.request_quote_required === true) {
+        fixedFareBookingResult = companyFixedBooking;
+      }
+    } else if (bookingFixedFareEligible) {
       fixedFareBookingResult = await resolveAirportFixedFare(env, tenantContext, payload, {
         pricingProfile,
         fallbackVatRate: vat_rate,
@@ -68084,11 +68408,47 @@ async function handleBooking(payload, env, request, options = {}) {
         allowReturnRequested: true,
       });
     }
-    const bookingMainUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
+    const bookingMainUsesFixedFare = fixedFareBookingResult.matched === true;
+    const bookingRequestQuoteRequired =
+      !_limousineAccepted &&
+      bookingExplicitScopeAllowed &&
+      fixedFareBookingResult.request_quote_required === true &&
+      !bookingMainUsesFixedFare;
+    if (bookingRequestQuoteRequired) {
+      return {
+        ok: false,
+        error: "request_quote_required",
+        message: "Geen vaste prijs van toepassing. Vraag een offerte aan.",
+      };
+    }
+    const quotedSnapshot =
+      payload?.fixed_price_snapshot && typeof payload.fixed_price_snapshot === "object"
+        ? payload.fixed_price_snapshot
+        : null;
+    const quotedTotal = Number(
+      quotedSnapshot?.total_incl_vat ??
+        payload?.quoted_total_incl_vat ??
+        payload?.quotedTotalInclVat,
+    );
+    if (
+      bookingMainUsesFixedFare &&
+      Number.isFinite(quotedTotal) &&
+      companyFixedPriceTotalsDiffer(
+        quotedTotal,
+        fixedFareBookingResult.snapshot?.total_incl_vat,
+      )
+    ) {
+      return {
+        ok: false,
+        error: "price_changed",
+        snapshot: fixedFareBookingResult.snapshot,
+        message: "Het totaal is gewijzigd. Bevestig de nieuwe prijs.",
+      };
+    }
     const bookingMainPricingSource = _limousineAccepted
       ? _limousineAccepted.pricingSource
       : bookingMainUsesFixedFare
-      ? "airport_fixed_fare"
+      ? (fixedFareBookingResult.pricing_source || "airport_fixed_fare")
       : "route_calc";
     const bookingMainFixedFareApplied = bookingMainUsesFixedFare;
     const bookingMainFixedFareRuleId = bookingMainUsesFixedFare
@@ -68173,7 +68533,59 @@ async function handleBooking(payload, env, request, options = {}) {
             payload?.returnPostalCode,
           24,
         );
-        if (bookingFixedFareEligible) {
+        if (bookingExplicitScopeAllowed) {
+          const companyReturnBooking = await resolveCompanyFixedPrice(env, tenantContext, {
+            ...payload,
+            from: return_from,
+            to: return_to,
+            pickup_lat: returnFromLat,
+            pickup_lng: returnFromLng,
+            dropoff_lat: returnToLat,
+            dropoff_lng: returnToLng,
+            airport_direction: returnDirection,
+            airport_iata:
+              payload.return_airport_iata ||
+              payload.returnAirportIata ||
+              payload.airport_iata,
+            road_distance_km: return_distance_km,
+            return_enabled: false,
+          }, {
+            vatRate: vat_rate,
+          });
+          if (companyReturnBooking.matched === true && companyReturnBooking.pricing) {
+            if (fixedFareBookingResult.snapshot?.price_covers === "full_assignment") {
+              returnPricing = {
+                price_ex_vat: 0,
+                price_vat: 0,
+                price_incl_vat: 0,
+                note: "Inbegrepen in de volledige heen-/terugopdracht.",
+              };
+              bookingReturnFallbackReason = "included_in_full_assignment";
+            } else {
+              returnPricing = companyReturnBooking.pricing;
+              bookingReturnFallbackReason = "company_fixed_price";
+            }
+            bookingReturnUsesFixedFare = true;
+            bookingReturnExplicitFixedFareMatched = true;
+            bookingReturnFixedFareRuleId = companyReturnBooking.fixed_fare_rule_id || null;
+            bookingReturnPricingSource = companyReturnBooking.pricing_source || "company_fixed_price";
+          } else if (
+            fixedFareBookingResult.snapshot?.price_covers === "full_assignment" &&
+            bookingMainFixedFareApplied
+          ) {
+            returnPricing = {
+              price_ex_vat: 0,
+              price_vat: 0,
+              price_incl_vat: 0,
+              note: "Inbegrepen in de volledige heen-/terugopdracht.",
+            };
+            bookingReturnUsesFixedFare = true;
+            bookingReturnFixedFareRuleId = bookingMainFixedFareRuleId;
+            bookingReturnPricingSource = bookingMainPricingSource;
+            bookingReturnFallbackReason = "included_in_full_assignment";
+          }
+        }
+        if (bookingFixedFareEligible && !bookingReturnUsesFixedFare) {
           const returnFixedFarePayload = {
             ...payload,
             from: return_from,
@@ -68929,6 +69341,7 @@ async function handleBooking(payload, env, request, options = {}) {
               rec: provisionalRecord,
             });
           }
+          stampCompanyFixedPriceSnapshot(provisionalRecord, fixedFareBookingResult.snapshot);
           await persistNewBookingRecord(
             env,
             canonicalBookingId,
@@ -69870,6 +70283,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           rec: provisionalRecord,
         });
       }
+      stampCompanyFixedPriceSnapshot(provisionalRecord, fixedFareBookingResult.snapshot);
       await persistNewBookingRecord(
         env,
         canonicalBookingId,
@@ -70156,6 +70570,59 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             airportDirection: outboundAirportDirection,
           }
         : {}),
+      ...(safeStr(payload?.airport_iata ?? payload?.airportIata, 8)
+        ? {
+            airport_iata: safeStr(payload?.airport_iata ?? payload?.airportIata, 8).toUpperCase(),
+          }
+        : {}),
+      ...(safeStr(payload?.flight_number ?? payload?.flightNumber, 16)
+        ? {
+            flight_number: safeStr(payload?.flight_number ?? payload?.flightNumber, 16).toUpperCase(),
+          }
+        : {}),
+      ...(safeStr(payload?.flight_at ?? payload?.flightAt, 40)
+        ? { flight_at: safeStr(payload?.flight_at ?? payload?.flightAt, 40) }
+        : {}),
+      ...(safeStr(payload?.flight_timezone ?? payload?.flightTimezone, 40)
+        ? {
+            flight_timezone: safeStr(
+              payload?.flight_timezone ?? payload?.flightTimezone,
+              40,
+            ),
+          }
+        : {}),
+      ...(safeStr(payload?.pickup_arrangement ?? payload?.pickupArrangement, 32)
+        ? {
+            pickup_arrangement: safeStr(
+              payload?.pickup_arrangement ?? payload?.pickupArrangement,
+              32,
+            ).toLowerCase(),
+          }
+        : {}),
+      ...(safeStr(payload?.return_airport_iata ?? payload?.returnAirportIata, 8)
+        ? {
+            return_airport_iata: safeStr(
+              payload?.return_airport_iata ?? payload?.returnAirportIata,
+              8,
+            ).toUpperCase(),
+          }
+        : {}),
+      ...(safeStr(payload?.return_flight_number ?? payload?.returnFlightNumber, 16)
+        ? {
+            return_flight_number: safeStr(
+              payload?.return_flight_number ?? payload?.returnFlightNumber,
+              16,
+            ).toUpperCase(),
+          }
+        : {}),
+      ...(safeStr(payload?.return_flight_at ?? payload?.returnFlightAt, 40)
+        ? {
+            return_flight_at: safeStr(
+              payload?.return_flight_at ?? payload?.returnFlightAt,
+              40,
+            ),
+          }
+        : {}),
       ...(persistedCancellationServiceContext.airport_transfer
         ? {
             airport_transfer: true,
@@ -70280,6 +70747,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             airportDirection: booking.airportDirection,
           }
         : {}),
+      ..._airportFlightRecordFields(booking),
       ...(booking.airport_transfer
         ? {
             airport_transfer: true,
@@ -70367,6 +70835,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
               airportDirection: booking.airportDirection,
             }
           : {}),
+        ..._airportFlightRecordFields(booking),
         ...(booking.airport_transfer
           ? {
               airport_transfer: true,
@@ -70503,6 +70972,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         rec: record,
       });
     }
+    stampCompanyFixedPriceSnapshot(record, fixedFareBookingResult.snapshot);
 
     try {
       await persistNewBookingRecord(
@@ -77139,8 +77609,23 @@ function normalizeWhen(dateStr, timeStr) {
   return `${d} ${t}`;
 }
 
+function _mapboxTokenOrEmpty(env) {
+  return String(env?.MAPBOX_TOKEN || "").trim();
+}
+
+function _missingMapboxConfigResult() {
+  return {
+    status: 503,
+    out: {
+      ok: false,
+      error: "route_config_missing",
+      message: "Routeberekening is niet geconfigureerd. Er is geen boekbare prijs beschikbaar.",
+    },
+  };
+}
+
 async function geocode(query, token) {
-  if (!token) throw new Error("Missing MAPBOX_TOKEN in Worker secrets");
+  if (!token) throw new Error("route_config_missing");
   const countryCode = inferMapboxCountryCodeFromQuery(query);
 
   const u =
@@ -77226,7 +77711,7 @@ function readExplicitCoordinatePair(body, prefix) {
 async function geocodeText(query, token) { return geocode(query, token); }
 
 async function directionsMulti(coords, token, options = {}) {
-  if (!token) throw new Error("Missing MAPBOX_TOKEN in Worker secrets");
+  if (!token) throw new Error("route_config_missing");
   if (!coords || coords.length < 2) throw new Error("Need at least 2 coordinates for directions");
 
   const path = coords.map(c => `${c.lng},${c.lat}`).join(";");
@@ -77723,6 +78208,8 @@ function _fixedFareReturnRequested(payload = {}) {
 }
 
 function _normalizeAirportFixedFareRule(raw, idx = 0) {
+  const extended = normalizeCompanyFixedPriceRule(raw, idx);
+  if (extended && extended.kind === "city_pair") return extended;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const enabled = raw.enabled !== false;
   const rule_id =
@@ -77803,6 +78290,23 @@ function _normalizeAirportFixedFareRule(raw, idx = 0) {
     active_until,
     active_from_ms: Number.isFinite(active_from_ms) ? active_from_ms : null,
     active_until_ms: Number.isFinite(active_until_ms) ? active_until_ms : null,
+    ...(extended
+      ? {
+          name: extended.name,
+          kind: "airport",
+          rule_version: extended.rule_version,
+          origin: extended.origin,
+          destination: extended.destination,
+          overflow_mode: extended.overflow_mode,
+          overflow_measure: extended.overflow_measure,
+          overflow_from: extended.overflow_from,
+          included_km: extended.included_km,
+          extra_per_km: extended.extra_per_km,
+          overflow_surcharge: extended.overflow_surcharge,
+          includes: extended.includes,
+          price_covers: extended.price_covers,
+        }
+      : {}),
   };
 }
 
@@ -77824,7 +78328,16 @@ function _normalizeAirportFixedFaresDocument(raw) {
     if (!normalized) continue;
     rules.push(normalized);
   }
-  return { version, updated_at, rules };
+  const fallbackRaw = _fixedFareNormalizeText(
+    source.fallback ?? raw?.fallback ?? "calculator",
+    32,
+  ).toLowerCase();
+  return {
+    version,
+    updated_at,
+    fallback: fallbackRaw === "request_quote" ? "request_quote" : "calculator",
+    rules,
+  };
 }
 
 function _validateAirportFixedFaresForAdmin(doc) {
@@ -78005,24 +78518,19 @@ function _validateAirportFixedFaresForAdmin(doc) {
 
 async function _saveScopedAirportFixedFares(env, doc, scope) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
-  const key = buildScopedAirportFixedFaresKey(scope);
-  if (!key) throw new Error("missing_tenant_scope");
-  const normalized = _normalizeAirportFixedFaresDocument(doc);
-  const updatedAt = new Date().toISOString();
-  const out = {
-    version: normalized.version || 1,
-    updated_at: updatedAt,
-    rules: Array.isArray(normalized.rules) ? normalized.rules : [],
-  };
-  await env.BOOKING_KV.put(
-    key,
-    JSON.stringify({
-      version: 1,
-      updated_at: updatedAt,
-      airport_fixed_fares: out,
-    }),
-  );
-  return { key, airport_fixed_fares: out };
+  const loaded = await loadCompanyFixedPricesDocument(env, scope);
+  if (!loaded.key) throw new Error("missing_tenant_scope");
+  const merged = mergeLegacyAirportFixedFaresSave(loaded.document, doc);
+  if (!merged.ok) {
+    return {
+      key: loaded.key,
+      error: merged.error,
+      airport_fixed_fares: merged.document,
+    };
+  }
+  const saved = await saveCompanyFixedPricesDocument(env, scope, merged.document);
+  if (!saved.ok) throw new Error(saved.error || "fixed_prices_save_failed");
+  return { key: saved.key, airport_fixed_fares: saved.document };
 }
 
 async function _loadScopedAirportFixedFares(env, scope) {

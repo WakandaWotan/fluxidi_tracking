@@ -6,6 +6,7 @@ import {
   decodeListCursor,
   encodeListCursor,
   isCompanyActiveListRow,
+  isCompanyOpenListRow,
   projectBookingListRows,
   seedProjectedCompanyPages,
   tryListCompanyBookingsProjected,
@@ -96,6 +97,22 @@ test("cursor encode/decode is opaque and stable", () => {
   assert.equal(parsed.after.booking_id, "2026-08-010");
 });
 
+test("open list keeps overdue pending and drops completed", () => {
+  const now = Date.parse("2026-09-12T12:00:00.000Z");
+  assert.equal(
+    isCompanyOpenListRow({ status: "PENDING", pickup_iso: "2026-09-08T12:00:00.000Z" }, now),
+    true,
+  );
+  assert.equal(
+    isCompanyOpenListRow({ status: "COMPLETED", pickup_iso: "2026-09-08T12:00:00.000Z" }, now),
+    false,
+  );
+  assert.equal(
+    isCompanyOpenListRow({ status: "CONFIRMED", pickup_iso: "2026-08-01T00:00:00.000Z" }, now),
+    false,
+  );
+});
+
 test("active-only drops completed and stale pickups", () => {
   const now = Date.parse("2026-08-31T12:00:00.000Z");
   assert.equal(
@@ -164,4 +181,37 @@ test("seeded company first/next pages stay within two page reads", async () => {
     kv.counts.got.some((key) => String(key).startsWith("booking:")),
     false,
   );
+});
+
+test("open list keeps overdue pending without sending history to the client", async () => {
+  const now = Date.parse("2026-09-12T12:00:00.000Z");
+  const seed = seedProjectedCompanyPages(
+    SCOPE,
+    [
+      row("agb_grace", {
+        status: "PENDING",
+        pickup_iso: "2026-09-08T12:00:00.000Z",
+        customer_name: "Grace Hopper",
+      }),
+      row("agb_done", {
+        status: "COMPLETED",
+        pickup_iso: "2026-09-11T12:00:00.000Z",
+      }),
+      row("agb_live", {
+        status: "CONFIRMED",
+        pickup_iso: "2026-09-12T10:00:00.000Z",
+      }),
+    ],
+    { includeHistory: true },
+  );
+  const kv = countingKV(seed);
+  const listed = await tryListCompanyBookingsProjected(
+    { BOOKING_KV: kv },
+    { limit: 25, includeHistory: false, tenantScope: SCOPE, nowMs: now },
+  );
+  assert.equal(listed.ok, true);
+  const ids = listed.items.map((item) => item.booking_id);
+  assert.equal(ids.includes("agb_grace"), true);
+  assert.equal(ids.includes("agb_live"), true);
+  assert.equal(ids.includes("agb_done"), false);
 });

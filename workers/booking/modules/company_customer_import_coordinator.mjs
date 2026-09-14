@@ -70,6 +70,10 @@ export class CompanyCustomerImportCoordinatorDO {
     if (action === "update_customer") return this._updateCustomer(body);
     if (action === "archive_customer") return this._archiveCustomer(body);
     if (action === "restore_customer") return this._restoreCustomer(body);
+    if (action === "assign_booking") return this._assignBooking(body);
+    if (action === "unassign_booking") return this._unassignBooking(body);
+    if (action === "reschedule_booking") return this._rescheduleBooking(body);
+    if (action === "phone_confirm_booking") return this._phoneConfirmBooking(body);
     return this._json({ ok: false, error: "unknown_action" }, 400);
   }
 
@@ -137,6 +141,46 @@ export class CompanyCustomerImportCoordinatorDO {
       idempotencyKey: body.idempotencyKey,
     });
     return this._json(result, result?.status || 500);
+  }
+
+  async _assignBooking(body) {
+    const { assignAgendaRide } = await import("./company_agenda.mjs");
+    const result = await assignAgendaRide(this.env, {
+      scope: body.scope,
+      bookingId: body.bookingId || body.booking_id,
+      body: body.body || {},
+    });
+    return this._json(result, result.ok ? 200 : 409);
+  }
+
+  async _unassignBooking(body) {
+    const { unassignAgendaRide } = await import("./company_agenda.mjs");
+    const result = await unassignAgendaRide(this.env, {
+      scope: body.scope,
+      bookingId: body.bookingId || body.booking_id,
+      body: body.body || {},
+    });
+    return this._json(result, result.ok ? 200 : 409);
+  }
+
+  async _rescheduleBooking(body) {
+    const { rescheduleAgendaRide } = await import("./company_agenda.mjs");
+    const result = await rescheduleAgendaRide(this.env, {
+      scope: body.scope,
+      bookingId: body.bookingId || body.booking_id,
+      body: body.body || {},
+    });
+    return this._json(result, result.ok ? 200 : 409);
+  }
+
+  async _phoneConfirmBooking(body) {
+    const { phoneConfirmAgendaRide } = await import("./company_agenda.mjs");
+    const result = await phoneConfirmAgendaRide(this.env, {
+      scope: body.scope,
+      bookingId: body.bookingId || body.booking_id,
+      body: body.body || {},
+    });
+    return this._json(result, result.ok ? 200 : 409);
   }
 
   _json(obj, status = 200) {

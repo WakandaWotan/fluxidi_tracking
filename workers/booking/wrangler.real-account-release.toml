@@ -1,0 +1,103 @@
+# Bounded production release for FLX-00001 / Fluxidi customer-ops.
+# Used only by scripts/deploy_real_account_booking_worker.ps1.
+# Does not replace local/dev wrangler.toml.
+#
+# Adds: CompanyCustomerImportCoordinator Durable Object + migration.
+# Does not add RateHawk vars, test flags, or the RateHawk TEST service.
+# RATEHAWK_HOTELS is listed only because live already serves
+# /public/hotels/ratehawk/* (GET returns 405). Omitting it would strip
+# an existing production binding. No new RateHawk functionality is enabled.
+# PLAY_REVIEW / KV-budget / cron flags are omitted; --keep-vars keeps live values.
+
+name = "fluxidi-booking-api"
+main = "fluxidi_booking_worker.js"
+compatibility_date = "2026-04-23"
+find_additional_modules = false
+
+[vars]
+GOOGLE_CALENDAR_ID = "primary"
+FLEET_AVAILABILITY_MODE = "multi_vehicle"
+COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
+HUMAN_BOOKING_ID_DO_ALLOCATOR = "1"
+HUMAN_BOOKING_ID_PROBES_ENABLED = "0"
+ALLOW_LEGACY_CUSTOMER_CONTACT_PROOF = "0"
+STRICT_LIST_DISPATCH_OWNERSHIP = "1"
+LEGACY_SCOPE_MIGRATION_ENABLED = "0"
+BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH = "1"
+BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST = "fluxidi_fluxidi_ddmh9g"
+
+[[services]]
+binding = "COMPLIANCE_WORKER"
+service = "fluxidi-compliance-api"
+
+# Existing live binding. Not a new RateHawk rollout.
+[[services]]
+binding = "RATEHAWK_HOTELS"
+service = "fluxidi-ratehawk-hotels-api"
+
+[observability.logs]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "FLEET_ALLOCATOR"
+class_name = "FleetAllocatorDO"
+
+[[durable_objects.bindings]]
+name = "BOOKING_REFERENCE_SEQUENCE"
+class_name = "BookingReferenceSequenceDO"
+
+[[durable_objects.bindings]]
+name = "DOCUMENT_REFERENCE_SEQUENCE"
+class_name = "DocumentReferenceSequenceDO"
+
+[[durable_objects.bindings]]
+name = "FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS"
+class_name = "FluxidiSubscriptionFounderSlotsDO"
+
+[[durable_objects.bindings]]
+name = "HUMAN_BOOKING_ID_SEQUENCE"
+class_name = "HumanBookingIdSequenceDO"
+
+[[durable_objects.bindings]]
+name = "COMPANY_CUSTOMER_IMPORT_COORDINATOR"
+class_name = "CompanyCustomerImportCoordinatorDO"
+
+[[kv_namespaces]]
+binding = "BOOKING_KV"
+id = "6805da1ffefe4a3982b4c419250c59b1"
+
+[[kv_namespaces]]
+binding = "FLUXIDI_TRACKING"
+id = "e457c0f51cfe44bca031250a0485b31e"
+
+[[kv_namespaces]]
+binding = "INVOICE_KV"
+id = "c945929b64a743fdb10e09059d835746"
+
+[[r2_buckets]]
+binding = "PUBLIC_MEDIA"
+bucket_name = "fluxidi-public-media"
+
+[[migrations]]
+tag = "fleet-allocator-v1"
+new_sqlite_classes = ["FleetAllocatorDO"]
+
+[[migrations]]
+tag = "booking-reference-sequence-v1"
+new_sqlite_classes = ["BookingReferenceSequenceDO"]
+
+[[migrations]]
+tag = "document-reference-sequence-v1"
+new_sqlite_classes = ["DocumentReferenceSequenceDO"]
+
+[[migrations]]
+tag = "fluxidi-subscription-founder-slots-v1"
+new_sqlite_classes = ["FluxidiSubscriptionFounderSlotsDO"]
+
+[[migrations]]
+tag = "human-booking-id-sequence-v1"
+new_sqlite_classes = ["HumanBookingIdSequenceDO"]
+
+[[migrations]]
+tag = "company-customer-import-coordinator-v1"
+new_sqlite_classes = ["CompanyCustomerImportCoordinatorDO"]

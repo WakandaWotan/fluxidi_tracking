@@ -36,6 +36,10 @@ function pngChunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crc]);
 }
 
+export function demoDriverLoginCode(company) {
+  return company.id === "demo_company_p0" ? "DRVP001" : "DRVP002";
+}
+
 export function demoVehicle(company) {
   const fluxidi = company.id === "demo_company_p0";
   return {
@@ -58,9 +62,22 @@ export function demoVehicle(company) {
   };
 }
 
+export function companyLinkSeedRecord(company) {
+  return {
+    tenant_id: company.id,
+    company_id: company.id,
+    company_code: company.code,
+    display_name: company.name,
+    country: "BE",
+    linking_enabled: true,
+    source: "local_customer_ops_demo",
+  };
+}
+
 export function demoDriver(company) {
   const fluxidi = company.id === "demo_company_p0";
   const driverId = `drv_${company.id}_1`;
+  const login = demoDriverLoginCode(company);
   return {
     driver_id: driverId,
     display_name: fluxidi ? "Karel Peeters" : "Lina Moreau",
@@ -70,7 +87,91 @@ export function demoDriver(company) {
     isActive: true,
     availability_status: "available",
     availabilityStatus: "available",
+    employee_number: login,
+    employeeNumber: login,
+    driver_code: login,
+    driverCode: login,
+    login_code: login,
+    loginCode: login,
+    agenda_color: fluxidi ? "#C9A227" : "#8C2F39",
+    driver_photo_url: `/local/media/${company.id}/logo.png`,
   };
+}
+
+const EXTRA_P0_DRIVERS = [
+  ["drv_demo_company_p0_2", "Amira Benali", "+32470000012", "offline", "#2F6B4F"],
+  ["drv_demo_company_p0_3", "Tom Janssen", "+32470000013", "busy", "#3D5A80"],
+  ["drv_demo_company_p0_4", "Lina Vermeulen", "+32470000014", "available", "#8C2F39"],
+  ["drv_demo_company_p0_5", "Noah Claessens", "+32470000015", "available", "#6B4F2F"],
+  ["drv_demo_company_p0_6", "Eva De Smet", "+32470000016", "paused", "#4A4A4A"],
+  ["drv_demo_company_p0_7", "Samir Haddad", "+32470000017", "available", "#1F6F8B"],
+  ["drv_demo_company_p0_8", "Elise Wouters", "+32470000018", "available", "#6B3FA0"],
+  ["drv_demo_company_p0_9", "Ruben Maes", "+32470000019", "busy", "#C45C26"],
+  ["drv_demo_company_p0_10", "Nadia El Amrani", "+32470000020", "available", "#2E7D6F"],
+  ["drv_demo_company_p0_11", "Pieter Goossens", "+32470000021", "offline", "#7A3B6C"],
+  ["drv_demo_company_p0_12", "Sofia Rossi", "+32470000022", "available", "#3F6B2F"],
+  ["drv_demo_company_p0_13", "Daan Coppens", "+32470000023", "available", "#8B4A1B"],
+  ["drv_demo_company_p0_14", "Leila Ait", "+32470000024", "available", "#2F4A6B"],
+  ["drv_demo_company_p0_15", "Jonas Verbeke", "+32470000025", "paused", "#A13D5C"],
+  ["drv_demo_company_p0_16", "Marta Nowak", "+32470000026", "available", "#4A6B3F"],
+  ["drv_demo_company_p0_17", "Youssef Benali", "+32470000027", "available", "#5C4A8B"],
+  ["drv_demo_company_p0_18", "Hanne Jacobs", "+32470000028", "available", "#8B5A2B"],
+  ["drv_demo_company_p0_19", "Olivier Dupont", "+32470000029", "available", "#2F6B6B"],
+  ["drv_demo_company_p0_20", "Amina Kaya", "+32470000030", "available", "#C9A227"],
+];
+
+export function extraDemoDrivers(company) {
+  if (company.id !== "demo_company_p0") return [];
+  return EXTRA_P0_DRIVERS.map(([id, name, phone, status, color]) => {
+    const row = {
+      driver_id: id,
+      display_name: name,
+      displayName: name,
+      phone,
+      is_active: true,
+      isActive: true,
+      availability_status: status,
+      availabilityStatus: status,
+      agenda_color: color,
+    };
+    if (id === "drv_demo_company_p0_2") {
+      row.driver_photo_url = "/local/media/demo_company_p0/logo.png";
+    }
+    return row;
+  });
+}
+
+export function mergeDemoDriverRecord(existing, seed) {
+  const current = existing && typeof existing === "object" ? existing : {};
+  const next = { ...current, ...seed };
+  const kept = String(current.agenda_color || current.agendaColor || "").trim();
+  if (kept) {
+    next.agenda_color = kept;
+    next.agendaColor = kept;
+  }
+  return next;
+}
+
+export function extraDemoVehicles(company) {
+  if (company.id !== "demo_company_p0") return [];
+  return [
+    {
+      vehicle_id: "vh_demo_company_p0_2",
+      vehicleId: "vh_demo_company_p0_2",
+      vehicle_name: "V-Klasse",
+      vehicleName: "V-Klasse",
+      brand_model: "Mercedes V250",
+      brandModel: "Mercedes V250",
+      license_plate: "1-FLX-002",
+      licensePlate: "1-FLX-002",
+      is_active: true,
+      isActive: true,
+      passenger_capacity: 7,
+      passengerCapacity: 7,
+      tenant_id: company.id,
+      company_id: company.id,
+    },
+  ];
 }
 
 export function solidLogoPng({ r, g, b, barR, barG, barB }) {

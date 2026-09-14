@@ -206,6 +206,14 @@ export function isUsableCustomerPhone(normalized) {
   return digits.length >= 8 && digits.length <= 15;
 }
 
+export function isUsableCustomerVatNumber(value) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  const compact = text.replace(/[\s.\-/]/g, "");
+  if (/^[A-Za-z]{2}[A-Za-z0-9]{8,12}$/.test(compact)) return true;
+  return /^\d{8,12}$/.test(compact);
+}
+
 export function maskCustomerEmail(email) {
   const value = normalizeCustomerEmail(email);
   const at = value.indexOf("@");
@@ -475,7 +483,11 @@ export function validateCustomerWrite(body, { partial = false, allowImportSource
     value.locale = "";
   }
   if (body?.company_name != null || !partial) value.company_name = clip(body?.company_name, 160);
-  if (body?.vat_number != null || !partial) value.vat_number = clip(body?.vat_number, 40);
+  if (body?.vat_number != null || !partial) {
+    const vat = clip(body?.vat_number, 40);
+    if (vat && !isUsableCustomerVatNumber(vat)) fields.vat_number = "invalid";
+    else value.vat_number = vat;
+  }
   if (body?.internal_notes != null) {
     if (String(body.internal_notes).length > 2000) fields.internal_notes = "too_long";
     else value.internal_notes = clip(body.internal_notes, 2000);
