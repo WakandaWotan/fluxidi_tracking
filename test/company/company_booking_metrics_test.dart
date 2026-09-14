@@ -13,11 +13,11 @@ void main() {
       'ok': true,
       'record': <String, dynamic>{
         'booking': <String, dynamic>{
-          'duration_route_min': 38,
+          'duration_route_min': 29,
           'currency': 'EUR',
         },
         'quote': <String, dynamic>{
-          'duration_min': 38,
+          'duration_min': 29,
           'pricing': <String, dynamic>{
             'price_incl_vat': '46.70',
             'currency': 'EUR',
@@ -26,25 +26,25 @@ void main() {
         },
         'operational_legs': <Map<String, dynamic>>[
           <String, dynamic>{
-            'duration_min': 38,
+            'duration_min': 29,
             'price_incl_vat': 46.7,
           },
         ],
       },
     };
-    expect(resolveCompanyBookingDurationMin(raw), 38);
+    expect(resolveCompanyBookingDurationMin(raw), 29);
     expect(resolveCompanyBookingPriceInclVat(raw), 46.7);
     expect(formatCompanyBookingMoney(46.7), '46,70 EUR');
-    expect(formatCompanyBookingDurationMin(38), '38 min');
+    expect(formatCompanyBookingDurationMin(29), '29 min');
     final ride = CompanyAgendaRide.fromMap(<String, dynamic>{
       'booking_id': '2026-09-012',
-      'duration_route_min': 38,
+      'duration_route_min': 29,
       'price_incl_vat': '46.70',
       'currency': 'EUR',
       'pickup_iso': '2026-09-15T08:00:00.000Z',
     });
     expect(ride.durationUnknown, isFalse);
-    expect(ride.durationMin, 38);
+    expect(ride.durationMin, 29);
     expect(ride.priceInclVat, 46.7);
   });
 
@@ -102,11 +102,11 @@ void main() {
                 'from': 'Maarkedal',
                 'to': 'Ronse',
                 'pickup_iso': '2026-09-15T08:00:00.000Z',
-                'duration_route_min': 38,
+                'duration_route_min': 29,
                 'currency': 'EUR',
               },
               'quote': <String, dynamic>{
-                'duration_min': 38,
+                'duration_min': 29,
                 'pricing': <String, dynamic>{
                   'price_incl_vat': '46.70',
                   'currency': 'EUR',
@@ -126,12 +126,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Bedrag: 46,70 EUR'), findsOneWidget);
-    expect(find.text('Ritduur: 38 min'), findsOneWidget);
+    expect(find.text('Ritduur: 29 min'), findsOneWidget);
     await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Karel Peeters').last);
     await tester.pumpAndSettle();
-    expect(seenDuration, 38);
+    expect(seenDuration, 29);
     expect(
       find.text(kCompanyAgendaAvailabilityUnknown.of(AppLanguage.nl)),
       findsNothing,
