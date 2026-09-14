@@ -415,8 +415,10 @@ test("assignment overlap and unknown duration fail closed", async () => {
     duration_min: 60,
     assigned_driver_id: "drv_1",
   }, { idempotencyKey: "drv-overlap" });
-  assert.equal(overlap.res.status, 409);
-  assert.equal(overlap.json.error, "assignment_overlap");
+  assert.equal(overlap.json.ok, true, JSON.stringify(overlap.json));
+  assert.equal(overlap.json.saved_unassigned, true);
+  assert.equal(overlap.json.assignment_warning?.error, "assignment_overlap");
+  assert.equal(overlap.json.item?.assigned_driver_id || "", "");
 
   const unknown = await checkAssignmentOverlap(env, {
     scope: { tenant_id: TENANT_A, company_id: COMPANY_A },
@@ -607,8 +609,9 @@ test("continuous_wait rejects a conflicting assignment in the wait gap", async (
     duration_min: 30,
     assigned_driver_id: "drv_wait",
   }, { idempotencyKey: "cont-conflict" });
-  assert.equal(conflict.res.status, 409);
-  assert.equal(conflict.json.error, "assignment_overlap");
+  assert.equal(conflict.json.ok, true, JSON.stringify(conflict.json));
+  assert.equal(conflict.json.saved_unassigned, true);
+  assert.equal(conflict.json.assignment_warning?.error, "assignment_overlap");
 });
 
 test("return on another day appears on that date only", async () => {

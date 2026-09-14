@@ -801,6 +801,22 @@ import {
   matchCompanyAgendaPath,
   serveCompanyAgendaHttp,
 } from "./modules/company_agenda.mjs";
+import { serveCompanyAgendaQuoteHttp } from "./modules/company_plan_quote.mjs";
+import {
+  decorateDriverForDispatch,
+  defaultManualOverride,
+  loadDispatchFleet,
+  normalizeManualOverride,
+  normalizeRosterExceptions,
+  normalizeWeeklyRoster,
+  persistDriverPresence,
+  syncDriverAvailabilityForBookingStatus,
+} from "./modules/company_dispatch.mjs";
+import {
+  directionsWithNoSegmentRetry,
+  isUsableMapboxRoute,
+  routeFailureFromError,
+} from "./modules/mapbox_route_retry.mjs";
 import {
   serveCompanyCustomerQuotesHttp,
   servePublicCustomerQuoteHttp,
@@ -23537,6 +23553,18 @@ async function _loadDriverIndexRecord(env, scope) {
         entry.assigned_vehicle_id ?? entry.assignedVehicleId,
         96,
       ),
+      vehicle_ids: Array.isArray(entry.vehicle_ids ?? entry.vehicleIds)
+        ? (entry.vehicle_ids ?? entry.vehicleIds)
+            .map((id) => sanitizeTenantString(id, 128))
+            .filter(Boolean)
+        : [],
+      blocked: _coerceBoolean(entry.blocked ?? entry.is_blocked, false),
+      weekly_roster: entry.weekly_roster ?? entry.weeklyRoster ?? null,
+      weeklyRoster: entry.weeklyRoster ?? entry.weekly_roster ?? null,
+      roster_exceptions: entry.roster_exceptions ?? entry.rosterExceptions ?? [],
+      rosterExceptions: entry.rosterExceptions ?? entry.roster_exceptions ?? [],
+      manual_override: entry.manual_override ?? entry.manualOverride ?? null,
+      manualOverride: entry.manualOverride ?? entry.manual_override ?? null,
       agenda_color: _driverAgendaColor(entry),
       agendaColor: _driverAgendaColor(entry),
       driver_photo_url: _driverAgendaPhotoUrl(entry),
@@ -28764,7 +28792,33 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     if (msg.includes("route_config_missing") || msg.includes("MAPBOX_TOKEN")) {
       return _missingMapboxConfigResult();
     }
-    throw err;
+    const failure = routeFailureFromError(err);
+    return {
+      status: 422,
+      out: {
+        ok: false,
+        error: "route_failed",
+        error_code: failure.code,
+        message: failure.message,
+        distance_km: null,
+        duration_min: null,
+        price_incl_vat: null,
+      },
+    };
+  }
+  if (!isUsableMapboxRoute(routeOut?.route)) {
+    return {
+      status: 422,
+      out: {
+        ok: false,
+        error: "route_failed",
+        error_code: "route_not_usable",
+        message: "Er is geen bruikbare wegroute gevonden tussen deze adressen.",
+        distance_km: null,
+        duration_min: null,
+        price_incl_vat: null,
+      },
+    };
   }
   const route_source =
     routeOut.fromSource === "coordinates" && routeOut.toSource === "coordinates"
@@ -28924,26 +28978,33 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     });
   }
   const quoteMainUsesFixedFare = fixedFareQuoteResult.matched === true;
+  const quoteCalculatorEnabled = pricingProfile.calculator_enabled !== false;
   const quoteMainPricingSource = quoteMainUsesFixedFare
     ? (fixedFareQuoteResult.pricing_source || "airport_fixed_fare")
     : quoteRequestQuoteRequired
       ? "request_quote"
-      : "route_calc";
+      : quoteCalculatorEnabled
+        ? "route_calc"
+        : "calculator_off";
   const quoteMainFixedFareApplied = quoteMainUsesFixedFare;
   const quoteMainFixedFareRuleId = quoteMainUsesFixedFare
     ? (fixedFareQuoteResult.fixed_fare_rule_id || null)
     : null;
 
-  // Pricing: server truth
+  // Pricing: server truth. Route metrics stay available when the company
+  // calculator is off or a manual quote is required.
+  const quoteSuppressAutoPrice = !quoteMainUsesFixedFare && (quoteRequestQuoteRequired || !quoteCalculatorEnabled);
   const mainPricing = quoteMainUsesFixedFare
     ? fixedFareQuoteResult.pricing
-    : quoteRequestQuoteRequired
+    : quoteSuppressAutoPrice
     ? {
         price_ex_vat: null,
         price_vat: null,
         price_incl_vat: null,
-        note: "Geen vaste prijs van toepassing. Vraag een offerte aan.",
-        breakdown: { kind: "request_quote" },
+        note: quoteRequestQuoteRequired
+          ? "Geen vaste prijs van toepassing. Vraag een offerte aan."
+          : "Automatische prijsberekening is uitgeschakeld.",
+        breakdown: { kind: quoteRequestQuoteRequired ? "request_quote" : "calculator_off" },
       }
     : calcPrice({
       distance_km,
@@ -29585,15 +29646,15 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       duration_min: duration_route_min,
       legs,
 
-      price_ex_vat: quoteRequestQuoteRequired ? null : mainPricing.price_ex_vat,
-      price_vat: quoteRequestQuoteRequired ? null : mainPricing.price_vat,
-      price_incl_vat: quoteRequestQuoteRequired ? null : mainPricing.price_incl_vat,
-      price_ex_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_ex_vat,
-      price_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_vat,
-      price_incl_vat_main: quoteRequestQuoteRequired ? null : mainPricing.price_incl_vat,
-      price_ex_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_ex_vat ?? null),
-      price_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_vat ?? null),
-      price_incl_vat_return: quoteRequestQuoteRequired ? null : (returnQuote?.price_incl_vat ?? null),
+      price_ex_vat: quoteSuppressAutoPrice ? null : mainPricing.price_ex_vat,
+      price_vat: quoteSuppressAutoPrice ? null : mainPricing.price_vat,
+      price_incl_vat: quoteSuppressAutoPrice ? null : mainPricing.price_incl_vat,
+      price_ex_vat_main: quoteSuppressAutoPrice ? null : mainPricing.price_ex_vat,
+      price_vat_main: quoteSuppressAutoPrice ? null : mainPricing.price_vat,
+      price_incl_vat_main: quoteSuppressAutoPrice ? null : mainPricing.price_incl_vat,
+      price_ex_vat_return: quoteSuppressAutoPrice ? null : (returnQuote?.price_ex_vat ?? null),
+      price_vat_return: quoteSuppressAutoPrice ? null : (returnQuote?.price_vat ?? null),
+      price_incl_vat_return: quoteSuppressAutoPrice ? null : (returnQuote?.price_incl_vat ?? null),
       note: mainPricing.note,
       pricing_profile: pricingProfile,
       pricing_source: quotePricingSource,
@@ -29610,9 +29671,9 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       fixed_fare_rule_id_return: quoteReturnFixedFareRuleId,
 
       // totals (main + optional return)
-      total_price_ex_vat: quoteRequestQuoteRequired ? null : round2((mainEx || 0) + (retEx || 0)),
-      total_price_vat: quoteRequestQuoteRequired ? null : round2((mainVat || 0) + (retVat || 0)),
-      total_price_incl_vat: quoteRequestQuoteRequired ? null : round2((mainIncl || 0) + (retIncl || 0)),
+      total_price_ex_vat: quoteSuppressAutoPrice ? null : round2((mainEx || 0) + (retEx || 0)),
+      total_price_vat: quoteSuppressAutoPrice ? null : round2((mainVat || 0) + (retVat || 0)),
+      total_price_incl_vat: quoteSuppressAutoPrice ? null : round2((mainIncl || 0) + (retIncl || 0)),
 
       return: returnQuote,
       breakdown: mainPricing.breakdown,
@@ -29933,6 +29994,42 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
   const scope = { tenant_id: tenantId, company_id: companyId };
   const existing = await _loadDriverIndexRecord(env, scope);
   const existingDriver = existing?.drivers?.[driverId] || {};
+  const vehicleIdsInput = Array.isArray(body.vehicle_ids ?? body.vehicleIds)
+    ? (body.vehicle_ids ?? body.vehicleIds)
+        .map((id) => sanitizeTenantString(id, 128))
+        .filter(Boolean)
+    : (Array.isArray(existingDriver.vehicle_ids) ? existingDriver.vehicle_ids : []);
+  const resolvedRoster = Object.prototype.hasOwnProperty.call(body, "weekly_roster") ||
+    Object.prototype.hasOwnProperty.call(body, "weeklyRoster")
+    ? normalizeWeeklyRoster(body.weekly_roster ?? body.weeklyRoster)
+    : (existingDriver.weekly_roster ?? existingDriver.weeklyRoster ?? null);
+  const resolvedExceptions = Object.prototype.hasOwnProperty.call(body, "roster_exceptions") ||
+    Object.prototype.hasOwnProperty.call(body, "rosterExceptions")
+    ? normalizeRosterExceptions(body.roster_exceptions ?? body.rosterExceptions)
+    : (existingDriver.roster_exceptions ?? existingDriver.rosterExceptions ?? []);
+  let resolvedOverride = Object.prototype.hasOwnProperty.call(body, "manual_override") ||
+    Object.prototype.hasOwnProperty.call(body, "manualOverride")
+    ? normalizeManualOverride(body.manual_override ?? body.manualOverride)
+    : (existingDriver.manual_override ?? existingDriver.manualOverride ?? null);
+  if (body.manual_active === true || body.manualActive === true) {
+    resolvedOverride = defaultManualOverride(
+      "active",
+      Date.now(),
+      resolvedRoster,
+      resolvedExceptions,
+    );
+  }
+  if (body.manual_inactive === true || body.manualInactive === true) {
+    resolvedOverride = defaultManualOverride(
+      "inactive",
+      Date.now(),
+      resolvedRoster,
+      resolvedExceptions,
+    );
+  }
+  if (body.clear_manual_override === true || body.clearManualOverride === true) {
+    resolvedOverride = null;
+  }
   const deletedDrivers = {
     ...(existing?.deleted_drivers || existing?.deletedDrivers || {}),
   };
@@ -30041,6 +30138,13 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
     availabilityStatus: resolvedAvailabilityStatus,
     driver_status: resolvedAvailabilityStatus,
     assigned_vehicle_id: assignedVehicleId,
+    vehicle_ids: vehicleIdsInput,
+    weekly_roster: resolvedRoster,
+    weeklyRoster: resolvedRoster,
+    roster_exceptions: resolvedExceptions,
+    rosterExceptions: resolvedExceptions,
+    manual_override: resolvedOverride,
+    manualOverride: resolvedOverride,
     agenda_color: resolvedAgendaColor,
     agendaColor: resolvedAgendaColor,
     driver_photo_url: resolvedDriverPhotoUrl,
@@ -31069,6 +31173,7 @@ async function handlePublicDriverAvailabilityUpdate(request, env) {
     drivers: nextDrivers,
     updated_at: nowIso,
   });
+  const heartbeat = await persistDriverPresence(env, scope, driverId, Date.now());
   return json(
     {
       ok: true,
@@ -31077,6 +31182,30 @@ async function handlePublicDriverAvailabilityUpdate(request, env) {
       driver_id: driverId,
       availability_status: desired,
       availabilityStatus: desired,
+      last_seen_at: heartbeat.last_seen_at || nowIso,
+    },
+    200,
+  );
+}
+
+async function handlePublicDriverHeartbeat(request, env) {
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const session = await _loadPublicDriverSessionFromRequest(request, env);
+  if (!session) {
+    return _publicDriverAuthFail();
+  }
+  const driverId = sanitizeTenantString(session.driver_id, 96);
+  const scope = {
+    tenant_id: session.tenant_id,
+    company_id: session.company_id,
+  };
+  const result = await persistDriverPresence(env, scope, driverId, Date.now());
+  return json(
+    {
+      ok: true,
+      driver_id: driverId,
+      last_seen_at: result.last_seen_at || "",
+      wrote: result.wrote === true,
     },
     200,
   );
@@ -45699,10 +45828,19 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const record = await _loadDriverIndexRecord(env, authScope.explicitScope);
+        const fleet = await loadDispatchFleet(env, authScope.explicitScope);
+        const nowMs = Date.now();
         const drivers = Object.values(record?.drivers || {})
           .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
-          .map((entry) => ({
-            driver_id: sanitizeTenantString(entry.driver_id ?? entry.driverId, 96),
+          .map((entry) => {
+            const driverId = sanitizeTenantString(entry.driver_id ?? entry.driverId, 96);
+            const decorated = decorateDriverForDispatch(
+              entry,
+              fleet.presenceMap[driverId] || {},
+              nowMs,
+            );
+            return {
+            driver_id: driverId,
             display_name: _normalizeDriverDisplayName(
               entry.display_name ?? entry.displayName ?? entry.fullName,
             ),
@@ -45719,6 +45857,15 @@ export default {
               entry.assigned_vehicle_id ?? entry.assignedVehicleId,
               96,
             ),
+            vehicle_ids: Array.isArray(entry.vehicle_ids) ? entry.vehicle_ids : [],
+            scheduled_active: decorated.scheduled_active === true,
+            working: decorated.working === true,
+            live_connected: decorated.live_connected === true,
+            last_seen_at: decorated.last_seen_at || "",
+            presence_label: decorated.presence_label || "",
+            weekly_roster: entry.weekly_roster ?? null,
+            roster_exceptions: entry.roster_exceptions ?? [],
+            manual_override: entry.manual_override ?? null,
             agenda_color: (() => {
               const raw = String(entry.agenda_color ?? entry.agendaColor ?? "")
                 .trim();
@@ -45744,7 +45891,8 @@ export default {
               ).trim();
               return local.startsWith("/local/media/") ? local : "";
             })(),
-          }))
+            };
+          })
           .filter((row) => row.driver_id);
         return json(
           {
@@ -45858,6 +46006,13 @@ export default {
         return handlePublicDriverAvailabilityUpdate(request, env);
       }
 
+      if (url.pathname === "/public/driver/heartbeat") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handlePublicDriverHeartbeat(request, env);
+      }
+
       if (url.pathname === "/driver/bookings") {
         if (request.method !== "GET") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -45867,6 +46022,12 @@ export default {
           console.log("[DRIVER_BOOKINGS][DENY] reason=unauthorized");
           return _publicDriverAuthFail();
         }
+        persistDriverPresence(
+          env,
+          { tenant_id: session.tenant_id, company_id: session.company_id },
+          session.driver_id,
+          Date.now(),
+        ).catch(() => {});
         const limit = Number(url.searchParams.get("limit") || "50");
         const includeHistory =
           (url.searchParams.get("include_history") || "").toLowerCase() === "1";
@@ -46082,6 +46243,17 @@ export default {
           tenantScope: scopedAgendaRoute.scope,
         });
         if (!agendaAuth.ok) return agendaAuth.response;
+        if (companyAgendaRoute.kind === "quote") {
+          if (request.method !== "POST") {
+            return json({ ok: false, error: "method_not_allowed" }, 405);
+          }
+          return await serveCompanyAgendaQuoteHttp({
+            env,
+            body: agendaBody,
+            scope: scopedAgendaRoute.scope,
+            quoteHandler: _handleQuoteRequestInternal,
+          });
+        }
         return await serveCompanyAgendaHttp({
           env,
           method: request.method,
@@ -50854,6 +51026,19 @@ export default {
               persist_fields: limousineCancelPersistFields,
             },
           );
+          if (out?.ok) {
+            const assignedDriverId = sanitizeTenantString(
+              rec?.assigned_driver_id || rec?.booking?.assigned_driver_id || trusted?.driver_session?.driver_id,
+              96,
+            );
+            if (assignedDriverId) {
+              await syncDriverAvailabilityForBookingStatus(env, {
+                scope: tenantScope,
+                driverId: assignedDriverId,
+                status: body?.status,
+              }).catch(() => {});
+            }
+          }
           return json(
             out,
             out?.error === "missing_tenant_scope"
@@ -77695,10 +77880,14 @@ function readExplicitCoordinatePair(body, prefix) {
   if (key !== "from" && key !== "to") return null;
 
   const lat = parseFiniteCoordinateNumber(
-    body?.[`${key}_lat`] ?? body?.[`${key}Lat`]
+    key === "from"
+      ? (body?.from_lat ?? body?.fromLat ?? body?.pickup_lat ?? body?.pickupLat)
+      : (body?.to_lat ?? body?.toLat ?? body?.dropoff_lat ?? body?.dropoffLat)
   );
   const lng = parseFiniteCoordinateNumber(
-    body?.[`${key}_lng`] ?? body?.[`${key}Lng`]
+    key === "from"
+      ? (body?.from_lng ?? body?.fromLng ?? body?.pickup_lng ?? body?.pickupLng ?? body?.pickup_lon ?? body?.pickupLon)
+      : (body?.to_lng ?? body?.toLng ?? body?.dropoff_lng ?? body?.dropoffLng ?? body?.dropoff_lon ?? body?.dropoffLon)
   );
 
   if (lat == null || lng == null) return null;
@@ -77843,7 +78032,11 @@ async function routeFromTextsWithStopsDetailed({
   const waypointNames = [String(fromText || "").trim(), ...stopNamesOk, String(toText || "").trim()].filter(Boolean);
   const coords = [from, ...stopCoords, to];
 
-  const route = await directionsMulti(coords, token);
+  const route = await directionsWithNoSegmentRetry({
+    coords,
+    token,
+    directions: directionsMulti,
+  });
 
   const legs = Array.isArray(route.legs) ? route.legs : [];
   const legsOut = legs.map((leg, idx) => {
@@ -77895,6 +78088,7 @@ const DEFAULT_TENANT_PRICING_PROFILE = {
   return_enabled: true,
   return_fee: 0.0,
   fuel_surcharge: 0.0,
+  calculator_enabled: true,
 };
 
 function _numOr(v, fb) {
@@ -78032,6 +78226,9 @@ function _normalizeTenantPricingProfile(raw) {
       : !!src.return_enabled,
     return_fee: Math.max(0, _numOr(src.return_fee, DEFAULT_TENANT_PRICING_PROFILE.return_fee)),
     fuel_surcharge: Math.max(0, _numOr(src.fuel_surcharge, DEFAULT_TENANT_PRICING_PROFILE.fuel_surcharge)),
+    calculator_enabled: src.calculator_enabled == null && src.auto_price_enabled == null
+      ? true
+      : !(src.calculator_enabled === false || src.auto_price_enabled === false),
   };
   const currencyCandidates = [
     src.currency,

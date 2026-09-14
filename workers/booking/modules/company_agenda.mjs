@@ -25,6 +25,7 @@ import {
   publicItemOverlapsPeriod,
   resolveAgendaLegTarget,
   resolveBookingCurrency,
+  resolveBookingDistanceKm,
   resolveBookingDurationMin,
   resolveBookingPriceExVat,
   resolveBookingPriceInclVat,
@@ -37,6 +38,18 @@ import {
   resolveCompanyFixedPrice,
   stampCompanyFixedPriceSnapshot,
 } from "./company_fixed_prices.mjs";
+import {
+  ASSIGNMENT_SAFETY_MARGIN_MIN,
+  driverFromFleet,
+  evaluateDriverEligibility,
+  evaluateVehicleEligibility,
+  expandWindowsWithSafetyMargin,
+  loadDispatchFleet,
+  publicAssignmentChoice,
+  resolveAutoVehicle,
+  rideIsSoon,
+  vehicleFromFleet,
+} from "./company_dispatch.mjs";
 
 const AGENDA_LIST_LIMIT = 200;
 const OVERLAP_INDEX_CAP = 24;
@@ -54,6 +67,8 @@ export function matchCompanyAgendaPath(pathname) {
   const path = String(pathname || "");
   if (path === "/company/agenda/rides") return { kind: "rides" };
   if (path === "/company/agenda/overlap") return { kind: "overlap" };
+  if (path === "/company/agenda/quote") return { kind: "quote" };
+  if (path === "/company/agenda/assignment-choices") return { kind: "assignment-choices" };
   const ride = path.match(
     /^\/company\/agenda\/rides\/([^/]+)(?:\/(assign|unassign|reschedule|phone-confirm))?$/,
   );
@@ -269,6 +284,10 @@ export async function checkAssignmentOverlap(env, input) {
   if (proposed.unknown || !proposed.windows.length) {
     return { ok: false, error: "assignment_availability_unknown" };
   }
+  const proposedWindows = expandWindowsWithSafetyMargin(
+    proposed.windows,
+    input.safetyMarginMin ?? ASSIGNMENT_SAFETY_MARGIN_MIN,
+  );
   const ids = new Set();
   const collect = (raw, window) => {
     const candidates = overlapCandidateIds(raw, window);
@@ -278,7 +297,7 @@ export async function checkAssignmentOverlap(env, input) {
     for (const id of candidates.ids) ids.add(id);
     return { incomplete: false };
   };
-  for (const window of proposed.windows) {
+  for (const window of proposedWindows) {
     if (driverId) {
       const raw = await kvJson(
         env.BOOKING_KV,
@@ -311,7 +330,7 @@ export async function checkAssignmentOverlap(env, input) {
       return { ok: false, error: "assignment_availability_unknown", booking_id: bookingId };
     }
     if (!other.windows.length) continue;
-    for (const window of proposed.windows) {
+    for (const window of proposedWindows) {
       for (const otherWindow of other.windows) {
         if (intervalsOverlap(window.start, window.end, otherWindow.start, otherWindow.end)) {
           return { ok: false, error: "assignment_overlap", booking_id: bookingId };
@@ -411,6 +430,7 @@ function publicAgendaItem(record, bookingId) {
     price_ex_vat: priceExVat,
     price_vat: priceVat,
     currency: resolveBookingCurrency(record),
+    distance_km: resolveBookingDistanceKm(record),
     service: safeStr(booking.service || record?.service, 32),
     tier: safeStr(booking.tier || record?.tier, 32),
     bags: Number(booking.bags ?? record?.bags ?? 0) || 0,
@@ -536,6 +556,10 @@ function buildPlannedBookingRecord({ tenantId, companyId, bookingId, body, now }
   const hasPrice = price != null && String(price).trim() !== "";
   const rideOptions = normalizeAgendaRideOptions(body);
   const note = sanitizeTenantString(body.note || body.description, 500);
+  const distanceKm = Number(body.distance_km ?? body.distanceKm);
+  const hasDistance = Number.isFinite(distanceKm) && distanceKm > 0;
+  const pricingSource = safeStr(body.pricing_source || body.pricingSource, 40);
+  const durationRouteMin = Number(body.duration_route_min ?? body.durationRouteMin ?? durationMin);
   return {
     booking_id: bookingId,
     tenant_id: tenantId,
@@ -550,7 +574,10 @@ function buildPlannedBookingRecord({ tenantId, companyId, bookingId, body, now }
     ride_started: false,
     pickup_iso: pickupIso,
     duration_min: durationUnknown ? null : durationMin,
+    duration_route_min: durationUnknown ? null : (Number.isFinite(durationRouteMin) && durationRouteMin > 0 ? durationRouteMin : durationMin),
     duration_unknown: durationUnknown,
+    ...(hasDistance ? { distance_km: Number(distanceKm.toFixed(1)) } : {}),
+    ...(pricingSource ? { pricing_source: pricingSource } : {}),
     assigned_driver_id: safeStr(body.assigned_driver_id || body.driver_id, 96) || null,
     assigned_vehicle_id: safeStr(body.assigned_vehicle_id || body.vehicle_id, 128) || null,
     created_at: now,
@@ -583,6 +610,9 @@ function buildPlannedBookingRecord({ tenantId, companyId, bookingId, body, now }
       customer_phone: safeStr(body.customer_phone || body.customerPhone, 40),
       currency: safeStr(body.currency, 8) || "EUR",
       ...(hasPrice ? { price_incl_vat: Number(price) } : {}),
+      ...(hasDistance ? { distance_km: Number(distanceKm.toFixed(1)) } : {}),
+      ...(pricingSource ? { pricing_source: pricingSource } : {}),
+      duration_route_min: durationUnknown ? null : (Number.isFinite(durationRouteMin) && durationRouteMin > 0 ? durationRouteMin : durationMin),
       status: "PENDING",
       source: "company_agenda",
       do_not_dispatch: true,
@@ -647,23 +677,53 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
   }
 
   const plannedChecks = assignmentWindowsForWrite(parsed);
-  if (plannedChecks.unknown && plannedChecks.checks.some((check) => check.driverId || check.vehicleId)) {
-    return { ok: false, error: "assignment_availability_unknown" };
+  let assignmentWarning = null;
+  const writeBody = { ...(body || {}) };
+  const wantsAssignment = plannedChecks.checks.some((check) => check.driverId || check.vehicleId);
+  if (wantsAssignment && plannedChecks.unknown) {
+    assignmentWarning = { error: "assignment_availability_unknown" };
   }
-  for (const check of plannedChecks.checks) {
-    if (!check.window || check.window.durationUnknown || check.window.end == null) {
-      if (check.driverId || check.vehicleId) {
-        return { ok: false, error: "assignment_availability_unknown" };
+  if (wantsAssignment && !assignmentWarning) {
+    for (const check of plannedChecks.checks) {
+      if (!check.window || check.window.durationUnknown || check.window.end == null) {
+        if (check.driverId || check.vehicleId) {
+          assignmentWarning = { error: "assignment_availability_unknown" };
+          break;
+        }
+        continue;
       }
-      continue;
+      const enforced = await enforceDispatchAssignment(env, {
+        scope: { tenant_id: tenantId, company_id: companyId },
+        driverId: check.driverId,
+        vehicleId: check.vehicleId,
+        pickupIso: parsed.pickupIso || pickupIso,
+        windows: [check.window],
+      });
+      if (!enforced.ok) {
+        assignmentWarning = enforced;
+        break;
+      }
+      if (enforced.legacy || enforced.skipped) {
+        const overlap = await checkAssignmentOverlap(env, {
+          scope: { tenant_id: tenantId, company_id: companyId },
+          driverId: check.driverId,
+          vehicleId: check.vehicleId || enforced.vehicleId,
+          windows: [check.window],
+        });
+        if (!overlap.ok) {
+          assignmentWarning = overlap;
+          break;
+        }
+      } else if (enforced.vehicleId && !writeBody.assigned_vehicle_id && !writeBody.vehicle_id) {
+        writeBody.assigned_vehicle_id = enforced.vehicleId;
+      }
     }
-    const overlap = await checkAssignmentOverlap(env, {
-      scope: { tenant_id: tenantId, company_id: companyId },
-      driverId: check.driverId,
-      vehicleId: check.vehicleId,
-      windows: [check.window],
-    });
-    if (!overlap.ok) return overlap;
+  }
+  if (assignmentWarning) {
+    writeBody.assigned_driver_id = "";
+    writeBody.assigned_vehicle_id = "";
+    writeBody.driver_id = "";
+    writeBody.vehicle_id = "";
   }
 
   const bookingId = await agendaBookingId(tenantId, companyId, key);
@@ -672,22 +732,22 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     tenantId,
     companyId,
     bookingId,
-    body,
+    body: writeBody,
     now,
   });
   applyCompanyRoundtripFields(record, parsed, { bookingId, now });
   const quotedSnapshot =
-    body?.fixed_price_snapshot && typeof body.fixed_price_snapshot === "object"
-      ? body.fixed_price_snapshot
+    writeBody?.fixed_price_snapshot && typeof writeBody.fixed_price_snapshot === "object"
+      ? writeBody.fixed_price_snapshot
       : null;
   const lockedQuotePrice =
-    body?.quote_price_locked === true ||
-    !!safeStr(body?.accepted_quote_id || body?.acceptedQuoteId, 80);
+    writeBody?.quote_price_locked === true ||
+    !!safeStr(writeBody?.accepted_quote_id || writeBody?.acceptedQuoteId, 80);
   const live = await resolveCompanyFixedPrice(
     env,
     { tenant_id: tenantId, company_id: companyId, hasScope: true },
     {
-      ...body,
+      ...writeBody,
       from,
       to,
       pickup_lat: body?.pickup_lat ?? body?.from_lat ?? body?.fromLat,
@@ -760,6 +820,9 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     listed: listed?.ok === true,
     item: items[0],
     items,
+    ...(assignmentWarning
+      ? { assignment_warning: assignmentWarning, saved_unassigned: true }
+      : {}),
   };
 }
 
@@ -810,6 +873,158 @@ async function persistAgendaBooking(env, { tenantId, companyId, bookingId, recor
   }
 }
 
+const ASSIGNMENT_CONFLICT_ERRORS = new Set([
+  "assignment_overlap",
+  "assignment_vehicle_overlap",
+  "assignment_availability_unknown",
+  "assignment_driver_inactive",
+  "assignment_driver_blocked",
+  "assignment_driver_not_scheduled",
+  "assignment_driver_paused",
+  "assignment_driver_on_trip",
+  "assignment_driver_offline",
+  "assignment_driver_not_live",
+  "assignment_driver_no_vehicle",
+  "assignment_vehicle_unavailable",
+  "assignment_vehicle_busy",
+  "assignment_vehicle_choice_required",
+]);
+
+export function assignmentConflictStatus(error) {
+  return ASSIGNMENT_CONFLICT_ERRORS.has(String(error || "")) ? 409 : 0;
+}
+
+export async function enforceDispatchAssignment(env, {
+  scope,
+  driverId,
+  vehicleId,
+  pickupIso,
+  windows,
+  excludeBookingId,
+}) {
+  const fleet = await loadDispatchFleet(env, scope);
+  const driver = driverFromFleet(fleet, driverId);
+  if (!driverId) {
+    return { ok: true, vehicleId: sanitizeTenantString(vehicleId, 128), skipped: true };
+  }
+  if (!driver) {
+    return { ok: true, vehicleId: sanitizeTenantString(vehicleId, 128), legacy: true };
+  }
+  const atMs = Date.now();
+  const presence = fleet.presenceMap[driverId] || {};
+  const overlap = await checkAssignmentOverlap(env, {
+    scope,
+    driverId,
+    vehicleId,
+    windows,
+    excludeBookingId,
+  });
+  const evaluation = evaluateDriverEligibility({
+    driver,
+    presence,
+    vehicles: fleet.vehicles,
+    drivers: fleet.drivers,
+    atMs,
+    pickupIso,
+    overlap,
+  });
+  if (!evaluation.ok) {
+    return { ok: false, error: evaluation.error, reasons: evaluation.reasons };
+  }
+  const auto = resolveAutoVehicle({
+    driver,
+    vehicles: fleet.vehicles,
+    drivers: fleet.drivers,
+    atMs,
+    requestedVehicleId: vehicleId,
+  });
+  if (!auto.ok) {
+    return { ok: false, error: auto.error, vehicles: auto.choices };
+  }
+  if (auto.vehicleId) {
+    const vehicleOverlap = await checkAssignmentOverlap(env, {
+      scope,
+      vehicleId: auto.vehicleId,
+      windows,
+      excludeBookingId,
+    });
+    const vehicleCheck = evaluateVehicleEligibility({
+      vehicle: vehicleFromFleet(fleet, auto.vehicleId),
+      drivers: fleet.drivers,
+      driver,
+      atMs,
+      overlap: vehicleOverlap,
+    });
+    if (!vehicleCheck.ok) return vehicleCheck;
+  }
+  return {
+    ok: true,
+    vehicleId: auto.vehicleId,
+    auto: auto.auto === true,
+  };
+}
+
+export async function listAssignmentChoices(env, input = {}) {
+  const scope = {
+    tenant_id: input.scope?.tenant_id || input.tenant_id,
+    company_id: input.scope?.company_id || input.company_id,
+  };
+  const fleet = await loadDispatchFleet(env, scope);
+  const atMs = Date.parse(String(input.now || "")) || Date.now();
+  const pickupIso = safeStr(input.pickupIso || input.pickup_iso, 80);
+  const durationMin = Number(input.durationMin ?? input.duration_min);
+  const excludeBookingId = safeStr(input.excludeBookingId || input.exclude_booking_id, 160);
+  const currentDriverId = sanitizeTenantString(
+    input.currentDriverId || input.current_driver_id || input.exclude_driver_id,
+    96,
+  );
+  const soon = rideIsSoon(pickupIso, atMs);
+  const windows = Number.isFinite(durationMin) && durationMin > 0 && pickupIso
+    ? [{ start: Date.parse(pickupIso), end: Date.parse(pickupIso) + durationMin * 60000, durationUnknown: false }]
+    : [];
+  const drivers = [];
+  for (const driver of fleet.drivers) {
+    const id = sanitizeTenantString(driver.driver_id || driver.driverId, 96);
+    if (!id || id === currentDriverId) continue;
+    const overlap = windows.length
+      ? await checkAssignmentOverlap(env, {
+          scope,
+          driverId: id,
+          pickupIso,
+          durationMin,
+          excludeBookingId,
+          windows,
+        })
+      : { ok: false, error: "assignment_availability_unknown" };
+    const evaluation = evaluateDriverEligibility({
+      driver,
+      presence: fleet.presenceMap[id] || {},
+      vehicles: fleet.vehicles,
+      drivers: fleet.drivers,
+      atMs,
+      pickupIso,
+      overlap,
+      soon,
+    });
+    if (evaluation.ok) {
+      drivers.push(publicAssignmentChoice(driver, evaluation));
+    }
+  }
+  const current = currentDriverId ? driverFromFleet(fleet, currentDriverId) : null;
+  return {
+    ok: true,
+    soon,
+    current_driver: current
+      ? {
+          driver_id: currentDriverId,
+          display_name: safeStr(current.display_name || current.displayName, 160),
+        }
+      : null,
+    drivers,
+    empty: drivers.length === 0,
+  };
+}
+
 export async function assignAgendaRide(env, { scope, bookingId, body }) {
   const { tenantId, companyId } = scopeIds(scope);
   const id = safeStr(bookingId, 160);
@@ -851,14 +1066,26 @@ export async function assignAgendaRide(env, { scope, bookingId, body }) {
       : mode === "split_no_wait"
         ? occupancy.windows.slice(0, 1)
         : occupancy.windows;
-  const overlap = await checkAssignmentOverlap(env, {
+  const enforced = await enforceDispatchAssignment(env, {
     scope: { tenant_id: tenantId, company_id: companyId },
     driverId,
     vehicleId,
+    pickupIso: nextForCheck.pickup_iso || nextForCheck.booking?.pickup_iso,
     windows: assignWindows,
     excludeBookingId: id,
   });
-  if (!overlap.ok) return overlap;
+  if (!enforced.ok) return enforced;
+  const resolvedVehicleId = enforced.vehicleId || vehicleId;
+  if (enforced.legacy || enforced.skipped) {
+    const overlap = await checkAssignmentOverlap(env, {
+      scope: { tenant_id: tenantId, company_id: companyId },
+      driverId,
+      vehicleId: resolvedVehicleId,
+      windows: assignWindows,
+      excludeBookingId: id,
+    });
+    if (!overlap.ok) return overlap;
+  }
   const previousDriver = safeStr(record.assigned_driver_id || record.booking?.assigned_driver_id, 96);
   const previousVehicle = safeStr(record.assigned_vehicle_id || record.booking?.assigned_vehicle_id, 128);
   const now = new Date().toISOString();
@@ -880,7 +1107,7 @@ export async function assignAgendaRide(env, { scope, bookingId, body }) {
       assignment_accepted: false,
       do_not_dispatch: record.do_not_dispatch === true || record.booking?.do_not_dispatch === true,
     },
-  }, { leg, driverId, vehicleId, now });
+  }, { leg, driverId, vehicleId: resolvedVehicleId, now });
   await removeBookingFromAssignmentIndexes(
     env,
     { tenant_id: tenantId, company_id: companyId, hasScope: true },
@@ -1101,15 +1328,22 @@ export async function serveCompanyAgendaHttp({ env, method, route, url, body, re
       idempotencyKey: idem,
     });
     if (!created.ok) {
-      const status =
-        created.error === "assignment_overlap" ||
-        created.error === "assignment_availability_unknown" ||
-        created.error === "price_changed"
-          ? 409
-          : 400;
+      const status = created.error === "price_changed" ? 409 : 400;
       return json(created, status);
     }
     return json(created, created.idempotent ? 200 : 201);
+  }
+  if (route.kind === "assignment-choices" && method === "GET") {
+    const listed = await listAssignmentChoices(env, {
+      scope,
+      pickupIso: url.searchParams.get("pickup_iso"),
+      durationMin: url.searchParams.get("duration_min"),
+      excludeBookingId: url.searchParams.get("exclude_booking_id"),
+      currentDriverId: url.searchParams.get("current_driver_id"),
+      returnPickupIso: url.searchParams.get("return_pickup_iso"),
+      returnDurationMin: url.searchParams.get("return_duration_min"),
+    });
+    return json(listed, 200);
   }
   if (route.kind === "overlap" && method === "GET") {
     const checked = await checkAssignmentOverlap(env, {
@@ -1144,8 +1378,7 @@ export async function serveCompanyAgendaHttp({ env, method, route, url, body, re
     });
     if (!mutated.ok) {
       const status =
-        mutated.error === "assignment_overlap" ||
-        mutated.error === "assignment_availability_unknown" ||
+        assignmentConflictStatus(mutated.error) ||
         mutated.error === "revision_conflict"
           ? 409
           : mutated.error === "booking_not_found"

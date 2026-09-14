@@ -174,6 +174,17 @@ export function resolveBookingPricingSource(record) {
   );
 }
 
+export function resolveBookingDistanceKm(record) {
+  const booking = bookingMap(record);
+  const quote = quoteMap(record);
+  return firstMoney([
+    record?.distance_km,
+    booking.distance_km,
+    quote.distance_km,
+    quote?.pricing_main?.breakdown?.distance_km,
+  ]);
+}
+
 export function normalizeReturnEnabled(body) {
   const explicit = !!(
     body?.return_enabled ??
