@@ -211,6 +211,123 @@ void main() {
     expect(find.text(kCompanyAgendaRouteRetry.of(AppLanguage.nl)), findsOneWidget);
     expect(find.text('Geen bruikbare wegroute tussen deze adressen.'), findsOneWidget);
   });
+
+  test('drawn addresses without a quote are calculating, not route_required', () {
+    final from = _selected('Gent');
+    final to = _selected('Ronse', lat: 50.74, lon: 3.60);
+    expect(
+      companyPlanRouteStatus(
+        from: from,
+        to: to,
+        loading: true,
+        quote: null,
+        error: null,
+      ),
+      CompanyPlanRouteStatus.calculating,
+    );
+    expect(
+      companyPlanRouteStatus(
+        from: from,
+        to: to,
+        loading: false,
+        quote: const CompanyPlanQuoteResult(
+          fingerprint: 'ok',
+          distanceKm: 34.2,
+          durationMin: 29,
+          pickupLat: 51.05,
+          pickupLon: 3.72,
+          dropoffLat: 50.74,
+          dropoffLon: 3.60,
+        ),
+        error: null,
+      ),
+      CompanyPlanRouteStatus.ready,
+    );
+    expect(
+      companyPlanRouteStatus(
+        from: from,
+        to: to,
+        loading: false,
+        quote: null,
+        error: 'route_failed',
+      ),
+      CompanyPlanRouteStatus.failed,
+    );
+    expect(
+      companyPlanRouteStatus(
+        from: const LimousineAddressValue(displayText: 'Ko'),
+        to: to,
+        loading: false,
+        quote: const CompanyPlanQuoteResult(
+          fingerprint: 'stale',
+          distanceKm: 34.2,
+          durationMin: 29,
+        ),
+        error: null,
+      ),
+      CompanyPlanRouteStatus.needsRestore,
+    );
+    expect(
+      companyPlanQuoteErrorIsMissingRoute('route_required', from, to),
+      isFalse,
+    );
+  });
+
+  test('airport change is a new fingerprint and coordinator requotes once', () async {
+    var calls = 0;
+    final coordinator = CompanyPlanQuoteCoordinator(
+      transport: (request) async {
+        calls += 1;
+        return CompanyPlanQuoteResult(
+          fingerprint: request.fingerprint,
+          distanceKm: 20,
+          durationMin: 25,
+        );
+      },
+    );
+    final first = companyPlanQuoteRequestFromAddresses(
+      from: _selected('Gent'),
+      to: _selected('BRU', lat: 50.901, lon: 4.484),
+      pickupLocal: DateTime(2026, 9, 15, 9),
+      options: const CompanyRideOptions(
+        service: 'airport',
+        airportIata: 'BRU',
+      ),
+      passengers: 1,
+    )!;
+    await coordinator.quote(first);
+    await coordinator.quote(first);
+    expect(calls, 1);
+    final next = companyPlanQuoteRequestFromAddresses(
+      from: _selected('Gent'),
+      to: _selected('CRL', lat: 50.46, lon: 4.45),
+      pickupLocal: DateTime(2026, 9, 15, 9),
+      options: const CompanyRideOptions(
+        service: 'airport',
+        airportIata: 'CRL',
+      ),
+      passengers: 1,
+    )!;
+    await coordinator.quote(next);
+    expect(calls, 2);
+    expect(first.fingerprint, isNot(next.fingerprint));
+  });
+
+  test('Nu quote omits client pickup_iso and stamps when_now', () {
+    final request = companyPlanQuoteRequestFromAddresses(
+      from: _selected('Gent'),
+      to: _selected('Ronse', lat: 50.74, lon: 3.60),
+      pickupLocal: DateTime(2026, 9, 15, 9),
+      whenNow: true,
+      options: const CompanyRideOptions(),
+      passengers: 1,
+    );
+    expect(request, isNotNull);
+    expect(request!.body['when'], 'now');
+    expect(request.body['when_now'], isTrue);
+    expect(request.body.containsKey('pickup_iso'), isFalse);
+    expect(request.fingerprint.contains('now'), isTrue);
+  });
 }
 
 void _noop() {}

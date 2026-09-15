@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_models.dart';
@@ -533,9 +534,8 @@ void main() {
     await tester.tap(find.byKey(kCompanyCustomerQuoteViewBookingKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
-    await tester.drag(find.byType(ListView).last, const Offset(0, -800));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Terug gaat naar de offerte'), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaBackToQuoteHintKey), findsOneWidget);
+    expect(find.textContaining('Terug gaat naar de offerte'), findsWidgets);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyCustomerQuotePageKey), findsOneWidget);
@@ -657,8 +657,7 @@ void main() {
         customer: _guestWithHome(),
         placeLookup: lookup,
       );
-      expect(find.text(kCompanySavedAddresses.of(AppLanguage.nl)), findsWidgets);
-      expect(find.byType(ActionChip), findsWidgets);
+      expect(find.text(kCompanySavedAddresses.of(AppLanguage.nl)), findsNothing);
       await tester.ensureVisible(find.byKey(kCompanyCustomerQuotePickupFieldKey));
       await tester.enterText(
         find.byKey(kCompanyCustomerQuotePickupFieldKey),
@@ -897,8 +896,9 @@ void main() {
     );
     expect(find.text('Leuven station, Leuven'), findsWidgets);
     expect(find.text('Brussel Centraal, Brussel'), findsWidgets);
-    expect(find.text('Antwerpen Centraal, Antwerpen'), findsWidgets);
+    expect(find.text('Antwerpen Centraal, Antwerpen'), findsNothing);
     expect(find.text('Gent-Sint-Pieters station, Gent'), findsWidgets);
+    expect(find.text(kCompanyRoundtripReturnToPlace.of(AppLanguage.nl)), findsOneWidget);
   });
 
   testWidgets('agenda moment fills quote time', (tester) async {

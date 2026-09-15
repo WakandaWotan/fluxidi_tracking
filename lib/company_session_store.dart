@@ -1564,6 +1564,8 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][PERSIST_FAIL] op=save_verified_pairing company=${_maskCompanyIdForLog(profile.companyId)} err=${_shortErrForCompanyLog(e)}',
       );
+      _sessionMemory = session;
+      activeCompanySessionNotifier.value = session;
     }
     companyProfileNotifier.value = profile;
     applyProfileToBusinessNotifier(profile);
@@ -1590,6 +1592,8 @@ class CompanySessionStore {
       debugPrint(
         '[COMPANY_SESSION][PERSIST_FAIL] op=persist_profile company=${_maskCompanyIdForLog(profile.companyId)} err=${_shortErrForCompanyLog(e)}',
       );
+      _profileMemory = profile;
+      companyProfileNotifier.value = profile;
     }
   }
 

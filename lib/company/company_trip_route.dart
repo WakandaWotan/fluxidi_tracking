@@ -85,3 +85,46 @@ CompanyRideOptions companyTripRouteOptionsAfterSwap({
     returnPickupArrangement: current.returnPickupArrangement,
   );
 }
+
+void companyTripApplyAirportEndpoint({
+  required CompanyTripRouteKind kind,
+  required AirportCatalogAirport airport,
+  required void Function(LimousineAddressValue value) applyPickup,
+  required void Function(LimousineAddressValue value) applyDropoff,
+}) {
+  final value = companyAirportAddressValue(airport);
+  if (kind == CompanyTripRouteKind.fromAirport) {
+    applyPickup(value);
+    return;
+  }
+  if (kind == CompanyTripRouteKind.toAirport) {
+    applyDropoff(value);
+  }
+}
+
+bool companyTripAddressIsAirport(
+  LimousineAddressValue value,
+  AirportCatalogAirport airport,
+) {
+  final expected = 'airport:${airport.iata.trim().toUpperCase()}';
+  return (value.placeId ?? '').trim().toUpperCase() == expected.toUpperCase();
+}
+
+void companyTripClearOppositeAirportEndpoint({
+  required CompanyTripRouteKind kind,
+  required AirportCatalogAirport airport,
+  required LimousineAddressValue pickup,
+  required LimousineAddressValue dropoff,
+  required void Function() clearPickup,
+  required void Function() clearDropoff,
+}) {
+  if (kind == CompanyTripRouteKind.fromAirport &&
+      companyTripAddressIsAirport(dropoff, airport)) {
+    clearDropoff();
+    return;
+  }
+  if (kind == CompanyTripRouteKind.toAirport &&
+      companyTripAddressIsAirport(pickup, airport)) {
+    clearPickup();
+  }
+}

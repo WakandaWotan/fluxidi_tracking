@@ -1,0 +1,25 @@
+---
+description: Volledige luchthavencatalogus behouden; Belgische fotokaarten zijn alleen snelkeuzes
+globs: lib/airport/**/*.dart,lib/company/**/*airport*.dart,lib/company/company_trip_route_fields.dart,lib/limousine/**/*airport*.dart,test/airport/**/*.dart
+alwaysApply: true
+---
+
+# Verplicht — volledige luchthavencatalogus behouden
+
+De klantenflow voor luchthavenvervoer moet de volledige bestaande luchthavenfunctionaliteit behouden.
+
+- Behoud **Kies je land** en daarna **Kies je luchthaven**.
+- Behoud de volledige bestaande luchthavenlijst voor alle beschikbare landen.
+- De zes Belgische luchthavenkaarten met foto’s — BRU, CRL, ANR, OST, LGG en KJK — zijn uitsluitend snelle visuele voorkeurskeuzes.
+- Ze mogen de volledige Belgische of internationale luchthavenlijst niet vervangen.
+- Bied naast de fotokaarten duidelijk **Andere luchthaven** of **Alle luchthavens bekijken** aan.
+- Na Andere luchthaven kiest of zoekt de klant eerst een land en vervolgens een luchthaven.
+- Behoud zoeken op luchthavennaam, stad, IATA-code en ICAO-code zoals ondersteund door de bestaande catalogus.
+- Gebruik `airport_catalog_repository` en de bestaande gegenereerde OurAirports-catalogus. Maak geen nieuwe, beperkte of hardgecodeerde luchthavenlijst.
+- Behoud de canonieke KJK-aanvulling voor Kortrijk-Wevelgem met hetzelfde adres en dezelfde coördinaten.
+- Iedere keuze — fotokaart, zoeken of land/luchthavenlijst — schrijft exact hetzelfde luchthavenrecord, adres en dezelfde coördinaten.
+- Kaart, routeberekening, prijs, afstand en ritduur blijven identiek ongeacht hoe de luchthaven werd gekozen.
+- De gekozen luchthaven mag niet verdwijnen wanneer de gebruiker tussen stappen terug- en vooruitgaat.
+- De bestaande keuze tussen **Naar de luchthaven** en **Van de luchthaven**, inclusief de juiste vluchtvelden en landingslogica, blijft behouden.
+- De vliegtuigfoto bovenaan de klantgerichte luchthavenflow blijft verplicht.
+- Verander de compacte bedrijfsplanner niet.

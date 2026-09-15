@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/company/company_roundtrip.dart';
 import 'package:fluxidi_tracking/company/company_agenda_scope_io.dart'
     if (dart.library.html) 'package:fluxidi_tracking/company/company_agenda_scope_web.dart';
@@ -227,10 +228,13 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
     if (draft.toLat != null && draft.toLat!.isFinite) 'dropoff_lat': draft.toLat,
     if (draft.toLon != null && draft.toLon!.isFinite) 'dropoff_lon': draft.toLon,
     if (draft.toPlaceId.trim().isNotEmpty) 'dropoff_place_id': draft.toPlaceId.trim(),
-    'pickup_iso': draft.pickupLocal.toUtc().toIso8601String(),
     'passengers': draft.passengers,
     if (price != null) 'price_incl_vat': price,
-    if (duration != null && duration > 0) 'duration_min': duration,
+    if ((duration != null && duration > 0) ||
+        (draft.durationRouteMin != null && draft.durationRouteMin! > 0))
+      'duration_min': duration != null && duration > 0
+          ? duration
+          : draft.durationRouteMin,
     if (draft.durationRouteMin != null && draft.durationRouteMin! > 0)
       'duration_route_min': draft.durationRouteMin,
     if (draft.distanceKm != null && draft.distanceKm! > 0)
@@ -248,8 +252,7 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       'service': draft.rideOptions.service,
     if (draft.rideOptions.tier.isNotEmpty) 'tier': draft.rideOptions.tier,
     if (draft.rideOptions.bags > 0) 'bags': draft.rideOptions.bags,
-    if (draft.rideOptions.waitMin > 0 &&
-        draft.roundtripChoice == CompanyRoundtripChoice.single)
+    if (draft.rideOptions.waitMin > 0)
       'wait_min': draft.rideOptions.waitMin,
     if (draft.rideOptions.flightNumber.isNotEmpty)
       'flight_number': draft.rideOptions.flightNumber,
@@ -268,9 +271,14 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       'return_from': draft.returnFromAddress.trim(),
     if (draft.returnToAddress.trim().isNotEmpty)
       'return_to': draft.returnToAddress.trim(),
-    if (int.tryParse(draft.returnDurationText.trim()) != null &&
-        int.parse(draft.returnDurationText.trim()) > 0)
-      'return_duration_min': int.parse(draft.returnDurationText.trim()),
+    if (companyPlanReturnDurationMin(
+          choice: draft.roundtripChoice,
+          outboundDurationMin: duration ?? draft.durationRouteMin,
+          quotedReturnDurationMin: int.tryParse(draft.returnDurationText.trim()),
+          returnDurationText: draft.returnDurationText,
+        )
+        case final returnDurationMin?)
+      'return_duration_min': returnDurationMin,
     if (draft.returnDriverId.trim().isNotEmpty)
       'return_assigned_driver_id': draft.returnDriverId.trim(),
     if (draft.returnVehicleId.trim().isNotEmpty)
@@ -287,6 +295,8 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       'return_dropoff_lon': draft.returnToLon,
     if (draft.returnToPlaceId.trim().isNotEmpty)
       'return_dropoff_place_id': draft.returnToPlaceId.trim(),
+    if (draft.stops.isNotEmpty) 'stops': draft.stops,
+    if (draft.returnStops.isNotEmpty) 'return_stops': draft.returnStops,
     if (draft.rideOptions.airportIata.isNotEmpty)
       'airport_iata': draft.rideOptions.airportIata,
     if (draft.rideOptions.flightAt.isNotEmpty)
@@ -306,6 +316,12 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
             false))
       'fixed_price_snapshot': draft.fixedPriceSnapshot,
   };
+  companyPlanApplyCreateWhenFields(body, draft);
+  final savedPickup = body['pickup_iso']?.toString() ?? '';
+  if (savedPickup.contains('1970-01-01') ||
+      (!draft.whenNow && savedPickup.isEmpty)) {
+    throw const CompanyAgendaException('invalid_pickup_iso');
+  }
   try {
     final resolved = await (headers ?? resolveCompanyAgendaHeaders)();
     final res = await http
@@ -323,6 +339,27 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
         .timeout(const Duration(seconds: 12));
     final decoded = tryDecodeCompanyAgendaJson(res.bodyBytes);
     if (decoded == null || decoded['ok'] != true) {
+      final existingId = decoded?['booking_id']?.toString().trim() ?? '';
+      if (existingId.isNotEmpty) {
+        final warning = decoded?['assignment_warning'];
+        final warningCode = warning is Map
+            ? (warning['error']?.toString() ?? '')
+            : (decoded?['error']?.toString() ?? '');
+        return CompanyAgendaRide(
+          bookingId: existingId,
+          customerId: draft.customer.customerId,
+          customerName: draft.customer.displayName,
+          fromAddress: draft.fromAddress,
+          toAddress: draft.toAddress,
+          pickupIso: draft.pickupLocal.toUtc().toIso8601String(),
+          status: 'PENDING',
+          assignedDriverId: '',
+          assignedVehicleId: '',
+          durationUnknown: duration == null || duration <= 0,
+          durationMin: duration,
+          assignmentWarning: warningCode,
+        );
+      }
       throw CompanyAgendaException(
         decoded?['error']?.toString().trim().isNotEmpty == true
             ? decoded!['error'].toString()

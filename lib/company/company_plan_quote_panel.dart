@@ -33,7 +33,7 @@ class CompanyPlanQuotePanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            error!,
+            companyPlanQuoteErrorText(error, language),
             key: kCompanyPlanQuoteStatusKey,
             style: TextStyle(color: theme.colorScheme.error),
           ),
@@ -50,19 +50,22 @@ class CompanyPlanQuotePanel extends StatelessWidget {
     if (quote == null || !quote.hasRoute) {
       return const SizedBox.shrink();
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final route = formatCompanyPlanQuoteRoute(quote, language);
+    final price = formatCompanyPlanQuotePrice(quote, language);
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(
-          formatCompanyPlanQuoteRoute(quote, language),
+          route,
           key: kCompanyPlanQuoteStatusKey,
           style: theme.textTheme.titleMedium,
         ),
-        if (quote.priceAvailable) ...[
-          const SizedBox(height: 6),
+        if (price.isNotEmpty) ...[
+          Text(' · ', style: theme.textTheme.titleMedium),
           Text(
-            formatCompanyPlanQuotePrice(quote, language),
+            price,
             key: kCompanyPlanQuotePriceKey,
+            style: theme.textTheme.titleMedium,
           ),
         ],
       ],

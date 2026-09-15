@@ -1,0 +1,14 @@
+{
+  "airports": 173,
+  "countries": 7,
+  "country_codes": ["BE", "FR", "DE", "LU", "NL", "ES", "GB"],
+  "featured_belgian_iata": ["BRU", "CRL", "ANR", "OST", "LGG", "KJK"],
+  "search_fields": ["name", "city", "iata", "country", "address"],
+  "kjk": {
+    "iata": "KJK",
+    "icao": "EBKT",
+    "latitude": 50.818611,
+    "longitude": 3.209167,
+    "preciseAddress": "Luchthavenstraat 1, 8560 Wevelgem, Belgium"
+  }
+}

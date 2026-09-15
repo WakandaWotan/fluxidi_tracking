@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_dossier.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
+import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository.dart';
@@ -387,6 +389,34 @@ void main() {
     expect(find.text(kCompanyCustomersSearchStillOpen.of(AppLanguage.nl)), findsOneWidget);
     expect(find.byKey(kCompanyCustomersContinueSearchKey), findsOneWidget);
     expect(find.text(kCompanyCustomersEmptySearch.of(AppLanguage.nl)), findsNothing);
+  });
+
+  testWidgets('CRM dossier has no calendar and no Rit plannen', (tester) async {
+    final repo = _FakeCustomersRepository(
+      pages: <CompanyCustomerListPage>[
+        CompanyCustomerListPage(
+          items: <CompanyCustomerListItem>[_item('cus_1', 'Ada')],
+          hasMore: false,
+          nextCursor: null,
+          totalCount: 1,
+        ),
+      ],
+      detail: parseCompanyCustomer(<String, dynamic>{
+        'customer_id': 'cus_1',
+        'display_name': 'Ada Lovelace',
+        'status': 'active',
+        'revision': 1,
+        'email': 'ada@example.test',
+        'internal_notes': 'staff only',
+      }),
+    );
+    await _pumpPage(tester, repository: repo, size: const Size(1280, 800));
+    await tester.tap(find.byKey(const Key('company_customer_row_cus_1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCustomerDossierKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersEditButtonKey), findsOneWidget);
+    expect(find.text(kCompanyAgendaPlanRide.of(AppLanguage.nl)), findsNothing);
+    expect(find.byKey(kCompanyAgendaPaneKey), findsNothing);
   });
 
   testWidgets('double submit is blocked on the form', (tester) async {

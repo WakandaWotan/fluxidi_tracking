@@ -33,8 +33,18 @@ import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
+import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_crew_combo.dart';
+import 'package:fluxidi_tracking/company/company_plan_media.dart';
+import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
-import 'package:fluxidi_tracking/company/company_plan_quote_panel.dart';
+import 'package:fluxidi_tracking/company/company_plan_waypoints.dart';
+import 'package:fluxidi_tracking/company/company_plan_ride_form.dart';
+import 'package:fluxidi_tracking/company/company_plan_ride_layout.dart';
+import 'package:fluxidi_tracking/company/company_plan_route_map.dart';
+import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
+import 'package:fluxidi_tracking/company/company_trip_route.dart';
 import 'package:fluxidi_tracking/company/company_rate_card_hint.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/company/company_ride_options_form.dart';
@@ -45,11 +55,14 @@ import 'package:fluxidi_tracking/company/local_synthetic_company_session.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 
 const Key kCompanyOpsWorkspacePageKey = Key('company_ops_workspace_page');
+const Key kCompanyOpsPlannerWorkspaceKey = Key('company_ops_planner_workspace');
+const Key kCompanyAgendaPhoneNavKey = Key('company_agenda_phone_nav');
 const Key kCompanyAgendaPaneKey = Key('company_agenda_pane');
 const Key kCompanyAgendaDayKey = Key('company_agenda_day');
 const Key kCompanyAgendaWeekKey = Key('company_agenda_week');
 const Key kCompanyAgendaTodayKey = Key('company_agenda_today');
 const Key kCompanyAgendaPlanRideKey = Key('company_agenda_plan_ride');
+const Key kCompanyAgendaPlanCloseKey = Key('company_agenda_plan_close');
 const Key kCompanyAgendaSaveRideKey = Key('company_agenda_save_ride');
 const Key kCompanyAgendaCancelRideKey = Key('company_agenda_cancel_ride');
 const Key kCompanyAgendaRideFormKey = Key('company_agenda_ride_form');
@@ -100,6 +113,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
     this.onOpenBooking,
     this.initialAnchor,
     this.planQuoteTransport,
+    this.plannerOnly = true,
   });
 
   final CompanyCustomersRepository? customersRepository;
@@ -114,6 +128,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
   final void Function(String bookingId)? onOpenBooking;
   final DateTime? initialAnchor;
   final CompanyPlanQuoteTransport? planQuoteTransport;
+  final bool plannerOnly;
 
   @override
   State<CompanyOpsWorkspacePage> createState() =>
@@ -162,16 +177,19 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   String? _planOverlapPreview;
   String? _driverFilter;
   String? _boundCompanyId;
-  _WorkspacePhoneSurface _phoneSurface = _WorkspacePhoneSurface.customers;
+  _WorkspacePhoneSurface _phoneSurface = _WorkspacePhoneSurface.agenda;
 
   late final LimousinePlaceLookup _placeLookup;
   late final LimousineAddressFieldController _fromAddress;
   late final LimousineAddressFieldController _toAddress;
   late final LimousineAddressFieldController _returnFromAddress;
   late final LimousineAddressFieldController _returnToAddress;
+  late final CompanyPlanStopList _outboundStops;
+  late final CompanyPlanStopList _returnStops;
   final TextEditingController _priceCtrl = TextEditingController();
   final TextEditingController _durationCtrl = TextEditingController();
   final TextEditingController _returnDurationCtrl = TextEditingController();
+  bool _preferSameCrew = true;
   final TextEditingController _noteCtrl = TextEditingController();
   int _passengers = 1;
   CompanyRideOptions _rideOptions = const CompanyRideOptions();
@@ -189,6 +207,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   String _planReturnDriverId = '';
   String _planReturnVehicleId = '';
   bool _agendaIncomplete = false;
+  bool _planWhenNow = true;
+  DateTime? _planLaterConceptLocal;
+  CompanyPlanVehicleCategory _planVehicleCategory =
+      CompanyPlanVehicleCategory.sedan;
+  bool _planDriverUserPicked = false;
+  bool _planVehicleUserPicked = false;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
 
@@ -229,6 +253,18 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       lookup: _placeLookup,
       fieldId: 'agenda_return_to',
       language: _lang.name,
+    );
+    _outboundStops = CompanyPlanStopList(
+      lookup: _placeLookup,
+      fieldPrefix: 'outbound',
+      language: _lang.name,
+      onChanged: _onPlanAddressChanged,
+    );
+    _returnStops = CompanyPlanStopList(
+      lookup: _placeLookup,
+      fieldPrefix: 'return',
+      language: _lang.name,
+      onChanged: _onPlanAddressChanged,
     );
     _customers =
         widget.customersRepository ??
@@ -278,16 +314,24 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Future<void> _refreshPlanQuote({bool force = false}) async {
+    final returnTo = _canonicalReturnTo();
     final request = companyPlanQuoteRequestFromAddresses(
       from: _fromAddress.value,
       to: _toAddress.value,
-      pickupLocal: _planPickupLocal ?? _draft?.pickupLocal,
+      pickupLocal: _planWhenNow ? null : _planPickupLocal,
+      whenNow: _planWhenNow,
       options: _rideOptions,
       passengers: _passengers,
       returnEnabled: _roundtripChoice != CompanyRoundtripChoice.single,
-      returnPickupLocal: _returnPickupLocal,
-      returnFrom: _returnFromAddress.value,
-      returnTo: _returnToAddress.value,
+      returnPickupLocal:
+          _roundtripChoice == CompanyRoundtripChoice.continuousWait
+          ? (_continuousWaitReturnPickup() ??
+                (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal))
+          : _returnPickupLocal,
+      returnFrom: _toAddress.value,
+      returnTo: returnTo,
+      stops: _outboundStops.values,
+      returnStops: _returnStops.values,
     );
     if (request == null) {
       if (!mounted) return;
@@ -320,9 +364,37 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       }
     });
     try {
-      final result = await _planQuote.quote(request);
+      var result = await _planQuote.quote(request);
       if (!mounted) return;
-      if (result.fingerprint != request.fingerprint) return;
+      if (result.fingerprint != request.fingerprint &&
+          !result.fingerprint.startsWith(request.fingerprint)) {
+        return;
+      }
+      if (_roundtripChoice != CompanyRoundtripChoice.single &&
+          !result.hasReturnRoute &&
+          companyPlanAddressIsQuoteReady(_toAddress.value) &&
+          companyPlanAddressIsQuoteReady(returnTo)) {
+        final inboundRequest = companyPlanQuoteRequestFromAddresses(
+          from: _toAddress.value,
+          to: returnTo,
+          pickupLocal: _roundtripChoice == CompanyRoundtripChoice.continuousWait
+              ? (_continuousWaitReturnPickup() ??
+                    (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal))
+              : _returnPickupLocal,
+          whenNow: false,
+          options: _rideOptions.copyWith(waitMin: 0),
+          passengers: _passengers,
+          stops: _returnStops.values,
+        );
+        if (inboundRequest != null) {
+          final inbound = await _planQuote.quote(inboundRequest);
+          if (!mounted) return;
+          result = companyPlanMergeLegQuotes(
+            outbound: result,
+            inbound: inbound,
+          );
+        }
+      }
       setState(() {
         _planQuoteResult = result;
         _planQuoteLoading = false;
@@ -330,13 +402,19 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         _fixedPriceSnapshot = result.fixedPriceSnapshot;
       });
       _applyAutomaticDuration(result);
+      _syncPlanAssignmentProposal();
     } on CompanyAgendaException catch (error) {
       if (!mounted) return;
+      final endpointsReady =
+          companyPlanAddressIsQuoteReady(_fromAddress.value) &&
+          companyPlanAddressIsQuoteReady(_toAddress.value);
       setState(() {
         _planQuoteLoading = false;
-        _planQuoteError = error.code.trim().isEmpty
-            ? 'De route kon niet worden berekend. De ingevulde ritgegevens blijven bewaard.'
-            : error.code;
+        _planQuoteError = !endpointsReady && error.code == 'route_required'
+            ? 'route_required'
+            : (error.code.trim().isEmpty
+                  ? kCompanyAgendaRouteRetry.of(_lang)
+                  : error.code);
       });
     } catch (_) {
       if (!mounted) return;
@@ -350,8 +428,36 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   void _applyAutomaticDuration(CompanyPlanQuoteResult? result) {
     if (result == null || result.durationMin == null) return;
     final next = '${result.durationMin}';
-    if (_durationCtrl.text.trim() == next) return;
-    _durationCtrl.text = next;
+    if (_durationCtrl.text.trim() != next) {
+      _durationCtrl.text = next;
+    }
+    final returnMin = companyPlanReturnDurationMin(
+      choice: _roundtripChoice,
+      outboundDurationMin: result.durationMin,
+      quotedReturnDurationMin: result.returnDurationMin,
+    );
+    if (returnMin != null) {
+      final text = '$returnMin';
+      if (_returnDurationCtrl.text.trim() != text) {
+        _returnDurationCtrl.text = text;
+      }
+    }
+  }
+
+  String _compactAddress(LimousineAddressValue value) {
+    final text = value.displayText.trim();
+    if (text.isEmpty) return '';
+    return text.split(',').first.trim();
+  }
+
+  LimousineAddressValue _canonicalReturnTo() {
+    if (_roundtripChoice == CompanyRoundtripChoice.single) {
+      return const LimousineAddressValue();
+    }
+    if (companyPlanAddressIsQuoteReady(_returnToAddress.value)) {
+      return _returnToAddress.value;
+    }
+    return _fromAddress.value;
   }
 
   Future<void> _restoreAgendaPrefs() async {
@@ -385,6 +491,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     _toAddress.removeListener(_onPlanAddressChanged);
     _returnFromAddress.removeListener(_onPlanAddressChanged);
     _returnToAddress.removeListener(_onPlanAddressChanged);
+    _outboundStops.dispose();
+    _returnStops.dispose();
     _fromAddress.dispose();
     _toAddress.dispose();
     _returnFromAddress.dispose();
@@ -417,6 +525,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     _fleetError = null;
     _planDriverId = '';
     _planVehicleId = '';
+    _planDriverUserPicked = false;
+    _planVehicleUserPicked = false;
     _planOverlapPreview = null;
     _driverFilter = null;
     _formError = null;
@@ -623,7 +733,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Future<void> _beginPlan({CompanyCustomer? customer, DateTime? pickup}) async {
-    final chosen = customer ?? _selected;
+    var chosen = customer ?? _selected;
+    if (chosen == null) {
+      for (final item in _items) {
+        if (item.status == 'archived') continue;
+        chosen = await _loadCustomer(item.customerId);
+        break;
+      }
+    }
     if (chosen != null &&
         _draft != null &&
         _draft!.customer.customerId == chosen.customerId &&
@@ -638,32 +755,44 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       );
       return;
     }
+    final selected = chosen;
     if (pickup != null) {
       _agendaMoment = pickup;
     }
-    final when = pickup ?? DateTime(_anchor.year, _anchor.month, _anchor.day);
-    final home = chosen.addresses.isEmpty
+    final whenNow = pickup == null;
+    final when = pickup;
+    final home = selected.addresses.isEmpty
         ? ''
         : companyCustomerAddressChoiceLabel(chosen.addresses.first);
     setState(() {
-      _planPickupLocal = pickup;
+      _planWhenNow = whenNow;
+      _planLaterConceptLocal = when;
+      _planPickupLocal = when;
+      _planVehicleCategory = CompanyPlanVehicleCategory.sedan;
+      _planDriverUserPicked = false;
+      _planVehicleUserPicked = false;
       _draft = CompanyRidePlanDraft(
-        customer: chosen,
-        pickupLocal: when,
+        customer: selected,
+        pickupLocal: when ?? companyPlanNowLocal(),
+        whenNow: whenNow,
         fromAddress: home,
         idempotencyKey:
-            'agenda-${chosen.customerId}-${when.toUtc().toIso8601String()}-${DateTime.now().microsecondsSinceEpoch}',
+            'agenda-${selected.customerId}-${whenNow ? 'now' : when!.toUtc().toIso8601String()}-${DateTime.now().microsecondsSinceEpoch}',
       );
-      if (chosen.addresses.isEmpty) {
+      if (selected.addresses.isEmpty) {
         _fromAddress.clear();
       } else {
         _fromAddress.acceptCopy(
-          companyAddressValueFromSaved(chosen.addresses.first),
+          companyAddressValueFromSaved(selected.addresses.first),
         );
+        unawaited(companyAddressGeocodeIfNeeded(_fromAddress));
       }
       _toAddress.clear();
       _returnFromAddress.clear();
       _returnToAddress.clear();
+      _outboundStops.clear();
+      _returnStops.clear();
+      _preferSameCrew = true;
       _priceCtrl.text = '';
       _durationCtrl.text = '';
       _returnDurationCtrl.text = '';
@@ -673,7 +802,9 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       _planReturnVehicleId = '';
       _planOverlapPreview = null;
       _passengers = 1;
-      _rideOptions = const CompanyRideOptions();
+      _rideOptions = const CompanyRideOptions(
+        vehicleType: kCompanyPlanVehicleTypeSedan,
+      );
       _fixedPriceSnapshot = null;
       _planQuote.invalidate();
       _planQuoteResult = null;
@@ -684,8 +815,29 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       _returnPickupLocal = null;
       _noteCtrl.text = '';
       _formError = null;
+      _selected = selected;
       _phoneSurface = _WorkspacePhoneSurface.form;
     });
+    _schedulePlanQuote();
+  }
+
+  void _fillReturnRouteFromOutbound({bool forceReturnTo = false}) {
+    if (_toAddress.value.displayText.trim().isNotEmpty) {
+      _returnFromAddress.acceptCopy(_toAddress.value);
+    }
+    if (forceReturnTo || _returnToAddress.value.displayText.trim().isEmpty) {
+      if (_fromAddress.value.displayText.trim().isNotEmpty) {
+        _returnToAddress.acceptCopy(_fromAddress.value);
+      }
+    }
+  }
+
+  DateTime? _continuousWaitReturnPickup() {
+    final duration = _planDurationMin;
+    final wait = _rideOptions.waitMin > 0 ? _rideOptions.waitMin : 45;
+    final start = _planWhenNow ? companyPlanNowLocal() : _planPickupLocal;
+    if (duration == null || start == null) return null;
+    return start.add(Duration(minutes: duration + wait));
   }
 
   void _onRoundtripChoiceChanged(CompanyRoundtripChoice next) {
@@ -698,16 +850,18 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         _returnPickupLocal = null;
         return;
       }
-      final pickupAt = _planPickupLocal ?? draft.pickupLocal;
+      _fillReturnRouteFromOutbound(forceReturnTo: true);
+      if (next == CompanyRoundtripChoice.continuousWait) {
+        if (_rideOptions.waitMin <= 0) {
+          _rideOptions = _rideOptions.copyWith(waitMin: 45);
+        }
+        _returnPickupLocal = _continuousWaitReturnPickup();
+        return;
+      }
+      final pickupAt = _planWhenNow
+          ? companyPlanNowLocal()
+          : (_planPickupLocal ?? draft.pickupLocal);
       _returnPickupLocal ??= pickupAt.add(const Duration(hours: 3));
-      if (_returnFromAddress.value.displayText.trim().isEmpty &&
-          _toAddress.value.displayText.trim().isNotEmpty) {
-        _returnFromAddress.acceptCopy(_toAddress.value);
-      }
-      if (_returnToAddress.value.displayText.trim().isEmpty &&
-          _fromAddress.value.displayText.trim().isNotEmpty) {
-        _returnToAddress.acceptCopy(_fromAddress.value);
-      }
     });
     unawaited(_previewPlanOverlap());
     _schedulePlanQuote();
@@ -788,12 +942,289 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   int? get _planDurationMin {
-    final raw = int.tryParse(_durationCtrl.text.trim());
-    if (raw == null || raw <= 0) return null;
-    return raw;
+    return companyPlanCanonicalDurationMin(
+      quoteDurationMin: _planQuoteResult?.durationMin,
+      durationRouteMin:
+          _draft?.durationRouteMin ?? _planQuoteResult?.durationMin,
+      durationText: _durationCtrl.text,
+    );
   }
 
   bool get _planDurationUnknown => _planDurationMin == null;
+
+  bool get _assignmentBlocked {
+    final outbound = companyPlanFindCrewCombo(
+      combos: _planCrewCombos,
+      driverId: _planDriverId,
+      vehicleId: _planVehicleId,
+    );
+    if (outbound != null && !outbound.suitable) return true;
+    final preview = (_planOverlapPreview ?? '').trim();
+    if (preview.isEmpty) return false;
+    if (preview == kCompanyAgendaAvailabilityUnknown.of(_lang)) {
+      return false;
+    }
+    return true;
+  }
+
+  CompanyPlanVehicleType get _planVehicleType {
+    return parseCompanyPlanVehicleType(_rideOptions.vehicleType) ??
+        companyPlanVehicleTypeForPassengers(_passengers);
+  }
+
+  bool get _planAirportMode {
+    return companyTripRouteKindIsAirport(companyTripRouteKindOf(_rideOptions));
+  }
+
+  List<Map<String, dynamic>> get _planVehicleChoices {
+    return companyPlanVehiclesForCategory(
+      vehicles: _vehicles,
+      category: _planVehicleCategory,
+      passengers: _passengers,
+    );
+  }
+
+  List<CompanyCrewCombo> get _planCrewCombos {
+    return _crewCombosForWindow(
+      whenNow: _planWhenNow,
+      driverId: _planDriverId,
+      vehicleId: _planVehicleId,
+    );
+  }
+
+  List<CompanyCrewCombo> get _planReturnCrewCombos {
+    if (_roundtripChoice != CompanyRoundtripChoice.splitNoWait) {
+      return _planCrewCombos;
+    }
+    return _crewCombosForWindow(
+      whenNow: false,
+      driverId: _planReturnDriverId,
+      vehicleId: _planReturnVehicleId,
+    );
+  }
+
+  List<CompanyCrewCombo> _crewCombosForWindow({
+    required bool whenNow,
+    required String driverId,
+    required String vehicleId,
+  }) {
+    final raw = companyPlanCrewCombos(
+      drivers: _drivers,
+      vehicles: _vehicles,
+      type: _planVehicleType,
+      passengers: _passengers,
+      whenNow: whenNow,
+    );
+    final overlap = (_planOverlapPreview ?? '').trim();
+    if (overlap.isEmpty ||
+        overlap == kCompanyAgendaAvailabilityUnknown.of(_lang)) {
+      return raw;
+    }
+    return [
+      for (final combo in raw)
+        if (combo.driverId == driverId && combo.vehicleId == vehicleId)
+          companyCrewComboWithPresence(
+            combo,
+            resolveCompanyPlanPresence(
+              driver: combo.driver,
+              overlapCode: 'assignment_overlap',
+              whenNow: whenNow,
+              vehicles: combo.vehicleId.isEmpty
+                  ? const <Map<String, dynamic>>[]
+                  : [combo.vehicle],
+            ),
+          )
+        else
+          combo,
+    ];
+  }
+
+  bool get _preferSameCrewWindowsChecked {
+    return companyPlanCrewComboAvailableOnBoth(
+      outbound: _planCrewCombos,
+      inbound: _planReturnCrewCombos,
+      driverId: _planDriverId,
+      vehicleId: _planVehicleId,
+    );
+  }
+
+  void _syncPlanAssignmentProposal() {
+    if (_draft == null) return;
+    final combos = _planCrewCombos;
+    final next = proposeCompanyPlanCrewAssignment(
+      combos: combos,
+      userPicked: _planDriverUserPicked || _planVehicleUserPicked,
+      currentDriverId: _planDriverId,
+      currentVehicleId: _planVehicleId,
+    );
+    var returnDriver = _planReturnDriverId;
+    var returnVehicle = _planReturnVehicleId;
+    if (_roundtripChoice == CompanyRoundtripChoice.continuousWait) {
+      returnDriver = next.driverId;
+      returnVehicle = next.vehicleId;
+    } else if (_roundtripChoice == CompanyRoundtripChoice.splitNoWait) {
+      final sameOk = companyPlanCrewComboAvailableOnBoth(
+        outbound: combos,
+        inbound: _planReturnCrewCombos,
+        driverId: next.driverId,
+        vehicleId: next.vehicleId,
+      );
+      if (_preferSameCrew && !sameOk && next.driverId.isNotEmpty) {
+        _preferSameCrew = false;
+      }
+      final inbound = proposeCompanyPlanReturnCrew(
+        combos: _planReturnCrewCombos,
+        outboundDriverId: next.driverId,
+        outboundVehicleId: next.vehicleId,
+        preferSame: _preferSameCrew && sameOk,
+        outboundAvailableForReturn: sameOk,
+      );
+      if (!_planDriverUserPicked || _planReturnDriverId.isEmpty) {
+        returnDriver = inbound.driverId;
+        returnVehicle = inbound.vehicleId;
+      }
+    }
+    if (mounted &&
+        (next.driverId != _planDriverId ||
+            next.vehicleId != _planVehicleId ||
+            returnDriver != _planReturnDriverId ||
+            returnVehicle != _planReturnVehicleId)) {
+      setState(() {
+        _planDriverId = next.driverId;
+        _planVehicleId = next.vehicleId;
+        _planReturnDriverId = returnDriver;
+        _planReturnVehicleId = returnVehicle;
+      });
+    }
+    unawaited(_previewPlanOverlap());
+  }
+
+  void _setPlanWhenNow(bool now) {
+    setState(() {
+      if (now) {
+        if (!_planWhenNow && _planPickupLocal != null) {
+          _planLaterConceptLocal = _planPickupLocal;
+        }
+        _planWhenNow = true;
+        _planPickupLocal = null;
+        final draft = _draft;
+        if (draft != null) {
+          _draft = draft.copyWith(
+            whenNow: true,
+            idempotencyKey:
+                'agenda-${draft.customer.customerId}-now-${DateTime.now().microsecondsSinceEpoch}',
+          );
+        }
+      } else {
+        _planWhenNow = false;
+        var later = _planLaterConceptLocal;
+        if (later != null && !companyPlanLaterPickupIsValid(later)) {
+          later = null;
+          _planLaterConceptLocal = null;
+        }
+        _planPickupLocal = later;
+        final draft = _draft;
+        if (draft != null) {
+          _draft = draft.copyWith(
+            whenNow: false,
+            pickupLocal: later ?? draft.pickupLocal,
+            idempotencyKey: later == null
+                ? 'agenda-${draft.customer.customerId}-later-${DateTime.now().microsecondsSinceEpoch}'
+                : 'agenda-${draft.customer.customerId}-${later.toUtc().toIso8601String()}',
+          );
+        }
+      }
+    });
+    unawaited(_previewPlanOverlap());
+    _schedulePlanQuote();
+  }
+
+  void _setPlanVehicleCategory(CompanyPlanVehicleCategory category) {
+    _planVehicleCategory = category;
+    _setPlanVehicleType(companyPlanVehicleTypeForCategory(category));
+    setState(() {
+      _rideOptions = _rideOptions.copyWith(
+        vehicleType: companyPlanVehicleCategoryWire(category),
+      );
+    });
+  }
+
+  void _setPlanVehicleType(CompanyPlanVehicleType type) {
+    var passengers = _passengers;
+    if (type == CompanyPlanVehicleType.sedan &&
+        passengers > kCompanyPlanSedanMaxPassengers) {
+      passengers = kCompanyPlanSedanMaxPassengers;
+    }
+    setState(() {
+      _passengers = passengers;
+      _rideOptions = _rideOptions.copyWith(
+        vehicleType: companyPlanVehicleTypeWire(type),
+      );
+      _planVehicleUserPicked = false;
+    });
+    _syncPlanAssignmentProposal();
+    _schedulePlanQuote();
+  }
+
+  void _setPlanAirportMode(bool enabled) {
+    final current = companyTripRouteKindOf(_rideOptions);
+    final next = enabled
+        ? (companyTripRouteKindIsAirport(current)
+              ? current
+              : CompanyTripRouteKind.toAirport)
+        : CompanyTripRouteKind.address;
+    setState(() {
+      _rideOptions = companyTripRouteOptionsForKind(
+        current: _rideOptions,
+        kind: next,
+      ).copyWith(vehicleType: _rideOptions.vehicleType);
+      _fixedPriceSnapshot = null;
+      _planQuoteResult = null;
+    });
+    _schedulePlanQuote();
+  }
+
+  Future<void> _applyPlanCustomerItem(CompanyCustomerListItem item) async {
+    final detail = await _loadCustomer(item.customerId);
+    if (!mounted || detail == null || detail.isArchived) return;
+    _applyPlanCustomer(detail);
+  }
+
+  void _applyPlanCustomer(CompanyCustomer customer) {
+    final draft = _draft;
+    setState(() {
+      _selected = customer;
+      if (draft != null) {
+        _draft = draft.copyWith(customer: customer);
+        if (customer.addresses.isNotEmpty &&
+            _fromAddress.value.displayText.trim().isEmpty) {
+          _fromAddress.acceptCopy(
+            companyAddressValueFromSaved(customer.addresses.first),
+          );
+        }
+      }
+    });
+    _schedulePlanQuote();
+  }
+
+  Future<void> _addPlanCustomer() async {
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) =>
+            CompanyCustomerFormPage(repository: _customers, language: _lang),
+      ),
+    );
+    if (!mounted) return;
+    if (result is CompanyCustomerMutationResult) {
+      await _reloadCustomers();
+      _applyPlanCustomer(result.customer);
+      return;
+    }
+    if (result is CompanyCustomer) {
+      await _reloadCustomers();
+      _applyPlanCustomer(result);
+    }
+  }
 
   String? get _planChoicesStatus {
     return companyAgendaAssignmentChoicesStatus(
@@ -810,7 +1241,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final draft = _draft;
     final driverId = _planDriverId.trim();
     final vehicleId = _planVehicleId.trim();
-    final pickupAt = _planPickupLocal ?? draft?.pickupLocal;
+    final pickupAt = _planWhenNow ? companyPlanNowLocal() : _planPickupLocal;
     if (draft == null ||
         pickupAt == null ||
         (driverId.isEmpty && vehicleId.isEmpty)) {
@@ -824,17 +1255,24 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         vehicleId: vehicleId,
         pickupIso: pickupAt.toUtc().toIso8601String(),
         durationMin: _planDurationMin,
-        returnPickupIso: _returnPickupLocal?.toUtc().toIso8601String() ?? '',
-        returnDurationMin: int.tryParse(_returnDurationCtrl.text.trim()),
+        returnPickupIso:
+            (_roundtripChoice == CompanyRoundtripChoice.continuousWait
+                    ? _continuousWaitReturnPickup()
+                    : _returnPickupLocal)
+                ?.toUtc()
+                .toIso8601String() ??
+            '',
+        returnDurationMin: companyPlanReturnDurationMin(
+          choice: _roundtripChoice,
+          outboundDurationMin: _planDurationMin,
+          quotedReturnDurationMin: _planQuoteResult?.returnDurationMin,
+          returnDurationText: _returnDurationCtrl.text,
+        ),
         roundtripMode: companyRoundtripChoiceWire(_roundtripChoice),
       );
       if (!mounted || _draft != draft) return;
       var text = companyAgendaAssignmentOverlapText(check, _lang);
-      if (durationUnknown ||
-          (_roundtripChoice == CompanyRoundtripChoice.continuousWait &&
-              (_planDurationMin == null ||
-                  _returnPickupLocal == null ||
-                  int.tryParse(_returnDurationCtrl.text.trim()) == null))) {
+      if (durationUnknown) {
         text ??= kCompanyAgendaAvailabilityUnknown.of(_lang);
       }
       setState(() => _planOverlapPreview = text);
@@ -855,9 +1293,13 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     setState(() {
       _draft = null;
       _planPickupLocal = null;
+      _planLaterConceptLocal = null;
+      _planWhenNow = true;
       _formError = null;
       _planDriverId = '';
       _planVehicleId = '';
+      _planDriverUserPicked = false;
+      _planVehicleUserPicked = false;
       _planOverlapPreview = null;
       _phoneSurface = _WorkspacePhoneSurface.agenda;
     });
@@ -868,19 +1310,30 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     if (draft == null || _saving) return;
     final fromValue = _fromAddress.value;
     final toValue = _toAddress.value;
-    final returnFromValue = _returnFromAddress.value;
-    final returnToValue = _returnToAddress.value;
+    final returnFromValue = _toAddress.value;
+    final returnToValue = _canonicalReturnTo();
     final from = fromValue.displayText.trim();
     final to = toValue.displayText.trim();
     if (from.isEmpty || to.isEmpty) {
       setState(() => _formError = kCompanyAgendaRouteRequired.of(_lang));
       return;
     }
-    if (_planPickupLocal == null) {
+    if (_planQuoteResult != null &&
+        !companyPlanQuoteSanityCheck(_planQuoteResult!).ok) {
+      setState(() => _formError = kCompanyAgendaPriceInvalid.of(_lang));
+      return;
+    }
+    if (!_planWhenNow && _planPickupLocal == null) {
       setState(() => _formError = kCompanyAgendaPickupRequired.of(_lang));
       return;
     }
-    if (_roundtripChoice != CompanyRoundtripChoice.single &&
+    if (!_planWhenNow &&
+        _planPickupLocal != null &&
+        !companyPlanLaterPickupIsValid(_planPickupLocal!)) {
+      setState(() => _formError = kCompanyAgendaLaterPickupInvalid.of(_lang));
+      return;
+    }
+    if (_roundtripChoice == CompanyRoundtripChoice.splitNoWait &&
         _returnPickupLocal == null) {
       setState(() => _formError = kCompanyRoundtripReturnRequired.of(_lang));
       return;
@@ -891,24 +1344,31 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         toValue.acceptance == LimousineAddressAcceptance.selected;
     final key =
         draft.idempotencyKey ??
-        'agenda-${draft.customer.customerId}-${_planPickupLocal!.toUtc().toIso8601String()}';
+        (_planWhenNow
+            ? 'agenda-${draft.customer.customerId}-now-${DateTime.now().microsecondsSinceEpoch}'
+            : 'agenda-${draft.customer.customerId}-${_planPickupLocal!.toUtc().toIso8601String()}');
     setState(() {
       _saving = true;
       _formError = null;
     });
     try {
       final filled = draft.copyWith(
-        pickupLocal: _planPickupLocal,
+        whenNow: _planWhenNow,
+        pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
         fromAddress: from,
         toAddress: to,
-        fromLat: fromSelected ? fromValue.lat : null,
-        fromLon: fromSelected ? fromValue.lon : null,
+        fromLat: fromValue.lat ?? _planQuoteResult?.pickupLat,
+        fromLon: fromValue.lon ?? _planQuoteResult?.pickupLon,
         fromPlaceId: fromSelected ? (fromValue.placeId ?? '') : '',
-        toLat: toSelected ? toValue.lat : null,
-        toLon: toSelected ? toValue.lon : null,
+        toLat: toValue.lat ?? _planQuoteResult?.dropoffLat,
+        toLon: toValue.lon ?? _planQuoteResult?.dropoffLon,
         toPlaceId: toSelected ? (toValue.placeId ?? '') : '',
-        clearFromCoords: !fromSelected,
-        clearToCoords: !toSelected,
+        clearFromCoords:
+            fromValue.lat == null && _planQuoteResult?.pickupLat == null,
+        clearToCoords:
+            toValue.lat == null && _planQuoteResult?.dropoffLat == null,
+        stops: _outboundStops.routeTexts,
+        returnStops: _returnStops.routeTexts,
         passengers: _passengers,
         priceText: _manualPriceLocked
             ? _priceCtrl.text
@@ -916,26 +1376,36 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   ? (_planQuoteResult!.priceInclVat?.toString() ??
                         _priceCtrl.text)
                   : _priceCtrl.text),
-        durationText: _durationCtrl.text,
+        durationText: '${_planDurationMin ?? ''}',
         distanceKm: _planQuoteResult?.distanceKm,
         pricingSource: _manualPriceLocked
             ? 'manual'
             : (_planQuoteResult?.pricingSource ?? ''),
         currency: _planQuoteResult?.currency ?? 'EUR',
         durationRouteMin: _planQuoteResult?.durationMin,
-        driverId: _planDriverId.trim(),
-        vehicleId: _planVehicleId.trim(),
+        driverId: _assignmentBlocked ? '' : _planDriverId.trim(),
+        vehicleId: _assignmentBlocked ? '' : _planVehicleId.trim(),
         rideOptions: _rideOptions,
         fixedPriceSnapshot: _fixedPriceSnapshot,
         publicNote: _noteCtrl.text,
         idempotencyKey: key,
         roundtripChoice: _roundtripChoice,
-        returnPickupLocal: _returnPickupLocal,
+        returnPickupLocal:
+            _roundtripChoice == CompanyRoundtripChoice.continuousWait
+            ? _continuousWaitReturnPickup()
+            : _returnPickupLocal,
         returnFromAddress: returnFromValue.displayText.trim(),
         returnToAddress: returnToValue.displayText.trim(),
-        returnDurationText: _returnDurationCtrl.text,
-        returnDriverId: _planReturnDriverId,
-        returnVehicleId: _planReturnVehicleId,
+        returnDurationText:
+            companyPlanReturnDurationMin(
+              choice: _roundtripChoice,
+              outboundDurationMin: _planDurationMin,
+              quotedReturnDurationMin: _planQuoteResult?.returnDurationMin,
+              returnDurationText: _returnDurationCtrl.text,
+            )?.toString() ??
+            '',
+        returnDriverId: _assignmentBlocked ? '' : _planReturnDriverId,
+        returnVehicleId: _assignmentBlocked ? '' : _planReturnVehicleId,
         returnFromLat:
             returnFromValue.acceptance == LimousineAddressAcceptance.selected
             ? returnFromValue.lat
@@ -985,11 +1455,29 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       ).showSnackBar(SnackBar(content: Text(kCompanyAgendaSaved.of(_lang))));
       await _openBooking(companyAgendaRideDetailId(ride), ride: ride);
       if (!mounted) return;
-      if (ride.assignmentWarning.trim().isNotEmpty) {
+      if (ride.assignmentWarning.trim().isNotEmpty || _assignmentBlocked) {
+        final combo = companyPlanFindCrewCombo(
+          combos: _planCrewCombos,
+          driverId: _planDriverId,
+          vehicleId: _planVehicleId,
+        );
+        final driverName = combo == null
+            ? kCompanyAgendaDriverFallback.of(_lang)
+            : companyPlanPublicDriverName(combo.driver, _lang);
+        final vehicleName = combo == null
+            ? kCompanyAgendaVehicleFallback.of(_lang)
+            : companyPlanPublicVehicleName(combo.vehicle, _lang);
+        final reason = ride.assignmentWarning.trim().isNotEmpty
+            ? companyPlanAssignmentWarningReason(ride.assignmentWarning)
+            : 'overlappende rit';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${kCompanyAgendaSavedUnassigned.of(_lang)} ${companyAgendaAssignmentExceptionText(CompanyAgendaException(ride.assignmentWarning), _lang)}',
+              companyPlanAssignmentRaceWarning(
+                driverName: driverName,
+                vehicleName: vehicleName,
+                reason: reason,
+              ),
             ),
           ),
         );
@@ -1117,7 +1605,9 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final tablet =
         size.width >= kCompanyOpsWorkspaceTabletWidth &&
         size.width < kCompanyOpsWorkspaceDesktopWidth;
-    if (!tablet || size.height <= size.width || _view != CompanyAgendaView.week) {
+    if (!tablet ||
+        size.height <= size.width ||
+        _view != CompanyAgendaView.week) {
       return;
     }
     _appliedPortraitDefault = true;
@@ -1137,20 +1627,17 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       builder: (context) => Scaffold(
         key: kCompanyOpsWorkspacePageKey,
         appBar: AppBar(
-          title: Text(kCompanyCustomersTitle.of(_lang)),
-          leading: phone && _phoneSurface != _WorkspacePhoneSurface.customers
+          title: Text(
+            widget.plannerOnly
+                ? kCompanyAgendaPlanRide.of(_lang)
+                : kCompanyCustomersTitle.of(_lang),
+          ),
+          leading: phone && _phoneSurface == _WorkspacePhoneSurface.form
               ? IconButton(
                   icon: const Icon(Icons.arrow_back),
                   onPressed: () {
                     setState(() {
-                      if (_phoneSurface == _WorkspacePhoneSurface.form) {
-                        _phoneSurface = _WorkspacePhoneSurface.customers;
-                      } else if (_phoneSurface ==
-                          _WorkspacePhoneSurface.detail) {
-                        _phoneSurface = _WorkspacePhoneSurface.customers;
-                      } else {
-                        _phoneSurface = _WorkspacePhoneSurface.customers;
-                      }
+                      _phoneSurface = _WorkspacePhoneSurface.agenda;
                     });
                   },
                 )
@@ -1169,17 +1656,37 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                     ),
                 ],
               ),
-            TextButton(
-              key: kCompanyAgendaPlanRideKey,
-              onPressed: () => _beginPlan(),
-              child: Text(kCompanyAgendaPlanRide.of(_lang)),
-            ),
+            if (_draft != null &&
+                (!phone || _phoneSurface == _WorkspacePhoneSurface.form))
+              IconButton(
+                key: kCompanyAgendaPlanCloseKey,
+                tooltip: kCompanyAgendaCancel.of(_lang),
+                onPressed: _saving ? null : _cancelDraft,
+                icon: const Icon(Icons.close),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FilledButton(
+                  key: kCompanyAgendaPlanRideKey,
+                  onPressed: () => _beginPlan(),
+                  child: Text(kCompanyAgendaPlanRide.of(_lang)),
+                ),
+              ),
           ],
         ),
-        body: SafeArea(
+        body: KeyedSubtree(
+          key: widget.plannerOnly
+              ? kCompanyOpsPlannerWorkspaceKey
+              : const ValueKey<String>('company_ops_combined_workspace'),
+          child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (constraints.maxWidth >= kCompanyOpsWorkspaceDesktopWidth) {
+              final size = Size(constraints.maxWidth, constraints.maxHeight);
+              if (companyOpsShowAgendaBesidePlanner(
+                size,
+                desktopWidth: kCompanyOpsWorkspaceDesktopWidth,
+              )) {
                 return _desktopBody();
               }
               if (constraints.maxWidth >= kCompanyOpsWorkspaceTabletWidth) {
@@ -1189,28 +1696,30 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
             },
           ),
         ),
-        bottomNavigationBar: phone && _draft == null
+        ),
+        bottomNavigationBar: phone && widget.plannerOnly
             ? NavigationBar(
-                selectedIndex: _phoneSurface == _WorkspacePhoneSurface.agenda
+                key: kCompanyAgendaPhoneNavKey,
+                selectedIndex: _phoneSurface == _WorkspacePhoneSurface.form
                     ? 1
                     : 0,
                 destinations: [
                   NavigationDestination(
-                    icon: const Icon(Icons.people_outline),
-                    label: kCompanyAgendaCustomersTab.of(_lang),
-                  ),
-                  NavigationDestination(
                     icon: const Icon(Icons.calendar_today_outlined),
                     label: kCompanyAgendaTitle.of(_lang),
                   ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.local_taxi_outlined),
+                    label: kCompanyAgendaNewRideTab.of(_lang),
+                  ),
                 ],
                 onDestinationSelected: (index) {
-                  setState(() {
-                    _phoneSurface = index == 1
-                        ? _WorkspacePhoneSurface.agenda
-                        : _WorkspacePhoneSurface.customers;
-                  });
-                  if (index == 1) _reloadAgenda(force: true);
+                  if (index == 1) {
+                    unawaited(_beginPlan());
+                    return;
+                  }
+                  setState(() => _phoneSurface = _WorkspacePhoneSurface.agenda);
+                  unawaited(_reloadAgenda(force: true));
                 },
               )
             : null,
@@ -1219,39 +1728,50 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Widget _desktopBody() {
+    if (widget.plannerOnly) return _plannerDesktopBody();
     final showDossier = _draft != null || !_dossierCollapsed;
-    return Row(
-      children: [
-        if (_customersCollapsed)
-          _collapsedRail(
-            key: kCompanyAgendaToggleCustomersKey,
-            tooltip:
-                '${kCompanyAgendaShowPane.of(_lang)} ${kCompanyAgendaCustomerPane.of(_lang)}',
-            icon: Icons.people_outline,
-            onPressed: () => setState(() => _customersCollapsed = false),
-          )
-        else
-          SizedBox(
-            width: kCompanyOpsWorkspaceCustomerPaneWidth,
-            child: _customerList(compact: true),
-          ),
-        const VerticalDivider(width: 1),
-        Expanded(child: _agendaPane(_AgendaChrome.desktop)),
-        const VerticalDivider(width: 1),
-        if (showDossier)
-          SizedBox(
-            width: kCompanyOpsWorkspaceDossierPaneWidth,
-            child: _detailPane(),
-          )
-        else
-          _collapsedRail(
-            key: kCompanyAgendaToggleDossierKey,
-            tooltip:
-                '${kCompanyAgendaShowPane.of(_lang)} ${kCompanyAgendaDossierPane.of(_lang)}',
-            icon: Icons.badge_outlined,
-            onPressed: () => setState(() => _dossierCollapsed = false),
-          ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final plannerWidth = companyOpsPlannerPaneWidth(
+          totalWidth: constraints.maxWidth,
+          customersCollapsed: _customersCollapsed,
+          planning: _draft != null,
+          dossierOpen: showDossier,
+          customerPaneWidth: kCompanyOpsWorkspaceCustomerPaneWidth,
+          dossierPaneWidth: kCompanyOpsWorkspaceDossierPaneWidth,
+          collapsedRailWidth: kCompanyOpsWorkspaceCollapsedRailWidth,
+        );
+        return Row(
+          children: [
+            if (_customersCollapsed)
+              _collapsedRail(
+                key: kCompanyAgendaToggleCustomersKey,
+                tooltip:
+                    '${kCompanyAgendaShowPane.of(_lang)} ${kCompanyAgendaCustomerPane.of(_lang)}',
+                icon: Icons.people_outline,
+                onPressed: () => setState(() => _customersCollapsed = false),
+              )
+            else
+              SizedBox(
+                width: kCompanyOpsWorkspaceCustomerPaneWidth,
+                child: _customerList(compact: true),
+              ),
+            const VerticalDivider(width: 1),
+            Expanded(child: _agendaPane(_AgendaChrome.desktop)),
+            const VerticalDivider(width: 1),
+            if (showDossier)
+              SizedBox(width: plannerWidth, child: _detailPane())
+            else
+              _collapsedRail(
+                key: kCompanyAgendaToggleDossierKey,
+                tooltip:
+                    '${kCompanyAgendaShowPane.of(_lang)} ${kCompanyAgendaDossierPane.of(_lang)}',
+                icon: Icons.badge_outlined,
+                onPressed: () => setState(() => _dossierCollapsed = false),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -1275,7 +1795,67 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     );
   }
 
+  Widget _plannerDesktopBody() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final plannerWidth = companyOpsPlannerPaneWidth(
+          totalWidth: constraints.maxWidth,
+          customersCollapsed: true,
+          planning: true,
+          dossierOpen: true,
+          customerPaneWidth: 0,
+          collapsedRailWidth: 0,
+        );
+        return Row(
+          children: [
+            Expanded(child: _agendaPane(_AgendaChrome.desktop)),
+            const VerticalDivider(width: 1),
+            SizedBox(
+              width: plannerWidth,
+              child: _draft != null ? _rideForm() : _plannerEmptyPane(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _plannerEmptyPane() {
+    final scheme = companyOpsCurrentScheme();
+    return ColoredBox(
+      color: scheme.surface,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                kCompanyAgendaHint.of(_lang),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                key: const Key('company_ops_planner_empty_start'),
+                onPressed: () => unawaited(_beginPlan()),
+                child: Text(kCompanyAgendaNewRideTab.of(_lang)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _tabletBody() {
+    if (widget.plannerOnly) {
+      if (_draft != null) return _rideForm();
+      return _agendaPane(_AgendaChrome.tablet);
+    }
     final size = MediaQuery.sizeOf(context);
     final landscape = size.width >= size.height;
     if (_draft != null) return _rideForm();
@@ -1312,10 +1892,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
             top: 0,
             bottom: 0,
             width: 260,
-            child: Material(
-              elevation: 3,
-              child: _customerList(compact: true),
-            ),
+            child: Material(elevation: 3, child: _customerList(compact: true)),
           )
         else if (_tabletCustomersOpen)
           Positioned(
@@ -1372,6 +1949,10 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Widget _phoneBody() {
+    if (widget.plannerOnly) {
+      if (_phoneSurface == _WorkspacePhoneSurface.form) return _rideForm();
+      return _agendaPane(_AgendaChrome.phone);
+    }
     switch (_phoneSurface) {
       case _WorkspacePhoneSurface.form:
         return _rideForm();
@@ -1435,48 +2016,48 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     return ColoredBox(
       color: companyOpsCurrentScheme().surface,
       child: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-          child: TextField(
-            key: kCompanyCustomersSearchFieldKey,
-            controller: _search,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: kCompanyCustomersSearchHint.of(_lang),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: TextField(
+              key: kCompanyCustomersSearchFieldKey,
+              controller: _search,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: kCompanyCustomersSearchHint.of(_lang),
+              ),
+              onChanged: (value) {
+                _query = value.trim();
+                _searchDebounce?.cancel();
+                _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+                  if (mounted) _reloadCustomers();
+                });
+              },
             ),
-            onChanged: (value) {
-              _query = value.trim();
-              _searchDebounce?.cancel();
-              _searchDebounce = Timer(const Duration(milliseconds: 280), () {
-                if (mounted) _reloadCustomers();
-              });
-            },
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonal(
-                key: kCompanyCustomersAddButtonKey,
-                onPressed: _addCustomer,
-                child: Text(kCompanyCustomersAddLabel.of(_lang)),
-              ),
-              OutlinedButton(
-                key: kCompanyCustomersImportButtonKey,
-                onPressed: _importCustomers,
-                child: Text(kCompanyCustomersImportLabel.of(_lang)),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonal(
+                  key: kCompanyCustomersAddButtonKey,
+                  onPressed: _addCustomer,
+                  child: Text(kCompanyCustomersAddLabel.of(_lang)),
+                ),
+                OutlinedButton(
+                  key: kCompanyCustomersImportButtonKey,
+                  onPressed: _importCustomers,
+                  child: Text(kCompanyCustomersImportLabel.of(_lang)),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Expanded(child: _customerListBody(compact: compact)),
-      ],
-    ),
+          const SizedBox(height: 8),
+          Expanded(child: _customerListBody(compact: compact)),
+        ],
+      ),
     );
   }
 
@@ -1609,9 +2190,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   key: kCompanyAgendaTodayKey,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: companyOpsCurrentScheme().onSurface,
-                    side: BorderSide(
-                      color: companyOpsCurrentScheme().outline,
-                    ),
+                    side: BorderSide(color: companyOpsCurrentScheme().outline),
                   ),
                   onPressed: () {
                     setState(() => _anchor = DateTime.now());
@@ -1623,14 +2202,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                   key: kCompanyAgendaPickDateKey,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: companyOpsCurrentScheme().onSurface,
-                    side: BorderSide(
-                      color: companyOpsCurrentScheme().outline,
-                    ),
+                    side: BorderSide(color: companyOpsCurrentScheme().outline),
                   ),
                   onPressed: _pickAnchorDate,
                   child: Text(kCompanyAgendaPickDate.of(_lang)),
                 ),
-                if (chrome == _AgendaChrome.desktop)
+                if (chrome == _AgendaChrome.desktop && !widget.plannerOnly)
                   _toolbarGroup(
                     children: [
                       IconButton(
@@ -1675,7 +2252,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                       ),
                     ],
                   ),
-                if (tablet)
+                if (tablet && !widget.plannerOnly)
                   IconButton(
                     key: kCompanyAgendaToggleCustomersKey,
                     tooltip:
@@ -1783,8 +2360,10 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                       setState(() => _anchor = day);
                       _reloadAgenda(force: true);
                     },
-                    onSelectRide: (ride) =>
-                        _openBooking(companyAgendaRideDetailId(ride), ride: ride),
+                    onSelectRide: (ride) => _openBooking(
+                      companyAgendaRideDetailId(ride),
+                      ride: ride,
+                    ),
                   )
                 : _agendaCalendar(),
           ),
@@ -1906,8 +2485,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       filteredDriverId: _driverFilter,
       hourHeight: companyAgendaHourHeightFor(_hourDensity),
       onRetry: () => _reloadAgenda(force: true),
-                    onSelectRide: (ride) =>
-                        _openBooking(companyAgendaRideDetailId(ride), ride: ride),
+      onSelectRide: (ride) =>
+          _openBooking(companyAgendaRideDetailId(ride), ride: ride),
       onAcceptCustomer: _acceptCustomerOnSlot,
       onAcceptRide: _acceptRideOnSlot,
       onFilterDriver: (id) => setState(() => _driverFilter = id),
@@ -1941,370 +2520,646 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         child: DefaultTextStyle(
           style: TextStyle(color: scheme.onSurface, fontSize: 14),
           child: CompanyCustomerDossier(
-      customer: customer,
-      language: _lang,
-      repository: _customers,
-      issuerName: widget.issuerName,
-      reloadToken: _quotesRevision,
-      plannedRides: _linkedRides
-          .where((ride) => ride.customerId == customer.customerId)
-          .toList(),
-      onOpenBooking: (bookingId) {
-        _openBooking(bookingId);
-      },
-      onEdit: _editSelected,
-      actions: [
-        FilledButton(
-          key: kCompanyCustomersEditButtonKey,
-          onPressed: _editSelected,
-          child: Text(kCompanyCustomersEdit.of(_lang)),
-        ),
-        OutlinedButton(
-          key: kCompanyCustomersQuoteButtonKey,
-          onPressed: _quoteSelected,
-          child: Text(kCompanyCustomerQuoteCreate.of(_lang)),
-        ),
-        OutlinedButton(
-          onPressed: () => _beginPlan(customer: customer),
-          child: Text(kCompanyAgendaPlanRide.of(_lang)),
-        ),
-      ],
+            customer: customer,
+            language: _lang,
+            repository: _customers,
+            issuerName: widget.issuerName,
+            reloadToken: _quotesRevision,
+            plannedRides: _linkedRides
+                .where((ride) => ride.customerId == customer.customerId)
+                .toList(),
+            onOpenBooking: (bookingId) {
+              _openBooking(bookingId);
+            },
+            onEdit: _editSelected,
+            actions: [
+              FilledButton(
+                key: kCompanyCustomersEditButtonKey,
+                onPressed: _editSelected,
+                child: Text(kCompanyCustomersEdit.of(_lang)),
+              ),
+              OutlinedButton(
+                key: kCompanyCustomersQuoteButtonKey,
+                onPressed: _quoteSelected,
+                child: Text(kCompanyCustomerQuoteCreate.of(_lang)),
+              ),
+              OutlinedButton(
+                onPressed: () => _beginPlan(customer: customer),
+                child: Text(kCompanyAgendaPlanRide.of(_lang)),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  Widget _planQuoteSummary() {
+    final quote = _planQuoteResult;
+    final split = _roundtripChoice != CompanyRoundtripChoice.single;
+    final sanity = quote == null
+        ? const CompanyPlanQuoteSanity(ok: true)
+        : companyPlanQuoteSanityCheck(quote);
+    final waitIncl = companyPlanQuoteLineIncl(
+      quote?.breakdown,
+      quote?.breakdown?.waitingEx,
+    );
+    final bagsIncl = companyPlanQuoteLineIncl(
+      quote?.breakdown,
+      quote?.breakdown?.bagsEx,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (quote != null && quote.hasRoute) ...[
+          if (split) ...[
+            Text(
+              formatCompanyPlanQuoteLegLine(
+                label: kCompanyRoundtripOutbound.of(_lang),
+                result: quote,
+                inbound: false,
+                language: _lang,
+                pickupLocal: _planWhenNow
+                    ? companyPlanNowLocal()
+                    : _planPickupLocal,
+              ),
+              key: const Key('company_plan_quote_outbound'),
+            ),
+            if (quote.hasReturnRoute)
+              Text(
+                formatCompanyPlanQuoteLegLine(
+                  label: kCompanyRoundtripReturn.of(_lang),
+                  result: quote,
+                  inbound: true,
+                  language: _lang,
+                  pickupLocal:
+                      _roundtripChoice == CompanyRoundtripChoice.continuousWait
+                      ? _continuousWaitReturnPickup()
+                      : _returnPickupLocal,
+                ),
+                key: const Key('company_plan_quote_return'),
+              ),
+            if ((waitIncl ?? 0) > 0)
+              Text(
+                '${kCompanyAgendaWaitPrice.of(_lang)} · ${formatCompanyPlanQuoteMoney(waitIncl!, quote.currency)}',
+                key: kCompanyAgendaWaitPriceKey,
+              ),
+            if ((bagsIncl ?? 0) > 0)
+              Text(
+                '${kCompanyAgendaBagsPrice.of(_lang)} · ${formatCompanyPlanQuoteMoney(bagsIncl!, quote.currency)}',
+                key: kCompanyAgendaBagsPriceKey,
+              ),
+            if (quote.displayTotalPrice != null)
+              Text(
+                '${kCompanyAgendaQuoteTotal.of(_lang)} · ${formatCompanyPlanQuoteMoney(quote.displayTotalPrice!, quote.currency)}',
+                key: const Key('company_plan_quote_total'),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+          ] else if (formatCompanyPlanQuotePrice(quote, _lang).isNotEmpty)
+            Text(formatCompanyPlanQuotePrice(quote, _lang)),
+        ],
+        if (!sanity.ok)
+          Text(
+            kCompanyAgendaPriceInvalid.of(_lang),
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ExpansionTile(
+          key: const Key('company_plan_price_breakdown'),
+          tilePadding: EdgeInsets.zero,
+          title: Text(kCompanyAgendaPriceBreakdown.of(_lang)),
+          children: [
+            if (quote != null &&
+                formatCompanyPlanQuotePrice(quote, _lang).isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(formatCompanyPlanQuotePrice(quote, _lang)),
+              ),
+            if (_fixedPriceSnapshot != null)
+              CompanyFixedPriceBreakdown(
+                language: _lang,
+                snapshot: _fixedPriceSnapshot!,
+              ),
+            CompanyInternalRatesPanel(language: _lang, options: _rideOptions),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _planAssignmentFields() {
+    final combos = _planCrewCombos;
+    final outbound = companyPlanFindCrewCombo(
+      combos: combos,
+      driverId: _planDriverId,
+      vehicleId: _planVehicleId,
+    );
+    final inbound = companyPlanFindCrewCombo(
+      combos: combos,
+      driverId: _planReturnDriverId,
+      vehicleId: _planReturnVehicleId,
+    );
+    final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
+    final waiting = _roundtripChoice == CompanyRoundtripChoice.continuousWait;
+    final fromText = _fromAddress.value.displayText;
+    final toText = _toAddress.value.displayText;
+    final returnToText = _returnToAddress.value.displayText;
+    final outboundTitle = waiting
+        ? kCompanyAgendaAssignmentContinuous.of(_lang)
+        : companyPlanCrewLegTitle(
+            prefix: kCompanyRoundtripOutbound.of(_lang),
+            from: fromText,
+            to: toText,
+          );
+    final returnTitle = companyPlanCrewLegTitle(
+      prefix: kCompanyRoundtripReturn.of(_lang),
+      from: toText,
+      to: returnToText.isEmpty ? fromText : returnToText,
+      fromFallback: 'B',
+      toFallback: 'A',
+    );
+    final unsuitable = companyAssignmentUnsuitableDriverChoices(
+      drivers: _drivers,
+      language: _lang,
+      currentDriverId: _planDriverId,
+      vehicles: _planVehicleChoices,
+      whenNow: _planWhenNow,
+      companyId: _boundCompanyId ?? '',
+    );
+    final sameUnavailable =
+        split &&
+        _preferSameCrew &&
+        outbound != null &&
+        inbound != null &&
+        (inbound.driverId != outbound.driverId ||
+            inbound.vehicleId != outbound.vehicleId);
+    return Column(
+      key: kCompanyAgendaPlanDriverKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_planChoicesStatus != null) ...[
+          Text(_planChoicesStatus!, key: kCompanyAgendaPlanChoicesStatusKey),
+          const SizedBox(height: 8),
+        ],
+        CompanyCrewComboPicker(
+          key: kCompanyAgendaOutboundCrewKey,
+          language: _lang,
+          title: outboundTitle,
+          combos: combos,
+          selectedId:
+              outbound?.id ?? companyCrewComboId(_planDriverId, _planVehicleId),
+          plannedLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+          includePlate: true,
+          unsuitableChoices: unsuitable,
+          onSelected: (id) {
+            final parsed = parseCompanyCrewComboId(id);
+            setState(() {
+              _planDriverId = parsed.driverId;
+              _planVehicleId = parsed.vehicleId;
+              _planDriverUserPicked = true;
+              _planVehicleUserPicked = true;
+              _planOverlapPreview = null;
+              if (!split) {
+                _planReturnDriverId = parsed.driverId;
+                _planReturnVehicleId = parsed.vehicleId;
+              } else if (_preferSameCrew &&
+                  companyPlanCrewComboAvailableOnBoth(
+                    outbound: combos,
+                    inbound: _planReturnCrewCombos,
+                    driverId: parsed.driverId,
+                    vehicleId: parsed.vehicleId,
+                  )) {
+                _planReturnDriverId = parsed.driverId;
+                _planReturnVehicleId = parsed.vehicleId;
+              }
+            });
+            _syncPlanAssignmentProposal();
+          },
+        ),
+        if (split) ...[
+          const SizedBox(height: 8),
+          SwitchListTile(
+            key: kCompanyAgendaPreferSameCrewKey,
+            contentPadding: EdgeInsets.zero,
+            title: Text(kCompanyAgendaSameCrewIfAvailable.of(_lang)),
+            value: _preferSameCrew,
+            onChanged: (next) {
+              setState(() {
+                _preferSameCrew = next;
+                if (next && _preferSameCrewWindowsChecked) {
+                  _planReturnDriverId = _planDriverId;
+                  _planReturnVehicleId = _planVehicleId;
+                } else if (next && !_preferSameCrewWindowsChecked) {
+                  _preferSameCrew = false;
+                }
+              });
+              _syncPlanAssignmentProposal();
+            },
+          ),
+          if (sameUnavailable)
+            Text(
+              kCompanyAgendaSameCrewUnavailable.of(_lang),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          CompanyCrewComboPicker(
+            key: kCompanyAgendaReturnCrewKey,
+            language: _lang,
+            title: returnTitle,
+            combos: _planReturnCrewCombos,
+            selectedId:
+                inbound?.id ??
+                companyCrewComboId(_planReturnDriverId, _planReturnVehicleId),
+            plannedLocal: _returnPickupLocal,
+            includePlate: true,
+            unsuitableChoices: unsuitable,
+            onSelected: (id) {
+              final parsed = parseCompanyCrewComboId(id);
+              setState(() {
+                _planReturnDriverId = parsed.driverId;
+                _planReturnVehicleId = parsed.vehicleId;
+                _planOverlapPreview = null;
+                _preferSameCrew =
+                    parsed.driverId == _planDriverId &&
+                    parsed.vehicleId == _planVehicleId &&
+                    companyPlanCrewComboAvailableOnBoth(
+                      outbound: combos,
+                      inbound: _planReturnCrewCombos,
+                      driverId: parsed.driverId,
+                      vehicleId: parsed.vehicleId,
+                    );
+              });
+              unawaited(_previewPlanOverlap());
+            },
+          ),
+        ],
+        if (_planOverlapPreview != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _planOverlapPreview!,
+            key: kCompanyAgendaOverlapPreviewKey,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _rideForm() {
     final draft = _draft;
     if (draft == null) return const SizedBox.shrink();
-    return Column(
+    final airportMode = _planAirportMode;
+    return KeyedSubtree(
       key: kCompanyAgendaRideFormKey,
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '${kCompanyAgendaPlanRide.of(_lang)} · ${draft.customer.displayName}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                CompanyDateTimeFields(
-                  fieldId: 'agenda_pickup',
+      child: CompanyPlanRideForm(
+        language: _lang,
+        title: kCompanyAgendaPlanRide.of(_lang),
+        brand: resolveCompanyPlanBrand(
+          identity: companyOpsIdentityNotifier.value,
+        ),
+        whenNow: _planWhenNow,
+        onWhenNowChanged: _setPlanWhenNow,
+        selectedCategory: _planVehicleCategory,
+        onCategoryChanged: _setPlanVehicleCategory,
+        bookableCategories: () {
+          final found = companyPlanBookableCategories(
+            vehicles: _vehicles,
+            passengers: _passengers,
+          );
+          if (found.isNotEmpty) return found;
+          return const <CompanyPlanVehicleCategory>[
+            CompanyPlanVehicleCategory.sedan,
+            CompanyPlanVehicleCategory.minivan,
+          ];
+        }(),
+        unsuitableCategories: <CompanyPlanVehicleCategory>{
+          for (final category in companyPlanBookableCategories(
+            vehicles: _vehicles,
+            passengers: _passengers,
+          ))
+            if (!companyPlanVehicleTypeFitsCapacity(
+              type: companyPlanVehicleTypeForCategory(category),
+              passengers: _passengers,
+              bags: _rideOptions.bags,
+            ))
+              category,
+        },
+        capacityWarning: () {
+          if (companyPlanVehicleTypeFitsCapacity(
+            type: _planVehicleType,
+            passengers: _passengers,
+            bags: _rideOptions.bags,
+          )) {
+            return null;
+          }
+          final suggested = companyPlanSuggestedTypeForCapacity(
+            passengers: _passengers,
+            bags: _rideOptions.bags,
+            available: companyPlanBookableCategories(
+              vehicles: _vehicles,
+              passengers: _passengers,
+            ).map(companyPlanVehicleTypeForCategory),
+          );
+          if (suggested == null) {
+            return kCompanyAgendaCapacityUnsuitable.of(_lang);
+          }
+          return kCompanyAgendaCapacitySuggest
+              .of(_lang)
+              .replaceAll(
+                '{type}',
+                companyPlanVehicleTypeLabel(suggested, _lang),
+              );
+        }(),
+        unavailableReasons: <CompanyPlanVehicleCategory, String>{
+          for (final category in companyPlanBookableCategories(
+            vehicles: _vehicles,
+            passengers: _passengers,
+          ))
+            if (companyPlanCategoryUnavailableReason(
+                  category: category,
+                  vehicles: _vehicles,
+                  passengers: _passengers,
                   language: _lang,
-                  value: _planPickupLocal,
-                  onChanged: (next) {
-                    setState(() {
-                      _planPickupLocal = next;
-                      if (next != null) {
-                        _agendaMoment = next;
-                        _draft = draft.copyWith(pickupLocal: next);
-                      }
-                    });
-                    unawaited(_previewPlanOverlap());
-                    _schedulePlanQuote();
-                  },
-                ),
-                const SizedBox(height: 12),
-                CompanyTripRouteFields(
-                  language: _lang,
-                  pickup: _fromAddress,
-                  dropoff: _toAddress,
-                  rideOptions: _rideOptions,
-                  onRideOptionsChanged: (next) {
-                    setState(() {
-                      _rideOptions = next;
-                      _fixedPriceSnapshot = null;
-                      _planQuoteResult = null;
-                    });
-                    _schedulePlanQuote();
-                  },
-                  savedAddresses: draft.customer.addresses,
-                  pickupInputKey: kCompanyAgendaFromFieldKey,
-                  dropoffInputKey: kCompanyAgendaToFieldKey,
-                  pickupLabel: kCompanyAgendaPickup.of(_lang),
-                  dropoffLabel: kCompanyAgendaDropoff.of(_lang),
-                  onRouteIdentityChanged: _onPlanAddressChanged,
-                  showReturnAirportFields:
-                      _roundtripChoice != CompanyRoundtripChoice.single,
-                ),
-                const SizedBox(height: 12),
-                CompanyRoundtripFields(
-                  language: _lang,
-                  choice: _roundtripChoice,
-                  onChoiceChanged: _onRoundtripChoiceChanged,
-                  returnPickup: _returnPickupLocal,
-                  onReturnPickupChanged: (next) {
-                    setState(() => _returnPickupLocal = next);
-                    unawaited(_previewPlanOverlap());
-                  },
-                  returnFrom: _returnFromAddress,
-                  returnTo: _returnToAddress,
-                  savedAddresses: draft.customer.addresses,
-                  returnDuration: _returnDurationCtrl,
-                  onReturnDurationChanged: (_) => _onPlanAssignmentInputsChanged(),
-                  extra: _roundtripChoice == CompanyRoundtripChoice.splitNoWait
-                      ? Column(
-                          children: [
-                            const SizedBox(height: 8),
-                            CompanyAssignmentSearchField(
-                              kind: CompanyAssignmentChoiceKind.driver,
-                              language: _lang,
-                              label: kCompanyRoundtripReturnDriver.of(_lang),
-                              selectedId: _planReturnDriverId,
-                              enabled:
-                                  !_saving &&
-                                  !_fleetLoading &&
-                                  _fleetError == null,
-                              choices: companyAssignmentDriverChoices(
-                                drivers: _drivers,
-                                language: _lang,
-                                unassignedLabel:
-                                    kCompanyAgendaUnassignedLane.of(_lang),
-                              ),
-                              onSelected: (id) {
-                                setState(() => _planReturnDriverId = id);
-                                unawaited(_previewPlanOverlap());
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            CompanyAssignmentSearchField(
-                              kind: CompanyAssignmentChoiceKind.vehicle,
-                              language: _lang,
-                              label: kCompanyRoundtripReturnVehicle.of(_lang),
-                              selectedId: _planReturnVehicleId,
-                              enabled:
-                                  !_saving &&
-                                  !_fleetLoading &&
-                                  _fleetError == null,
-                              choices: companyAssignmentVehicleChoices(
-                                vehicles: _vehicles,
-                                language: _lang,
-                                unassignedLabel:
-                                    kCompanyAgendaUnassignedLane.of(_lang),
-                                passengers: _passengers,
-                              ),
-                              onSelected: (id) {
-                                setState(() => _planReturnVehicleId = id);
-                                unawaited(_previewPlanOverlap());
-                              },
-                            ),
-                          ],
-                        )
-                      : null,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(kCompanyAgendaPassengers.of(_lang)),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: _passengers > 1
-                          ? () {
-                              setState(() => _passengers -= 1);
-                              _schedulePlanQuote();
-                            }
-                          : null,
-                      icon: const Icon(Icons.remove),
-                    ),
-                    Text('$_passengers'),
-                    IconButton(
-                      onPressed: () {
-                        setState(() => _passengers += 1);
-                        _schedulePlanQuote();
-                      },
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                CompanyRideOptionsForm(
-                  language: _lang,
-                  value: _rideOptions,
-                  showAirportRouteFields: false,
-                  showReturnAirportFields: false,
-                  onChanged: (next) {
-                    setState(() => _rideOptions = next);
-                    _schedulePlanQuote();
-                  },
-                ),
-                const SizedBox(height: 8),
-                CompanyPlanQuotePanel(
-                  language: _lang,
-                  loading: _planQuoteLoading,
-                  result: _planQuoteResult,
-                  error: _planQuoteError,
-                  onRetry: () => unawaited(_refreshPlanQuote(force: true)),
-                ),
-                if (_fixedPriceSnapshot != null) ...[
-                  const SizedBox(height: 8),
-                  CompanyFixedPriceBreakdown(
-                    language: _lang,
-                    snapshot: _fixedPriceSnapshot!,
-                  ),
-                ],
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _noteCtrl,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: kCompanyCustomerQuoteDescription.of(_lang),
-                    alignLabelWithHint: true,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  kCompanyCustomerQuotePublicDescriptionHint.of(_lang),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                CompanyInternalRatesPanel(
-                  language: _lang,
-                  options: _rideOptions,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _priceCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: kCompanyAgendaPrice.of(_lang),
-                  ),
-                ),
-                if (_roundtripChoice != CompanyRoundtripChoice.single) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    kCompanyRoundtripPriceCovers.of(_lang),
-                    style: Theme.of(context).textTheme.bodySmall,
-                    softWrap: true,
-                  ),
-                ],
-                const SizedBox(height: 8),
-                InputDecorator(
-                  decoration: InputDecoration(
-                    labelText: kCompanyAgendaDuration.of(_lang),
-                    border: const OutlineInputBorder(),
-                  ),
-                  child: Text(
-                    _planQuoteResult?.durationMin != null
-                        ? '${_planQuoteResult!.durationMin} min'
-                        : (_durationCtrl.text.trim().isEmpty
-                              ? '—'
-                              : '${_durationCtrl.text.trim()} min'),
-                  ),
-                ),
-                ExpansionTile(
-                  key: kCompanyPlanQuoteManualDurationKey,
-                  tilePadding: EdgeInsets.zero,
-                  title: Text(kCompanyAgendaManualDuration.of(_lang)),
-                  subtitle: Text(
-                    kCompanyAgendaManualDurationHint.of(_lang),
-                    softWrap: true,
-                  ),
-                  children: [
-                    TextField(
-                      controller: _durationCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: kCompanyAgendaManualDuration.of(_lang),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (_planChoicesStatus != null) ...[
-                  Text(
-                    _planChoicesStatus!,
-                    key: kCompanyAgendaPlanChoicesStatusKey,
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                CompanyAssignmentSearchField(
-                  key: kCompanyAgendaPlanDriverKey,
-                  kind: CompanyAssignmentChoiceKind.driver,
-                  language: _lang,
-                  label: kCompanyAgendaDriver.of(_lang),
-                  selectedId: _planDriverId,
-                  enabled: !_saving && !_fleetLoading && _fleetError == null,
-                  choices: companyAssignmentDriverChoices(
-                    drivers: _drivers,
-                    language: _lang,
-                    unassignedLabel: kCompanyAgendaUnassignedLane.of(_lang),
-                  ),
-                  onSelected: (id) {
-                    setState(() => _planDriverId = id);
-                    unawaited(_previewPlanOverlap());
-                  },
-                ),
-                const SizedBox(height: 8),
-                CompanyAssignmentSearchField(
-                  key: kCompanyAgendaPlanVehicleKey,
-                  kind: CompanyAssignmentChoiceKind.vehicle,
-                  language: _lang,
-                  label: kCompanyAgendaVehicle.of(_lang),
-                  selectedId: _planVehicleId,
-                  enabled: !_saving && !_fleetLoading && _fleetError == null,
-                  choices: companyAssignmentVehicleChoices(
-                    vehicles: _vehicles,
-                    language: _lang,
-                    unassignedLabel: kCompanyAgendaUnassignedLane.of(_lang),
-                    passengers: _passengers,
-                  ),
-                  onSelected: (id) {
-                    setState(() => _planVehicleId = id);
-                    unawaited(_previewPlanOverlap());
-                  },
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  kCompanyAgendaOnlineNowHint.of(_lang),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                if (_planOverlapPreview != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _planOverlapPreview!,
-                    key: kCompanyAgendaOverlapPreviewKey,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                if (_formError != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _formError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+                )
+                case final reason?)
+              category: reason,
+        },
+        customer: draft.customer,
+        customers: _items,
+        onCustomerSelected: (item) => unawaited(_applyPlanCustomerItem(item)),
+        onAddCustomer: () => unawaited(_addPlanCustomer()),
+        vehicleType: _planVehicleType,
+        airportMode: airportMode,
+        onVehicleTypeChanged: _setPlanVehicleType,
+        onAirportModeChanged: _setPlanAirportMode,
+        routeFields: CompanyTripRouteFields(
+          language: _lang,
+          pickup: _fromAddress,
+          dropoff: _toAddress,
+          rideOptions: _rideOptions,
+          onRideOptionsChanged: (next) {
+            setState(() {
+              _rideOptions = next.copyWith(
+                vehicleType: _rideOptions.vehicleType,
+              );
+              _fixedPriceSnapshot = null;
+              _planQuoteResult = null;
+            });
+            _schedulePlanQuote();
+          },
+          savedAddresses: draft.customer.addresses,
+          pickupInputKey: kCompanyAgendaFromFieldKey,
+          dropoffInputKey: kCompanyAgendaToFieldKey,
+          pickupLabel: kCompanyAgendaPickupPlace.of(_lang),
+          dropoffLabel: kCompanyAgendaDropoffPlace.of(_lang),
+          sectionTitle: kCompanyRoundtripOutbound.of(_lang),
+          onRouteIdentityChanged: () {
+            _fillReturnRouteFromOutbound();
+            _onPlanAddressChanged();
+          },
+          showReturnAirportFields: false,
+          showRouteKindChips: false,
+          showAirportDestinationCards: false,
+          hideAddressKindChip: true,
+          pickupLocal: _planPickupLocal,
+          whenNow: _planWhenNow,
+          routeDurationMin: _planDurationMin,
+          showFlightBlock: false,
+          betweenEndpoints: CompanyPlanWaypointFields(
+            language: _lang,
+            stops: _outboundStops,
+            savedAddresses: draft.customer.addresses,
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              FilledButton(
-                key: kCompanyAgendaSaveRideKey,
-                onPressed: _saving ? null : _saveDraft,
-                child: Text(kCompanyAgendaSave.of(_lang)),
+        roundtripChoiceFields: CompanyRoundtripChoiceControl(
+          language: _lang,
+          choice: _roundtripChoice,
+          onChoiceChanged: _onRoundtripChoiceChanged,
+        ),
+        returnRouteFields: _roundtripChoice == CompanyRoundtripChoice.single
+            ? null
+            : CompanyRoundtripFields(
+                language: _lang,
+                choice: _roundtripChoice,
+                onChoiceChanged: _onRoundtripChoiceChanged,
+                returnPickup: _returnPickupLocal,
+                onReturnPickupChanged: (next) {
+                  setState(() => _returnPickupLocal = next);
+                  unawaited(_previewPlanOverlap());
+                  _schedulePlanQuote();
+                },
+                returnTo: _returnToAddress,
+                savedAddresses: draft.customer.addresses,
+                waitMin: _rideOptions.waitMin,
+                showChoice: false,
+                showReturnWhen: false,
+                showWait: false,
+                returnFromText: _compactAddress(_toAddress.value),
+                returnToText: _compactAddress(_canonicalReturnTo()),
+                returnStops: CompanyPlanWaypointFields(
+                  language: _lang,
+                  stops: _returnStops,
+                  savedAddresses: draft.customer.addresses,
+                  addLabel: kCompanyAgendaAddReturnStop.of(_lang),
+                  addKey: kCompanyPlanAddReturnStopKey,
+                  showCount: false,
+                ),
               ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                key: kCompanyAgendaCancelRideKey,
-                onPressed: _saving ? null : _cancelDraft,
-                child: Text(kCompanyAgendaCancel.of(_lang)),
+        returnWhenFields: _roundtripChoice == CompanyRoundtripChoice.splitNoWait
+            ? CompanyDateTimeFields(
+                fieldId: 'roundtrip_return',
+                language: _lang,
+                value: _returnPickupLocal,
+                leadingLabel: kCompanyRoundtripReturn.of(_lang),
+                onChanged: (next) {
+                  setState(() => _returnPickupLocal = next);
+                  unawaited(_previewPlanOverlap());
+                  _schedulePlanQuote();
+                },
+              )
+            : null,
+        waitFields: _roundtripChoice == CompanyRoundtripChoice.continuousWait
+            ? CompanyRoundtripFields(
+                language: _lang,
+                choice: _roundtripChoice,
+                onChoiceChanged: _onRoundtripChoiceChanged,
+                returnPickup: _returnPickupLocal,
+                onReturnPickupChanged: (_) {},
+                returnTo: _returnToAddress,
+                waitMin: _rideOptions.waitMin,
+                onWaitMinChanged: (next) {
+                  setState(() {
+                    _rideOptions = _rideOptions.copyWith(waitMin: next);
+                    _returnPickupLocal = _continuousWaitReturnPickup();
+                  });
+                  unawaited(_previewPlanOverlap());
+                  _schedulePlanQuote();
+                },
+                showChoice: false,
+                showReturnTo: false,
+                showReturnWhen: false,
+                showWait: true,
+              )
+            : null,
+        flightFields: airportMode
+            ? CompanyTripRouteFields(
+                language: _lang,
+                pickup: _fromAddress,
+                dropoff: _toAddress,
+                rideOptions: _rideOptions,
+                onRideOptionsChanged: (next) {
+                  setState(() {
+                    _rideOptions = next.copyWith(
+                      vehicleType: _rideOptions.vehicleType,
+                    );
+                    _fixedPriceSnapshot = null;
+                    _planQuoteResult = null;
+                  });
+                  _schedulePlanQuote();
+                },
+                savedAddresses: draft.customer.addresses,
+                onRouteIdentityChanged: () {
+                  _fillReturnRouteFromOutbound();
+                  _onPlanAddressChanged();
+                },
+                showReturnAirportFields: false,
+                showRouteKindChips: true,
+                showAirportDestinationCards: true,
+                hideAddressKindChip: true,
+                pickupLocal: _planPickupLocal,
+                whenNow: _planWhenNow,
+                routeDurationMin: _planDurationMin,
+                showFlightBlock: true,
+                showGroundAddresses: false,
+              )
+            : null,
+        whenLaterFields: CompanyDateTimeFields(
+          fieldId: 'agenda_pickup',
+          language: _lang,
+          value: _planPickupLocal,
+          firstDate: companyPlanLaterFirstDate(),
+          rejectPast: true,
+          leadingLabel: kCompanyRoundtripOutbound.of(_lang),
+          onChanged: (next) {
+            setState(() {
+              _planPickupLocal = next;
+              _planLaterConceptLocal = next;
+              if (next != null) {
+                _agendaMoment = next;
+                _draft = draft.copyWith(whenNow: false, pickupLocal: next);
+              }
+            });
+            unawaited(_previewPlanOverlap());
+            _schedulePlanQuote();
+          },
+        ),
+        passengers: _passengers,
+        onPassengersChanged: (next) {
+          final type = next > kCompanyPlanSedanMaxPassengers
+              ? CompanyPlanVehicleType.minivan
+              : _planVehicleType;
+          setState(() {
+            _passengers = next;
+            if (type != _planVehicleType) {
+              _rideOptions = _rideOptions.copyWith(
+                vehicleType: companyPlanVehicleTypeWire(type),
+              );
+            }
+          });
+          _syncPlanAssignmentProposal();
+          _schedulePlanQuote();
+        },
+        bags: _rideOptions.bags,
+        onBagsChanged: (next) {
+          setState(() => _rideOptions = _rideOptions.copyWith(bags: next));
+          _schedulePlanQuote();
+        },
+        quote: _planQuoteSummary(),
+        proposedAssignment: _planAssignmentFields(),
+        unsuitableDrivers: null,
+        moreOptions: [
+          CompanyRideOptionsForm(
+            language: _lang,
+            value: _rideOptions,
+            showTitle: false,
+            showService: false,
+            showTier: false,
+            showBags: false,
+            showWait: false,
+            showAirportRouteFields: false,
+            showReturnAirportFields: false,
+            showMeetAndGreet: true,
+            onChanged: (next) {
+              setState(
+                () => _rideOptions = next.copyWith(
+                  vehicleType: _rideOptions.vehicleType,
+                  bags: _rideOptions.bags,
+                  waitMin: _rideOptions.waitMin,
+                ),
+              );
+              _schedulePlanQuote();
+            },
+          ),
+          TextField(
+            controller: _noteCtrl,
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: kCompanyCustomerQuoteDescription.of(_lang),
+              alignLabelWithHint: true,
+            ),
+          ),
+          TextField(
+            controller: _priceCtrl,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: kCompanyAgendaPrice.of(_lang),
+            ),
+          ),
+          if (_roundtripChoice != CompanyRoundtripChoice.single)
+            Text(
+              kCompanyRoundtripPriceCovers.of(_lang),
+              style: Theme.of(context).textTheme.bodySmall,
+              softWrap: true,
+            ),
+          ExpansionTile(
+            key: kCompanyPlanQuoteManualDurationKey,
+            tilePadding: EdgeInsets.zero,
+            title: Text(kCompanyAgendaManualDuration.of(_lang)),
+            subtitle: Text(
+              kCompanyAgendaManualDurationHint.of(_lang),
+              softWrap: true,
+            ),
+            children: [
+              TextField(
+                controller: _durationCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: kCompanyAgendaManualDuration.of(_lang),
+                ),
               ),
             ],
           ),
+        ],
+        primary: FilledButton(
+          key: kCompanyAgendaSaveRideKey,
+          onPressed: _saving ? null : _saveDraft,
+          child: Text(kCompanyAgendaPlanRide.of(_lang)),
         ),
-      ],
+        secondary: OutlinedButton(
+          key: kCompanyAgendaCancelRideKey,
+          onPressed: _saving ? null : _cancelDraft,
+          child: Text(kCompanyAgendaCancel.of(_lang)),
+        ),
+        map: CompanyPlanRouteMap(
+          language: _lang,
+          pickup: _fromAddress.value,
+          dropoff: _toAddress.value,
+          quote: _planQuoteResult,
+          loading: _planQuoteLoading,
+          error: _planQuoteError,
+          onRetry: () => unawaited(_refreshPlanQuote(force: true)),
+          pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+        ),
+        errorText: _formError,
+      ),
     );
   }
 }

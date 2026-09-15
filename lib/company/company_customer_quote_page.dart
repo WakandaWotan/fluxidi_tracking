@@ -735,10 +735,8 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
                     returnPickup: _returnAt,
                     onReturnPickupChanged: (next) =>
                         setState(() => _returnAt = next),
-                    returnFrom: _returnFrom,
                     returnTo: _returnTo,
                     savedAddresses: widget.customer.addresses,
-                    returnDuration: _returnDuration,
                   ),
                 ),
                 _field(

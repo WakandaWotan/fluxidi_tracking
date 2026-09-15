@@ -42,6 +42,7 @@ class CompanyRideOptions {
     this.returnFlightNumber = '',
     this.returnFlightAt = '',
     this.returnPickupArrangement = '',
+    this.vehicleType = '',
   });
 
   final String service;
@@ -63,6 +64,7 @@ class CompanyRideOptions {
   final String returnFlightNumber;
   final String returnFlightAt;
   final String returnPickupArrangement;
+  final String vehicleType;
 
   bool get isAirport => service.trim().toLowerCase() == 'airport';
 
@@ -79,6 +81,7 @@ class CompanyRideOptions {
       airportIata.trim().isEmpty &&
       flightAt.trim().isEmpty &&
       pickupArrangement.trim().isEmpty &&
+      vehicleType.trim().isEmpty &&
       returnAirportIata.trim().isEmpty &&
       returnFlightNumber.trim().isEmpty &&
       returnFlightAt.trim().isEmpty;
@@ -103,6 +106,7 @@ class CompanyRideOptions {
     String? returnFlightNumber,
     String? returnFlightAt,
     String? returnPickupArrangement,
+    String? vehicleType,
   }) {
     return CompanyRideOptions(
       service: service ?? this.service,
@@ -125,6 +129,9 @@ class CompanyRideOptions {
       returnFlightAt: returnFlightAt ?? this.returnFlightAt,
       returnPickupArrangement:
           returnPickupArrangement ?? this.returnPickupArrangement,
+      vehicleType: companyRideSanitizeVehicleType(
+        vehicleType ?? this.vehicleType,
+      ),
     );
   }
 
@@ -159,6 +166,8 @@ class CompanyRideOptions {
         'return_flight_at': returnFlightAt.trim(),
       if (returnPickupArrangement.trim().isNotEmpty)
         'return_pickup_arrangement': returnPickupArrangement.trim(),
+      if (companyRideSanitizeVehicleType(vehicleType).isNotEmpty)
+        'vehicle_type': companyRideSanitizeVehicleType(vehicleType),
     };
   }
 }
@@ -180,13 +189,18 @@ CompanyRideOptions parseCompanyRideOptions(Object? raw) {
     return '';
   }
 
-  final service = pick(const ['service', 'service_id']).toLowerCase();
+  var service = pick(const ['service', 'service_id']).toLowerCase();
   final tier = pick(const ['tier', 'vehicle_tier', 'tier_id']).toLowerCase();
   final extra = pick(const ['extra', 'extra_option']).toLowerCase();
   final direction = pick(const [
     'airport_direction',
     'airportDirection',
   ]).toLowerCase();
+  var vehicleType = pick(const ['vehicle_type', 'vehicleType']).toLowerCase();
+  if (companyRideVehicleTypeIsServiceMode(vehicleType)) {
+    if (service.isEmpty) service = 'airport';
+    vehicleType = '';
+  }
   return CompanyRideOptions(
     service: kCompanyRideServices.contains(service) ? service : '',
     tier: kCompanyRideTiers.contains(tier) ? tier : '',
@@ -227,7 +241,23 @@ CompanyRideOptions parseCompanyRideOptions(Object? raw) {
       'return_pickup_arrangement',
       'returnPickupArrangement',
     ]).toLowerCase(),
+    vehicleType: companyRideSanitizeVehicleType(vehicleType),
   );
+}
+
+bool companyRideVehicleTypeIsServiceMode(String raw) {
+  switch (raw.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')) {
+    case 'airport':
+    case 'airport_ride':
+      return true;
+    default:
+      return false;
+  }
+}
+
+String companyRideSanitizeVehicleType(String raw) {
+  if (companyRideVehicleTypeIsServiceMode(raw)) return '';
+  return raw.trim().toLowerCase();
 }
 
 String companyRideOptionLabel(String id, AppLanguage language) {
@@ -281,7 +311,14 @@ String formatCompanyRideOptionsSummary(
       companyRideOptionLabel(options.service, language),
     if (options.tier.isNotEmpty) companyRideOptionLabel(options.tier, language),
     if (options.bags > 0) bagsLabel,
-    if (options.waitMin > 0) '${options.waitMin} min',
+    if (options.waitMin > 0)
+      language == AppLanguage.fr
+          ? 'attente ${options.waitMin} min'
+          : language == AppLanguage.es
+              ? 'espera ${options.waitMin} min'
+              : language == AppLanguage.nl
+                  ? 'wacht ${options.waitMin} min'
+                  : 'wait ${options.waitMin} min',
     if (options.airportDirection.isNotEmpty)
       companyRideOptionLabel(options.airportDirection, language),
     if (options.airportIata.isNotEmpty) options.airportIata,

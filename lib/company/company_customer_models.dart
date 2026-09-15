@@ -34,6 +34,8 @@ class CompanyCustomerAddress {
     this.postalCode = '',
     this.countryCode = '',
     this.notes = '',
+    this.lat,
+    this.lon,
   });
 
   final String addressId;
@@ -45,6 +47,8 @@ class CompanyCustomerAddress {
   final String postalCode;
   final String countryCode;
   final String notes;
+  final double? lat;
+  final double? lon;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -57,6 +61,8 @@ class CompanyCustomerAddress {
       if (postalCode.trim().isNotEmpty) 'postal_code': postalCode.trim(),
       if (countryCode.trim().isNotEmpty) 'country_code': countryCode.trim(),
       if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+      if (lat != null && lat!.isFinite) 'lat': lat,
+      if (lon != null && lon!.isFinite) 'lon': lon,
     };
   }
 }
@@ -387,6 +393,18 @@ String _optionalText(Map<dynamic, dynamic> map, String key) {
   return map[key]?.toString().trim() ?? '';
 }
 
+double? _optionalCoord(Map<dynamic, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final raw = map[key];
+    if (raw is num && raw.isFinite) return raw.toDouble();
+    if (raw is String) {
+      final parsed = num.tryParse(raw.trim())?.toDouble();
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+  }
+  return null;
+}
+
 CompanyCustomerAddress parseCompanyCustomerAddress(Map<dynamic, dynamic> raw) {
   final type = _optionalText(raw, 'type').toLowerCase();
   const allowed = <String>{'home', 'work', 'pickup', 'billing', 'other'};
@@ -400,6 +418,8 @@ CompanyCustomerAddress parseCompanyCustomerAddress(Map<dynamic, dynamic> raw) {
     postalCode: _optionalText(raw, 'postal_code'),
     countryCode: _optionalText(raw, 'country_code'),
     notes: _optionalText(raw, 'notes'),
+    lat: _optionalCoord(raw, const ['lat', 'latitude', 'pickup_lat']),
+    lon: _optionalCoord(raw, const ['lon', 'lng', 'longitude', 'pickup_lon']),
   );
 }
 

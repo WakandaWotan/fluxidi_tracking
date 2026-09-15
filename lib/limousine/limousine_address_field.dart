@@ -235,13 +235,17 @@ class LimousineAddressFieldController extends ChangeNotifier {
   }) {
     _debounce?.cancel();
     _requestId += 1;
+    final kept = limousinePreferCanonicalLabel(
+      original: textController.text,
+      suggestion: suggestion.label,
+    );
     textController.value = TextEditingValue(
-      text: suggestion.label,
-      selection: TextSelection.collapsed(offset: suggestion.label.length),
+      text: kept,
+      selection: TextSelection.collapsed(offset: kept.length),
     );
     value = LimousineAddressValue(
-      displayText: suggestion.label,
-      canonicalLabel: suggestion.label,
+      displayText: kept,
+      canonicalLabel: kept,
       lat: suggestion.lat,
       lon: suggestion.lon,
       placeId: suggestion.placeId,
@@ -340,6 +344,7 @@ class LimousineAddressField extends StatelessWidget {
     this.showCurrentLocation = false,
     this.inputKey,
     this.decoration,
+    this.showCanonicalEcho = true,
   });
 
   final LimousineAddressFieldController controller;
@@ -349,6 +354,7 @@ class LimousineAddressField extends StatelessWidget {
   final bool showCurrentLocation;
   final Key? inputKey;
   final InputDecoration? decoration;
+  final bool showCanonicalEcho;
 
   String _t(LocalizedText text) => text.of(language);
 
@@ -396,7 +402,7 @@ class LimousineAddressField extends StatelessWidget {
                           suffixIconConstraints: _suffixConstraints(controller),
                         ),
               ),
-              if (ready)
+              if (ready && showCanonicalEcho)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(

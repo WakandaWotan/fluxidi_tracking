@@ -13,12 +13,14 @@ class CompanyAirportSearchField extends StatefulWidget {
     required this.selected,
     required this.onSelected,
     this.fieldKey,
+    this.label,
   });
 
   final AppLanguage language;
   final AirportCatalogAirport? selected;
   final ValueChanged<AirportCatalogAirport> onSelected;
   final Key? fieldKey;
+  final String? label;
 
   @override
   State<CompanyAirportSearchField> createState() =>
@@ -79,7 +81,7 @@ class _CompanyAirportSearchFieldState extends State<CompanyAirportSearchField> {
           controller: _query,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            labelText: kCompanyAirportSearch.of(widget.language),
+            labelText: widget.label ?? kCompanyAirportSearch.of(widget.language),
             hintText: kCompanyAirportSearchHint.of(widget.language),
             suffixIcon: selected == null
                 ? const Icon(Icons.flight_rounded)

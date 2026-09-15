@@ -110,3 +110,6 @@ flutter:
     - assets/payment/logos/
     - assets/payment/badges/
     - assets/payment/providers/
+    - assets/vehicles/fallback/v1/
+    - assets/booking/modes/v1/
+    - assets/booking/airports/v1/

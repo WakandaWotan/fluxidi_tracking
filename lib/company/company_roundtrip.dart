@@ -67,6 +67,33 @@ String companyAgendaRideDetailId(CompanyAgendaRide ride) {
   return ride.bookingId.trim();
 }
 
+int? companyPlanReturnDurationMin({
+  required CompanyRoundtripChoice choice,
+  int? outboundDurationMin,
+  int? quotedReturnDurationMin,
+  String returnDurationText = '',
+}) {
+  if (choice == CompanyRoundtripChoice.continuousWait) {
+    if (quotedReturnDurationMin != null && quotedReturnDurationMin > 0) {
+      return quotedReturnDurationMin;
+    }
+    return outboundDurationMin != null && outboundDurationMin > 0
+        ? outboundDurationMin
+        : null;
+  }
+  if (choice == CompanyRoundtripChoice.splitNoWait) {
+    if (quotedReturnDurationMin != null && quotedReturnDurationMin > 0) {
+      return quotedReturnDurationMin;
+    }
+    final typed = int.tryParse(returnDurationText.trim());
+    if (typed != null && typed > 0) return typed;
+    return outboundDurationMin != null && outboundDurationMin > 0
+        ? outboundDurationMin
+        : null;
+  }
+  return null;
+}
+
 int? companyOccupancyWaitMinutes({
   required DateTime outboundLocal,
   required int? outboundDurationMin,

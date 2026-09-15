@@ -142,6 +142,7 @@ import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart'
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
+import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/brand_signature_gold_windows_layout.dart';
 import 'package:fluxidi_tracking/company/auth_failure_kind.dart';
@@ -2306,10 +2307,15 @@ Future<void> main() async {
     );
   }
   DriverSessionStore.instance.prepareStandaloneDriverEntry();
-  await DriverSessionStore.instance.bootstrap(
-    driversNotifier.value,
-    useStandaloneScopePointer: !_startInCompanyAdminHome,
-  );
+  try {
+    await DriverSessionStore.instance.bootstrap(
+      driversNotifier.value,
+      useStandaloneScopePointer: !_startInCompanyAdminHome,
+    );
+  } catch (error, stack) {
+    debugPrint('[STARTUP][DRIVER_BOOTSTRAP_FAIL] $error');
+    debugPrint('$stack');
+  }
   final startupDriverSession = activeDriverSessionNotifier.value;
   final startupDriverHasToken = (startupDriverSession?.driverSessionToken ?? '')
       .trim()

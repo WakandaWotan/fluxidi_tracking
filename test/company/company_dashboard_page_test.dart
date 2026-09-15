@@ -195,30 +195,10 @@ void main() {
             onOpenCustomers: (context, identity) {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => CompanyOpsWorkspacePage(
+                  builder: (_) => CompanyCustomersPage(
                     language: AppLanguage.nl,
                     issuerName: identity.companyName,
-                    customersRepository: repo,
-                    agendaRepository: CompanyAgendaRepository(
-                      scopeResolver: () => const <String, String>{
-                        'tenant_id': 'demo_company_p0',
-                        'company_id': 'demo_company_p0',
-                      },
-                      listTransport: (_) async => const <CompanyAgendaRide>[],
-                      createTransport:
-                          ({
-                            required draft,
-                            required idempotencyKey,
-                          }) async {
-                            throw const CompanyAgendaException('unused');
-                          },
-                    ),
-                    driversLoader: () async => const <Map<String, dynamic>>[],
-                    vehiclesLoader: () async => const <Map<String, dynamic>>[],
-                    bookingDetailLoader: (id) async => <String, dynamic>{
-                      'ok': true,
-                      'booking_id': id,
-                    },
+                    repository: repo,
                   ),
                 ),
               );
@@ -257,7 +237,7 @@ void main() {
     await tester.tap(find.text('Brussel-Zuid → Antwerpen-Centraal'));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
-    expect(find.textContaining('Terug gaat naar de boekingenlijst'), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaBackToQuoteHintKey), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingsPageKey), findsOneWidget);
@@ -278,7 +258,8 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('brand_signature_action_ai_dispatch')));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyOpsWorkspacePageKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersPageKey), findsOneWidget);
+    expect(find.byKey(kCompanyOpsWorkspacePageKey), findsNothing);
     expect(find.byKey(kCompanyCustomersSearchFieldKey), findsOneWidget);
     expect(find.text(kCompanyCustomersTitle.of(AppLanguage.nl)), findsWidgets);
     await tester.pageBack();

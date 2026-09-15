@@ -59,7 +59,7 @@ void main() {
     await tester.tap(find.text('Brussel-Zuid → Antwerpen-Centraal'));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
-    expect(find.textContaining('Terug gaat naar de boekingenlijst'), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaBackToQuoteHintKey), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingsPageKey), findsOneWidget);

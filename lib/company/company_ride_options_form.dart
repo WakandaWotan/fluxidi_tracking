@@ -26,6 +26,12 @@ class CompanyRideOptionsForm extends StatelessWidget {
     required this.onChanged,
     this.showReturnAirportFields = false,
     this.showAirportRouteFields = true,
+    this.showTitle = true,
+    this.showService = true,
+    this.showTier = true,
+    this.showBags = true,
+    this.showWait = true,
+    this.showMeetAndGreet,
   });
 
   final AppLanguage language;
@@ -33,6 +39,12 @@ class CompanyRideOptionsForm extends StatelessWidget {
   final ValueChanged<CompanyRideOptions> onChanged;
   final bool showReturnAirportFields;
   final bool showAirportRouteFields;
+  final bool showTitle;
+  final bool showService;
+  final bool showTier;
+  final bool showBags;
+  final bool showWait;
+  final bool? showMeetAndGreet;
 
   @override
   Widget build(BuildContext context) {
@@ -49,15 +61,18 @@ class CompanyRideOptionsForm extends StatelessWidget {
       }
       return extras.isEmpty ? '' : extras.first.id;
     }();
+    final showMeet = showMeetAndGreet ?? value.isAirport;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          kCompanyCustomerQuoteRideOptions.of(language),
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 10),
-        if (services.isNotEmpty)
+        if (showTitle) ...[
+          Text(
+            kCompanyCustomerQuoteRideOptions.of(language),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (showService && services.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: DropdownButtonFormField<String>(
@@ -81,7 +96,7 @@ class CompanyRideOptionsForm extends StatelessWidget {
               onChanged: (next) => onChanged(value.copyWith(service: next ?? '')),
             ),
           ),
-        if (tiers.isNotEmpty)
+        if (showTier && tiers.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: DropdownButtonFormField<String>(
@@ -105,6 +120,7 @@ class CompanyRideOptionsForm extends StatelessWidget {
               onChanged: (next) => onChanged(value.copyWith(tier: next ?? '')),
             ),
           ),
+        if (showBags)
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: Row(
@@ -127,6 +143,7 @@ class CompanyRideOptionsForm extends StatelessWidget {
             ],
           ),
         ),
+        if (showWait)
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: TextFormField(
@@ -278,7 +295,7 @@ class CompanyRideOptionsForm extends StatelessWidget {
               ),
           ],
         ],
-        if (value.isAirport) ...[
+        if (showMeet) ...[
           SwitchListTile(
             key: kCompanyRideMeetAndGreetKey,
             contentPadding: EdgeInsets.zero,

@@ -159,6 +159,10 @@ class CompanyCustomerDossier extends StatelessWidget {
         _section(kCompanyCustomersInternalNotes.of(language), [
           Text(_value(customer.internalNotes)),
         ]),
+        if (actions.isNotEmpty) ...[
+          Wrap(spacing: 8, runSpacing: 8, children: actions),
+          const SizedBox(height: 16),
+        ],
         _CompanyCustomerLinkedRecords(
           key: ValueKey<String>(
             '${customer.customerId}-$reloadToken',
@@ -171,10 +175,6 @@ class CompanyCustomerDossier extends StatelessWidget {
           plannedRides: plannedRides,
           onOpenBooking: onOpenBooking,
         ),
-        if (actions.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Wrap(spacing: 8, runSpacing: 8, children: actions),
-        ],
       ],
     );
   }

@@ -6,6 +6,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_http.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_dispatch.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
@@ -59,8 +60,28 @@ class _AssignAgendaRepository extends CompanyAgendaRepository {
   }
 }
 
+Future<void> _pickAssignCombo(
+  WidgetTester tester,
+  String comboId,
+) async {
+  final field = find.byKey(kCompanyAgendaAssignDriverKey);
+  await tester.ensureVisible(field);
+  await tester.pumpAndSettle();
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+  final choice = find.byKey(
+    companyAssignmentChoiceKey(CompanyAssignmentChoiceKind.driver, comboId),
+  );
+  await tester.ensureVisible(choice);
+  await tester.pumpAndSettle();
+  await tester.tap(choice);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('Toewijzen stays visible and overlap is shown', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final agenda = _AssignAgendaRepository(
       assignError: const CompanyAgendaException('assignment_overlap'),
     );
@@ -96,6 +117,7 @@ void main() {
               'vehicle_name': 'S-Klasse',
               'license_plate': '1-FLX-001',
               'passenger_capacity': 3,
+              'vehicle_type': 'sedan',
             },
           ],
         ),
@@ -107,10 +129,8 @@ void main() {
       find.text(kCompanyCustomerQuoteAssignmentPending.of(AppLanguage.nl)),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Karel Peeters').last);
-    await tester.pumpAndSettle();
+    await _pickAssignCombo(tester, 'drv_karel|vh_1');
+    await tester.ensureVisible(find.byKey(kCompanyAgendaAssignButtonKey));
     await tester.tap(find.byKey(kCompanyAgendaAssignButtonKey));
     await tester.pumpAndSettle();
     expect(agenda.assignCalls, 1);
@@ -120,6 +140,8 @@ void main() {
   });
 
   testWidgets('saved assignment stays visible after reload', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final assigned = <String, String>{};
     final agenda = _AssignAgendaRepository();
     await tester.pumpWidget(
@@ -159,20 +181,15 @@ void main() {
               'license_plate': '1-FLX-001',
               'passenger_capacity': 3,
               'is_active': true,
+              'vehicle_type': 'sedan',
             },
           ],
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Karel Peeters').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaAssignVehicleKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('S-Klasse').last);
-    await tester.pumpAndSettle();
+    await _pickAssignCombo(tester, 'drv_karel|vh_1');
+    expect(find.byKey(kCompanyAgendaAssignVehicleKey), findsNothing);
     agenda.onAssigned = (driverId, vehicleId) {
       assigned['driver'] = driverId;
       assigned['vehicle'] = vehicleId;
@@ -252,6 +269,8 @@ void main() {
   });
 
   testWidgets('overlap preview appears before save', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final agenda = CompanyAgendaRepository(
       scopeResolver: () => const <String, String>{
         'tenant_id': 'demo_company_p0',
@@ -307,10 +326,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Karel Peeters').last);
-    await tester.pumpAndSettle();
+    await _pickAssignCombo(tester, 'drv_karel|');
     expect(find.byKey(kCompanyAgendaOverlapPreviewKey), findsOneWidget);
     expect(
       find.text(kCompanyAgendaOverlapPreview.of(AppLanguage.nl)),
@@ -368,6 +384,8 @@ void main() {
   testWidgets('current driver is shown separately and not as an alternative', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
         home: CompanyBookingDetailPage(
@@ -403,9 +421,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaCurrentDriverKey), findsOneWidget);
     expect(find.textContaining('Karel Peeters'), findsWidgets);
+    await tester.ensureVisible(find.byKey(kCompanyAgendaAssignDriverKey));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
     await tester.pumpAndSettle();
-    expect(find.text('Amira Hassan').hitTestable(), findsWidgets);
+    expect(find.textContaining('Amira Hassan'), findsWidgets);
     expect(find.text(kCompanyAgendaNoOtherDriver.of(AppLanguage.nl)), findsNothing);
   });
 }

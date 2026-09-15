@@ -35,7 +35,9 @@ class CompanyAgendaRide {
     this.linkedAgendaItemId = '',
     this.roundtripChoice = CompanyRoundtripChoice.single,
     this.occupancyWaitMin,
+    this.occupancyMin,
     this.occupancyUnknown = false,
+    this.occupancyEndIso = '',
     this.returnPickupIso = '',
     this.assignmentWarning = '',
   });
@@ -68,7 +70,9 @@ class CompanyAgendaRide {
   final String linkedAgendaItemId;
   final CompanyRoundtripChoice roundtripChoice;
   final int? occupancyWaitMin;
+  final int? occupancyMin;
   final bool occupancyUnknown;
+  final String occupancyEndIso;
   final String returnPickupIso;
   final String assignmentWarning;
 
@@ -91,9 +95,21 @@ class CompanyAgendaRide {
     return parsed?.toUtc();
   }
 
+  DateTime? get rideEndUtc {
+    final start = pickupUtc;
+    if (start == null || durationMin == null || durationMin! <= 0) return null;
+    return start.add(Duration(minutes: durationMin!));
+  }
+
   DateTime? get dropoffUtc {
     final start = pickupUtc;
-    if (start == null || durationUnknown || durationMin == null) return null;
+    if (start == null) return null;
+    final occupancyEnd = DateTime.tryParse(occupancyEndIso.trim())?.toUtc();
+    if (occupancyEnd != null) return occupancyEnd;
+    if (occupancyMin != null && occupancyMin! > 0) {
+      return start.add(Duration(minutes: occupancyMin!));
+    }
+    if (durationUnknown || durationMin == null) return null;
     return start.add(Duration(minutes: durationMin!));
   }
 
@@ -164,7 +180,14 @@ class CompanyAgendaRide {
       occupancyWaitMin: int.tryParse(
         first(const ['occupancy_wait_min', 'occupancyWaitMin']),
       ),
+      occupancyMin: int.tryParse(
+        first(const ['occupancy_min', 'occupancyMin']),
+      ),
       occupancyUnknown: raw['occupancy_unknown'] == true,
+      occupancyEndIso: first(const [
+        'occupancy_end_iso',
+        'occupancyEndIso',
+      ]),
       returnPickupIso: first(const [
         'return_pickup_iso',
         'returnPickupIso',
@@ -207,7 +230,9 @@ class CompanyAgendaRide {
       linkedAgendaItemId: linkedAgendaItemId,
       roundtripChoice: roundtripChoice,
       occupancyWaitMin: occupancyWaitMin,
+      occupancyMin: occupancyMin,
       occupancyUnknown: occupancyUnknown,
+      occupancyEndIso: occupancyEndIso,
       returnPickupIso: returnPickupIso,
       assignmentWarning: warning.trim(),
     );
@@ -269,6 +294,9 @@ class CompanyRidePlanDraft {
     this.pricingSource = '',
     this.currency = 'EUR',
     this.durationRouteMin,
+    this.whenNow = false,
+    this.stops = const <String>[],
+    this.returnStops = const <String>[],
   });
 
   final CompanyCustomer customer;
@@ -307,8 +335,12 @@ class CompanyRidePlanDraft {
   final String pricingSource;
   final String currency;
   final int? durationRouteMin;
+  final bool whenNow;
+  final List<String> stops;
+  final List<String> returnStops;
 
   CompanyRidePlanDraft copyWith({
+    CompanyCustomer? customer,
     DateTime? pickupLocal,
     String? fromAddress,
     String? toAddress,
@@ -350,9 +382,12 @@ class CompanyRidePlanDraft {
     String? currency,
     int? durationRouteMin,
     bool clearQuoteMetrics = false,
+    bool? whenNow,
+    List<String>? stops,
+    List<String>? returnStops,
   }) {
     return CompanyRidePlanDraft(
-      customer: customer,
+      customer: customer ?? this.customer,
       pickupLocal: pickupLocal ?? this.pickupLocal,
       fromAddress: fromAddress ?? this.fromAddress,
       toAddress: toAddress ?? this.toAddress,
@@ -404,6 +439,9 @@ class CompanyRidePlanDraft {
       durationRouteMin: clearQuoteMetrics
           ? null
           : (durationRouteMin ?? this.durationRouteMin),
+      whenNow: whenNow ?? this.whenNow,
+      stops: stops ?? this.stops,
+      returnStops: returnStops ?? this.returnStops,
     );
   }
 }
@@ -446,9 +484,19 @@ CompanyAgendaPeriod companyAgendaPeriodFor({
 }
 
 String companyCustomerAddressLine(CompanyCustomerAddress address) {
-  return <String>[
-    address.label,
-    address.line1,
-    address.city,
-  ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' · ');
+  final street = <String>[
+    address.line1.trim(),
+    address.line2.trim(),
+  ].where((part) => part.isNotEmpty).join(' ');
+  final locality = <String>[
+    address.postalCode.trim(),
+    address.city.trim(),
+  ].where((part) => part.isNotEmpty).join(' ');
+  final line = <String>[
+    if (street.isNotEmpty) street,
+    if (locality.isNotEmpty) locality,
+    if (address.countryCode.trim().isNotEmpty) address.countryCode.trim(),
+  ].join(', ');
+  if (line.isNotEmpty) return line;
+  return address.label.trim();
 }

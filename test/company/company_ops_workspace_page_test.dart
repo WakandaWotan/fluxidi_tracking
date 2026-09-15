@@ -18,8 +18,17 @@ import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_drivers_now.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_form_date_time.dart';
+import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
+import 'package:fluxidi_tracking/company/company_crew_combo.dart';
+import 'package:fluxidi_tracking/company/company_plan_airport_cards.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/company/company_ride_options_form.dart';
+import 'package:fluxidi_tracking/company/company_plan_ride_form.dart';
+import 'package:fluxidi_tracking/company/company_trip_route_fields.dart';
+import 'package:fluxidi_tracking/company/company_plan_route_map.dart';
+import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 
 class _FakeCustomersRepository extends CompanyCustomersRepository {
   _FakeCustomersRepository({this.pages, this.detail})
@@ -218,11 +227,14 @@ Future<void> _pumpWorkspace(
 }
 
 Future<void> _fillPlanPickup(WidgetTester tester) async {
+  await tester.ensureVisible(find.byKey(kCompanyAgendaPlanWhenLaterKey));
+  await tester.tap(find.byKey(kCompanyAgendaPlanWhenLaterKey));
+  await tester.pumpAndSettle();
   final date = tester.widget<TextField>(
     find.byKey(companyFormDateFieldKey('agenda_pickup')),
   );
-  date.controller!.text = '13/9/2026';
-  date.onSubmitted?.call('13/9/2026');
+  date.controller!.text = '20/9/2026';
+  date.onSubmitted?.call('20/9/2026');
   final time = tester.widget<TextField>(
     find.byKey(companyFormTimeFieldKey('agenda_pickup')),
   );
@@ -245,40 +257,9 @@ void main() {
     ],
   );
 
-  testWidgets('desktop load more keeps later customers visible', (
+  testWidgets('desktop planner has agenda beside the form, not a CRM list', (
     tester,
   ) async {
-    await _pumpWorkspace(
-      tester,
-      size: const Size(1280, 800),
-      customers: _FakeCustomersRepository(
-        pages: <CompanyCustomerListPage>[
-          CompanyCustomerListPage(
-            items: <CompanyCustomerListItem>[_item('cus_1', 'Ada Lovelace')],
-            hasMore: true,
-            nextCursor: 'page-2',
-            totalCount: 2,
-          ),
-          CompanyCustomerListPage(
-            items: <CompanyCustomerListItem>[_item('cus_2', 'Grace Hopper')],
-            hasMore: false,
-            nextCursor: null,
-            totalCount: 2,
-          ),
-        ],
-      ),
-      agenda: _FakeAgendaRepository(),
-    );
-    expect(find.text('Ada Lovelace'), findsOneWidget);
-    expect(find.text('Grace Hopper'), findsNothing);
-    await tester.tap(find.byKey(kCompanyCustomersLoadMoreKey));
-    await tester.pumpAndSettle();
-    expect(find.text('Ada Lovelace'), findsOneWidget);
-    expect(find.text('Grace Hopper'), findsOneWidget);
-    expect(find.byKey(kCompanyCustomersLoadMoreKey), findsNothing);
-  });
-
-  testWidgets('desktop keeps list, agenda and detail together', (tester) async {
     await _pumpWorkspace(
       tester,
       size: const Size(1280, 800),
@@ -286,15 +267,13 @@ void main() {
       agenda: _FakeAgendaRepository(),
     );
     expect(find.byKey(kCompanyOpsWorkspacePageKey), findsOneWidget);
-    expect(find.byKey(kCompanyCustomersSearchFieldKey), findsOneWidget);
+    expect(find.byKey(kCompanyOpsPlannerWorkspaceKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersSearchFieldKey), findsNothing);
     expect(find.byKey(kCompanyAgendaPaneKey), findsOneWidget);
-    expect(
-      find.text(kCompanyCustomersSelectHint.of(AppLanguage.nl)),
-      findsOneWidget,
-    );
     expect(find.byKey(kCompanyAgendaPlanRideKey), findsOneWidget);
     expect(find.byKey(kCompanyDriversNowPaneKey), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
+    expect(find.text(kCompanyAgendaPlanRide.of(AppLanguage.nl)), findsWidgets);
   });
 
   testWidgets('Chauffeurs nu uses loaded drivers without claiming online', (
@@ -326,7 +305,7 @@ void main() {
     );
   });
 
-  testWidgets('tablet keeps list and agenda, phone uses sequential screens', (
+  testWidgets('tablet shows agenda; phone uses Agenda and Nieuwe rit', (
     tester,
   ) async {
     await _pumpWorkspace(
@@ -336,11 +315,8 @@ void main() {
       agenda: _FakeAgendaRepository(),
     );
     expect(find.byKey(kCompanyAgendaPaneKey), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaToggleCustomersKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaToggleCustomersKey), findsNothing);
     expect(find.byType(NavigationBar), findsNothing);
-    await tester.tap(find.byKey(kCompanyAgendaToggleCustomersKey));
-    await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyCustomersListKey), findsOneWidget);
 
     await _pumpWorkspace(
       tester,
@@ -348,12 +324,11 @@ void main() {
       customers: customers(),
       agenda: _FakeAgendaRepository(),
     );
-    expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaPlanRideKey), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaPaneKey), findsNothing);
-    await tester.tap(find.text(kCompanyAgendaTitle.of(AppLanguage.nl)));
-    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaPhoneNavKey), findsOneWidget);
+    expect(find.text(kCompanyAgendaTitle.of(AppLanguage.nl)), findsWidgets);
+    expect(find.text(kCompanyAgendaNewRideTab.of(AppLanguage.nl)), findsOneWidget);
     expect(find.byKey(kCompanyAgendaPaneKey), findsOneWidget);
+    expect(find.byKey(kCompanyCustomersSearchFieldKey), findsNothing);
   });
 
   testWidgets('Rit plannen and cancel never write a booking', (tester) async {
@@ -364,12 +339,23 @@ void main() {
       customers: customers(),
       agenda: agenda,
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaAirportModeKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaPlanRideKey), findsNothing);
+    expect(find.byKey(kCompanyAgendaPlanCloseKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaOccupancyKey), findsOneWidget);
+    await tester.ensureVisible(find.byKey(kCompanyAgendaMoreOptionsKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaMoreOptionsKey));
+    await tester.pumpAndSettle();
     expect(find.text(kCompanyAgendaPrice.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.byKey(kCompanyRideServiceKey), findsNothing);
+    expect(find.byKey(kCompanyRideTierKey), findsNothing);
+    expect(find.byKey(kCompanyRideBagsKey), findsNothing);
+    expect(find.byKey(kCompanyRideWaitKey), findsNothing);
     await tester.tap(find.byKey(kCompanyAgendaCancelRideKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaRideFormKey), findsNothing);
@@ -386,14 +372,10 @@ void main() {
       customers: customers(),
       agenda: agenda,
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyTripRouteAddressKey), findsOneWidget);
-    expect(find.byKey(kCompanyTripRouteToAirportKey), findsOneWidget);
-    expect(find.byKey(kCompanyTripRouteFromAirportKey), findsOneWidget);
-    expect(find.textContaining('september 2026'), findsNothing);
+    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.textContaining('2026-09'), findsNothing);
     await _fillPlanPickup(tester);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -417,8 +399,6 @@ void main() {
       customers: customers(),
       agenda: agenda,
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     await _fillPlanPickup(tester);
@@ -438,8 +418,6 @@ void main() {
       customers: customers(),
       agenda: unknown,
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     await _fillPlanPickup(tester);
@@ -555,21 +533,16 @@ void main() {
       lessThan(1601),
     );
 
-    await tester.tap(find.text('Ada Lovelace'));
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyCustomerDossierKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
     expect(find.text('Zo'), findsOneWidget);
     expect(find.text('13/9'), findsOneWidget);
     expect(
       tester.getRect(find.byKey(companyAgendaDayHeaderKey(sunday))).right,
       lessThan(1601),
     );
-
-    await tester.tap(find.byKey(kCompanyAgendaToggleDossierKey));
-    await tester.pumpAndSettle();
     expect(find.byKey(kCompanyCustomerDossierKey), findsNothing);
-    expect(find.text('Zo'), findsOneWidget);
-    expect(find.text('13/9'), findsOneWidget);
 
     await tester.tap(find.byKey(kCompanyAgendaNextPeriodKey));
     await tester.pumpAndSettle();
@@ -587,16 +560,24 @@ void main() {
       agenda: _FakeAgendaRepository(),
       initialAnchor: DateTime(2026, 9, 9, 12),
     );
-    final slot = find.byKey(Key(companyAgendaSlotKey(sunday)));
-    expect(slot, findsOneWidget);
-    await tester.drag(
-      find.byKey(const Key('company_customer_row_cus_1')),
-      tester.getCenter(slot) -
-          tester.getCenter(find.byKey(const Key('company_customer_row_cus_1'))),
-    );
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
-    expect(find.text('13 september 2026'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(kCompanyAgendaPlanWhenLaterKey));
+    await tester.tap(find.byKey(kCompanyAgendaPlanWhenLaterKey));
+    await tester.pumpAndSettle();
+    final date = tester.widget<TextField>(
+      find.byKey(companyFormDateFieldKey('agenda_pickup')),
+    );
+    date.controller!.text = '13/9/2026';
+    date.onSubmitted?.call('13/9/2026');
+    final time = tester.widget<TextField>(
+      find.byKey(companyFormTimeFieldKey('agenda_pickup')),
+    );
+    time.controller!.text = '00:00';
+    time.onSubmitted?.call('00:00');
+    await tester.pump();
+    expect(find.textContaining('13'), findsWidgets);
   });
 
   testWidgets('agenda colors reload in Klantenbeheer after a chauffeur save', (
@@ -756,81 +737,31 @@ void main() {
         <String, dynamic>{
           'vehicle_id': 'vh_1',
           'vehicle_name': 'S-Klasse',
+          'vehicle_type': 'sedan',
           'license_plate': '1-FLX-001',
           'passenger_capacity': 3,
           'is_active': true,
         },
       ],
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    expect(find.text(kCompanyAgendaUnassignedLane.of(AppLanguage.nl)), findsWidgets);
     await tester.ensureVisible(find.byKey(kCompanyAgendaPlanDriverKey));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaPlanDriverKey));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_karel',
-        ),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_amira',
-        ),
-      ),
-      findsOneWidget,
-    );
-    await tester.enterText(find.byKey(kCompanyAgendaPlanDriverKey), 'kar');
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_karel',
-        ),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_amira',
-        ),
-      ),
-      findsNothing,
-    );
+    expect(find.byKey(const Key('company_crew_combo_drv_karel|vh_1')), findsNothing);
     await tester.tap(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_karel',
-        ),
+      find.descendant(
+        of: find.byKey(kCompanyAgendaOutboundCrewKey),
+        matching: find.byKey(kCompanyCrewComboOpenKey),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(kCompanyAgendaPlanVehicleKey));
+    expect(find.byKey(const Key('company_crew_combo_drv_karel|vh_1')), findsOneWidget);
+    expect(find.byKey(const Key('company_crew_combo_drv_amira|vh_1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('company_crew_combo_drv_karel|vh_1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaPlanVehicleKey));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.vehicle,
-          'vh_1',
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyCrewComboSheetKey), findsNothing);
+    expect(find.byKey(kCompanyAgendaPlanVehicleKey), findsNothing);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -857,11 +788,19 @@ void main() {
         },
       ],
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(kCompanyAgendaPlanDriverKey), 'Karel Peeters');
+    await tester.ensureVisible(find.byKey(kCompanyAgendaOutboundCrewKey));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(kCompanyAgendaOutboundCrewKey),
+        matching: find.byKey(kCompanyCrewComboOpenKey),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaUnassignedLaneKey));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -886,29 +825,26 @@ void main() {
         },
       ],
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     await _fillPlanPickup(tester);
     await tester.ensureVisible(find.byKey(kCompanyAgendaPlanDriverKey));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(kCompanyAgendaPlanDriverKey));
-    await tester.pumpAndSettle();
     await tester.tap(
-      find.byKey(
-        companyAssignmentChoiceKey(
-          CompanyAssignmentChoiceKind.driver,
-          'drv_karel',
-        ),
+      find.descendant(
+        of: find.byKey(kCompanyAgendaOutboundCrewKey),
+        matching: find.byKey(kCompanyCrewComboOpenKey),
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('company_crew_combo_drv_karel|')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(kCompanyAgendaOverlapPreviewKey));
+    expect(find.byKey(kCompanyAgendaOverlapPreviewKey), findsOneWidget);
     expect(
       find.text(kCompanyAgendaAvailabilityUnknown.of(AppLanguage.nl)),
-      findsOneWidget,
+      findsWidgets,
     );
-    expect(find.text(kCompanyAgendaOnlineNowHint.of(AppLanguage.nl)), findsOneWidget);
   });
 
   testWidgets('date navigation stays in one toolbar group when the bar wraps', (
@@ -944,8 +880,6 @@ void main() {
       customers: customers(),
       agenda: _FakeAgendaRepository(),
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
@@ -1048,20 +982,77 @@ void main() {
       customers: customers(),
       agenda: agenda,
     );
-    await tester.tap(find.text('Ada Lovelace'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(kCompanyAgendaToFieldKey));
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel-Zuid');
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    expect(find.text('Brussel-Zuid'), findsOneWidget);
+    expect(find.text('Brussel-Zuid'), findsWidgets);
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
     await tester.pumpAndSettle();
     expect(agenda.createCalls, 1);
     expect(agenda.lastDriverId, '');
+  });
+
+  testWidgets('wide Windows keeps agenda beside the guided planner', (
+    tester,
+  ) async {
+    await _pumpWorkspace(
+      tester,
+      size: const Size(1524, 900),
+      customers: customers(),
+      agenda: _FakeAgendaRepository(),
+    );
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaPaneKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaPlanMapKey), findsNothing);
+    expect(find.text('Kortrijksesteenweg'), findsNothing);
+    expect(find.textContaining('Wotanlaan'), findsNothing);
+  });
+
+  testWidgets('tablet landscape splits input and map; airport keeps a vehicle type', (
+    tester,
+  ) async {
+    await _pumpWorkspace(
+      tester,
+      size: const Size(1180, 820),
+      customers: customers(),
+      agenda: _FakeAgendaRepository(),
+    );
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaPlanMapKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaPaneKey), findsNothing);
+    await tester.ensureVisible(find.byKey(kCompanyAgendaAirportModeKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaAirportModeKey));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(kCompanyAgendaVehicleTypeSedanKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaVehicleTypeMinivanKey), findsOneWidget);
+    expect(find.text(kCompanyAgendaAirportNeedsVehicle.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.byKey(kCompanyTripRouteToAirportKey), findsOneWidget);
+    expect(find.text('Van de luchthaven'), findsOneWidget);
+    expect(find.byKey(companyPlanAirportCardKey('BRU')), findsOneWidget);
+    expect(find.byKey(companyPlanAirportCardKey('other')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(companyPlanAirportCardKey('BRU')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(companyPlanAirportCardKey('BRU')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyPlanAirportSummaryKey), findsOneWidget);
+    expect(find.textContaining('BRU'), findsWidgets);
+    expect(find.byKey(kCompanyAgendaToFieldKey), findsNothing);
+    expect(find.byKey(kCompanyAgendaFromFieldKey), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    final save = tester.getRect(find.byKey(kCompanyAgendaSaveRideKey));
+    expect(save.bottom, lessThanOrEqualTo(820.5));
   });
 }

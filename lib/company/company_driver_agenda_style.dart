@@ -67,11 +67,32 @@ String companyAgendaDriverId(Map<String, dynamic> raw) {
   return (raw['driver_id'] ?? raw['driverId'] ?? '').toString().trim();
 }
 
+bool companyPlanLooksLikeInternalId(String value) {
+  final text = value.trim();
+  return RegExp(
+    r'^(drv|vh|usr|co|cust|booking)_',
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
 String companyAgendaDriverName(Map<String, dynamic> raw) {
   final name = (raw['display_name'] ?? raw['displayName'] ?? raw['name'] ?? '')
       .toString()
       .trim();
-  return name.isEmpty ? companyAgendaDriverId(raw) : name;
+  if (name.isNotEmpty && !companyPlanLooksLikeInternalId(name)) {
+    return name;
+  }
+  final first = (raw['first_name'] ?? raw['firstName'] ?? raw['given_name'] ?? '')
+      .toString()
+      .trim();
+  final last = (raw['last_name'] ?? raw['lastName'] ?? raw['family_name'] ?? '')
+      .toString()
+      .trim();
+  final composed = '$first $last'.trim();
+  if (composed.isNotEmpty && !companyPlanLooksLikeInternalId(composed)) {
+    return composed;
+  }
+  return '';
 }
 
 CompanyAgendaDriverLook companyAgendaDriverLook(
@@ -83,9 +104,7 @@ CompanyAgendaDriverLook companyAgendaDriverLook(
       : companyAgendaDriverId(raw);
   return CompanyAgendaDriverLook(
     driverId: id,
-    displayName: companyAgendaDriverName(raw).isEmpty
-        ? id
-        : companyAgendaDriverName(raw),
+    displayName: companyAgendaDriverName(raw),
     color: companyAgendaColorFromHex(
       (raw['agenda_color'] ?? raw['agendaColor'] ?? '').toString(),
       fallbackSeed: id,

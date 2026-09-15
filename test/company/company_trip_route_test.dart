@@ -51,4 +51,48 @@ void main() {
     expect(value.acceptance, LimousineAddressAcceptance.selected);
     expect(value.displayText, isNotEmpty);
   });
+
+  test('to/from airport fills only the matching catalog endpoint', () {
+    final airport = airportByIata('BRU')!;
+    LimousineAddressValue? pickup;
+    LimousineAddressValue? dropoff;
+    companyTripApplyAirportEndpoint(
+      kind: CompanyTripRouteKind.toAirport,
+      airport: airport,
+      applyPickup: (value) => pickup = value,
+      applyDropoff: (value) => dropoff = value,
+    );
+    expect(pickup, isNull);
+    expect(dropoff?.placeId, 'airport:BRU');
+    expect(dropoff?.lat, airport.latitude);
+    expect(dropoff?.lon, airport.longitude);
+
+    pickup = null;
+    dropoff = null;
+    companyTripApplyAirportEndpoint(
+      kind: CompanyTripRouteKind.fromAirport,
+      airport: airport,
+      applyPickup: (value) => pickup = value,
+      applyDropoff: (value) => dropoff = value,
+    );
+    expect(dropoff, isNull);
+    expect(pickup?.placeId, 'airport:BRU');
+  });
+
+  test('direction change clears the opposite airport endpoint', () {
+    final airport = airportByIata('ANR')!;
+    final filled = companyAirportAddressValue(airport);
+    var pickup = filled;
+    var dropoff = filled;
+    companyTripClearOppositeAirportEndpoint(
+      kind: CompanyTripRouteKind.fromAirport,
+      airport: airport,
+      pickup: pickup,
+      dropoff: dropoff,
+      clearPickup: () => pickup = const LimousineAddressValue(),
+      clearDropoff: () => dropoff = const LimousineAddressValue(),
+    );
+    expect(pickup.placeId, 'airport:ANR');
+    expect(dropoff.placeId ?? '', isEmpty);
+  });
 }

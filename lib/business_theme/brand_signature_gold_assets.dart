@@ -33,6 +33,7 @@ const Map<String, String> kBrandSignatureGoldActionAssetKeys = <String, String>{
   'demand_radar': 'demand_radar',
   'booking_link': 'booking_link',
   'planning': 'planning',
+  'plan_ride': 'plan_ride',
   'ai_dispatch': 'ai_dispatch',
   'theme': 'theme',
   'more': 'more',

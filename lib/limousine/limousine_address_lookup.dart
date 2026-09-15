@@ -27,15 +27,23 @@ class LimousinePlaceSuggestion {
     this.lat,
     this.lon,
     this.placeId,
+    this.placeType = '',
   });
 
   final String label;
   final double? lat;
   final double? lon;
   final String? placeId;
+  final String placeType;
 
   bool get hasCoordinates =>
       lat != null && lon != null && lat!.isFinite && lon!.isFinite;
+
+  bool get isStreetLevel {
+    final type = placeType.trim().toLowerCase();
+    final id = (placeId ?? '').toLowerCase();
+    return type == 'address' || id.startsWith('address.');
+  }
 }
 
 class LimousinePlaceLookupResult {
@@ -120,21 +128,92 @@ bool limousineAddressAllowsManualFallback(String raw) {
   return RegExp(r'[\s,]').hasMatch(text);
 }
 
+final RegExp _streetNumber = RegExp(r'\d+[A-Za-z]?\b');
+final RegExp _localityOnly = RegExp(
+  r'^\d{4}\b[^A-Za-zÀ-ÿ]*[A-Za-zÀ-ÿ].*$',
+);
+
+bool limousineAddressHasStreetNumber(String raw) =>
+    _streetNumber.hasMatch(raw.trim());
+
+bool limousineAddressLooksLikeLocalityOnly(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return true;
+  if (limousineAddressHasStreetNumber(text) &&
+      RegExp(r'[A-Za-zÀ-ÿ]{3,}').hasMatch(text.split(RegExp(r'\d')).first)) {
+    return false;
+  }
+  return _localityOnly.hasMatch(text) &&
+      !RegExp(r'[A-Za-zÀ-ÿ]{3,}.+\d').hasMatch(text);
+}
+
+bool limousineAddressIsMoreSpecific(String original, String candidate) {
+  final left = original.trim();
+  final right = candidate.trim();
+  if (left.isEmpty) return false;
+  if (right.isEmpty) return true;
+  final leftStreet = limousineAddressHasStreetNumber(left) &&
+      !limousineAddressLooksLikeLocalityOnly(left);
+  final rightStreet = limousineAddressHasStreetNumber(right) &&
+      !limousineAddressLooksLikeLocalityOnly(right);
+  if (leftStreet && !rightStreet) return true;
+  return false;
+}
+
+String limousinePreferCanonicalLabel({
+  required String original,
+  required String suggestion,
+}) {
+  if (limousineAddressIsMoreSpecific(original, suggestion)) {
+    return original.trim();
+  }
+  return suggestion.trim().isEmpty ? original.trim() : suggestion.trim();
+}
+
+LimousinePlaceSuggestion? limousinePreferStreetLevelSuggestion(
+  String query,
+  List<LimousinePlaceSuggestion> suggestions,
+) {
+  if (suggestions.isEmpty) return null;
+  final needle = query.trim().toLowerCase();
+  final street = [
+    for (final item in suggestions)
+      if (item.isStreetLevel) item,
+  ];
+  if (street.isEmpty) {
+    if (limousineAddressLooksLikeLocalityOnly(query)) {
+      return suggestions.first;
+    }
+    return null;
+  }
+  for (final item in street) {
+    if (needle.isNotEmpty && item.label.toLowerCase().contains(needle.split(',').first.trim())) {
+      return item;
+    }
+  }
+  return street.first;
+}
+
 Uri limousineMapboxPlacesUri({
   required String query,
   required String token,
   String language = 'nl',
   String? country = 'be',
+  String types = 'address',
 }) {
   final encoded = Uri.encodeComponent(query);
   final countryPart = (country ?? '').trim().isEmpty
       ? ''
       : '&country=${Uri.encodeComponent(country!.trim())}';
+  final typesPart = types.trim().isEmpty
+      ? ''
+      : '&types=${Uri.encodeComponent(types.trim())}';
   return Uri.parse(
     'https://$kLimousineMapboxGeocodingV5Host$kLimousineMapboxGeocodingV5PathPrefix$encoded.json'
     '?access_token=${Uri.encodeComponent(token)}'
     '&autocomplete=true'
     '$countryPart'
+    '$typesPart'
     '&language=${Uri.encodeComponent(language)}'
     '&limit=$kLimousineAddressMaxSuggestions',
   );
@@ -152,6 +231,7 @@ Uri limousineMapboxReverseGeocodeUri({
     '?access_token=${Uri.encodeComponent(token)}'
     '&language=${Uri.encodeComponent(language)}'
     '&country=be'
+    '&types=address'
     '&limit=1',
   );
 }
@@ -200,12 +280,19 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
     if (lat != null && (lat < -90 || lat > 90 || !lat.isFinite)) lat = null;
     if (lon != null && (lon < -180 || lon > 180 || !lon.isFinite)) lon = null;
     final placeId = (map['id'] ?? '').toString().trim();
+    final types = map['place_type'];
+    final placeType = types is List && types.isNotEmpty
+        ? types.first.toString().trim()
+        : placeId.contains('.')
+            ? placeId.split('.').first
+            : '';
     out.add(
       LimousinePlaceSuggestion(
         label: label,
         lat: lat,
         lon: lon,
         placeId: placeId.isEmpty ? null : placeId,
+        placeType: placeType,
       ),
     );
     if (out.length >= kLimousineAddressMaxSuggestions) break;
@@ -270,11 +357,16 @@ class LimousinePlaceLookup {
     if (token.isEmpty) {
       return const LimousinePlaceLookupResult(hadError: true);
     }
+    final types = limousineLooksLikeBelgianPostcode(query) ||
+            limousineAddressLooksLikeLocalityOnly(query)
+        ? 'address,place,postcode'
+        : 'address';
     final uri = limousineMapboxPlacesUri(
       query: query,
       token: token,
       language: language,
       country: country,
+      types: types,
     );
     final client = _client ?? http.Client();
     try {

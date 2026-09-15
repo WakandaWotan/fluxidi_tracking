@@ -14,6 +14,13 @@ const LocalizedText kCompanyAgendaCustomersTab = LocalizedText(
   es: 'Clientes',
 );
 
+const LocalizedText kCompanyAgendaNewRideTab = LocalizedText(
+  nl: 'Nieuwe rit',
+  en: 'New ride',
+  fr: 'Nouvelle course',
+  es: 'Nuevo viaje',
+);
+
 const LocalizedText kCompanyAgendaDay = LocalizedText(
   nl: 'Dag',
   en: 'Day',
@@ -560,6 +567,13 @@ const LocalizedText kCompanyAgendaPickupRequired = LocalizedText(
   es: 'Elija fecha y hora de recogida.',
 );
 
+const LocalizedText kCompanyAgendaLaterPickupInvalid = LocalizedText(
+  nl: 'Kies een datum en tijd die niet in het verleden liggen.',
+  en: 'Choose a date and time that are not in the past.',
+  fr: 'Choisissez une date et une heure qui ne sont pas passées.',
+  es: 'Elija una fecha y hora que no estén en el pasado.',
+);
+
 const LocalizedText kCompanyAgendaChoicesLoading = LocalizedText(
   nl: 'Chauffeurs en voertuigen worden geladen…',
   en: 'Loading drivers and vehicles…',
@@ -610,10 +624,10 @@ const LocalizedText kCompanyAgendaDriverInactive = LocalizedText(
 );
 
 const LocalizedText kCompanyAgendaHint = LocalizedText(
-  nl: 'Sleep een actieve klant naar een tijdstip of gebruik Rit plannen.',
-  en: 'Drag an active customer onto a time or use Plan ride.',
-  fr: 'Glissez un client actif sur un horaire ou utilisez Planifier.',
-  es: 'Arrastra un cliente activo a una hora o usa Planificar.',
+  nl: 'Kies Nieuwe rit of een tijdstip om te plannen.',
+  en: 'Choose New ride or a time slot to plan.',
+  fr: 'Choisissez Nouvelle course ou un horaire.',
+  es: 'Elige Nuevo viaje o una hora para planificar.',
 );
 
 const LocalizedText kCompanyAgendaCustomerPane = LocalizedText(
@@ -960,10 +974,10 @@ const LocalizedText kCompanyRoundtripReturnFrom = LocalizedText(
 );
 
 const LocalizedText kCompanyRoundtripReturnTo = LocalizedText(
-  nl: 'Bestemming terugrit',
-  en: 'Return drop-off',
-  fr: 'Destination du retour',
-  es: 'Destino de vuelta',
+  nl: 'Terug naar',
+  en: 'Return to',
+  fr: 'Retour vers',
+  es: 'Vuelta a',
 );
 
 const LocalizedText kCompanyRoundtripReturnDuration = LocalizedText(
@@ -992,6 +1006,69 @@ const LocalizedText kCompanyRoundtripReturnRequired = LocalizedText(
   en: 'Choose the return date and time.',
   fr: 'Choisissez la date et l’heure du retour.',
   es: 'Elija la fecha y hora de la vuelta.',
+);
+
+const LocalizedText kCompanyAgendaWaitTime = LocalizedText(
+  nl: 'Wachttijd',
+  en: 'Waiting time',
+  fr: 'Temps d’attente',
+  es: 'Tiempo de espera',
+);
+
+const LocalizedText kCompanyAgendaDriverWaitsAbout = LocalizedText(
+  nl: 'Chauffeur wacht ongeveer {min} minuten',
+  en: 'Driver waits about {min} minutes',
+  fr: 'Le chauffeur attend environ {min} minutes',
+  es: 'El conductor espera unos {min} minutos',
+);
+
+const LocalizedText kCompanyAgendaAddStop = LocalizedText(
+  nl: 'Tussenstop toevoegen',
+  en: 'Add a stop',
+  fr: 'Ajouter un arrêt',
+  es: 'Añadir una parada',
+);
+
+const LocalizedText kCompanyAgendaWaitManual = LocalizedText(
+  nl: 'Andere wachttijd (minuten)',
+  en: 'Other waiting time (minutes)',
+  fr: 'Autre temps d’attente (minutes)',
+  es: 'Otro tiempo de espera (minutos)',
+);
+
+const LocalizedText kCompanyAgendaEstimatedArrival = LocalizedText(
+  nl: 'Geschatte aankomst',
+  en: 'Estimated arrival',
+  fr: 'Arrivée estimée',
+  es: 'Llegada estimada',
+);
+
+const LocalizedText kCompanyAgendaTypeUnavailable = LocalizedText(
+  nl: 'Niet beschikbaar',
+  en: 'Unavailable',
+  fr: 'Indisponible',
+  es: 'No disponible',
+);
+
+const LocalizedText kCompanyAgendaCustomerConfirmTitle = LocalizedText(
+  nl: 'Uw rit',
+  en: 'Your ride',
+  fr: 'Votre trajet',
+  es: 'Su viaje',
+);
+
+const LocalizedText kCompanyAgendaTechnicalDetails = LocalizedText(
+  nl: 'Technische details',
+  en: 'Technical details',
+  fr: 'Détails techniques',
+  es: 'Detalles técnicos',
+);
+
+const LocalizedText kCompanyAgendaBackToQuoteHint = LocalizedText(
+  nl: 'Terug gaat naar de offerte',
+  en: 'Back returns to the quote',
+  fr: 'Retour ouvre le devis',
+  es: 'Atrás vuelve al presupuesto',
 );
 
 const LocalizedText kCompanyRoundtripOccupancyUnknown = LocalizedText(
@@ -1062,4 +1139,515 @@ const LocalizedText kCompanyAgendaSmallerPeriod = LocalizedText(
   en: 'Switch to day view',
   fr: 'Vue quotidienne',
   es: 'Vista diaria',
+);
+
+const LocalizedText kCompanyAgendaWhenNow = LocalizedText(
+  nl: 'Nu',
+  en: 'Now',
+  fr: 'Maintenant',
+  es: 'Ahora',
+);
+
+const LocalizedText kCompanyAgendaWhenLater = LocalizedText(
+  nl: 'Later',
+  en: 'Later',
+  fr: 'Plus tard',
+  es: 'Más tarde',
+);
+
+const LocalizedText kCompanyAgendaCustomer = LocalizedText(
+  nl: 'Klant',
+  en: 'Customer',
+  fr: 'Client',
+  es: 'Cliente',
+);
+
+const LocalizedText kCompanyAgendaCustomerSearch = LocalizedText(
+  nl: 'Zoek of voeg een klant toe',
+  en: 'Search or add a customer',
+  fr: 'Rechercher ou ajouter un client',
+  es: 'Buscar o añadir un cliente',
+);
+
+const LocalizedText kCompanyAgendaCustomerAdd = LocalizedText(
+  nl: 'Klant toevoegen',
+  en: 'Add customer',
+  fr: 'Ajouter un client',
+  es: 'Añadir cliente',
+);
+
+const LocalizedText kCompanyAgendaPickupPlace = LocalizedText(
+  nl: 'Vertrek',
+  en: 'Pickup',
+  fr: 'Départ',
+  es: 'Salida',
+);
+
+const LocalizedText kCompanyAgendaDropoffPlace = LocalizedText(
+  nl: 'Bestemming',
+  en: 'Destination',
+  fr: 'Destination',
+  es: 'Destino',
+);
+
+const LocalizedText kCompanyRoundtripReturnToPlace = LocalizedText(
+  nl: 'Terug naar',
+  en: 'Return to',
+  fr: 'Retour vers',
+  es: 'Vuelta a',
+);
+
+const LocalizedText kCompanyAgendaAddReturnStop = LocalizedText(
+  nl: 'Tussenstop terugrit toevoegen',
+  en: 'Add a return stop',
+  fr: 'Ajouter un arrêt au retour',
+  es: 'Añadir parada de vuelta',
+);
+
+const LocalizedText kCompanyAgendaStopLabel = LocalizedText(
+  nl: 'Tussenstop {n}',
+  en: 'Stop {n}',
+  fr: 'Arrêt {n}',
+  es: 'Parada {n}',
+);
+
+const LocalizedText kCompanyAgendaStopCount = LocalizedText(
+  nl: '{n}/10 tussenstops',
+  en: '{n}/10 stops',
+  fr: '{n}/10 arrêts',
+  es: '{n}/10 paradas',
+);
+
+const LocalizedText kCompanyAgendaRestoreRoute = LocalizedText(
+  nl: 'Route herstellen',
+  en: 'Restore route',
+  fr: 'Rétablir l’itinéraire',
+  es: 'Restaurar ruta',
+);
+
+const LocalizedText kCompanyAgendaRouteMissingCompact = LocalizedText(
+  nl: 'Geen bruikbare routecoördinaten voor deze adressen.',
+  en: 'No usable route coordinates for these addresses.',
+  fr: 'Pas de coordonnées d’itinéraire utilisables pour ces adresses.',
+  es: 'No hay coordenadas de ruta utilizables para estas direcciones.',
+);
+
+const LocalizedText kCompanyAgendaSameCrewIfAvailable = LocalizedText(
+  nl: 'Zelfde chauffeur en voertuig indien beschikbaar',
+  en: 'Same driver and vehicle if available',
+  fr: 'Même chauffeur et véhicule si disponible',
+  es: 'Mismo conductor y vehículo si está disponible',
+);
+
+const LocalizedText kCompanyAgendaAssignmentOutbound = LocalizedText(
+  nl: 'Heenrit A → B',
+  en: 'Outbound A → B',
+  fr: 'Aller A → B',
+  es: 'Ida A → B',
+);
+
+const LocalizedText kCompanyAgendaAssignmentReturn = LocalizedText(
+  nl: 'Terugrit B → A',
+  en: 'Return B → A',
+  fr: 'Retour B → A',
+  es: 'Vuelta B → A',
+);
+
+const LocalizedText kCompanyAgendaAssignmentSingle = LocalizedText(
+  nl: 'Toewijzing rit A → B',
+  en: 'Assignment A → B',
+  fr: 'Attribution A → B',
+  es: 'Asignación A → B',
+);
+
+const LocalizedText kCompanyAgendaRouteCard = LocalizedText(
+  nl: 'Route',
+  en: 'Route',
+  fr: 'Itinéraire',
+  es: 'Ruta',
+);
+
+const LocalizedText kCompanyAgendaRideFacts = LocalizedText(
+  nl: 'Ritgegevens',
+  en: 'Ride details',
+  fr: 'Détails du trajet',
+  es: 'Datos del viaje',
+);
+
+const LocalizedText kCompanyAgendaPriceCard = LocalizedText(
+  nl: 'Prijs',
+  en: 'Price',
+  fr: 'Prix',
+  es: 'Precio',
+);
+
+const LocalizedText kCompanyAgendaQuoteTotal = LocalizedText(
+  nl: 'Totaal',
+  en: 'Total',
+  fr: 'Total',
+  es: 'Total',
+);
+
+const LocalizedText kCompanyAgendaVehicleType = LocalizedText(
+  nl: 'Voertuigtype',
+  en: 'Vehicle type',
+  fr: 'Type de véhicule',
+  es: 'Tipo de vehículo',
+);
+
+const LocalizedText kCompanyAgendaVehicleTypeSedan = LocalizedText(
+  nl: 'Sedan',
+  en: 'Sedan',
+  fr: 'Berline',
+  es: 'Sedán',
+);
+
+const LocalizedText kCompanyAgendaVehicleTypeMinivan = LocalizedText(
+  nl: 'Minivan',
+  en: 'Minivan',
+  fr: 'Minivan',
+  es: 'Monovolumen',
+);
+
+const LocalizedText kCompanyAgendaAirportMode = LocalizedText(
+  nl: 'Luchthavenrit',
+  en: 'Airport ride',
+  fr: 'Course aéroport',
+  es: 'Viaje al aeropuerto',
+);
+
+const LocalizedText kCompanyAgendaAirportModeHint = LocalizedText(
+  nl: 'Vlucht en bagage',
+  en: 'Flight and baggage',
+  fr: 'Vol et bagages',
+  es: 'Vuelo y equipaje',
+);
+
+const LocalizedText kCompanyAgendaAirportNeedsVehicle = LocalizedText(
+  nl: 'Kies nog een voertuigtype voor deze luchthavenrit.',
+  en: 'Still choose a vehicle type for this airport ride.',
+  fr: 'Choisissez encore un type de véhicule pour cette course aéroport.',
+  es: 'Elige todavía un tipo de vehículo para este viaje de aeropuerto.',
+);
+
+const LocalizedText kCompanyAgendaFromAirport = LocalizedText(
+  nl: 'Van de luchthaven',
+  en: 'From the airport',
+  fr: 'Depuis l’aéroport',
+  es: 'Desde el aeropuerto',
+);
+
+const LocalizedText kCompanyAgendaOtherAirport = LocalizedText(
+  nl: 'Andere luchthaven',
+  en: 'Other airport',
+  fr: 'Autre aéroport',
+  es: 'Otro aeropuerto',
+);
+
+const LocalizedText kCompanyAgendaProposedDriver = LocalizedText(
+  nl: 'Voorgestelde chauffeur',
+  en: 'Suggested driver',
+  fr: 'Chauffeur proposé',
+  es: 'Conductor propuesto',
+);
+
+const LocalizedText kCompanyAgendaMoreOptions = LocalizedText(
+  nl: 'Meer opties',
+  en: 'More options',
+  fr: 'Plus d’options',
+  es: 'Más opciones',
+);
+
+const LocalizedText kCompanyAgendaBusyUntil = LocalizedText(
+  nl: 'Bezig tot',
+  en: 'Busy until',
+  fr: 'Occupé jusqu’à',
+  es: 'Ocupado hasta',
+);
+
+const LocalizedText kCompanyAgendaOffDuty = LocalizedText(
+  nl: 'Buiten dienst',
+  en: 'Off duty',
+  fr: 'Hors service',
+  es: 'Fuera de servicio',
+);
+
+const LocalizedText kCompanyAgendaVehicleOccupied = LocalizedText(
+  nl: 'Voertuig bezet',
+  en: 'Vehicle occupied',
+  fr: 'Véhicule occupé',
+  es: 'Vehículo ocupado',
+);
+
+const LocalizedText kCompanyAgendaCapacityShort = LocalizedText(
+  nl: 'Onvoldoende capaciteit',
+  en: 'Not enough capacity',
+  fr: 'Capacité insuffisante',
+  es: 'Capacidad insuficiente',
+);
+
+const LocalizedText kCompanyAgendaCannotReachPickup = LocalizedText(
+  nl: 'Kan ophaallocatie niet tijdig bereiken',
+  en: 'Cannot reach the pickup in time',
+  fr: 'Ne peut pas rejoindre la prise en charge à temps',
+  es: 'No puede llegar a tiempo al punto de recogida',
+);
+
+const LocalizedText kCompanyAgendaUnsuitableDrivers = LocalizedText(
+  nl: 'Niet-inzetbare chauffeurs',
+  en: 'Unavailable drivers',
+  fr: 'Chauffeurs non disponibles',
+  es: 'Conductores no disponibles',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategoryCompact = LocalizedText(
+  nl: 'Compact',
+  en: 'Compact',
+  fr: 'Compacte',
+  es: 'Compacto',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategoryBreak = LocalizedText(
+  nl: 'Break',
+  en: 'Estate',
+  fr: 'Break',
+  es: 'Familiar',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategorySuv = LocalizedText(
+  nl: 'SUV',
+  en: 'SUV',
+  fr: 'SUV',
+  es: 'SUV',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategoryMinibus = LocalizedText(
+  nl: 'Minibus',
+  en: 'Minibus',
+  fr: 'Minibus',
+  es: 'Minibús',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategoryPremium = LocalizedText(
+  nl: 'Premium',
+  en: 'Premium',
+  fr: 'Premium',
+  es: 'Premium',
+);
+
+const LocalizedText kCompanyAgendaVehicleCategoryWheelchair = LocalizedText(
+  nl: 'Toegankelijk',
+  en: 'Accessible',
+  fr: 'Accessible',
+  es: 'Accesible',
+);
+
+const LocalizedText kCompanyAgendaBadgeElectric = LocalizedText(
+  nl: 'Elektrisch',
+  en: 'Electric',
+  fr: 'Électrique',
+  es: 'Eléctrico',
+);
+
+const LocalizedText kCompanyAgendaBadgeBags = LocalizedText(
+  nl: 'Extra bagage',
+  en: 'Extra luggage',
+  fr: 'Bagages extra',
+  es: 'Equipaje extra',
+);
+
+const LocalizedText kCompanyAgendaBadgeChildSeat = LocalizedText(
+  nl: 'Kinderstoel',
+  en: 'Child seat',
+  fr: 'Siège enfant',
+  es: 'Silla infantil',
+);
+
+const LocalizedText kCompanyAgendaBadgePets = LocalizedText(
+  nl: 'Huisdieren',
+  en: 'Pets',
+  fr: 'Animaux',
+  es: 'Mascotas',
+);
+
+const LocalizedText kCompanyAgendaBadgePremium = LocalizedText(
+  nl: 'Premium',
+  en: 'Premium',
+  fr: 'Premium',
+  es: 'Premium',
+);
+
+const LocalizedText kCompanyAgendaBadgeAccessible = LocalizedText(
+  nl: 'Toegankelijk',
+  en: 'Accessible',
+  fr: 'Accessible',
+  es: 'Accesible',
+);
+
+const LocalizedText kCompanyAgendaSearchOtherAirport = LocalizedText(
+  nl: 'Zoek andere luchthaven',
+  en: 'Search another airport',
+  fr: 'Rechercher un autre aéroport',
+  es: 'Buscar otro aeropuerto',
+);
+
+const LocalizedText kCompanyAgendaConfirmRide = LocalizedText(
+  nl: 'Bevestig rit',
+  en: 'Confirm ride',
+  fr: 'Confirmer la course',
+  es: 'Confirmar viaje',
+);
+
+const LocalizedText kCompanyAgendaPriceBreakdown = LocalizedText(
+  nl: 'Bekijk prijsopbouw',
+  en: 'View price breakdown',
+  fr: 'Voir le détail du prix',
+  es: 'Ver desglose del precio',
+);
+
+const LocalizedText kCompanyAgendaDriverFallback = LocalizedText(
+  nl: 'Chauffeur',
+  en: 'Driver',
+  fr: 'Chauffeur',
+  es: 'Conductor',
+);
+
+const LocalizedText kCompanyAgendaVehicleFallback = LocalizedText(
+  nl: 'Voertuig',
+  en: 'Vehicle',
+  fr: 'Véhicule',
+  es: 'Vehículo',
+);
+
+const LocalizedText kCompanyAgendaFlightAfterPickup = LocalizedText(
+  nl: 'De ophaaltijd ligt na het vluchtvertrek.',
+  en: 'Pickup is after the flight departure.',
+  fr: 'L’heure de prise en charge est après le départ du vol.',
+  es: 'La recogida es posterior a la salida del vuelo.',
+);
+
+const LocalizedText kCompanyAgendaLandingNotPickup = LocalizedText(
+  nl: 'Landingstijd is niet automatisch de ophaaltijd.',
+  en: 'Landing time is not automatically the pickup time.',
+  fr: 'L’heure d’atterrissage n’est pas automatiquement l’heure de prise en charge.',
+  es: 'La hora de aterrizaje no es automáticamente la hora de recogida.',
+);
+
+const LocalizedText kCompanyAgendaCapacityUnsuitable = LocalizedText(
+  nl: 'Dit voertuigtype past niet bij het aantal passagiers of bagage.',
+  en: 'This vehicle type does not fit the passenger or baggage count.',
+  fr: 'Ce type de véhicule ne convient pas au nombre de passagers ou de bagages.',
+  es: 'Este tipo de vehículo no cabe con el número de pasajeros o maletas.',
+);
+
+const LocalizedText kCompanyAgendaSuggestedPickup = LocalizedText(
+  nl: 'Geadviseerde ophaaltijd: {time}',
+  en: 'Suggested pickup time: {time}',
+  fr: 'Heure de prise en charge conseillée : {time}',
+  es: 'Hora de recogida aconsejada: {time}',
+);
+
+const LocalizedText kCompanyAgendaCapacitySuggest = LocalizedText(
+  nl: 'Kies {type} voor dit aantal passagiers of bagage.',
+  en: 'Choose {type} for this passenger or baggage count.',
+  fr: 'Choisissez {type} pour ce nombre de passagers ou de bagages.',
+  es: 'Elija {type} para este número de pasajeros o maletas.',
+);
+
+const LocalizedText kCompanyAgendaRegularRide = LocalizedText(
+  nl: 'Gewoon vervoer',
+  en: 'Regular ride',
+  fr: 'Course classique',
+  es: 'Viaje normal',
+);
+
+const LocalizedText kCompanyAgendaReturnSummary = LocalizedText(
+  nl: 'Terugrit: {from} → {to}',
+  en: 'Return: {from} → {to}',
+  fr: 'Retour : {from} → {to}',
+  es: 'Vuelta: {from} → {to}',
+);
+
+const LocalizedText kCompanyAgendaFreeAt = LocalizedText(
+  nl: 'Vrij om {time}',
+  en: 'Free at {time}',
+  fr: 'Libre à {time}',
+  es: 'Libre a las {time}',
+);
+
+const LocalizedText kCompanyAgendaBusyMaybeFree = LocalizedText(
+  nl: 'Bezig, mogelijk vrij om {time}',
+  en: 'Busy, possibly free at {time}',
+  fr: 'Occupé, éventuellement libre à {time}',
+  es: 'Ocupado, posiblemente libre a las {time}',
+);
+
+const LocalizedText kCompanyAgendaOverlapBlocked = LocalizedText(
+  nl: 'Niet beschikbaar — overlappende rit',
+  en: 'Unavailable — overlapping ride',
+  fr: 'Indisponible — course en chevauchement',
+  es: 'No disponible — viaje solapado',
+);
+
+const LocalizedText kCompanyAgendaWaitPrice = LocalizedText(
+  nl: 'Wachttijd',
+  en: 'Waiting time',
+  fr: 'Temps d’attente',
+  es: 'Tiempo de espera',
+);
+
+const LocalizedText kCompanyAgendaBagsPrice = LocalizedText(
+  nl: 'Bagage',
+  en: 'Baggage',
+  fr: 'Bagages',
+  es: 'Equipaje',
+);
+
+const LocalizedText kCompanyAgendaStartFee = LocalizedText(
+  nl: 'Starttarief',
+  en: 'Start fare',
+  fr: 'Tarif de départ',
+  es: 'Tarifa de salida',
+);
+
+const LocalizedText kCompanyAgendaPriceInvalid = LocalizedText(
+  nl: 'De prijsberekening is ongeldig. Boeken is geblokkeerd tot de quote klopt.',
+  en: 'The price calculation is invalid. Booking is blocked until the quote is correct.',
+  fr: 'Le calcul du prix est invalide. La réservation est bloquée tant que le devis n’est pas correct.',
+  es: 'El cálculo del precio no es válido. La reserva queda bloqueada hasta que la cotización sea correcta.',
+);
+
+const LocalizedText kCompanyAgendaSameCrewUnavailable = LocalizedText(
+  nl: 'Dezelfde combinatie is niet beschikbaar voor de terugrit.',
+  en: 'The same combination is not available for the return ride.',
+  fr: 'La même combinaison n’est pas disponible pour le retour.',
+  es: 'La misma combinación no está disponible para la vuelta.',
+);
+
+const LocalizedText kCompanyAgendaAssignmentContinuous = LocalizedText(
+  nl: 'Heenrit + wachten + terugrit',
+  en: 'Outbound + wait + return',
+  fr: 'Aller + attente + retour',
+  es: 'Ida + espera + vuelta',
+);
+
+const LocalizedText kCompanyAgendaCrewSearch = LocalizedText(
+  nl: 'Zoek chauffeur of voertuig',
+  en: 'Search driver or vehicle',
+  fr: 'Rechercher chauffeur ou véhicule',
+  es: 'Buscar conductor o vehículo',
+);
+
+const LocalizedText kCompanyAgendaCrewChoose = LocalizedText(
+  nl: 'Kies chauffeur en voertuig',
+  en: 'Choose driver and vehicle',
+  fr: 'Choisir chauffeur et véhicule',
+  es: 'Elegir conductor y vehículo',
+);
+
+const LocalizedText kCompanyAgendaCrewVehicleCount = LocalizedText(
+  nl: '{count} voertuigen',
+  en: '{count} vehicles',
+  fr: '{count} véhicules',
+  es: '{count} vehículos',
 );

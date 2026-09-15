@@ -21,4 +21,21 @@ void main() {
     expect(parsed.returnAirportIata, 'CDG');
     expect(parsed.returnFlightNumber, 'AF1401');
   });
+
+  test('airport_ride stored as vehicle_type is recovered as service mode', () {
+    final parsed = parseCompanyRideOptions(<String, dynamic>{
+      'vehicle_type': 'airport_ride',
+    });
+    expect(parsed.service, 'airport');
+    expect(parsed.vehicleType, isEmpty);
+    expect(parsed.toJson()['vehicle_type'], isNull);
+    expect(parsed.toJson()['service'], 'airport');
+    expect(
+      CompanyRideOptions(
+        service: 'airport',
+        vehicleType: 'sedan',
+      ).copyWith(vehicleType: 'airport').vehicleType,
+      isEmpty,
+    );
+  });
 }

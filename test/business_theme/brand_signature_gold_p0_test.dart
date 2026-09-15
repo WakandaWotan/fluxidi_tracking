@@ -721,6 +721,7 @@ void main() {
       expect(home.contains("actionKey: 'ai_dispatch'"), isTrue);
       expect(home.contains("nl: 'Klantenbeheer'"), isTrue);
       expect(home.contains('_openCompanyCustomers'), isTrue);
+      expect(home.contains('_openCompanyPlanRide'), isTrue);
       expect(home.contains("nl: 'AI Dispatch'"), isFalse);
       expect(
         home.contains("CompanyCustomersPage"),

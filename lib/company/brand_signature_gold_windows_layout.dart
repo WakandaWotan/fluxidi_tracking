@@ -13,7 +13,7 @@ const Key kBrandSignatureGoldWindowsActionGridKey = Key(
   'brand_signature_gold_windows_action_grid',
 );
 
-const int kBrandSignatureGoldWindowsTileCount = 10;
+const int kBrandSignatureGoldWindowsTileCount = 11;
 const int kBrandSignatureGoldWindowsPreferredColumns = 5;
 const int kBrandSignatureGoldWindowsPreferredRows = 2;
 const double kBrandSignatureGoldWindowsFiveColumnMinWidth = 900;
@@ -63,8 +63,7 @@ bool brandSignatureGoldWindowsCompactApplies({
   required BusinessThemeVariant variant,
   bool? ioWindows,
 }) {
-  final windows =
-      platform == TargetPlatform.windows || ioWindows == true;
+  final windows = platform == TargetPlatform.windows || ioWindows == true;
   return !isWeb &&
       windows &&
       variant == BusinessThemeVariant.brandSignatureGold;
@@ -398,8 +397,7 @@ class BrandSignatureGoldWindowsActionGrid extends StatelessWidget {
         );
         final mustScroll =
             scrollable ||
-            (constraints.maxHeight.isFinite &&
-                neededHeight > hostHeight + 0.5);
+            (constraints.maxHeight.isFinite && neededHeight > hostHeight + 0.5);
         if (mustScroll) {
           grid = SingleChildScrollView(
             child: SizedBox(width: width, child: grid),

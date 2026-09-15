@@ -9,6 +9,8 @@ void main() {
     ).readAsStringSync();
     expect(home.contains("nl: 'Klantenbeheer'"), isTrue);
     expect(home.contains('_openCompanyCustomers'), isTrue);
+    expect(home.contains('_openCompanyPlanRide'), isTrue);
+    expect(home.contains('CompanyCustomersPage('), isTrue);
     expect(home.contains('CompanyOpsWorkspacePage('), isTrue);
     expect(home.contains('issuerName:'), isTrue);
     expect(home.contains('onOpenBooking:'), isTrue);
@@ -23,6 +25,7 @@ void main() {
       home.contains("onTap: () => _openCompanyCustomers(context)"),
       isTrue,
     );
+    expect(home.contains("'company_home_customers'"), isTrue);
   });
 
   test('old AI Dispatch placeholder is no longer reachable via that tile', () {

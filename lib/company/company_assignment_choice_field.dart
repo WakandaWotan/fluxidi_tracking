@@ -6,6 +6,9 @@ import 'package:fluxidi_tracking/company/company_agenda_http.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
+import 'package:fluxidi_tracking/company/company_plan_assignment.dart';
+import 'package:fluxidi_tracking/company/company_plan_media.dart';
+import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 
 enum CompanyAssignmentChoiceKind { driver, vehicle }
 
@@ -145,26 +148,111 @@ List<CompanyAssignmentChoice> companyAssignmentDriverChoices({
   required List<Map<String, dynamic>> drivers,
   required AppLanguage language,
   required String unassignedLabel,
+  bool suitableOnly = true,
+  String currentDriverId = '',
+  List<Map<String, dynamic>> vehicles = const <Map<String, dynamic>>[],
+  bool whenNow = true,
+  String tenantId = '',
+  String companyId = '',
+  String Function(Map<String, dynamic> driver)? overlapCodeOf,
 }) {
-  return <CompanyAssignmentChoice>[
+  final current = currentDriverId.trim();
+  final choices = <CompanyAssignmentChoice>[
     CompanyAssignmentChoice(
       id: kCompanyAssignmentUnassignedId,
       label: unassignedLabel,
       searchText: unassignedLabel,
     ),
-    for (final driver in drivers)
-      if (companyAgendaDriverId(driver).isNotEmpty)
-        CompanyAssignmentChoice(
-          id: companyAgendaDriverId(driver),
-          label: _driverChoiceLabel(driver, language),
-          searchText: <String>[
-            companyAgendaDriverName(driver),
-            companyAgendaDriverId(driver),
-          ].join(' '),
-          enabled: companyAgendaDriverIsActive(driver),
-          leading: _CompanyAssignmentDriverLook(driver: driver),
-        ),
   ];
+  for (final driver in drivers) {
+    final id = companyAgendaDriverId(driver);
+    if (id.isEmpty) continue;
+    final presence = resolveCompanyPlanPresence(
+      driver: driver,
+      overlapCode: overlapCodeOf?.call(driver) ?? '',
+      whenNow: whenNow,
+      vehicles: [
+        for (final vehicle in vehicles)
+          if (companyAgendaDriverLinkedVehicleIds(
+            driver,
+          ).contains(companyAgendaVehicleId(vehicle)))
+            vehicle,
+      ],
+    );
+    if (suitableOnly && !presence.suitable && id != current) continue;
+    final linked = [
+      for (final vehicle in vehicles)
+        if (companyAgendaDriverLinkedVehicleIds(
+          driver,
+        ).contains(companyAgendaVehicleId(vehicle)))
+          vehicle,
+    ];
+    choices.add(
+      CompanyAssignmentChoice(
+        id: id,
+        label: _driverChoiceLabel(driver, language),
+        subtitle: companyPlanPresenceLabel(presence, language),
+        searchText: <String>[
+          companyAgendaDriverName(driver),
+          id,
+        ].join(' '),
+        enabled: presence.suitable && companyAgendaDriverIsActive(driver),
+        leading: _CompanyAssignmentDriverLook(
+          driver: driver,
+          vehicle: linked.isEmpty ? null : linked.first,
+          presence: presence,
+          language: language,
+          tenantId: tenantId,
+          companyId: companyId,
+        ),
+      ),
+    );
+  }
+  return choices;
+}
+
+List<CompanyAssignmentChoice> companyAssignmentUnsuitableDriverChoices({
+  required List<Map<String, dynamic>> drivers,
+  required AppLanguage language,
+  String currentDriverId = '',
+  List<Map<String, dynamic>> vehicles = const <Map<String, dynamic>>[],
+  bool whenNow = true,
+  String tenantId = '',
+  String companyId = '',
+  String Function(Map<String, dynamic> driver)? overlapCodeOf,
+}) {
+  return companyAssignmentDriverChoices(
+    drivers: drivers,
+    language: language,
+    unassignedLabel: '',
+    suitableOnly: false,
+    currentDriverId: currentDriverId,
+    vehicles: vehicles,
+    whenNow: whenNow,
+    tenantId: tenantId,
+    companyId: companyId,
+    overlapCodeOf: overlapCodeOf,
+  ).where((choice) => !choice.isUnassigned && !choice.enabled).toList();
+}
+
+String companyPlanPublicDriverName(
+  Map<String, dynamic> driver,
+  AppLanguage language,
+) {
+  final name = companyAgendaDriverName(driver);
+  if (name.isEmpty) return kCompanyAgendaDriverFallback.of(language);
+  return name;
+}
+
+String companyPlanPublicVehicleName(
+  Map<String, dynamic> vehicle,
+  AppLanguage language,
+) {
+  final name = companyAgendaVehicleName(vehicle);
+  if (name.isNotEmpty && !companyPlanLooksLikeInternalId(name)) return name;
+  final label = companyAgendaVehicleLabel(vehicle);
+  if (label.isNotEmpty && !companyPlanLooksLikeInternalId(label)) return label;
+  return kCompanyAgendaVehicleFallback.of(language);
 }
 
 List<CompanyAssignmentChoice> companyAssignmentVehicleChoices({
@@ -195,12 +283,18 @@ List<CompanyAssignmentChoice> companyAssignmentVehicleChoices({
             vehicle,
             passengers: passengers,
           ),
+          leading: CompanyPlanVehicleThumb(
+            media: resolveCompanyPlanVehicleMedia(
+              vehicle: vehicle,
+            ),
+            semanticLabel: companyAgendaVehicleLabel(vehicle),
+          ),
         ),
   ];
 }
 
 String _driverChoiceLabel(Map<String, dynamic> driver, AppLanguage language) {
-  final name = companyAgendaDriverName(driver);
+  final name = companyPlanPublicDriverName(driver, language);
   if (!companyAgendaDriverIsActive(driver)) {
     return '$name · ${kCompanyAgendaDriverInactive.of(language)}';
   }
@@ -212,9 +306,7 @@ String _vehicleChoiceTitle(
   AppLanguage language,
   int passengers,
 ) {
-  final name = companyAgendaVehicleName(vehicle);
-  final plate = companyAgendaVehiclePlate(vehicle);
-  final label = name.isNotEmpty ? name : companyAgendaVehicleLabel(vehicle);
+  final label = companyPlanPublicVehicleName(vehicle, language);
   if (!companyAgendaVehicleIsActive(vehicle)) {
     return '$label · ${kCompanyAgendaDriverInactive.of(language)}';
   }
@@ -222,7 +314,6 @@ String _vehicleChoiceTitle(
   if (capacity > 0 && capacity < passengers) {
     return '$label · te klein voor $passengers';
   }
-  if (name.isNotEmpty && plate.isNotEmpty) return '$name · $plate';
   return label;
 }
 
@@ -293,11 +384,19 @@ class _CompanyAssignmentSearchFieldState
     return null;
   }
 
-  String get _selectedLabel =>
-      _selected?.label ??
-      (widget.selectedId.trim().isEmpty
-          ? (widget.choices.isEmpty ? '' : widget.choices.first.label)
-          : widget.selectedId);
+  String get _selectedLabel {
+    final selected = _selected;
+    if (selected != null) return selected.label;
+    if (widget.selectedId.trim().isEmpty) {
+      return widget.choices.isEmpty ? '' : widget.choices.first.label;
+    }
+    if (companyPlanLooksLikeInternalId(widget.selectedId)) {
+      return widget.kind == CompanyAssignmentChoiceKind.driver
+          ? kCompanyAgendaDriverFallback.of(widget.language)
+          : kCompanyAgendaVehicleFallback.of(widget.language);
+    }
+    return widget.selectedId;
+  }
 
   String get _activeFilter {
     final typed = _filter.trim();
@@ -435,43 +534,54 @@ class _CompanyAssignmentSearchFieldState
 }
 
 class _CompanyAssignmentDriverLook extends StatelessWidget {
-  const _CompanyAssignmentDriverLook({required this.driver});
+  const _CompanyAssignmentDriverLook({
+    required this.driver,
+    this.vehicle,
+    this.presence,
+    this.language = AppLanguage.nl,
+    this.tenantId = '',
+    this.companyId = '',
+  });
 
   final Map<String, dynamic> driver;
+  final Map<String, dynamic>? vehicle;
+  final CompanyPlanPresence? presence;
+  final AppLanguage language;
+  final String tenantId;
+  final String companyId;
 
   @override
   Widget build(BuildContext context) {
-    final look = companyAgendaDriverLook(driver);
-    final photo = look.photoUrl;
+    final media = resolveCompanyPlanDriverMedia(
+      driver: driver,
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    final tone = presence ??
+        resolveCompanyPlanPresence(driver: driver, whenNow: true);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircleAvatar(
-          radius: 14,
-          backgroundColor: look.color,
-          backgroundImage: photo.isEmpty ? null : NetworkImage(photo),
-          onBackgroundImageError: photo.isEmpty ? null : (_, _) {},
-          child: photo.isEmpty
-              ? Text(
-                  look.initials,
-                  style: TextStyle(
-                    color: companyAgendaOnColor(look.color),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                )
-              : null,
-        ),
+        CompanyPlanDriverAvatar(media: media, radius: 14),
         const SizedBox(width: 6),
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            color: look.color,
-            shape: BoxShape.circle,
-            border: Border.all(color: Theme.of(context).dividerColor),
-          ),
+        Icon(
+          tone.icon,
+          size: 14,
+          color: companyPlanPresenceColor(tone.tone),
         ),
+        if (vehicle != null) ...[
+          const SizedBox(width: 6),
+          CompanyPlanVehicleThumb(
+            media: resolveCompanyPlanVehicleMedia(
+              vehicle: vehicle!,
+              tenantId: tenantId,
+              companyId: companyId,
+            ),
+            width: 36,
+            height: 24,
+            semanticLabel: companyAgendaVehicleLabel(vehicle!),
+          ),
+        ],
       ],
     );
   }

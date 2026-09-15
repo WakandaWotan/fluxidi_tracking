@@ -1,8 +1,9 @@
 // Shared published airport catalog used by Luchthavenvervoer and Limousine.
-// The generated `kAirportCatalog` stays the only airport list. This file only
-// projects the same supported-country slice that AirportPage already used.
+// The generated `kAirportCatalog` is the main list. Canonical supplements
+// cover published airports that OurAirports omits (no scheduled service).
 
 import 'airport_catalog.generated.dart';
+import 'airport_catalog_supplement.dart';
 
 const Set<String> kSupportedAirportCountryCodes = <String>{
   'BE',
@@ -30,6 +31,7 @@ class AirportCatalogAirport {
     required this.city,
     required this.name,
     required this.iata,
+    this.icao = '',
     this.latitude,
     this.longitude,
     this.preciseAddress,
@@ -40,6 +42,7 @@ class AirportCatalogAirport {
   final String city;
   final String name;
   final String iata;
+  final String icao;
   final double? latitude;
   final double? longitude;
   final String? preciseAddress;
@@ -366,6 +369,7 @@ AirportCatalogAirport airportCatalogAirportFromEntry(AirportCatalogEntry entry) 
     city: entry.municipality,
     name: entry.name,
     iata: entry.iata,
+    icao: entry.icao,
     latitude: entry.latitude,
     longitude: entry.longitude,
     preciseAddress: entry.preciseAddress,
@@ -386,15 +390,17 @@ List<AirportCatalogAirport> publishedAirportCatalog({
       )
       .map(airportCatalogAirportFromEntry)
       .toList(growable: false);
-  if (generated.isEmpty) return List<AirportCatalogAirport>.unmodifiable(fallback);
+  if (generated.isEmpty) {
+    return mergeAirportCatalogSupplements(fallback);
+  }
   final iataSet = generated.map((airport) => airport.iata).toSet();
   final missingRequired = requiredIata
       .where((iata) => !iataSet.contains(iata))
       .toList(growable: false);
   if (missingRequired.isNotEmpty) {
-    return List<AirportCatalogAirport>.unmodifiable(fallback);
+    return mergeAirportCatalogSupplements(fallback);
   }
-  return List<AirportCatalogAirport>.unmodifiable(generated);
+  return mergeAirportCatalogSupplements(generated);
 }
 
 List<String> publishedAirportCountryCodes([

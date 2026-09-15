@@ -192,6 +192,9 @@ class CompanyDateTimeFields extends StatefulWidget {
     this.enabled = true,
     this.dateLabel,
     this.timeLabel,
+    this.leadingLabel,
+    this.firstDate,
+    this.rejectPast = false,
     this.scrollPadding = const EdgeInsets.fromLTRB(20, 20, 20, 160),
   });
 
@@ -203,6 +206,9 @@ class CompanyDateTimeFields extends StatefulWidget {
   final bool enabled;
   final String? dateLabel;
   final String? timeLabel;
+  final String? leadingLabel;
+  final DateTime? firstDate;
+  final bool rejectPast;
   final EdgeInsets scrollPadding;
 
   @override
@@ -257,19 +263,38 @@ class _CompanyDateTimeFieldsState extends State<CompanyDateTimeFields> {
   DateTime _anchor() => _value?.toLocal() ?? DateTime.now();
 
   void _commit(DateTime? next) {
+    if (next != null &&
+        widget.rejectPast &&
+        next.toLocal().isBefore(DateTime.now())) {
+      _syncControllers();
+      return;
+    }
     widget.onChanged(next);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncControllers();
     });
   }
 
+  DateTime _firstDate(DateTime current) {
+    final first = widget.firstDate?.toLocal();
+    if (first == null) return DateTime(current.year - 1);
+    return DateTime(first.year, first.month, first.day);
+  }
+
+  DateTime _pickerInitial(DateTime current) {
+    final first = _firstDate(current);
+    final day = DateTime(current.year, current.month, current.day);
+    return day.isBefore(first) ? first : current;
+  }
+
   Future<void> _pickDate() async {
     if (!widget.enabled) return;
     final current = _anchor();
+    final first = _firstDate(current);
     final picked = await showDatePicker(
       context: context,
-      initialDate: current,
-      firstDate: DateTime(current.year - 1),
+      initialDate: _pickerInitial(current),
+      firstDate: first,
       lastDate: DateTime(current.year + 2),
       helpText: kCompanyAgendaPickDate.of(widget.language),
       locale: Localizations.maybeLocaleOf(context),
@@ -332,35 +357,55 @@ class _CompanyDateTimeFieldsState extends State<CompanyDateTimeFields> {
         ),
       ),
     );
-    if (!widget.includeTime) return dateField;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(flex: 3, child: dateField),
-        const SizedBox(width: 8),
-        Expanded(
-          flex: 2,
-          child: TextField(
-            key: companyFormTimeFieldKey(widget.fieldId),
-            controller: _timeCtrl,
-            enabled: widget.enabled,
-            keyboardType: TextInputType.datetime,
-            textInputAction: TextInputAction.next,
-            scrollPadding: widget.scrollPadding,
-            onTap: widget.enabled ? _pickTime : null,
-            onEditingComplete: _applyTypedTime,
-            onSubmitted: (_) => _applyTypedTime(),
-            decoration: InputDecoration(
-              labelText: widget.timeLabel ?? kCompanyFormTime.of(widget.language),
-              suffixIcon: IconButton(
-                key: companyFormTimeIconKey(widget.fieldId),
-                tooltip: kCompanyAgendaPickTime.of(widget.language),
-                onPressed: widget.enabled ? _pickTime : null,
-                icon: const Icon(Icons.schedule_outlined),
+    if (!widget.includeTime) {
+      return _withLeading(dateField);
+    }
+    return _withLeading(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(flex: 3, child: dateField),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 2,
+            child: TextField(
+              key: companyFormTimeFieldKey(widget.fieldId),
+              controller: _timeCtrl,
+              enabled: widget.enabled,
+              keyboardType: TextInputType.datetime,
+              textInputAction: TextInputAction.next,
+              scrollPadding: widget.scrollPadding,
+              onTap: widget.enabled ? _pickTime : null,
+              onEditingComplete: _applyTypedTime,
+              onSubmitted: (_) => _applyTypedTime(),
+              decoration: InputDecoration(
+                labelText: widget.timeLabel ?? kCompanyFormTime.of(widget.language),
+                suffixIcon: IconButton(
+                  key: companyFormTimeIconKey(widget.fieldId),
+                  tooltip: kCompanyAgendaPickTime.of(widget.language),
+                  onPressed: widget.enabled ? _pickTime : null,
+                  icon: const Icon(Icons.schedule_outlined),
+                ),
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _withLeading(Widget child) {
+    final label = widget.leadingLabel?.trim() ?? '';
+    if (label.isEmpty) return child;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 72,
+          child: Text(label, style: Theme.of(context).textTheme.titleSmall),
         ),
+        const SizedBox(width: 8),
+        Expanded(child: child),
       ],
     );
   }

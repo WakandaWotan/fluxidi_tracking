@@ -172,8 +172,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Bedrag: 46,70 EUR'), findsOneWidget);
-    expect(find.text('Ritduur: 29 min'), findsOneWidget);
+    expect(find.text('46,70 EUR'), findsOneWidget);
+    expect(find.text('29 min'), findsOneWidget);
     await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Karel Peeters').last);

@@ -12,7 +12,7 @@ import 'package:fluxidi_tracking/company/company_booking_link_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_bookings_page.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
-import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
+import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
@@ -253,10 +253,9 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
         }
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => CompanyOpsWorkspacePage(
+            builder: (_) => CompanyCustomersPage(
               language: _lang,
               issuerName: identity.companyName,
-              customersRepository: createCompanyCustomersRepository(),
               sessionStore: createCompanyCustomerImportSessionStore(),
               onOpenBooking: widget.onOpenBooking ?? _openBookingFromQuote,
             ),

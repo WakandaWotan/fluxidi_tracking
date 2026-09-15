@@ -7,6 +7,44 @@ import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
 void main() {
+  test('Koekamerstraat 48A stays a full street address, not Maarkedal', () {
+    const address = CompanyCustomerAddress(
+      label: 'Thuis',
+      line1: 'Koekamerstraat 48A',
+      city: 'Schorisse',
+      postalCode: '9688',
+      countryCode: 'BE',
+      lat: 50.77,
+      lon: 3.61,
+    );
+    final value = companyAddressValueFromSaved(address);
+    expect(value.displayText, contains('Koekamerstraat 48A'));
+    expect(value.displayText, contains('9688'));
+    expect(value.displayText, contains('Schorisse'));
+    expect(value.displayText.contains('Maarkedal'), isFalse);
+    expect(value.lat, 50.77);
+    expect(value.lon, 3.61);
+    final parsed = parseCompanyPlanCanonicalAddress(value.displayText);
+    expect(parsed.street, 'Koekamerstraat');
+    expect(parsed.houseNumber, '48A');
+    expect(parsed.postalCode, '9688');
+    expect(parsed.city, 'Schorisse');
+    expect(
+      limousineAddressIsMoreSpecific(
+        'Koekamerstraat 48A, 9688 Schorisse',
+        '9688, Maarkedal',
+      ),
+      isTrue,
+    );
+    expect(
+      limousinePreferCanonicalLabel(
+        original: 'Koekamerstraat 48A, 9688 Schorisse',
+        suggestion: '9688, Maarkedal, Oost-Vlaanderen, België',
+      ),
+      'Koekamerstraat 48A, 9688 Schorisse',
+    );
+  });
+
   test('stored incomplete text stays incomplete, complete manual stays manual', () {
     final gent = companyAddressValueFromStored(text: 'gent');
     expect(gent.acceptance, LimousineAddressAcceptance.incomplete);
@@ -99,6 +137,48 @@ void main() {
     expect(controller.value.acceptance, LimousineAddressAcceptance.incomplete);
     expect(controller.value.lat, isNull);
     expect(controller.value.placeId, isNull);
+  });
+
+  testWidgets('saved addresses stay hidden until the field is focused', (
+    tester,
+  ) async {
+    final lookup = LimousinePlaceLookup(
+      searchOverride: (query, language) async {
+        return const LimousinePlaceLookupResult();
+      },
+    );
+    addTearDown(lookup.dispose);
+    final controller = LimousineAddressFieldController(
+      lookup: lookup,
+      fieldId: 'quote_pickup',
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompanyAddressField(
+            controller: controller,
+            label: 'Vertrek',
+            language: AppLanguage.nl,
+            savedAddresses: const [
+              CompanyCustomerAddress(
+                label: 'Thuis',
+                line1: 'Koekamerstraat 48A',
+                city: 'Schorisse',
+                postalCode: '9688',
+                countryCode: 'BE',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text(kCompanySavedAddresses.of(AppLanguage.nl)), findsNothing);
+    expect(find.textContaining('Koekamerstraat 48A'), findsNothing);
+    await tester.tap(find.byKey(limousineAddressInputKey('quote_pickup')));
+    await tester.pumpAndSettle();
+    expect(find.text(kCompanySavedAddresses.of(AppLanguage.nl)), findsNothing);
+    expect(find.textContaining('Koekamerstraat 48A'), findsOneWidget);
   });
 
   testWidgets('search distinguishes loading, empty and error', (tester) async {
