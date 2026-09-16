@@ -17,11 +17,15 @@ import {
   applyAgendaLegPickup,
   applyCompanyRoundtripFields,
   assignmentWindowsForWrite,
+  assignmentWriteFlags,
+  clearParsedAssignment,
   decorateAgendaItem,
   indexItemOverlapsPeriod,
   occupancyWindowsForRecord,
   occupancyWindowsFromTimes,
   parseCompanyRoundtripWrite,
+  sanitizePublicAssignmentItem,
+  sanitizeRecordAssignmentTruth,
   publicItemOverlapsPeriod,
   resolveAgendaLegTarget,
   resolveBookingCurrency,
@@ -38,6 +42,11 @@ import {
   resolveCompanyFixedPrice,
   stampCompanyFixedPriceSnapshot,
 } from "./company_fixed_prices.mjs";
+import {
+  companyAgendaPickupIsEpoch,
+  companyAgendaWhenIsNow,
+  resolveCompanyAgendaPickupIso,
+} from "./company_plan_when.mjs";
 import {
   ASSIGNMENT_SAFETY_MARGIN_MIN,
   driverFromFleet,
@@ -387,6 +396,12 @@ function normalizeAgendaRideOptions(body) {
   };
 }
 
+function publicAgendaItems(record, bookingId, { stripAll = false } = {}) {
+  sanitizeRecordAssignmentTruth(record, { stripAll });
+  return decorateAgendaItem(publicAgendaItem(record, bookingId), record, bookingId)
+    .map((item) => sanitizePublicAssignmentItem(item, { stripAll }));
+}
+
 function publicAgendaItem(record, bookingId) {
   const booking = record?.booking && typeof record.booking === "object" ? record.booking : {};
   const durationMin = resolveBookingDurationMin(record);
@@ -407,6 +422,9 @@ function publicAgendaItem(record, bookingId) {
     status: safeStr(record?.status || booking.status, 40) || "PENDING",
     assigned_driver_id: safeStr(record?.assigned_driver_id || booking.assigned_driver_id, 96),
     assigned_vehicle_id: safeStr(record?.assigned_vehicle_id || booking.assigned_vehicle_id, 128),
+    assignment_state: safeStr(record?.assigned_driver_id || booking.assigned_driver_id, 96)
+      ? "assigned"
+      : "unassigned",
     assignment_accepted:
       record?.assignment_accepted === true ||
       record?.driver_accepted === true ||
@@ -469,6 +487,12 @@ function publicAgendaItem(record, bookingId) {
       : null,
     occupancy_unknown: record?.occupancy_unknown === true || booking.occupancy_unknown === true,
     parent_booking_id: bookingId,
+    outbound_stops: Array.isArray(record?.outbound_stops)
+      ? record.outbound_stops
+      : booking.outbound_stops || booking.stops || [],
+    return_stops: Array.isArray(record?.return_stops)
+      ? record.return_stops
+      : booking.return_stops || [],
     operational_legs: Array.isArray(record?.operational_legs) ? record.operational_legs : booking.operational_legs || null,
   };
 }
@@ -548,7 +572,8 @@ async function hydrateAgendaIndexRow(env, row) {
 }
 
 function buildPlannedBookingRecord({ tenantId, companyId, bookingId, body, now }) {
-  const pickupIso = safeStr(body.pickup_iso || body.pickupIso, 80);
+  const clock = now instanceof Date ? now : new Date(now);
+  const pickupIso = resolveCompanyAgendaPickupIso(body, clock);
   const durationMin = Number(body.duration_min ?? body.durationMin);
   const durationUnknown = !Number.isFinite(durationMin) || durationMin <= 0;
   const pax = Math.max(1, Number(body.passengers ?? body.pax ?? 1) || 1);
@@ -648,12 +673,12 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
   const key = safeStr(idempotencyKey, 120);
   if (!key) return { ok: false, error: "idempotency_key_required" };
   const customerId = safeStr(body?.customer_id || body?.customerId, 160);
-  const pickupIso = safeStr(body?.pickup_iso || body?.pickupIso, 80);
+  const pickupIso = resolveCompanyAgendaPickupIso(body, new Date());
   const from = safeStr(body?.from || body?.pickup, 240);
   const to = safeStr(body?.to || body?.dropoff, 240);
   if (!customerId) return { ok: false, error: "customer_required" };
-  if (!pickupIso || !Number.isFinite(Date.parse(pickupIso))) {
-    return { ok: false, error: "pickup_iso_required" };
+  if (!pickupIso || !Number.isFinite(Date.parse(pickupIso)) || companyAgendaPickupIsEpoch(pickupIso)) {
+    return { ok: false, error: companyAgendaWhenIsNow(body) ? "invalid_pickup_iso" : "pickup_iso_required" };
   }
   if (!from || !to) return { ok: false, error: "route_required" };
 
@@ -678,7 +703,7 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
 
   const plannedChecks = assignmentWindowsForWrite(parsed);
   let assignmentWarning = null;
-  const writeBody = { ...(body || {}) };
+  const writeBody = { ...(body || {}), pickup_iso: pickupIso, pickupIso };
   const wantsAssignment = plannedChecks.checks.some((check) => check.driverId || check.vehicleId);
   if (wantsAssignment && plannedChecks.unknown) {
     assignmentWarning = { error: "assignment_availability_unknown" };
@@ -724,6 +749,11 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     writeBody.assigned_vehicle_id = "";
     writeBody.driver_id = "";
     writeBody.vehicle_id = "";
+    writeBody.return_assigned_driver_id = "";
+    writeBody.return_assigned_vehicle_id = "";
+    writeBody.return_driver_id = "";
+    writeBody.return_vehicle_id = "";
+    clearParsedAssignment(parsed);
   }
 
   const bookingId = await agendaBookingId(tenantId, companyId, key);
@@ -736,6 +766,9 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     now,
   });
   applyCompanyRoundtripFields(record, parsed, { bookingId, now });
+  if (assignmentWarning) {
+    sanitizeRecordAssignmentTruth(record, { stripAll: true });
+  }
   const quotedSnapshot =
     writeBody?.fixed_price_snapshot && typeof writeBody.fixed_price_snapshot === "object"
       ? writeBody.fixed_price_snapshot
@@ -812,7 +845,8 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     idemKey,
     JSON.stringify({ booking_id: bookingId, created_at: now }),
   );
-  const items = decorateAgendaItem(publicAgendaItem(record, bookingId), record, bookingId);
+  const items = decorateAgendaItem(publicAgendaItem(record, bookingId), record, bookingId)
+    .map((item) => sanitizePublicAssignmentItem(item, { stripAll: !!assignmentWarning }));
   return {
     ok: true,
     idempotent: false,
@@ -820,9 +854,7 @@ export async function createAgendaRide(env, { scope, body, idempotencyKey }) {
     listed: listed?.ok === true,
     item: items[0],
     items,
-    ...(assignmentWarning
-      ? { assignment_warning: assignmentWarning, saved_unassigned: true }
-      : {}),
+    ...assignmentWriteFlags(record, assignmentWarning),
   };
 }
 
@@ -880,6 +912,11 @@ const ASSIGNMENT_CONFLICT_ERRORS = new Set([
   "assignment_driver_inactive",
   "assignment_driver_blocked",
   "assignment_driver_not_scheduled",
+  "assignment_driver_outside_hours",
+  "assignment_driver_planned_break",
+  "assignment_driver_absent",
+  "assignment_ride_after_hours",
+  "assignment_schedule_undeterminable",
   "assignment_driver_paused",
   "assignment_driver_on_trip",
   "assignment_driver_offline",
@@ -903,6 +940,9 @@ export async function enforceDispatchAssignment(env, {
   excludeBookingId,
 }) {
   const fleet = await loadDispatchFleet(env, scope);
+  if (fleet.load_failed) {
+    return { ok: false, error: "assignment_availability_unknown" };
+  }
   const driver = driverFromFleet(fleet, driverId);
   if (!driverId) {
     return { ok: true, vehicleId: sanitizeTenantString(vehicleId, 128), skipped: true };
@@ -970,6 +1010,16 @@ export async function listAssignmentChoices(env, input = {}) {
     company_id: input.scope?.company_id || input.company_id,
   };
   const fleet = await loadDispatchFleet(env, scope);
+  if (fleet.load_failed) {
+    return {
+      ok: false,
+      error: "assignment_availability_unknown",
+      soon: false,
+      current_driver: null,
+      drivers: [],
+      empty: true,
+    };
+  }
   const atMs = Date.parse(String(input.now || "")) || Date.now();
   const pickupIso = safeStr(input.pickupIso || input.pickup_iso, 80);
   const durationMin = Number(input.durationMin ?? input.duration_min);

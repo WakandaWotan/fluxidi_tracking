@@ -18,8 +18,12 @@ import {
   nextShiftBoundaryMs,
   normalizeWeeklyRoster,
   resolveAutoVehicle,
+  resolveScheduleState,
   rideIsSoon,
   scheduledActiveAt,
+  weeklyRosterIsConfigured,
+  scheduleConflictAt,
+  scheduledSlotAt,
   syncDriverAvailabilityForBookingStatus,
 } from "./modules/company_dispatch.mjs";
 import {
@@ -498,6 +502,280 @@ test("overlapping driver and vehicle assignments are rejected", async () => {
   });
   assert.equal(overlapVehicle.ok, false);
   assert.match(String(overlapVehicle.error), /assignment_vehicle|assignment_overlap/);
+});
+
+test("empty roster is not configured and does not refuse assignment", () => {
+  assert.equal(weeklyRosterIsConfigured(null), false);
+  assert.equal(weeklyRosterIsConfigured({ timezone: TZ, days: {} }), false);
+  const at = Date.parse("2026-09-14T12:00:00.000Z");
+  const pickupIso = "2026-09-16T08:00:00.000Z";
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: null,
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: at,
+    pickupIso,
+    soon: false,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.reasons.includes("assignment_driver_not_scheduled"), false);
+});
+
+test("a consciously empty saved roster is not the same as never set", () => {
+  const emptySaved = { timezone: TZ, days: {}, explicitly_set: true };
+  assert.equal(weeklyRosterIsConfigured(emptySaved), true);
+  assert.equal(weeklyRosterIsConfigured({ timezone: TZ, days: {} }), false);
+  const at = Date.parse("2026-09-14T12:00:00.000Z");
+  const refused = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: emptySaved,
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: at,
+    pickupIso: "2026-09-16T08:00:00.000Z",
+    soon: false,
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, "assignment_driver_not_scheduled");
+});
+
+test("a planned break is named separately from off-hours", () => {
+  const roster = {
+    timezone: TZ,
+    days: {
+      mon: [{ start: "09:00", end: "17:00", breaks: [{ start: "12:00", end: "12:30" }] }],
+    },
+  };
+  const breakAt = Date.parse("2026-09-14T10:15:00.000Z");
+  const slot = scheduledSlotAt(roster, breakAt);
+  assert.equal(slot.inBreak, true);
+  assert.equal(scheduleConflictAt(roster, breakAt), "assignment_driver_planned_break");
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: roster,
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: Date.parse("2026-09-14T08:00:00.000Z"),
+    pickupIso: "2026-09-14T10:15:00.000Z",
+    soon: false,
+  });
+  assert.equal(result.error, "assignment_driver_planned_break");
+});
+
+test("a configured roster outside hours still refuses", () => {
+  const at = Date.parse("2026-09-14T12:00:00.000Z");
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: rosterNineToFive(),
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: at,
+    pickupIso: "2026-09-14T20:00:00.000Z",
+    soon: false,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "assignment_driver_outside_hours");
+});
+
+test("failed roster load is undeterminable, not empty", () => {
+  const at = Date.parse("2026-09-14T12:00:00.000Z");
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: null,
+      weekly_roster_load_failed: true,
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: at,
+    pickupIso: "2026-09-16T08:00:00.000Z",
+    soon: false,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "assignment_schedule_undeterminable");
+  assert.equal(result.reasons.includes("assignment_driver_not_scheduled"), false);
+});
+
+test("unsupported timezone is undeterminable", () => {
+  const state = resolveScheduleState(
+    {
+      timezone: "Not/AZone",
+      days: { mon: [{ start: "09:00", end: "17:00" }] },
+    },
+    Date.parse("2026-09-14T10:00:00.000Z"),
+  );
+  assert.equal(state.undeterminable, true);
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: {
+        timezone: "Not/AZone",
+        days: { mon: [{ start: "09:00", end: "17:00" }] },
+      },
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: Date.parse("2026-09-14T12:00:00.000Z"),
+    pickupIso: "2026-09-16T08:00:00.000Z",
+    soon: false,
+  });
+  assert.equal(result.error, "assignment_schedule_undeterminable");
+});
+
+test("a pickup that already started is not soon", () => {
+  const pickup = Date.parse("2026-09-16T18:00:00.000Z");
+  const attempt = Date.parse("2026-09-16T18:29:00.000Z");
+  assert.equal(rideIsSoon(new Date(pickup).toISOString(), attempt), false);
+  assert.equal(rideIsSoon(new Date(attempt + 10 * 60 * 1000).toISOString(), attempt), true);
+});
+
+test("past pickup without a roster is not blocked as unscheduled or not-live", () => {
+  const pickupIso = "2026-09-16T18:00:00.000Z";
+  const at = Date.parse("2026-09-16T18:29:00.000Z");
+  const result = evaluateDriverEligibility({
+    driver: {
+      driver_id: "drv_1",
+      is_active: true,
+      weekly_roster: null,
+      availability_status: "available",
+      assigned_vehicle_id: "vh_1",
+    },
+    vehicles: [{ vehicle_id: "vh_1", is_active: true }],
+    atMs: at,
+    pickupIso,
+  });
+  assert.equal(result.soon, false);
+  assert.equal(result.reasons.includes("assignment_driver_not_scheduled"), false);
+  assert.equal(result.reasons.includes("assignment_driver_not_live"), false);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("empty-roster assign persists; overlap and self-exclude stay enforced", async () => {
+  const kv = memoryKV();
+  kv.store.set("tenant:TA:company:CA:drivers:index:v1", JSON.stringify({
+    drivers: {
+      drv_chris: {
+        driver_id: "drv_chris",
+        display_name: "Christophe",
+        is_active: true,
+        availability_status: "available",
+        assigned_vehicle_id: "vh_chris",
+      },
+      drv_wotan: {
+        driver_id: "drv_wotan",
+        display_name: "Wotan",
+        is_active: true,
+        availability_status: "available",
+        assigned_vehicle_id: "vh_wotan",
+      },
+    },
+  }));
+  kv.store.set("tenant:TA:company:CA:fleet:vehicles:v1", JSON.stringify({
+    vehicles: [
+      { vehicle_id: "vh_chris", is_active: true, assigned_driver_id: "drv_chris" },
+      { vehicle_id: "vh_wotan", is_active: true, assigned_driver_id: "drv_wotan" },
+    ],
+  }));
+  const env = { BOOKING_KV: kv };
+  const created = await createAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    body: {
+      customer_id: "cus_1",
+      from: "Gent",
+      to: "Ronse",
+      pickup_iso: "2026-09-16T18:00:00.000Z",
+      duration_min: 40,
+    },
+    idempotencyKey: "empty-roster-assign",
+  });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const first = await assignAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    bookingId: created.booking_id,
+    body: { assigned_driver_id: "drv_chris", revision: 1 },
+  });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(first.item.assigned_driver_id, "drv_chris");
+  const switched = await assignAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    bookingId: created.booking_id,
+    body: { assigned_driver_id: "drv_wotan", revision: 2 },
+  });
+  assert.equal(switched.ok, true, JSON.stringify(switched));
+  assert.equal(switched.item.assigned_driver_id, "drv_wotan");
+  const other = await createAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    body: {
+      customer_id: "cus_2",
+      from: "Gent",
+      to: "Oudenaarde",
+      pickup_iso: "2026-09-16T18:10:00.000Z",
+      duration_min: 40,
+    },
+    idempotencyKey: "empty-roster-overlap",
+  });
+  const overlap = await assignAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    bookingId: other.booking_id,
+    body: { assigned_driver_id: "drv_wotan" },
+  });
+  assert.equal(overlap.ok, false);
+  assert.equal(overlap.error, "assignment_overlap");
+});
+
+test("fleet load failure refuses instead of looking like no roster", async () => {
+  const booking = {
+    booking_id: "agb_load",
+    tenant_id: "TA",
+    company_id: "CA",
+    customer_id: "cus_1",
+    from: "Gent",
+    to: "Ronse",
+    pickup_iso: "2026-09-16T18:00:00.000Z",
+    status: "PENDING",
+    revision: 1,
+    duration_min: 40,
+  };
+  const env = {
+    BOOKING_KV: {
+      async get(key, opts) {
+        if (String(key).startsWith("booking:")) {
+          return opts?.type === "json" ? booking : JSON.stringify(booking);
+        }
+        throw new Error("kv_unavailable");
+      },
+      async put() {},
+      async delete() {},
+    },
+  };
+  const assigned = await assignAgendaRide(env, {
+    scope: { tenant_id: "TA", company_id: "CA" },
+    bookingId: "agb_load",
+    body: { assigned_driver_id: "drv_1" },
+  });
+  assert.equal(assigned.ok, false);
+  assert.equal(assigned.error, "assignment_availability_unknown");
 });
 
 test("decorateDriverForDispatch never keeps an expired heartbeat green", () => {

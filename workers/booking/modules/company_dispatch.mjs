@@ -113,51 +113,142 @@ function formatHm(minutes) {
   return `${hour}:${minute}`;
 }
 
+export function dispatchTimezoneIsSupported(timeZone) {
+  const zone = sanitizeTenantString(timeZone, 64) || DEFAULT_DISPATCH_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function weeklyRosterHasConfiguredBlocks(raw) {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const roster = normalizeWeeklyRoster(raw);
+  return WEEKDAY_KEYS.some((key) => (roster.days[key] || []).length > 0);
+}
+
+export function weeklyRosterIsConfigured(raw, exceptionsRaw = []) {
+  if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
+    if (
+      raw.explicitly_set === true ||
+      raw.explicitlySet === true ||
+      raw.configured === true
+    ) {
+      return true;
+    }
+  }
+  if (weeklyRosterHasConfiguredBlocks(raw)) return true;
+  return normalizeRosterExceptions(exceptionsRaw).length > 0;
+}
+
+export function driverRosterLoadFailed(driver) {
+  if (!driver || typeof driver !== "object") return false;
+  if (driver.weekly_roster_load_failed === true || driver.weeklyRosterLoadFailed === true) {
+    return true;
+  }
+  const status = sanitizeTenantString(
+    driver.weekly_roster_status || driver.weeklyRosterStatus || driver.roster_status,
+    40,
+  ).toLowerCase();
+  return status === "load_failed" || status === "error" || status === "unavailable";
+}
+
+export function resolveScheduleState(rosterRaw, atMs, exceptionsRaw = []) {
+  const configured = weeklyRosterIsConfigured(rosterRaw, exceptionsRaw);
+  if (!configured) {
+    return { configured: false, active: false, undeterminable: false };
+  }
+  const roster = normalizeWeeklyRoster(rosterRaw);
+  if (!dispatchTimezoneIsSupported(roster.timezone)) {
+    return {
+      configured: true,
+      active: false,
+      undeterminable: true,
+      error: "unsupported_timezone",
+    };
+  }
+  try {
+    return {
+      configured: true,
+      active: scheduledActiveAt(rosterRaw, atMs, exceptionsRaw) === true,
+      undeterminable: false,
+    };
+  } catch {
+    return {
+      configured: true,
+      active: false,
+      undeterminable: true,
+      error: "schedule_eval_failed",
+    };
+  }
+}
+
 export function zonedParts(atMs, timeZone = DEFAULT_DISPATCH_TIMEZONE) {
   const ms = Number(atMs);
   if (!Number.isFinite(ms)) return null;
   const zone = sanitizeTenantString(timeZone, 64) || DEFAULT_DISPATCH_TIMEZONE;
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: zone,
-    weekday: "short",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(ms));
-  const get = (type) => parts.find((part) => part.type === type)?.value || "";
-  const weekdayRaw = get("weekday").slice(0, 3).toLowerCase();
-  const weekdayMap = {
-    mon: "mon",
-    tue: "tue",
-    wed: "wed",
-    thu: "thu",
-    fri: "fri",
-    sat: "sat",
-    sun: "sun",
-  };
-  return {
-    timeZone: zone,
-    weekday: weekdayMap[weekdayRaw] || "mon",
-    year: get("year"),
-    month: get("month"),
-    day: get("day"),
-    date: `${get("year")}-${get("month")}-${get("day")}`,
-    hour: Number(get("hour")),
-    minute: Number(get("minute")),
-    second: Number(get("second")),
-    minutes: Number(get("hour")) * 60 + Number(get("minute")),
-  };
+  if (!dispatchTimezoneIsSupported(zone)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(ms));
+    const get = (type) => parts.find((part) => part.type === type)?.value || "";
+    const weekdayRaw = get("weekday").slice(0, 3).toLowerCase();
+    const weekdayMap = {
+      mon: "mon",
+      tue: "tue",
+      wed: "wed",
+      thu: "thu",
+      fri: "fri",
+      sat: "sat",
+      sun: "sun",
+    };
+    return {
+      timeZone: zone,
+      weekday: weekdayMap[weekdayRaw] || "mon",
+      year: get("year"),
+      month: get("month"),
+      day: get("day"),
+      date: `${get("year")}-${get("month")}-${get("day")}`,
+      hour: Number(get("hour")),
+      minute: Number(get("minute")),
+      second: Number(get("second")),
+      minutes: Number(get("hour")) * 60 + Number(get("minute")),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function normalizeRosterBlock(raw) {
   const start = parseHm(raw?.start ?? raw?.from ?? raw?.begin);
   const end = parseHm(raw?.end ?? raw?.to);
   if (start == null || end == null || start === end) return null;
-  return { start: formatHm(start), end: formatHm(end), overnight: start > end };
+  const breaks = [];
+  if (Array.isArray(raw?.breaks)) {
+    for (const slot of raw.breaks) {
+      const bStart = parseHm(slot?.start ?? slot?.from);
+      const bEnd = parseHm(slot?.end ?? slot?.to);
+      if (bStart == null || bEnd == null || bStart === bEnd) continue;
+      breaks.push({ start: formatHm(bStart), end: formatHm(bEnd) });
+    }
+  }
+  return {
+    start: formatHm(start),
+    end: formatHm(end),
+    overnight: start > end,
+    ...(breaks.length ? { breaks } : {}),
+  };
 }
 
 export function normalizeWeeklyRoster(raw) {
@@ -168,9 +259,14 @@ export function normalizeWeeklyRoster(raw) {
     const rows = Array.isArray(daysSource[key]) ? daysSource[key] : [];
     days[key] = rows.map(normalizeRosterBlock).filter(Boolean);
   }
+  const explicitlySet =
+    source.explicitly_set === true ||
+    source.explicitlySet === true ||
+    source.configured === true;
   return {
     timezone: sanitizeTenantString(source.timezone || source.time_zone, 64) || DEFAULT_DISPATCH_TIMEZONE,
     days,
+    ...(explicitlySet ? { explicitly_set: true } : {}),
   };
 }
 
@@ -215,32 +311,114 @@ function previousDateParts(parts) {
   return prev;
 }
 
-export function scheduledActiveAt(rosterRaw, atMs, exceptionsRaw = []) {
-  const roster = normalizeWeeklyRoster(rosterRaw);
-  const parts = zonedParts(atMs, roster.timezone);
-  if (!parts) return false;
-  const exceptions = normalizeRosterExceptions(exceptionsRaw);
-  const today = blocksForDate(roster, parts, exceptions);
-  for (const block of today) {
-    const start = parseHm(block.start);
-    const end = parseHm(block.end);
-    if (start == null || end == null) continue;
-    if (start < end) {
-      if (parts.minutes >= start && parts.minutes < end) return true;
-    } else if (parts.minutes >= start) {
-      return true;
-    }
+function blockContainsMinutes(block, minutes, { overnightTail = false } = {}) {
+  const start = parseHm(block.start);
+  const end = parseHm(block.end);
+  if (start == null || end == null) return false;
+  if (overnightTail) {
+    return start > end && minutes < end;
   }
-  const prevParts = previousDateParts(parts);
-  if (!prevParts) return false;
-  const yesterday = blocksForDate(roster, prevParts, exceptions);
-  for (const block of yesterday) {
-    const start = parseHm(block.start);
-    const end = parseHm(block.end);
-    if (start == null || end == null || start < end) continue;
-    if (parts.minutes < end) return true;
+  if (start < end) return minutes >= start && minutes < end;
+  return minutes >= start;
+}
+
+function breakContainsMinutes(block, minutes, { overnightTail = false } = {}) {
+  const blockStart = parseHm(block.start);
+  if (blockStart == null || !Array.isArray(block.breaks)) return false;
+  for (const slot of block.breaks) {
+    let start = parseHm(slot.start);
+    let end = parseHm(slot.end);
+    if (start == null || end == null) continue;
+    if (start < blockStart) start += 1440;
+    if (end <= start) end += 1440;
+    const probe = overnightTail ? minutes + 1440 : minutes;
+    if (probe >= start && probe < end) return true;
   }
   return false;
+}
+
+function dateIsAbsent(parts, exceptions) {
+  return (exceptions || []).some((row) => row.date === parts?.date && row.type === "off");
+}
+
+export function scheduledSlotAt(rosterRaw, atMs, exceptionsRaw = []) {
+  const roster = normalizeWeeklyRoster(rosterRaw);
+  const parts = zonedParts(atMs, roster.timezone);
+  if (!parts) {
+    return { active: false, inBreak: false, absent: false, undeterminable: true };
+  }
+  const exceptions = normalizeRosterExceptions(exceptionsRaw);
+  if (dateIsAbsent(parts, exceptions)) {
+    return { active: false, inBreak: false, absent: true, undeterminable: false };
+  }
+  const today = blocksForDate(roster, parts, exceptions);
+  for (const block of today) {
+    if (!blockContainsMinutes(block, parts.minutes)) continue;
+    if (breakContainsMinutes(block, parts.minutes)) {
+      return { active: false, inBreak: true, absent: false, undeterminable: false };
+    }
+    return { active: true, inBreak: false, absent: false, undeterminable: false };
+  }
+  const prevParts = previousDateParts(parts);
+  if (prevParts) {
+    const yesterday = blocksForDate(roster, prevParts, exceptions);
+    for (const block of yesterday) {
+      if (!blockContainsMinutes(block, parts.minutes, { overnightTail: true })) continue;
+      if (breakContainsMinutes(block, parts.minutes, { overnightTail: true })) {
+        return { active: false, inBreak: true, absent: false, undeterminable: false };
+      }
+      return { active: true, inBreak: false, absent: false, undeterminable: false };
+    }
+  }
+  return { active: false, inBreak: false, absent: false, undeterminable: false };
+}
+
+export function scheduledActiveAt(rosterRaw, atMs, exceptionsRaw = []) {
+  return scheduledSlotAt(rosterRaw, atMs, exceptionsRaw).active === true;
+}
+
+export function scheduleConflictAt(rosterRaw, atMs, exceptionsRaw = []) {
+  const configured = weeklyRosterIsConfigured(rosterRaw, exceptionsRaw);
+  if (!configured) return "";
+  const roster = normalizeWeeklyRoster(rosterRaw);
+  if (!dispatchTimezoneIsSupported(roster.timezone)) {
+    return "assignment_schedule_undeterminable";
+  }
+  let slot;
+  try {
+    slot = scheduledSlotAt(rosterRaw, atMs, exceptionsRaw);
+  } catch {
+    return "assignment_schedule_undeterminable";
+  }
+  if (slot.undeterminable) return "assignment_schedule_undeterminable";
+  if (slot.inBreak) return "assignment_driver_planned_break";
+  if (slot.absent) return "assignment_driver_absent";
+  if (slot.active) return "";
+  if (!weeklyRosterHasConfiguredBlocks(rosterRaw) && normalizeRosterExceptions(exceptionsRaw).length === 0) {
+    return "assignment_driver_not_scheduled";
+  }
+  return "assignment_driver_outside_hours";
+}
+
+export function scheduleConflictForWindow(rosterRaw, pickupMs, durationMin, exceptionsRaw = []) {
+  const startConflict = scheduleConflictAt(rosterRaw, pickupMs, exceptionsRaw);
+  if (startConflict) return startConflict;
+  const duration = Number(durationMin);
+  if (!Number.isFinite(duration) || duration <= 0) return "";
+  const endMs = Number(pickupMs) + duration * 60000;
+  for (let t = Number(pickupMs) + 15 * 60000; t < endMs; t += 15 * 60000) {
+    const conflict = scheduleConflictAt(rosterRaw, t, exceptionsRaw);
+    if (conflict === "assignment_driver_planned_break") return conflict;
+    if (conflict === "assignment_schedule_undeterminable") return conflict;
+    if (
+      conflict === "assignment_driver_outside_hours" ||
+      conflict === "assignment_driver_absent" ||
+      conflict === "assignment_driver_not_scheduled"
+    ) {
+      return "assignment_ride_after_hours";
+    }
+  }
+  return "";
 }
 
 function addMinutesInZone(atMs, minutes, timeZone) {
@@ -293,13 +471,27 @@ export function effectiveWorkState({
 } = {}) {
   const isActive = driver?.is_active !== false && driver?.isActive !== false;
   const blocked = driver?.blocked === true || driver?.is_blocked === true;
-  const scheduled = scheduledActiveAt(roster || driver?.weekly_roster, atMs, exceptions || driver?.roster_exceptions);
+  const rosterRaw = roster || driver?.weekly_roster || driver?.weeklyRoster;
+  const exceptionsRaw = exceptions || driver?.roster_exceptions || driver?.rosterExceptions;
+  const loadFailed = driverRosterLoadFailed(driver);
+  const schedule = loadFailed
+    ? {
+        configured: true,
+        active: false,
+        undeterminable: true,
+        error: "roster_load_failed",
+      }
+    : resolveScheduleState(rosterRaw, atMs, exceptionsRaw);
+  const scheduled = schedule.active === true;
   const manual = resolveManualOverride(override || driver?.manual_override, {
     atMs,
-    roster: roster || driver?.weekly_roster,
-    exceptions: exceptions || driver?.roster_exceptions,
+    roster: rosterRaw,
+    exceptions: exceptionsRaw,
   });
-  let working = scheduled;
+  // No stored roster keeps the agreed pre-roster behaviour: the schedule does
+  // not refuse. A configured roster still gates working hours. A failed load
+  // is never treated as "no roster".
+  let working = schedule.undeterminable ? false : schedule.configured ? scheduled : true;
   if (manual.active && manual.kind === "inactive") working = false;
   if (manual.active && manual.kind === "active") working = true;
   if (manual.active && manual.kind === "paused") working = true;
@@ -307,6 +499,8 @@ export function effectiveWorkState({
     account_active: isActive,
     blocked,
     scheduled_active: scheduled,
+    roster_configured: schedule.configured === true,
+    schedule_undeterminable: schedule.undeterminable === true,
     manual_override: manual,
     working: isActive && !blocked && working,
   };
@@ -349,7 +543,11 @@ export function expandWindowsWithSafetyMargin(windows, marginMin = ASSIGNMENT_SA
 export function rideIsSoon(pickupIso, atMs, soonWindowMin = SOON_WINDOW_MIN) {
   const start = Date.parse(String(pickupIso || ""));
   if (!Number.isFinite(start)) return true;
-  return start <= Number(atMs) + soonWindowMin * 60000;
+  const now = Number(atMs);
+  // A pickup that already started is not an upcoming "soon" ride. Treating a
+  // 20:00 trip as soon at 20:29 falsely demanded a live connection.
+  if (start < now) return false;
+  return start <= now + soonWindowMin * 60000;
 }
 
 export function linkedVehicleIds(driver) {
@@ -423,7 +621,22 @@ export function evaluateDriverEligibility({
   const soonRide = soon ?? rideIsSoon(pickupIso, atMs);
   if (!work.account_active) reasons.push("assignment_driver_inactive");
   if (work.blocked) reasons.push("assignment_driver_blocked");
-  if (!work.working) reasons.push("assignment_driver_not_scheduled");
+  if (work.schedule_undeterminable) {
+    reasons.push("assignment_schedule_undeterminable");
+  } else if (!work.working) {
+    if (work.manual_override?.kind === "inactive") {
+      reasons.push("assignment_driver_not_scheduled");
+    } else if (work.roster_configured) {
+      const pickupMs = Date.parse(String(pickupIso || "")) || Number(atMs);
+      const conflict = scheduleConflictForWindow(
+        driver?.weekly_roster || driver?.weeklyRoster,
+        pickupMs,
+        durationMin,
+        driver?.roster_exceptions || driver?.rosterExceptions,
+      );
+      reasons.push(conflict || "assignment_driver_not_scheduled");
+    }
+  }
   if (availability === AVAILABILITY.PAUSED) reasons.push("assignment_driver_paused");
   if (availability === AVAILABILITY.ON_TRIP && soonRide) reasons.push("assignment_driver_on_trip");
   if (soonRide && availability !== AVAILABILITY.AVAILABLE && availability !== AVAILABILITY.ON_TRIP) {
@@ -594,20 +807,32 @@ export async function loadDispatchFleet(env, scope) {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
   const scoped = { tenant_id: tenantId, company_id: companyId };
-  const [indexRaw, presenceRaw, vehiclesRaw] = await Promise.all([
-    env?.BOOKING_KV?.get(_companyDriverIndexKey(scoped), { type: "json" }),
-    env?.BOOKING_KV?.get(companyDriverPresenceKey(scoped), { type: "json" }),
-    env?.BOOKING_KV?.get(companyFleetVehiclesKey(scoped), { type: "json" }),
-  ]);
-  const driversMap = indexRaw?.drivers && typeof indexRaw.drivers === "object" ? indexRaw.drivers : {};
-  const drivers = Object.values(driversMap).filter((row) => row && typeof row === "object");
-  const presenceMap = presenceRaw?.drivers && typeof presenceRaw.drivers === "object" ? presenceRaw.drivers : {};
-  const vehicles = Array.isArray(vehiclesRaw)
-    ? vehiclesRaw
-    : Array.isArray(vehiclesRaw?.vehicles)
-      ? vehiclesRaw.vehicles
-      : [];
-  return { drivers, presenceMap, vehicles, indexRaw, presenceRaw };
+  try {
+    const [indexRaw, presenceRaw, vehiclesRaw] = await Promise.all([
+      env?.BOOKING_KV?.get(_companyDriverIndexKey(scoped), { type: "json" }),
+      env?.BOOKING_KV?.get(companyDriverPresenceKey(scoped), { type: "json" }),
+      env?.BOOKING_KV?.get(companyFleetVehiclesKey(scoped), { type: "json" }),
+    ]);
+    const driversMap = indexRaw?.drivers && typeof indexRaw.drivers === "object" ? indexRaw.drivers : {};
+    const drivers = Object.values(driversMap).filter((row) => row && typeof row === "object");
+    const presenceMap = presenceRaw?.drivers && typeof presenceRaw.drivers === "object" ? presenceRaw.drivers : {};
+    const vehicles = Array.isArray(vehiclesRaw)
+      ? vehiclesRaw
+      : Array.isArray(vehiclesRaw?.vehicles)
+        ? vehiclesRaw.vehicles
+        : [];
+    return { drivers, presenceMap, vehicles, indexRaw, presenceRaw, load_failed: false };
+  } catch (error) {
+    return {
+      drivers: [],
+      presenceMap: {},
+      vehicles: [],
+      indexRaw: null,
+      presenceRaw: null,
+      load_failed: true,
+      load_error: String(error?.message || error || "fleet_load_failed"),
+    };
+  }
 }
 
 export function driverFromFleet(fleet, driverId) {

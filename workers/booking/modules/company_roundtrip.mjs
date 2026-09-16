@@ -30,6 +30,11 @@ function quoteMap(record) {
   return record?.quote && typeof record.quote === "object" ? record.quote : {};
 }
 
+function normalizeStopList(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => safeStr(item, 240)).filter(Boolean).slice(0, 10);
+}
+
 function firstMoney(values) {
   for (const value of values) {
     if (value == null || value === "") continue;
@@ -80,7 +85,7 @@ export function resolveBookingReturnDurationMin(record) {
   const returnLeg = operationalLegsOf(record).find(
     (leg) => String(leg?.leg_type || "").toLowerCase() === "return",
   );
-  return firstPositiveDurationMin([
+  const explicit = firstPositiveDurationMin([
     record?.return_duration_min,
     record?.returnDurationMin,
     booking.return_duration_min,
@@ -90,6 +95,13 @@ export function resolveBookingReturnDurationMin(record) {
     quote?.return?.duration_min,
     quote?.return?.durationMin,
   ]);
+  if (explicit != null) return explicit;
+  // Waiting return uses the same reverse route; do not require an empty
+  // "Duur terugrit" field as the occupancy source.
+  if (resolveRoundtripDispatchMode(record) === ROUNDTRIP_CONTINUOUS) {
+    return resolveBookingDurationMin(record);
+  }
+  return null;
 }
 
 export function resolveBookingPriceInclVat(record) {
@@ -374,7 +386,8 @@ export function occupancyWindowsFromTimes({
     durationMin,
     returnPickupIso,
   });
-  const returnDuration = parseDurationMin(returnDurationMin, null);
+  const returnDuration =
+    parseDurationMin(returnDurationMin, null) ?? parseDurationMin(durationMin, null);
   if (wait.unknown || returnDuration == null || !Number.isFinite(Date.parse(String(returnPickupIso || "")))) {
     return { ok: true, unknown: true, windows: [] };
   }
@@ -491,7 +504,7 @@ export function parseCompanyRoundtripWrite(body = {}) {
   const durationMin = parseDurationMin(body.duration_min ?? body.durationMin, null);
   const returnDurationMin = parseDurationMin(
     body.return_duration_min ?? body.returnDurationMin,
-    null,
+    mode === ROUNDTRIP_CONTINUOUS ? durationMin : null,
   );
   const from = safeStr(body.from ?? body.pickup, 240);
   const to = safeStr(body.to ?? body.dropoff, 240);
@@ -560,6 +573,8 @@ export function parseCompanyRoundtripWrite(body = {}) {
       body.assigned_vehicle_id ?? body.vehicle_id,
       128,
     ),
+    outboundStops: normalizeStopList(body.stops || body.outbound_stops || body.outboundStops),
+    returnStops: normalizeStopList(body.return_stops || body.returnStops),
   };
 }
 
@@ -580,11 +595,12 @@ function operationalLeg({
   from,
   to,
   durationMin,
-  assignedDriverId,
-  assignedVehicleId,
-  createdAt,
-  updatedAt,
-  status = "PENDING",
+    assignedDriverId,
+    assignedVehicleId,
+    createdAt,
+    updatedAt,
+    status = "PENDING",
+    stops = [],
 }) {
   const parent = safeStr(parentBookingId, 160);
   const key = safeStr(legKey, 24).toUpperCase() || "LEG";
@@ -609,6 +625,7 @@ function operationalLeg({
     assignedDriverId: assignedDriverId || null,
     assigned_vehicle_id: assignedVehicleId || null,
     assignedVehicleId: assignedVehicleId || null,
+    stops: Array.isArray(stops) ? stops : [],
     status,
     lifecycle,
     created_at: createdAt,
@@ -628,6 +645,7 @@ export function buildCompanyOperationalLegs({ bookingId, parsed, createdAt, upda
     durationMin: parsed.durationMin,
     assignedDriverId: parsed.outboundDriverId,
     assignedVehicleId: parsed.outboundVehicleId,
+    stops: parsed.outboundStops || [],
     createdAt,
     updatedAt,
     status,
@@ -645,6 +663,7 @@ export function buildCompanyOperationalLegs({ bookingId, parsed, createdAt, upda
       durationMin: parsed.returnDurationMin,
       assignedDriverId: parsed.returnDriverId || parsed.outboundDriverId,
       assignedVehicleId: parsed.returnVehicleId || parsed.outboundVehicleId,
+      stops: parsed.returnStops || [],
       createdAt,
       updatedAt,
       status,
@@ -683,6 +702,8 @@ export function applyCompanyRoundtripFields(record, parsed, { bookingId, now } =
   record.return_dropoff_lat = parsed.returnDropoffLat;
   record.return_dropoff_lon = parsed.returnDropoffLon;
   record.return_dropoff_place_id = parsed.returnDropoffPlaceId || "";
+  record.outbound_stops = parsed.outboundStops || [];
+  record.return_stops = parsed.returnStops || [];
   if (legs.length) record.operational_legs = legs;
   else delete record.operational_legs;
 
@@ -703,6 +724,8 @@ export function applyCompanyRoundtripFields(record, parsed, { bookingId, now } =
     return_dropoff_lat: parsed.returnDropoffLat,
     return_dropoff_lon: parsed.returnDropoffLon,
     return_dropoff_place_id: parsed.returnDropoffPlaceId || "",
+    outbound_stops: parsed.outboundStops || [],
+    return_stops: parsed.returnStops || [],
     ...(legs.length ? { operational_legs: legs } : {}),
   };
   return record;
@@ -836,7 +859,11 @@ export function decorateAgendaItem(item, record, bookingId) {
         leg_type: mode === ROUNDTRIP_CONTINUOUS ? "continuous" : "",
         linked_agenda_item_id: "",
         ...(mode === ROUNDTRIP_CONTINUOUS && occupancyMin != null
-          ? { duration_min: occupancyMin, duration_unknown: false }
+          ? {
+              occupancy_min: occupancyMin,
+              occupancy_end_iso: new Date(occupancyEnd).toISOString(),
+              duration_unknown: false,
+            }
           : {}),
       },
     ];
@@ -1068,5 +1095,105 @@ export function quoteWriteRoundtripValue(body) {
       return_assigned_driver_id: parsed.returnDriverId,
       return_assigned_vehicle_id: parsed.returnVehicleId,
     },
+  };
+}
+
+export function pairedAssignmentIds(driverId, vehicleId) {
+  const driver = sanitizeTenantString(driverId, 96);
+  const vehicle = sanitizeTenantString(vehicleId, 128);
+  if (driver && vehicle) return { driverId: driver, vehicleId: vehicle };
+  return { driverId: "", vehicleId: "" };
+}
+
+export function clearParsedAssignment(parsed) {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  parsed.outboundDriverId = "";
+  parsed.outboundVehicleId = "";
+  parsed.returnDriverId = "";
+  parsed.returnVehicleId = "";
+  return parsed;
+}
+
+export function pairParsedAssignment(parsed) {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const outbound = pairedAssignmentIds(parsed.outboundDriverId, parsed.outboundVehicleId);
+  parsed.outboundDriverId = outbound.driverId;
+  parsed.outboundVehicleId = outbound.vehicleId;
+  const inbound = pairedAssignmentIds(parsed.returnDriverId, parsed.returnVehicleId);
+  parsed.returnDriverId = inbound.driverId;
+  parsed.returnVehicleId = inbound.vehicleId;
+  return parsed;
+}
+
+function applyPairedIds(target, driverId, vehicleId) {
+  const paired = pairedAssignmentIds(driverId, vehicleId);
+  if (!target || typeof target !== "object") return paired;
+  target.assigned_driver_id = paired.driverId || null;
+  target.assignedDriverId = paired.driverId || null;
+  target.assigned_vehicle_id = paired.vehicleId || null;
+  target.assignedVehicleId = paired.vehicleId || null;
+  return paired;
+}
+
+export function recordHasAssignmentIds(record) {
+  if (!record || typeof record !== "object") return false;
+  if (pairedAssignmentIds(record.assigned_driver_id, record.assigned_vehicle_id).driverId) {
+    return true;
+  }
+  const booking = record.booking && typeof record.booking === "object" ? record.booking : {};
+  if (pairedAssignmentIds(booking.assigned_driver_id, booking.assigned_vehicle_id).driverId) {
+    return true;
+  }
+  for (const leg of Array.isArray(record.operational_legs) ? record.operational_legs : []) {
+    if (pairedAssignmentIds(leg?.assigned_driver_id || leg?.assignedDriverId, leg?.assigned_vehicle_id || leg?.assignedVehicleId).driverId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function sanitizeRecordAssignmentTruth(record, { stripAll = false } = {}) {
+  if (!record || typeof record !== "object") return record;
+  const parent = stripAll
+    ? { driverId: "", vehicleId: "" }
+    : pairedAssignmentIds(record.assigned_driver_id, record.assigned_vehicle_id);
+  record.assigned_driver_id = parent.driverId || null;
+  record.assigned_vehicle_id = parent.vehicleId || null;
+  record.assignment_state = parent.driverId ? "assigned" : "unassigned";
+  if (record.booking && typeof record.booking === "object") {
+    const booked = stripAll
+      ? { driverId: "", vehicleId: "" }
+      : pairedAssignmentIds(record.booking.assigned_driver_id, record.booking.assigned_vehicle_id);
+    record.booking.assigned_driver_id = booked.driverId || parent.driverId || null;
+    record.booking.assigned_vehicle_id = booked.vehicleId || parent.vehicleId || null;
+  }
+  if (Array.isArray(record.operational_legs)) {
+    record.operational_legs = record.operational_legs.map((leg) => {
+      const next = { ...leg };
+      if (stripAll) applyPairedIds(next, "", "");
+      else applyPairedIds(next, next.assigned_driver_id || next.assignedDriverId, next.assigned_vehicle_id || next.assignedVehicleId);
+      return next;
+    });
+  }
+  return record;
+}
+
+export function assignmentWriteFlags(record, warning) {
+  const hasIds = recordHasAssignmentIds(record);
+  if (warning) return { assignment_warning: warning, saved_unassigned: true };
+  if (hasIds) return {};
+  return {};
+}
+
+export function sanitizePublicAssignmentItem(item, { stripAll = false } = {}) {
+  if (!item || typeof item !== "object") return item;
+  const paired = stripAll
+    ? { driverId: "", vehicleId: "" }
+    : pairedAssignmentIds(item.assigned_driver_id, item.assigned_vehicle_id);
+  return {
+    ...item,
+    assigned_driver_id: paired.driverId || "",
+    assigned_vehicle_id: paired.vehicleId || "",
+    assignment_state: paired.driverId ? "assigned" : "unassigned",
   };
 }
