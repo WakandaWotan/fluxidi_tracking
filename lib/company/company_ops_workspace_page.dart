@@ -1,7 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_route_map.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/company/booking_list_page_repository.dart';
 import 'package:fluxidi_tracking/company/company_agenda_calendar.dart';
 import 'package:fluxidi_tracking/company/company_agenda_http.dart';
@@ -10,6 +14,7 @@ import 'package:fluxidi_tracking/company/company_agenda_prefs.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_booking_detail_page.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
+import 'package:fluxidi_tracking/company/company_customer_ground.dart';
 import 'package:fluxidi_tracking/company/company_customer_dossier.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
 import 'package:fluxidi_tracking/company/company_customer_import_page.dart';
@@ -27,7 +32,11 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
 import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_drivers_now.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 import 'package:fluxidi_tracking/company/company_form_date_time.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
@@ -114,6 +123,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
     this.initialAnchor,
     this.planQuoteTransport,
     this.plannerOnly = true,
+    this.initialCustomer,
   });
 
   final CompanyCustomersRepository? customersRepository;
@@ -129,6 +139,7 @@ class CompanyOpsWorkspacePage extends StatefulWidget {
   final DateTime? initialAnchor;
   final CompanyPlanQuoteTransport? planQuoteTransport;
   final bool plannerOnly;
+  final CompanyCustomer? initialCustomer;
 
   @override
   State<CompanyOpsWorkspacePage> createState() =>
@@ -287,6 +298,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     _reloadAgenda();
     _reloadFleet();
     unawaited(_restoreAgendaPrefs());
+    final initial = widget.initialCustomer;
+    if (initial != null && companyCustomerIsSpecified(initial)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_beginPlan(customer: initial));
+      });
+    }
   }
 
   void _onPlanAddressChanged() {
@@ -733,37 +750,37 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Future<void> _beginPlan({CompanyCustomer? customer, DateTime? pickup}) async {
-    var chosen = customer ?? _selected;
-    if (chosen == null) {
-      for (final item in _items) {
-        if (item.status == 'archived') continue;
-        chosen = await _loadCustomer(item.customerId);
-        break;
+    final chosen = customer ?? _selected;
+    // Reopening the planner must never discard what was already typed. That
+    // includes a draft whose customer is still to be picked.
+    if (_draft != null && pickup == null) {
+      final sameCustomer =
+          chosen == null || _draft!.customer.customerId == chosen.customerId;
+      if (sameCustomer) {
+        setState(() => _phoneSurface = _WorkspacePhoneSurface.form);
+        return;
       }
     }
-    if (chosen != null &&
-        _draft != null &&
-        _draft!.customer.customerId == chosen.customerId &&
-        pickup == null) {
-      setState(() => _phoneSurface = _WorkspacePhoneSurface.form);
-      return;
-    }
-    if (chosen == null || chosen.isArchived) {
+    // Opening the planner without a chosen customer is legitimate: the form
+    // shows an empty, searchable customer field. Only an archived customer
+    // that was explicitly picked is refused.
+    if (chosen != null && chosen.isArchived) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(kCompanyAgendaSelectCustomer.of(_lang))),
       );
       return;
     }
-    final selected = chosen;
+    final selected = chosen ?? const CompanyCustomer.unchosen();
     if (pickup != null) {
       _agendaMoment = pickup;
     }
     final whenNow = pickup == null;
     final when = pickup;
-    final home = selected.addresses.isEmpty
+    final preferred = companyCustomerPreferredAddress(selected);
+    final home = preferred == null
         ? ''
-        : companyCustomerAddressChoiceLabel(chosen.addresses.first);
+        : companyCustomerAddressChoiceLabel(preferred);
     setState(() {
       _planWhenNow = whenNow;
       _planLaterConceptLocal = when;
@@ -779,14 +796,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         idempotencyKey:
             'agenda-${selected.customerId}-${whenNow ? 'now' : when!.toUtc().toIso8601String()}-${DateTime.now().microsecondsSinceEpoch}',
       );
-      if (selected.addresses.isEmpty) {
-        _fromAddress.clear();
-      } else {
-        _fromAddress.acceptCopy(
-          companyAddressValueFromSaved(selected.addresses.first),
-        );
-        unawaited(companyAddressGeocodeIfNeeded(_fromAddress));
-      }
+      _fromAddress.clear();
       _toAddress.clear();
       _returnFromAddress.clear();
       _returnToAddress.clear();
@@ -815,9 +825,18 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       _returnPickupLocal = null;
       _noteCtrl.text = '';
       _formError = null;
-      _selected = selected;
+      // Never make an unchosen placeholder look like a selected customer.
+      if (selected.isChosen) _selected = selected;
       _phoneSurface = _WorkspacePhoneSurface.form;
     });
+    if (selected.isChosen) {
+      companyApplyCustomerGroundAddress(
+        customer: selected,
+        options: _rideOptions,
+        pickup: _fromAddress,
+        dropoff: _toAddress,
+      );
+    }
     _schedulePlanQuote();
   }
 
@@ -1180,6 +1199,26 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       ).copyWith(vehicleType: _rideOptions.vehicleType);
       _fixedPriceSnapshot = null;
       _planQuoteResult = null;
+      if (enabled) {
+        if (next == CompanyTripRouteKind.toAirport) {
+          _toAddress.clear();
+        } else if (next == CompanyTripRouteKind.fromAirport) {
+          _fromAddress.clear();
+        }
+      } else {
+        final iata = current == CompanyTripRouteKind.address
+            ? ''
+            : _rideOptions.airportIata;
+        final airport = iata.trim().isEmpty ? null : airportByIata(iata);
+        if (airport != null) {
+          if (companyTripAddressIsAirport(_fromAddress.value, airport)) {
+            _fromAddress.clear();
+          }
+          if (companyTripAddressIsAirport(_toAddress.value, airport)) {
+            _toAddress.clear();
+          }
+        }
+      }
     });
     _schedulePlanQuote();
   }
@@ -1196,12 +1235,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       _selected = customer;
       if (draft != null) {
         _draft = draft.copyWith(customer: customer);
-        if (customer.addresses.isNotEmpty &&
-            _fromAddress.value.displayText.trim().isEmpty) {
-          _fromAddress.acceptCopy(
-            companyAddressValueFromSaved(customer.addresses.first),
-          );
-        }
+        companyApplyCustomerGroundAddress(
+          customer: customer,
+          options: _rideOptions,
+          pickup: _fromAddress,
+          dropoff: _toAddress,
+        );
       }
     });
     _schedulePlanQuote();
@@ -1314,6 +1353,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final returnToValue = _canonicalReturnTo();
     final from = fromValue.displayText.trim();
     final to = toValue.displayText.trim();
+    // The customer is validated here, not at open: the planner may be filled
+    // in first and the customer picked afterwards. The typed ride data stays.
+    if (!draft.customer.isChosen) {
+      setState(() => _formError = kCompanyAgendaSelectCustomer.of(_lang));
+      return;
+    }
     if (from.isEmpty || to.isEmpty) {
       setState(() => _formError = kCompanyAgendaRouteRequired.of(_lang));
       return;
@@ -1502,6 +1547,47 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       }
     }
     return null;
+  }
+
+  Future<void> _openAgendaDriverSchedule(String driverId) async {
+    final id = driverId.trim();
+    if (id.isEmpty) return;
+    Map<String, dynamic>? driver;
+    for (final row in _drivers) {
+      if (companyAgendaDriverId(row) == id) {
+        driver = row;
+        break;
+      }
+    }
+    final name = driver == null ? id : companyAgendaDriverName(driver);
+    final loaded = await fetchCompanyOpsDriverSchedule(id);
+    if (!mounted) return;
+    final result = await openCompanyDriverSchedulePage(
+      context,
+      language: _lang,
+      schedule:
+          loaded.schedule ??
+          CompanyDriverSchedule(
+            driverId: id,
+            timezone: kCompanyDefaultTimezone,
+          ),
+      driverName: name.isEmpty ? id : name,
+      canEdit: companyDriverScheduleCallerCanEdit(
+        isCompanyAdmin: true,
+        callerDriverId: '',
+        targetDriverId: id,
+      ),
+      persistenceAvailable: loaded.canPersist,
+    );
+    if (result == null || !loaded.canPersist) return;
+    try {
+      await saveCompanyOpsDriverSchedule(result);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Uurrooster bewaren mislukt.')),
+      );
+    }
   }
 
   Future<void> _openBooking(String bookingId, {CompanyAgendaRide? ride}) async {
@@ -2309,6 +2395,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
               },
               onClearDriver: () => setState(() => _driverFilter = null),
               onOpenRide: _openBooking,
+              onOpenSchedule: _openAgendaDriverSchedule,
             ),
           ),
           if (_agendaIncomplete && !_loadingAgenda)
@@ -2617,6 +2704,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
               ),
           ] else if (formatCompanyPlanQuotePrice(quote, _lang).isNotEmpty)
             Text(formatCompanyPlanQuotePrice(quote, _lang)),
+          if (!quote.priceAvailable)
+            Text(
+              kCompanyAgendaQuoteUnavailable.of(_lang),
+              key: kCompanyPlanQuotePriceKey,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
         ],
         if (!sanity.ok)
           Text(
@@ -2819,17 +2912,18 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         onWhenNowChanged: _setPlanWhenNow,
         selectedCategory: _planVehicleCategory,
         onCategoryChanged: _setPlanVehicleCategory,
-        bookableCategories: () {
-          final found = companyPlanBookableCategories(
-            vehicles: _vehicles,
-            passengers: _passengers,
-          );
-          if (found.isNotEmpty) return found;
-          return const <CompanyPlanVehicleCategory>[
-            CompanyPlanVehicleCategory.sedan,
-            CompanyPlanVehicleCategory.minivan,
-          ];
-        }(),
+        categoryPhotoUrls: companyPlanCategoryPhotoUrls(
+          vehicles: _vehicles,
+          tenantId: _agenda.scope?['tenant_id'] ?? '',
+          companyId: _boundCompanyId ?? '',
+        ),
+        categoryPassengerCaps: companyPlanCategoryPassengerCaps(
+          vehicles: _vehicles,
+        ),
+        bookableCategories: companyPlanBookableCategories(
+          vehicles: _vehicles,
+          passengers: _passengers,
+        ),
         unsuitableCategories: <CompanyPlanVehicleCategory>{
           for (final category in companyPlanBookableCategories(
             vehicles: _vehicles,
@@ -3148,15 +3242,39 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           onPressed: _saving ? null : _cancelDraft,
           child: Text(kCompanyAgendaCancel.of(_lang)),
         ),
-        map: CompanyPlanRouteMap(
-          language: _lang,
-          pickup: _fromAddress.value,
-          dropoff: _toAddress.value,
-          quote: _planQuoteResult,
-          loading: _planQuoteLoading,
-          error: _planQuoteError,
-          onRetry: () => unawaited(_refreshPlanQuote(force: true)),
-          pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+        map: Builder(
+          builder: (context) {
+            final window = MediaQuery.sizeOf(context);
+            if (companyOpsShowAgendaBesidePlanner(window)) {
+              return CompanyPlanRouteMap(
+                language: _lang,
+                pickup: _fromAddress.value,
+                dropoff: _toAddress.value,
+                quote: _planQuoteResult,
+                loading: _planQuoteLoading,
+                error: _planQuoteError,
+                onRetry: () => unawaited(_refreshPlanQuote(force: true)),
+                pickupLocal:
+                    _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+              );
+            }
+            return KeyedSubtree(
+              key: kCompanyAgendaPlanMapKey,
+              child: CustomerBookingRouteMap(
+              language: _lang,
+              palette: paletteForCustomerTheme(customerThemeNotifier.value),
+              pickup: _fromAddress.value,
+              dropoff: _toAddress.value,
+              stops: _outboundStops.values,
+              quote: _planQuoteResult,
+              quoteLoading: _planQuoteLoading,
+              errorText: _planQuoteError,
+              onRetry: () => unawaited(_refreshPlanQuote(force: true)),
+              pickupLocal:
+                  _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+              ),
+            );
+          },
         ),
         errorText: _formError,
       ),

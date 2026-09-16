@@ -78,6 +78,18 @@ String companyAgendaAssignmentExceptionText(
     'assignment_driver_not_scheduled' => kCompanyAgendaDriverNotScheduled.of(
       language,
     ),
+    'assignment_driver_outside_hours' => kCompanyDriverConflictOutsideHours.of(
+      language,
+    ),
+    'assignment_driver_planned_break' => kCompanyDriverConflictBreak.of(
+      language,
+    ),
+    'assignment_driver_absent' => kCompanyDriverConflictAbsent.of(language),
+    'assignment_ride_after_hours' => kCompanyDriverConflictEndsAfterHours.of(
+      language,
+    ),
+    'assignment_schedule_undeterminable' =>
+      kCompanyDriverScheduleUndeterminable.of(language),
     'assignment_driver_paused' => kCompanyAgendaDriverPaused.of(language),
     'assignment_driver_on_trip' => kCompanyAgendaDriverOnTrip.of(language),
     'assignment_driver_offline' ||

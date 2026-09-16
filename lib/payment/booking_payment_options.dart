@@ -58,6 +58,32 @@ String paymentMarketCountryCode(String raw) {
 /// For taxi and airport this is the company operating the app. For a
 /// marketplace booking it is the partner the customer selected, which is a
 /// different company than the one on this device.
+enum BookingPaymentCapabilityStatus {
+  ok,
+  loadFailed,
+  missing,
+  notOffered,
+  unknown,
+}
+
+BookingPaymentCapabilityStatus parseBookingPaymentCapabilityStatus(Object? raw) {
+  switch ((raw ?? '').toString().trim().toLowerCase()) {
+    case 'ok':
+    case 'available':
+      return BookingPaymentCapabilityStatus.ok;
+    case 'load_failed':
+    case 'loadfailed':
+      return BookingPaymentCapabilityStatus.loadFailed;
+    case 'missing':
+      return BookingPaymentCapabilityStatus.missing;
+    case 'not_offered':
+    case 'notoffered':
+      return BookingPaymentCapabilityStatus.notOffered;
+    default:
+      return BookingPaymentCapabilityStatus.unknown;
+  }
+}
+
 class BookingPaymentCapability {
   const BookingPaymentCapability({
     required this.paymentOwnerMode,
@@ -68,12 +94,15 @@ class BookingPaymentCapability {
     this.publicPaymentOptions = const <String>[],
     this.qrTransferAvailable = false,
     this.countryCode = '',
+    this.capabilityProjectionPresent = true,
+    this.projectionStatus = BookingPaymentCapabilityStatus.unknown,
   });
 
-  /// No company capability is known yet.
+  /// The Fluxidi demo payment account.
   ///
-  /// Mirrors the default [PaymentOwnershipGate] so a surface whose profile has
-  /// not loaded behaves exactly as it did before this seam existed.
+  /// Only for demo and test surfaces. A real customer-facing booking flow must
+  /// use [BookingPaymentCapability.unavailable] while the company profile is
+  /// unknown, so an unverified company can never present a hosted checkout.
   const BookingPaymentCapability.unknown()
     : paymentOwnerMode = 'fluxidi_central_demo',
       paymentDemoMode = true,
@@ -82,7 +111,9 @@ class BookingPaymentCapability {
       mollieForcedTestMode = null,
       publicPaymentOptions = const <String>[],
       qrTransferAvailable = false,
-      countryCode = '';
+      countryCode = '',
+      capabilityProjectionPresent = false,
+      projectionStatus = BookingPaymentCapabilityStatus.unknown;
 
   /// A company whose capability could not be established.
   ///
@@ -96,7 +127,9 @@ class BookingPaymentCapability {
       mollieForcedTestMode = null,
       publicPaymentOptions = const <String>[],
       qrTransferAvailable = false,
-      countryCode = '';
+      countryCode = '',
+      capabilityProjectionPresent = false,
+      projectionStatus = BookingPaymentCapabilityStatus.missing;
 
   /// Reads the capability a worker published for a partner the customer is
   /// booking with.
@@ -106,23 +139,65 @@ class BookingPaymentCapability {
   /// cannot honour.
   factory BookingPaymentCapability.fromPublicJson(Object? source) {
     if (source is! Map) return const BookingPaymentCapability.unavailable();
+    // A worker may publish the capability nested (limousine does) or flat on
+    // the profile. The public partner profile currently carries neither, which
+    // is why [capabilityProjectionPresent] is reported rather than guessed.
+    final nested = source['payment_capability'];
+    final projection = nested is Map ? nested : source;
     bool? optionalBool(Object? value) => value is bool ? value : null;
-    final rawOptions = source['public_payment_options'];
+    Object? read(String snake, String camel) =>
+        projection[snake] ?? projection[camel];
+
+    final rawOptions = read('public_payment_options', 'publicPaymentOptions');
+    // Fall back to the list the company actually published on its public
+    // profile, so enabled methods are not silently dropped. This only affects
+    // which known ids may be shown; it never grants online capability.
+    final publishedMethods = source['payment_methods'] ?? source['paymentMethods'];
+    final options = rawOptions is List
+        ? rawOptions.map((e) => e.toString()).toList(growable: false)
+        : (publishedMethods is List
+              ? publishedMethods.map((e) => e.toString()).toList(growable: false)
+              : const <String>[]);
+
+    final ownerMode = (read('payment_owner_mode', 'paymentOwnerMode') ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final status = parseBookingPaymentCapabilityStatus(
+      source['payment_capability_status'] ??
+          source['paymentCapabilityStatus'] ??
+          projection['payment_capability_status'] ??
+          projection['status'],
+    );
+    final hasProjection =
+        status == BookingPaymentCapabilityStatus.ok ||
+        status == BookingPaymentCapabilityStatus.notOffered ||
+        ((status == BookingPaymentCapabilityStatus.unknown) &&
+            (ownerMode.isNotEmpty ||
+                read('mollie_connected', 'mollieConnected') != null ||
+                read('qr_transfer_available', 'qrTransferAvailable') != null));
+
     return BookingPaymentCapability(
-      paymentOwnerMode: (source['payment_owner_mode'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase(),
-      paymentDemoMode: optionalBool(source['payment_demo_mode']) ?? true,
-      mollieConnected: optionalBool(source['mollie_connected']) ?? false,
-      livePaymentsEnabled: optionalBool(source['live_payments_enabled']),
-      mollieForcedTestMode: optionalBool(source['mollie_forced_test_mode']),
-      publicPaymentOptions: rawOptions is List
-          ? rawOptions.map((e) => e.toString()).toList(growable: false)
-          : const <String>[],
+      paymentOwnerMode: ownerMode,
+      paymentDemoMode:
+          optionalBool(read('payment_demo_mode', 'paymentDemoMode')) ?? true,
+      mollieConnected:
+          optionalBool(read('mollie_connected', 'mollieConnected')) ?? false,
+      livePaymentsEnabled: optionalBool(
+        read('live_payments_enabled', 'livePaymentsEnabled'),
+      ),
+      mollieForcedTestMode: optionalBool(
+        read('mollie_forced_test_mode', 'mollieForcedTestMode'),
+      ),
+      publicPaymentOptions: options,
       qrTransferAvailable:
-          optionalBool(source['qr_transfer_available']) ?? false,
-      countryCode: (source['country'] ?? '').toString(),
+          optionalBool(read('qr_transfer_available', 'qrTransferAvailable')) ??
+          false,
+      countryCode: (read('country', 'countryCode') ?? '').toString(),
+      capabilityProjectionPresent: hasProjection,
+      projectionStatus: status == BookingPaymentCapabilityStatus.unknown && hasProjection
+          ? BookingPaymentCapabilityStatus.ok
+          : status,
     );
   }
 
@@ -137,6 +212,16 @@ class BookingPaymentCapability {
 
   /// Whether the company has bank details behind the QR transfer option.
   final bool qrTransferAvailable;
+
+  /// Whether the response actually carried a payment capability projection.
+  ///
+  /// False means the API said nothing about payments — a different situation
+  /// from a company that deliberately offers only manual methods, and the
+  /// reason online checkout must stay hidden until the API reports it.
+  final bool capabilityProjectionPresent;
+
+  /// Server-reported reason the projection is present, missing, or failed.
+  final BookingPaymentCapabilityStatus projectionStatus;
 
   /// Country the company operates in, as the company itself recorded it.
   ///
@@ -215,9 +300,20 @@ class BookingPaymentOptions {
   bool get qrPaymentConfigured => capability.qrPaymentConfigured;
 
   /// True when QR transfer is offered but the company never filled in an IBAN.
+  ///
+  /// Requires a real capability projection: an API that said nothing about
+  /// payments is not evidence that bank details are missing.
   bool get qrPaymentMissingBankDetails =>
       visibleMethodIds.contains(PaymentMethodIds.qrCode) &&
-      !qrPaymentConfigured;
+      !qrPaymentConfigured &&
+      capability.capabilityProjectionPresent;
+
+  /// True when QR cannot be confirmed because the company's payment settings
+  /// are simply not known yet.
+  bool get qrPaymentDetailsUnknown =>
+      visibleMethodIds.contains(PaymentMethodIds.qrCode) &&
+      !qrPaymentConfigured &&
+      !capability.capabilityProjectionPresent;
 
   bool isGooglePaySubmitBlocked(String methodId) =>
       PaymentMethodResolver.isGooglePayMethodId(methodId) &&

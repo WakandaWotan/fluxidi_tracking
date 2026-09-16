@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_dispatch.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
 
@@ -43,13 +44,12 @@ String companyPlanPresenceLabel(
   CompanyPlanPresence presence,
   AppLanguage language, {
   DateTime? plannedLocal,
+  bool durationKnown = true,
 }) {
   switch (presence.code) {
     case 'available':
-      if (plannedLocal != null) {
-        return kCompanyAgendaFreeAt
-            .of(language)
-            .replaceAll('{time}', companyPlanFormatClock(plannedLocal));
+      if (!durationKnown) {
+        return kCompanyAgendaAvailabilityUnknown.of(language);
       }
       return kCompanyDriverPresenceAvailable.of(language);
     case 'on_trip':
@@ -75,6 +75,16 @@ String companyPlanPresenceLabel(
       return kCompanyAgendaDriverInactive.of(language);
     case 'assignment_driver_not_scheduled':
       return kCompanyAgendaOffDuty.of(language);
+    case 'assignment_driver_outside_hours':
+      return kCompanyDriverConflictOutsideHours.of(language);
+    case 'assignment_driver_planned_break':
+      return kCompanyDriverConflictBreak.of(language);
+    case 'assignment_driver_absent':
+      return kCompanyDriverConflictAbsent.of(language);
+    case 'assignment_ride_after_hours':
+      return kCompanyDriverConflictEndsAfterHours.of(language);
+    case 'assignment_schedule_undeterminable':
+      return kCompanyDriverScheduleUndeterminable.of(language);
     case 'assignment_driver_paused':
       return kCompanyDriverPresencePaused.of(language);
     case 'assignment_driver_offline':
@@ -106,6 +116,10 @@ CompanyPlanPresence resolveCompanyPlanPresence({
   DateTime? busyUntil,
   DateTime? lastSeenUtc,
   DateTime? nowUtc,
+  CompanyDriverSchedule? schedule,
+  DateTime? rideStartUtc,
+  DateTime? rideEndUtc,
+  Duration approach = Duration.zero,
 }) {
   if (!companyAgendaDriverIsActive(driver)) {
     return const CompanyPlanPresence(
@@ -137,6 +151,17 @@ CompanyPlanPresence resolveCompanyPlanPresence({
       icon: Icons.near_me_disabled_outlined,
     );
   }
+  // The roster can only refuse, never grant: a driver inside working hours is
+  // still subject to every rule below. A driver without a roster keeps the
+  // exact behaviour they had before schedules existed.
+  final scheduleBlock = _schedulePresenceBlock(
+    schedule: schedule,
+    rideStartUtc: rideStartUtc,
+    rideEndUtc: rideEndUtc,
+    approach: approach,
+  );
+  if (scheduleBlock != null) return scheduleBlock;
+
   final status = (driver['availability_status'] ??
           driver['availabilityStatus'] ??
           driver['presence_label'] ??
@@ -237,6 +262,66 @@ CompanyPlanPresence resolveCompanyPlanPresence({
     code: 'scheduled_no_live',
     icon: Icons.help_outline,
   );
+}
+
+/// Blocks the assignment when the roster refuses this ride, or null when the
+/// roster has nothing to say (including when no roster is stored).
+CompanyPlanPresence? _schedulePresenceBlock({
+  required CompanyDriverSchedule? schedule,
+  required DateTime? rideStartUtc,
+  required DateTime? rideEndUtc,
+  required Duration approach,
+}) {
+  if (schedule == null || !schedule.isConfigured) return null;
+  if (schedule.isEmpty) {
+    return const CompanyPlanPresence(
+      tone: CompanyPlanPresenceTone.blocked,
+      code: 'assignment_driver_not_scheduled',
+      icon: Icons.event_busy_outlined,
+    );
+  }
+  if (rideStartUtc == null) return null;
+  final conflict = companyDriverScheduleConflictFor(
+    schedule: schedule,
+    rideStartUtc: rideStartUtc,
+    rideEndUtc: rideEndUtc ?? rideStartUtc,
+    approach: approach,
+  );
+  switch (conflict) {
+    case CompanyDriverScheduleConflict.outsideWorkingHours:
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_driver_outside_hours',
+        icon: Icons.schedule_outlined,
+      );
+    case CompanyDriverScheduleConflict.plannedBreak:
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_driver_planned_break',
+        icon: Icons.free_breakfast_outlined,
+      );
+    case CompanyDriverScheduleConflict.absent:
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_driver_absent',
+        icon: Icons.event_busy_outlined,
+      );
+    case CompanyDriverScheduleConflict.rideEndsAfterWorkingHours:
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_ride_after_hours',
+        icon: Icons.nightlight_outlined,
+      );
+    case CompanyDriverScheduleConflict.undeterminable:
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_schedule_undeterminable',
+        icon: Icons.help_outline,
+      );
+    case CompanyDriverScheduleConflict.noSchedule:
+    case CompanyDriverScheduleConflict.none:
+      return null;
+  }
 }
 
 class CompanyPlanPresenceChip extends StatelessWidget {

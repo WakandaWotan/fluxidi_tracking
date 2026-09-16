@@ -84,7 +84,7 @@ $defines = @(
 )
 
 Write-Host 'Building release APK (production booking host, no localhost, no demo token)...'
-& $flutter build apk --release @defines
+& $flutter build apk --release --build-name=1.0.1 --build-number=10 @defines
 if ($LASTEXITCODE -ne 0) { throw "flutter build apk failed: $LASTEXITCODE" }
 
 $apk = Join-Path $repo 'build\app\outputs\flutter-apk\app-release.apk'
@@ -98,7 +98,7 @@ Copy-Item -LiteralPath $apk -Destination $copied -Force
   "apk=$copied"
   "flutter_apk=$apk"
   "application_id=com.fluxidi.tracking"
-  "version=1.0.1+4"
+  "version=1.0.1+10"
   "built_at=$builtAt"
   "source_revision=$revision"
   "source_dirty=$dirty"

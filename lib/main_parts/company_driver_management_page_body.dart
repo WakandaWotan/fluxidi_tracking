@@ -801,6 +801,58 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
     );
   }
 
+  /// Opens the working-hours screen for one driver of this company.
+  ///
+  /// The company scope comes from the active company session, never from the
+  /// row, so a driver of another company can never be addressed. Editing
+  /// follows the existing company-admin right; a driver opening their own
+  /// profile gets the read-only view.
+  Future<void> _openDriverSchedule(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final driverId = companyDriverRecordId(driver);
+    if (driverId.isEmpty) return;
+    final scope = companyOpsScope();
+    final language = appLanguageNotifier.value;
+    final canEdit = companyDriverScheduleCallerCanEdit(
+      isCompanyAdmin: activeCompanySessionNotifier.value != null,
+      callerDriverId: activeDriverSessionNotifier.value?.driverId ?? '',
+      targetDriverId: driverId,
+    );
+    debugPrint(
+      '[COMPANY_DRIVER_SCHEDULE][OPEN] driver=${_maskScopeForLog(driverId)}'
+      ' company=${_maskScopeForLog(scope['company_id'] ?? '')}'
+      ' canEdit=$canEdit',
+    );
+    final loaded = await fetchCompanyOpsDriverSchedule(driverId);
+    if (!context.mounted) return;
+    final result = await openCompanyDriverSchedulePage(
+      context,
+      language: language,
+      schedule:
+          loaded.schedule ??
+          CompanyDriverSchedule(
+            driverId: driverId,
+            timezone: kCompanyDefaultTimezone,
+          ),
+      driverName: driver.fullName.trim().isEmpty
+          ? driverId
+          : driver.fullName.trim(),
+      canEdit: canEdit,
+      persistenceAvailable: loaded.canPersist && canEdit,
+    );
+    if (result == null || !loaded.canPersist || !canEdit) return;
+    try {
+      await saveCompanyOpsDriverSchedule(result);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Uurrooster bewaren mislukt.')),
+      );
+    }
+  }
+
   Future<void> _openEditDriverDialog(
     BuildContext context,
     DriverProfile existing,
@@ -865,6 +917,17 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      unawaited(_openDriverSchedule(context, existing));
+                    },
+                    icon: const Icon(Icons.schedule_outlined, size: 20),
+                    label: Text(
+                      kCompanyDriverScheduleTitle.of(appLanguageNotifier.value),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
@@ -3984,6 +4047,34 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
+                      key: companyDriverScheduleActionKey(
+                        companyDriverRecordId(driver),
+                      ),
+                      onPressed: () => _openDriverSchedule(context, driver),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: _textPrimary,
+                        side: BorderSide(
+                          color: _border.withOpacity(_isDark ? 0.45 : 0.92),
+                        ),
+                        backgroundColor: _subPanelBg,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.schedule_outlined, size: 20),
+                      label: Text(
+                        kCompanyDriverScheduleTitle.of(
+                          appLanguageNotifier.value,
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
                       onPressed: () => _openEditDriverDialog(context, driver),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 52),
@@ -4250,6 +4341,18 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.schedule_outlined, color: actionIconColor),
+                title: Text(
+                  kCompanyDriverScheduleTitle.of(appLanguageNotifier.value),
+                  style: TextStyle(color: _textPrimary),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_openDriverSchedule(context, driver));
+                },
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.edit_outlined, color: actionIconColor),
@@ -6735,6 +6838,51 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                                     fr: 'QR de liaison temporaire',
                                                     es: 'QR temporal de vinculación',
                                                   ),
+                                          ),
+                                        ),
+                                        OutlinedButton.icon(
+                                          key: companyDriverScheduleActionKey(
+                                            companyDriverRecordId(d),
+                                          ),
+                                          onPressed: () =>
+                                              _openDriverSchedule(context, d),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: _textPrimary,
+                                            side: BorderSide(
+                                              color: _border.withOpacity(
+                                                _isDark ? 0.45 : 0.92,
+                                              ),
+                                            ),
+                                            backgroundColor: _panelBg,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isCompactLandscape
+                                                  ? 10
+                                                  : 12,
+                                              vertical: isCompactLandscape
+                                                  ? 6
+                                                  : 8,
+                                            ),
+                                            minimumSize: isCompactLandscape
+                                                ? const Size(0, 32)
+                                                : null,
+                                            textStyle: isCompactLandscape
+                                                ? const TextStyle(
+                                                    fontSize: 11.6,
+                                                  )
+                                                : null,
+                                          ),
+                                          icon: Icon(
+                                            Icons.schedule_outlined,
+                                            size: isCompactLandscape ? 14 : 16,
+                                          ),
+                                          label: Text(
+                                            kCompanyDriverScheduleTitle.of(
+                                              appLanguageNotifier.value,
+                                            ),
                                           ),
                                         ),
                                         OutlinedButton.icon(

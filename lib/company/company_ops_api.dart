@@ -10,6 +10,8 @@ import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart';
 import 'package:fluxidi_tracking/company/company_ops_session.dart'
     show companyOpsSessionIsReady;
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 
 export 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart'
     show
@@ -463,4 +465,125 @@ Future<Map<String, dynamic>> previewCompanyFixedPrice(
     );
   }
   return decoded;
+}
+
+class CompanyDriverScheduleLoad {
+  const CompanyDriverScheduleLoad({
+    required this.canPersist,
+    this.present = false,
+    this.schedule,
+    this.error,
+  });
+
+  final bool canPersist;
+  final bool present;
+  final CompanyDriverSchedule? schedule;
+  final String? error;
+}
+
+Future<CompanyDriverScheduleLoad> fetchCompanyOpsDriverSchedule(
+  String driverId,
+) async {
+  final id = driverId.trim();
+  if (id.isEmpty) {
+    return const CompanyDriverScheduleLoad(
+      canPersist: false,
+      error: 'missing_driver',
+    );
+  }
+  final scope = companyOpsScope();
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/company/drivers/${Uri.encodeComponent(id)}/schedule',
+  ).replace(queryParameters: scope);
+  try {
+    final res = await http
+        .get(uri, headers: await companyOpsHeaders())
+        .timeout(const Duration(seconds: 12));
+    final decoded = decodeCompanyOpsJson(res.bodyBytes);
+    if (res.statusCode == 404) {
+      return const CompanyDriverScheduleLoad(
+        canPersist: false,
+        error: 'driver_not_found',
+      );
+    }
+    if (res.statusCode != 200 || decoded['ok'] != true) {
+      return CompanyDriverScheduleLoad(
+        canPersist: false,
+        error: decoded['error']?.toString() ?? 'schedule_load_failed',
+      );
+    }
+    if (decoded['present'] != true) {
+      return CompanyDriverScheduleLoad(
+        canPersist: true,
+        present: false,
+        schedule: CompanyDriverSchedule(
+          driverId: id,
+          timezone: kCompanyDefaultTimezone,
+        ),
+      );
+    }
+    final raw = decoded['schedule'];
+    if (raw is! Map) {
+      return CompanyDriverScheduleLoad(
+        canPersist: true,
+        present: true,
+        schedule: CompanyDriverSchedule(
+          driverId: id,
+          timezone: kCompanyDefaultTimezone,
+          explicitlySet: true,
+        ),
+      );
+    }
+    final parsed = CompanyDriverSchedule.fromJson(
+      Map<String, dynamic>.from(raw),
+    );
+    return CompanyDriverScheduleLoad(
+      canPersist: true,
+      present: true,
+      schedule:
+          parsed?.copyWith(explicitlySet: true) ??
+          CompanyDriverSchedule(
+            driverId: id,
+            timezone: kCompanyDefaultTimezone,
+            explicitlySet: true,
+          ),
+    );
+  } catch (_) {
+    return const CompanyDriverScheduleLoad(
+      canPersist: false,
+      error: 'schedule_load_failed',
+    );
+  }
+}
+
+Future<CompanyDriverSchedule> saveCompanyOpsDriverSchedule(
+  CompanyDriverSchedule schedule,
+) async {
+  final scope = companyOpsScope();
+  final id = schedule.driverId.trim();
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/company/drivers/${Uri.encodeComponent(id)}/schedule',
+  ).replace(queryParameters: scope);
+  final res = await http
+      .put(
+        uri,
+        headers: await companyOpsHeaders(),
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          ...schedule.copyWith(explicitlySet: true).toJson(),
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = decodeCompanyOpsJson(res.bodyBytes);
+  if (res.statusCode < 200 || res.statusCode >= 300 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'schedule_save_failed',
+    );
+  }
+  final raw = decoded['schedule'];
+  if (raw is Map) {
+    return CompanyDriverSchedule.fromJson(Map<String, dynamic>.from(raw)) ??
+        schedule.copyWith(explicitlySet: true);
+  }
+  return schedule.copyWith(explicitlySet: true);
 }

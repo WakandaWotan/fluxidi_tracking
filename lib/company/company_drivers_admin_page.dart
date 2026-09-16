@@ -8,7 +8,9 @@ import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart'
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_theme.dart';
-import 'package:fluxidi_tracking/company/company_driver_roster.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 
 const Key kCompanyDriversRosterKey = Key('company_drivers_roster');
 
@@ -68,14 +70,20 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
       _error = null;
     });
     try {
-      final results = await Future.wait<Object>([
-        (widget.driversLoader ?? fetchCompanyOpsDrivers)(),
-        (widget.subscriptionLoader ?? fetchCompanyOpsSubscriptionProfile)(),
-      ]);
+      final drivers = await (widget.driversLoader ?? fetchCompanyOpsDrivers)();
+      var maxDrivers = 1;
+      try {
+        final subscription =
+            await (widget.subscriptionLoader ??
+                fetchCompanyOpsSubscriptionProfile)();
+        maxDrivers = companyOpsMaxDrivers(subscription);
+      } catch (_) {
+        // A failed cap request must not hide the loaded roster.
+      }
       if (!mounted) return;
       setState(() {
-        _drivers = results[0] as List<Map<String, dynamic>>;
-        _maxDrivers = companyOpsMaxDrivers(results[1] as Map<String, dynamic>);
+        _drivers = drivers;
+        _maxDrivers = maxDrivers;
         _loading = false;
       });
     } catch (_) {
@@ -166,97 +174,34 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
   }
 
   Future<void> _editRoster(Map<String, dynamic> driver) async {
-    var days = companyDriverRosterDaysFrom(
-      driver['weekly_roster'] is Map
-          ? Map<String, dynamic>.from(driver['weekly_roster'] as Map)
-          : null,
-    );
-    final saved = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          key: kCompanyDriversRosterKey,
-          title: const Text('Werkuren'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Tijdzone: Europe/Brussels'),
-                  for (final day in kCompanyDriverRosterDays)
-                    Row(
-                      children: [
-                        SizedBox(width: 40, child: Text(day)),
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: (days[day]?.isNotEmpty ?? false)
-                                ? '${days[day]!.first.start}-${days[day]!.first.end}'
-                                : '',
-                            decoration: const InputDecoration(
-                              hintText: '09:00-17:00 of 22:00-06:00',
-                            ),
-                            onChanged: (value) {
-                              final parts = value.split('-');
-                              if (parts.length != 2) {
-                                days[day] = const <CompanyRosterBlock>[];
-                                return;
-                              }
-                              days[day] = [
-                                CompanyRosterBlock(
-                                  start: parts[0].trim(),
-                                  end: parts[1].trim(),
-                                ),
-                              ];
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  TextButton(
-                    onPressed: () {
-                      days = companyDriverCopyRosterDay(
-                        days: days,
-                        fromDay: 'mon',
-                        toDays: const ['tue', 'wed', 'thu', 'fri'],
-                      );
-                    },
-                    child: const Text('Kopieer maandag naar weekdagen'),
-                  ),
-                ],
-              ),
-            ),
+    final driverId = companyAgendaDriverId(driver);
+    if (driverId.isEmpty) return;
+    final name = companyAgendaDriverName(driver);
+    final loaded = await fetchCompanyOpsDriverSchedule(driverId);
+    if (!mounted) return;
+    final result = await openCompanyDriverSchedulePage(
+      context,
+      language: _lang,
+      schedule:
+          loaded.schedule ??
+          CompanyDriverSchedule(
+            driverId: driverId,
+            timezone: kCompanyDefaultTimezone,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Annuleer'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                context,
-                companyDriverRosterToJson(days: days),
-              ),
-              child: const Text('Bewaar'),
-            ),
-          ],
-        );
-      },
+      driverName: name.isEmpty ? driverId : name,
+      canEdit: companyDriverScheduleCallerCanEdit(
+        isCompanyAdmin: true,
+        callerDriverId: '',
+        targetDriverId: driverId,
+      ),
+      persistenceAvailable: loaded.canPersist,
     );
-    if (saved == null) return;
-    setState(() => _saving = true);
+    if (result == null || !loaded.canPersist) return;
     try {
-      await (widget.driverUpsert ?? upsertCompanyOpsDriver)(<String, dynamic>{
-        ...driver,
-        'weekly_roster': saved,
-      });
-      await _load();
+      await saveCompanyOpsDriverSchedule(result);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = 'Werkuren bewaren mislukt.';
-        _saving = false;
-      });
+      setState(() => _error = 'Uurrooster bewaren mislukt.');
     }
   }
 
@@ -343,14 +288,14 @@ class _CompanyDriversAdminPageState extends State<CompanyDriversAdminPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                key: Key(
-                                  'company_drivers_roster_${companyAgendaDriverId(driver)}',
+                                key: companyDriverScheduleActionKey(
+                                  companyAgendaDriverId(driver),
                                 ),
-                                tooltip: 'Werkuren',
+                                tooltip: kCompanyDriverScheduleTitle.of(_lang),
                                 onPressed: _saving
                                     ? null
                                     : () => _editRoster(driver),
-                                icon: const Icon(Icons.schedule),
+                                icon: const Icon(Icons.schedule_outlined),
                               ),
                               IconButton(
                                 onPressed: _saving
