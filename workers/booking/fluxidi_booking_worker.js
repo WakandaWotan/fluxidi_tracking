@@ -350,6 +350,26 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
+  dropUnpersistedDemoVehicles,
+  evaluateFleetCapacityWrite,
+  vehicleLimitMessage,
+  VEHICLE_LIMIT_REACHED,
+} from "./modules/fleet_vehicle_capacity.mjs";
+import {
+  activeDriverIdsFromIndex,
+  activeVehicleIdsFromFleet,
+  loadTrialEntitlement,
+  normalizeTrialEntitlementWrite,
+  previewTrialEntitlementWrite,
+  resolveEffectiveVehicleCapacity,
+  saveTrialEntitlement,
+  summarizeTrialEntitlement,
+} from "./modules/company_trial_entitlement.mjs";
+import {
+  applyAccountAction,
+  loadAccountLifecycle,
+} from "./modules/company_account_lifecycle.mjs";
+import {
   fetchRatehawkHotelsStatus,
   handleAdminRatehawkTestHotelpage,
   handleAdminRatehawkTestPrebook,
@@ -17719,6 +17739,173 @@ function _subscriptionBlockedResponse({ scope } = {}) {
   return json({ ok: false, error: "subscription_suspended" }, 402);
 }
 
+async function handleAdminCompanyAccount(request, url, env) {
+  if (!hasValidAdminToken(request, url, env)) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const body = request.method === "GET" ? {} : ((await safeJson(request)) || {});
+  if (request.method !== "GET" && request.method !== "POST") {
+    return json({ ok: false, error: "method_not_allowed" }, 405);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) return json(missingTenantScopeError(), 400);
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  const companyCode = sanitizeTenantString(
+    body.company_code ?? body.companyCode ?? url.searchParams.get("company_code"),
+    80,
+  );
+  if (request.method === "GET") {
+    const record = await loadAccountLifecycle(env.BOOKING_KV, { tenantId, companyId });
+    return json({
+      ok: true,
+      tenant_id: tenantId,
+      company_id: companyId,
+      company_code: companyCode || record.company_code || null,
+      account: record,
+      subscription_untouched: true,
+    }, 200);
+  }
+  const result = await applyAccountAction(env.BOOKING_KV, {
+    tenantId,
+    companyId,
+    companyCode,
+    action: sanitizeTenantString(body.action, 40).toLowerCase(),
+    actorId: sanitizeTenantString(body.actor_id ?? body.actorId, 80) || "platform_admin",
+    reason: sanitizeTenantString(body.reason, 240),
+    confirmation: body.confirmation && typeof body.confirmation === "object" ? body.confirmation : null,
+  });
+  if (!result.ok) {
+    const status = result.error === "unauthorized" ? 401
+      : (result.error === "close_confirmation_required" || result.error === "action_not_available" || result.error === "hard_protected_company")
+        ? 409
+        : 400;
+    return json(result, status);
+  }
+  return json(result, 200);
+}
+
+async function _trialUsageForScope(env, scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(scope?.company_id, 80);
+  let vehicles = 0;
+  let drivers = 0;
+  if (env?.BOOKING_KV && tenantId && companyId) {
+    const fleetRaw = await env.BOOKING_KV.get(
+      `tenant:${tenantId}:company:${companyId}:fleet:vehicles:v1`,
+      { type: "json" },
+    );
+    vehicles = activeVehicleIdsFromFleet(fleetRaw || {}).length;
+    const driverRaw = await env.BOOKING_KV.get(
+      `tenant:${tenantId}:company:${companyId}:drivers:index:v1`,
+      { type: "json" },
+    );
+    drivers = activeDriverIdsFromIndex(driverRaw || {}).length;
+  }
+  return { vehicles, drivers };
+}
+
+function _sourceTrialEndsAt(profile = {}) {
+  const fromTrial = sanitizeTenantString(profile?.trial_ends_at ?? profile?.trialEndsAt, 48);
+  if (fromTrial) return fromTrial;
+  return sanitizeTenantString(profile?.current_period_end ?? profile?.currentPeriodEnd, 48);
+}
+
+async function handleAdminCompanyTrialEntitlement(request, url, env) {
+  if (!hasValidAdminToken(request, url, env)) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+  const body = request.method === "GET" ? {} : ((await safeJson(request)) || {});
+  if (request.method !== "GET" && request.method !== "POST") {
+    return json({ ok: false, error: "method_not_allowed" }, 405);
+  }
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
+  if (!explicitScope?.hasScope) return json(missingTenantScopeError(), 400);
+  const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
+  const companyId = sanitizeTenantString(explicitScope.company_id, 80);
+  const companyCode = sanitizeTenantString(
+    body.company_code ?? body.companyCode ?? url.searchParams.get("company_code"),
+    80,
+  );
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const profile = await loadSubscriptionProfile(env, scope, { allowTenantLegacyFallback: false });
+  const account = await loadAccountLifecycle(env.BOOKING_KV, { tenantId, companyId });
+  const override = await loadTrialEntitlement(env.BOOKING_KV, { tenantId, companyId });
+  const usage = await _trialUsageForScope(env, scope);
+  const sourceTrialEnds = _sourceTrialEndsAt(profile);
+  const profileForSummary = sourceTrialEnds && sourceTrialEnds !== profile?.trial_ends_at
+    ? { ...profile, trial_ends_at: sourceTrialEnds }
+    : profile;
+  const current = summarizeTrialEntitlement({
+    profile: profileForSummary,
+    override,
+    usage,
+    accountState: account.state,
+  });
+  if (request.method === "GET") {
+    return json({
+      ok: true,
+      source: "booking_worker",
+      execute: false,
+      tenant_id: tenantId,
+      company_id: companyId,
+      company_code: companyCode || account.company_code || null,
+      ...current,
+    }, 200);
+  }
+  const previewOnly = body.preview_only === true || body.previewOnly === true || body.execute === false;
+  const preview = previewTrialEntitlementWrite({
+    current,
+    nextVehicles: body.vehicles_allowed ?? body.vehiclesAllowed,
+    nextDrivers: body.drivers_allowed ?? body.driversAllowed,
+    nextEndsAt: body.trial_ends_at ?? body.trialEndsAt,
+    reason: body.reason,
+  });
+  const normalized = normalizeTrialEntitlementWrite({
+    vehiclesAllowed: body.vehicles_allowed ?? body.vehiclesAllowed,
+    driversAllowed: body.drivers_allowed ?? body.driversAllowed,
+    trialEndsAt: body.trial_ends_at ?? body.trialEndsAt,
+    reason: body.reason,
+    actorId: body.actor_id ?? body.actorId ?? "platform_admin",
+    tenantId,
+    companyId,
+    companyCode,
+  });
+  if (!normalized.ok) return json({ ok: false, ...normalized, preview }, 400);
+  if (previewOnly) {
+    return json({
+      ok: true,
+      source: "booking_worker",
+      execute: false,
+      progress: "preview_only",
+      preview,
+      ...current,
+    }, 200);
+  }
+  const saved = await saveTrialEntitlement(env.BOOKING_KV, normalized.record);
+  if (!saved.ok) return json({ ok: false, error: saved.error || "write_failed", execute: false }, 500);
+  const nextOverride = await loadTrialEntitlement(env.BOOKING_KV, { tenantId, companyId });
+  const confirmed = summarizeTrialEntitlement({
+    profile: profileForSummary,
+    override: nextOverride,
+    usage,
+    accountState: account.state,
+  });
+  return json({
+    ok: true,
+    source: "booking_worker",
+    execute: true,
+    progress: "applied",
+    preview,
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: companyCode || account.company_code || null,
+    ...confirmed,
+  }, 200);
+}
+
 // =========================
 // Patch 3.3: apply a verified recurring paid payment.
 //
@@ -29036,10 +29223,15 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       const rf = body.return_from || body.to;
       const rt = body.return_to || body.from;
       if (!rf || !rt) throw new Error("Missing return_from/return_to");
+      const returnStops = Array.isArray(body?.return_stops)
+        ? body.return_stops
+        : Array.isArray(body?.returnStops)
+          ? body.returnStops
+          : [];
       const retRouteOut = await routeFromTextsWithStopsDetailed({
         fromText: rf,
         toText: rt,
-        stopsTexts: [],
+        stopsTexts: returnStops,
         token: env.MAPBOX_TOKEN
       });
 
@@ -29056,9 +29248,9 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         when: retWhen,
         time_str: body.return_time,
         pax,
-        bags,
+        bags: 0,
         vat_rate,
-        stop_count: 0,
+        stop_count: returnStops.length,
         wait_min: 0,
         pricing_profile: pricingProfile,
         apply_return_fee: true,
@@ -29271,6 +29463,7 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         pricing_source: quoteReturnPricingSource,
         fixed_fare_applied: quoteReturnUsesFixedFare,
         fixed_fare_rule_id: quoteReturnFixedFareRuleId,
+        breakdown: retPricing.breakdown || null,
       };
     }
   } catch (e) {
@@ -29677,6 +29870,10 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
 
       return: returnQuote,
       breakdown: mainPricing.breakdown,
+      from_lat: fromPoint?.lat ?? routeOut?.resolved_from_point?.lat ?? null,
+      from_lng: fromPoint?.lng ?? routeOut?.resolved_from_point?.lng ?? null,
+      to_lat: toPoint?.lat ?? routeOut?.resolved_to_point?.lat ?? null,
+      to_lng: toPoint?.lng ?? routeOut?.resolved_to_point?.lng ?? null,
       availability,
     };
   if (bookingCurrency) {
@@ -37566,6 +37763,20 @@ export default {
       // CORS preflight
       if (request.method === "OPTIONS") {
         return new Response(null, { headers: corsHeaders() });
+      }
+
+      if (
+        (url.pathname === "/admin/company/account" || url.pathname === "/admin/company/account/")
+        && (request.method === "GET" || request.method === "POST")
+      ) {
+        return handleAdminCompanyAccount(request, url, env);
+      }
+
+      if (
+        (url.pathname === "/admin/company/trial-entitlement" || url.pathname === "/admin/company/trial-entitlement/")
+        && (request.method === "GET" || request.method === "POST")
+      ) {
+        return handleAdminCompanyTrialEntitlement(request, url, env);
       }
 
       // INVOICE-LOGO-BLACK-RECTANGLE P0 — one-shot ops trigger.
@@ -48317,6 +48528,36 @@ export default {
         const existingNormalized = (Array.isArray(existingFleet?.vehiclesRaw) ? existingFleet.vehiclesRaw : [])
           .map((entry) => _normalizeVehicleEntry(entry, { scope }))
           .filter((v) => v !== null);
+        const existingActiveIds = existingNormalized
+          .map((v) => String(v.vehicle_id ?? v.id ?? v.vehicleId ?? "").trim())
+          .filter(Boolean);
+        const withoutNewDemo = dropUnpersistedDemoVehicles(normalized, existingActiveIds);
+        if (normalized.length > 0 && withoutNewDemo.length === 0 && existingNormalized.length > 0) {
+          console.log(
+            `[FLEET_VEHICLE_LIMIT][KEEP_EXISTING] scope=${scopeMasked} reason=demo_drop_empty incoming=${normalized.length} existing=${existingNormalized.length}`,
+          );
+          return json({
+            ok: true,
+            changed: false,
+            key: scopedKey,
+            source: "scoped",
+            scoped_key: scopedKey,
+            legacy_key: VEHICLE_INVENTORY_KEY,
+            count: existingNormalized.length,
+            vehicles: existingNormalized,
+            deleted_vehicle_ids: deletedVehicleIdList(
+              existingFleet && typeof existingFleet.deletedVehicleIds === "object"
+                ? existingFleet.deletedVehicleIds
+                : {},
+            ),
+            deleted_count: Object.keys(
+              existingFleet && typeof existingFleet.deletedVehicleIds === "object"
+                ? existingFleet.deletedVehicleIds
+                : {},
+            ).length,
+            source_revision: existingFleet?.sourceRevision ?? 0,
+          }, 200);
+        }
         // Server-owned vehicle deletion tombstones (mirrors the driver index
         // deleted_drivers map). A client payload may only ADD tombstones via
         // deleted_vehicle_ids; existing server tombstones are always preserved
@@ -48338,10 +48579,38 @@ export default {
           incomingDeleted,
         );
         const activeNormalized = filterActiveVehicles(
-          normalized,
+          withoutNewDemo,
           mergedDeleted,
           (v) => v.vehicle_id ?? v.id ?? v.vehicleId,
         );
+        const incomingActiveIds = activeNormalized
+          .map((v) => String(v.vehicle_id ?? v.id ?? v.vehicleId ?? "").trim())
+          .filter(Boolean);
+        const profile = await loadSubscriptionProfile(env, scope, {
+          allowTenantLegacyFallback: false,
+        });
+        const trialOverride = await loadTrialEntitlement(env.BOOKING_KV, {
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+        });
+        const allowed = resolveEffectiveVehicleCapacity(profile, trialOverride);
+        const capacity = evaluateFleetCapacityWrite({
+          existingActiveIds,
+          incomingActiveIds,
+          allowed,
+        });
+        if (!capacity.ok) {
+          console.log(
+            `[FLEET_VEHICLE_LIMIT][BLOCK] scope=${scopeMasked} allowed=${capacity.allowed} existing=${capacity.existing} incoming=${capacity.incoming} added=${capacity.added}`,
+          );
+          return json({
+            ok: false,
+            error: VEHICLE_LIMIT_REACHED,
+            message: vehicleLimitMessage(),
+            allowed: capacity.allowed,
+            current: capacity.existing,
+          }, 409);
+        }
         const deletedIdList = deletedVehicleIdList(mergedDeleted);
         const activeUnchanged = kvComparableEqual(existingNormalized, activeNormalized);
         const deletedUnchanged = kvComparableEqual(existingDeleted, mergedDeleted);
@@ -68658,10 +68927,15 @@ async function handleBooking(payload, env, request, options = {}) {
       return_from = safeStr(payload?.return_from || payload?.returnFrom) || to;
       return_to = safeStr(payload?.return_to || payload?.returnTo) || from;
       if (return_from && return_to) {
+        const returnStops = Array.isArray(payload?.return_stops)
+          ? payload.return_stops
+          : Array.isArray(payload?.returnStops)
+            ? payload.returnStops
+            : [];
         const outR = await routeFromTextsWithStopsDetailed({
           fromText: return_from,
           toText: return_to,
-          stopsTexts: [],
+          stopsTexts: returnStops,
           token: env.MAPBOX_TOKEN
         });
         return_distance_km = round1((outR?.route?.distance || 0) / 1000);
@@ -68675,9 +68949,9 @@ async function handleBooking(payload, env, request, options = {}) {
           when: normalizeWhen(date, time),
           time_str: time,
           pax,
-          bags,
+          bags: 0,
           vat_rate,
-          stop_count: 0,
+          stop_count: returnStops.length,
           wait_min: 0,
           pricing_profile: pricingProfile,
           apply_return_fee: true,
@@ -83055,9 +83329,8 @@ function _normalizePublicCoverage(raw) {
   if (primaryPostcode) supportedSet.add(primaryPostcode);
   const lat = _safePublicNumber(src.lat, { min: -90, max: 90 });
   const lng = _safePublicNumber(src.lng, { min: -180, max: 180 });
-  const serviceRadiusKm = _safePublicNumber(
+  const serviceRadiusKm = _normalizeNearbyRadiusKm(
     src.service_radius_km ?? src.serviceRadiusKm,
-    { min: 1, max: 100 },
   );
   return {
     region_label: _safePublicText(src.region_label ?? src.regionLabel, 120),

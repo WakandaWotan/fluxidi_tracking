@@ -283,8 +283,7 @@ test("client cannot force the server-owned source_revision", async () => {
         company_id: COMPANY,
         source_revision: 9999,
         vehicles: [
-          vehicle("vh_tesla", "Hoofdwagen", "T-XAA-674"),
-          vehicle("vh_cadillac", "Cadillac", "Tax002"),
+          vehicle("vh_tesla", "Hoofdwagen X", "T-XAA-674"),
         ],
       },
     }),

@@ -1,8 +1,11 @@
 /**
  * Controlled company-index backfill for ride_activity:v1.
- * Default is dry-run. Pass --execute to write. Never scans globally.
+ * Default is dry-run. --execute writes only complete existing indexes.
+ * Missing company indexes are never written as empty summaries.
  */
-import { spawn } from "node:child_process";
+import { exec } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { promisify } from "node:util";
 import {
   applyRideActivityObservations,
   markRideActivityHistoryComplete,
@@ -11,38 +14,73 @@ import {
   rideActivitySummaryKey,
 } from "../workers/booking/modules/ride_activity_summary.mjs";
 
+const execAsync = promisify(exec);
 const NS = process.env.BOOKING_KV_NAMESPACE_ID || "6805da1ffefe4a3982b4c419250c59b1";
 const WRANGLER = "4.131.2";
 const EXECUTE = process.argv.includes("--execute");
 const INDEX_CAP = 2000;
+const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
+const ONLY = onlyArg ? new Set(onlyArg.slice("--only=".length).split(",").map((code) => code.trim()).filter(Boolean)) : null;
 
-function kvGet(key) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
+async function kvGet(key) {
+  try {
+    const command = [
       "npx",
-      ["--yes", `wrangler@${WRANGLER}`, "kv", "key", "get", key, "--namespace-id", NS, "--remote"],
-      { windowsHide: true, shell: true },
-    );
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (chunk) => { out += chunk; });
-    child.stderr.on("data", (chunk) => { err += chunk; });
-    child.on("close", () => {
-      const text = out.trim();
-      const jsonStart = text.indexOf("{");
-      const jsonText = jsonStart >= 0 ? text.slice(jsonStart) : text;
-      if (!jsonText || jsonText === "Value not found") {
-        resolve({ ok: false, missing: true, key });
-        return;
-      }
-      try {
-        resolve({ ok: true, key, value: JSON.parse(jsonText) });
-      } catch (error) {
-        resolve({ ok: false, key, error: err || error.message });
-      }
+      "--yes",
+      `wrangler@${WRANGLER}`,
+      "kv",
+      "key",
+      "get",
+      JSON.stringify(key),
+      "--namespace-id",
+      NS,
+      "--remote",
+    ].join(" ");
+    const { stdout, stderr } = await execAsync(command, {
+      windowsHide: true,
+      timeout: 90000,
+      maxBuffer: 8 * 1024 * 1024,
     });
-    child.on("error", reject);
-  });
+    const text = String(stdout || "").trim();
+    const jsonStart = Math.min(
+      ...["{", "["].map((token) => {
+        const at = text.indexOf(token);
+        return at >= 0 ? at : Number.POSITIVE_INFINITY;
+      }),
+    );
+    const jsonText = Number.isFinite(jsonStart) ? text.slice(jsonStart) : text;
+    const combined = `${text}\n${stderr || ""}`;
+    if (!jsonText || jsonText === "Value not found" || /404:\s*Not Found/i.test(combined)) {
+      return { ok: false, missing: true, key, error: "source_not_found" };
+    }
+    return { ok: true, key, value: JSON.parse(jsonText) };
+  } catch (error) {
+    const stdout = String(error?.stdout || "").trim();
+    const stderr = String(error?.stderr || error?.message || "");
+    if (stdout.includes("Value not found") || /404:\s*Not Found/i.test(`${stdout}\n${stderr}`)) {
+      return { ok: false, missing: true, key, error: "source_not_found" };
+    }
+    return { ok: false, key, error: "kv_get_failed" };
+  }
+}
+
+async function kvPut(key, value) {
+  writeFileSync("._ride_activity_put.json", `${JSON.stringify(value)}\n`);
+  const command = [
+    "npx",
+    "--yes",
+    `wrangler@${WRANGLER}`,
+    "kv",
+    "key",
+    "put",
+    JSON.stringify(key),
+    "--namespace-id",
+    NS,
+    "--remote",
+    "--path",
+    "._ride_activity_put.json",
+  ].join(" ");
+  await execAsync(command, { windowsHide: true, timeout: 90000, maxBuffer: 2 * 1024 * 1024 });
 }
 
 async function mapPool(items, limit, worker) {
@@ -55,7 +93,8 @@ async function mapPool(items, limit, worker) {
       out[current] = await worker(items[current], current);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, () => run()));
+  if (!items.length) return out;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()));
   return out;
 }
 
@@ -74,6 +113,7 @@ for (let page = 1; page <= pageCount; page += 1) {
 const plans = [];
 for (const company of companies) {
   const code = String(company.company_code || "").trim();
+  if (ONLY && !ONLY.has(code)) continue;
   const link = await kvGet(`company_link:index:code:${code}:v1`);
   const tenantId = String(link.value?.tenant_id || link.value?.tenantId || "").trim();
   const companyId = String(link.value?.company_id || link.value?.companyId || "").trim();
@@ -81,6 +121,7 @@ for (const company of companies) {
     company_code: code,
     display_name: company.display_name || null,
     would_write: false,
+    written: false,
     history_complete: false,
     truncated: false,
     key: tenantId && companyId ? rideActivitySummaryKey(tenantId, companyId) : null,
@@ -99,6 +140,7 @@ for (const company of companies) {
   const items = Array.isArray(list.value?.items) ? list.value.items : [];
   plan.truncated = items.length >= INDEX_CAP || list.value?.truncated === true;
   const ids = items.map((item) => String(item.booking_id || item.bookingId || "").trim()).filter(Boolean);
+  console.log(JSON.stringify({ phase: "company_bookings", company_code: code, index_items: ids.length }));
   const records = await mapPool(ids, 4, async (bookingId) => {
     const got = await kvGet(`booking:${bookingId}`);
     return got.ok ? observationFromBookingRecord(bookingId, got.value, { tenant_id: tenantId, company_id: companyId }) : null;
@@ -114,10 +156,11 @@ for (const company of companies) {
   plan.first_completed_ride_at = marked.summary.first_completed_ride_at;
   plan.total_real_rides = marked.summary.total_real_rides;
   plan.total_completed_rides = marked.summary.total_completed_rides;
-  plan.would_write = true;
   plan.payload = serializeRideActivitySummary(marked.summary);
-  if (EXECUTE) {
-    throw new Error("execute_disabled_in_this_task");
+  plan.would_write = plan.history_complete === true && plan.truncated !== true;
+  if (EXECUTE && plan.would_write) {
+    await kvPut(plan.key, plan.payload);
+    plan.written = true;
   }
   plans.push(plan);
 }
@@ -127,11 +170,13 @@ console.log(JSON.stringify({
   execute: EXECUTE,
   dry_run: !EXECUTE,
   companies: plans.length,
+  written_keys: plans.filter((row) => row.written).map((row) => row.key),
   plans: plans.map((row) => ({
     company_code: row.company_code,
     display_name: row.display_name,
     key: row.key,
     would_write: row.would_write,
+    written: row.written === true,
     history_complete: row.history_complete,
     truncated: row.truncated,
     first_real_ride_id: row.first_real_ride_id || null,

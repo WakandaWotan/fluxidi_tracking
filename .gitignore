@@ -57,6 +57,7 @@ trip_kpis_debug_*.json
 backup_*.patch
 
 # Local Fluxidi runtime test bodies
+._ride_activity_put.json
 *_dryrun_body.json
 invoice_issue_outbound.json
 invoice_negative_parent_only.json
