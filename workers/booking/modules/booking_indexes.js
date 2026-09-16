@@ -93,6 +93,7 @@ import {
 } from "./booking_identity.js";
 import { _flattenBookingForRidesListWithOperationalLegs } from "./booking_read_model.js";
 import { indexRoundtripFields } from "./company_roundtrip.mjs";
+import { upsertRideActivitySummaryBestEffort } from "./ride_activity_summary.mjs";
 
 /* ---- Private, byte-identical duplicates of main pure helpers --------
  * Behavior-identical to `_toMsOrZero` and `_normalizeCustomerIdentityId` in
@@ -1028,6 +1029,7 @@ export async function upsertCompanyBookingsListIndexBestEffort(env, bookingId, r
     const recordScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = _indexNormalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
+    await upsertRideActivitySummaryBestEffort(env, bookingId, rec, scope);
     const item = bookingListIndexItemFromRecord(bookingId, rec);
     if (!item) {
       await _notifyListProjection({
