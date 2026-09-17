@@ -94,14 +94,18 @@ Future<void> customerBookingGeocodeIfNeeded(
       !limousineAddressLooksLikeLocalityOnly(query)) {
     return;
   }
+  // A saved or typed street stays on screen. Geocoding may only attach
+  // coordinates when the suggestion still describes that same street.
   final kept = limousinePreferCanonicalLabel(
     original: query,
     suggestion: best.label,
   );
+  final sameStreet = limousinePlaceSuggestionMatchesQuery(best, query) ||
+      limousineAddressIsMoreSpecific(query, best.label);
   controller.acceptCopy(
     LimousineAddressValue(
-      displayText: kept,
-      canonicalLabel: kept,
+      displayText: sameStreet ? query : kept,
+      canonicalLabel: sameStreet ? query : kept,
       lat: best.lat,
       lon: best.lon,
       placeId: best.placeId,

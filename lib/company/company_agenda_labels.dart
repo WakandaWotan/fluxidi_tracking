@@ -168,6 +168,13 @@ const LocalizedText kCompanyAgendaAssigned = LocalizedText(
   es: 'Asignado',
 );
 
+const LocalizedText kCompanyAgendaAssignedTo = LocalizedText(
+  nl: 'Toegewezen aan {name}',
+  en: 'Assigned to {name}',
+  fr: 'Attribué à {name}',
+  es: 'Asignado a {name}',
+);
+
 const LocalizedText kCompanyAgendaAccepted = LocalizedText(
   nl: 'Aanvaard',
   en: 'Accepted',

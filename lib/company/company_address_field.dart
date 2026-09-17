@@ -28,14 +28,27 @@ LimousineUxTokens companyLimousineUxTokens() {
 }
 
 String companyCustomerAddressLine(CompanyCustomerAddress address) {
+  final street = address.line1.trim().isNotEmpty
+      ? address.line1
+      : companyCustomerStreetFromLabel(address.label);
   return companyPlanCanonicalAddressLine(
-    street: address.line1,
+    street: street,
     line2: address.line2,
     postalCode: address.postalCode,
     city: address.city,
     country: address.countryCode,
     fallback: address.label,
   );
+}
+
+/// A dossier label such as "Thuis" is not a street. A label that already
+/// names a numbered street may fill in a record that only stored locality.
+String companyCustomerStreetFromLabel(String raw) {
+  final label = raw.trim();
+  if (label.isEmpty) return '';
+  if (limousineAddressLooksLikeLocalityOnly(label)) return '';
+  if (!limousineAddressHasStreetNumber(label)) return '';
+  return label;
 }
 
 class CompanyPlanCanonicalAddress {

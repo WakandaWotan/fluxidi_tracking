@@ -468,6 +468,10 @@ String _composeStreetAndHouseNumber(Map<dynamic, dynamic> raw) {
     'line_1',
     'streetAddress',
     'street_address',
+    'formatted',
+    'formatted_address',
+    'full_address',
+    'address',
   ]);
   final house = _firstOptionalText(raw, const <String>[
     'house_number',
@@ -505,11 +509,28 @@ CompanyCustomerAddress parseCompanyCustomerAddress(Map<dynamic, dynamic> raw) {
     label: _optionalText(raw, 'label'),
     // Records written by other surfaces name the street differently. Reading
     // only `line1` silently turned a full address into a bare locality.
-    line1: _composeStreetAndHouseNumber(raw),
+    line1: () {
+      final composed = _composeStreetAndHouseNumber(raw);
+      if (composed.isNotEmpty) return composed;
+      final label = _optionalText(raw, 'label');
+      if (RegExp(r'\d').hasMatch(label) &&
+          RegExp(r'[A-Za-zÀ-ÿ]{3,}').hasMatch(label)) {
+        return label;
+      }
+      return '';
+    }(),
     line2: _optionalText(raw, 'line2'),
     city: _optionalText(raw, 'city'),
-    postalCode: _optionalText(raw, 'postal_code'),
-    countryCode: _optionalText(raw, 'country_code'),
+    postalCode: _firstOptionalText(raw, const [
+      'postal_code',
+      'postalCode',
+      'postcode',
+    ]),
+    countryCode: _firstOptionalText(raw, const [
+      'country_code',
+      'countryCode',
+      'country',
+    ]),
     notes: _optionalText(raw, 'notes'),
     lat: _optionalCoord(raw, const ['lat', 'latitude', 'pickup_lat']),
     lon: _optionalCoord(raw, const ['lon', 'lng', 'longitude', 'pickup_lon']),

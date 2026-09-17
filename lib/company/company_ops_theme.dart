@@ -285,6 +285,22 @@ ThemeData companyOpsMaterialTheme(BusinessThemePalette palette) {
       trackColor: WidgetStatePropertyAll(palette.surfaceAlt),
       trackBorderColor: WidgetStatePropertyAll(scheme.outline),
     ),
+    datePickerTheme: DatePickerThemeData(
+      backgroundColor: palette.surface,
+      headerBackgroundColor: palette.surface,
+      headerForegroundColor: palette.textPrimary,
+      dayForegroundColor: WidgetStatePropertyAll(palette.textPrimary),
+      todayForegroundColor: WidgetStatePropertyAll(palette.accent),
+      yearForegroundColor: WidgetStatePropertyAll(palette.textPrimary),
+    ),
+    timePickerTheme: TimePickerThemeData(
+      backgroundColor: palette.surface,
+      hourMinuteTextColor: palette.textPrimary,
+      dayPeriodTextColor: palette.textPrimary,
+      dialHandColor: palette.accent,
+      dialBackgroundColor: palette.surfaceAlt,
+      entryModeIconColor: palette.textPrimary,
+    ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: palette.surface,
       indicatorColor: palette.accent,

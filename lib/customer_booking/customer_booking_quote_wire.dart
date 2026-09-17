@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
 const String kCustomerBookingIssueNeedRoute = 'need_route';
 const String kCustomerBookingIssueNeedWhen = 'need_pickup_time';
+const String kCustomerBookingIssueLaterInvalid = 'later_invalid';
 const String kCustomerBookingIssueFailed = 'route_failed';
 const String kCustomerBookingIssuePriceFailed = 'price_failed';
 const String kCustomerBookingIssueQuoteFailed = 'quote_failed';

@@ -2,6 +2,7 @@
 
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
@@ -82,6 +83,15 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
         focusKey: 'when',
       ),
     );
+  } else if (!whenNow &&
+      pickupLocal != null &&
+      !companyPlanLaterPickupIsValid(pickupLocal)) {
+    issues.add(
+      const CustomerBookingSubmitIssue(
+        code: kCustomerBookingIssueLaterInvalid,
+        focusKey: 'when',
+      ),
+    );
   }
   if (name.trim().isEmpty) {
     issues.add(
@@ -158,6 +168,8 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
       return kCustomerBookingNeedDropoffField.of(language);
     case kCustomerBookingIssueNeedWhen:
       return kCustomerBookingNeedWhen.of(language);
+    case kCustomerBookingIssueLaterInvalid:
+      return kCustomerBookingLaterInvalid.of(language);
     case kCustomerBookingIssueNeedName:
       return kCustomerBookingNeedNameField.of(language);
     case kCustomerBookingIssueNeedPhone:

@@ -29,6 +29,11 @@ const Key kCustomerBookingDropoffKey = Key('customer_booking_dropoff');
 const Key kCustomerBookingAddStopKey = Key('customer_booking_add_stop');
 const Key kCustomerBookingNowKey = Key('customer_booking_when_now');
 const Key kCustomerBookingLaterKey = Key('customer_booking_when_later');
+const Key kCustomerBookingDateKey = Key('customer_booking_date');
+const Key kCustomerBookingTimeKey = Key('customer_booking_time');
+const Key kCustomerBookingLaterInvalidKey = Key(
+  'customer_booking_later_invalid',
+);
 const Key kCustomerBookingOneWayKey = Key('customer_booking_one_way');
 const Key kCustomerBookingReturnNoWaitKey = Key(
   'customer_booking_return_no_wait',

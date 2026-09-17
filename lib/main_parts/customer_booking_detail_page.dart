@@ -3702,6 +3702,24 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               ),
                               _formatPickup(effectivePickup),
                             ),
+                            const SizedBox(height: 8),
+                            CustomerBookingAssignedDriverCard(
+                              driver: customerBookingAssignedDriverFromMaps(
+                                booking: v.booking,
+                                driver: v.source['assigned_driver'] is Map
+                                    ? Map<String, dynamic>.from(
+                                        v.source['assigned_driver'] as Map,
+                                      )
+                                    : (v.record['assigned_driver'] is Map
+                                          ? Map<String, dynamic>.from(
+                                              v.record['assigned_driver'] as Map,
+                                            )
+                                          : null),
+                              ),
+                              language: appConfig.currentLanguage,
+                              palette: palette,
+                              wide: MediaQuery.sizeOf(context).width >= 720,
+                            ),
                             if (focusedLegType != null &&
                                 roundtripProjection != null &&
                                 roundtripProjection.cancelledLegType !=

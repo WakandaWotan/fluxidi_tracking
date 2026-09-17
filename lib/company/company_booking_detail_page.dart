@@ -18,6 +18,7 @@ import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_dispatch.dart';
 import 'package:fluxidi_tracking/company/company_booking_route_coords.dart';
 import 'package:fluxidi_tracking/company/company_crew_combo.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_form.dart';
 import 'package:fluxidi_tracking/company/company_plan_route_map.dart';
@@ -105,6 +106,7 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
   List<Map<String, dynamic>> _vehicles = const <Map<String, dynamic>>[];
   String? _driverId;
   String? _vehicleId;
+  int _mutationSeq = 0;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
   late final CompanyAgendaRepository _agenda =
@@ -342,24 +344,26 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
     Future<void> Function() action,
   ) async {
     if (_saving) return;
+    final seq = ++_mutationSeq;
     setState(() {
       _saving = true;
       _assignError = null;
     });
     try {
       await action();
+      if (!mounted || seq != _mutationSeq) return;
       final scope = _agenda.scope ?? companyOpsScope();
       bookingListPageRepository.invalidateBookingListsForAffectedCompany(
         tenantId: scope['tenant_id'] ?? '',
         companyId: scope['company_id'] ?? '',
       );
       await _load();
-      if (!mounted) return;
+      if (!mounted || seq != _mutationSeq) return;
       setState(() => _saving = false);
     } on CompanyAgendaException catch (error) {
       // A refusal is definite: the server kept the existing assignment, so
       // only the message changes and the stored crew stays as it was.
-      if (!mounted) return;
+      if (!mounted || seq != _mutationSeq) return;
       setState(() {
         _saving = false;
         _assignError = _agendaExceptionText(error);
@@ -367,14 +371,14 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
     } catch (_) {
       // An uncertain outcome (network, timeout) may or may not have applied.
       // Read the server back rather than leaving a guess on screen.
-      if (!mounted) return;
+      if (!mounted || seq != _mutationSeq) return;
       setState(() => _assignError = kCompanyAgendaSaveFailed.of(_lang));
       try {
         await _load();
       } catch (_) {
         // Keep the refusal message; the next open re-reads anyway.
       }
-      if (!mounted) return;
+      if (!mounted || seq != _mutationSeq) return;
       setState(() => _saving = false);
     }
   }
@@ -784,8 +788,7 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                         children: [
                           if (_assigned)
                             Text(
-                              '${kCompanyAgendaAssigned.of(_lang)}: '
-                              '${_driverLabel(_storedDriverId)} · '
+                              '${kCompanyAgendaAssignedTo.of(_lang).replaceAll('{name}', _driverFirstName(_storedDriverId))} · '
                               '${_vehicleLabel(_storedVehicleId)}',
                               key: kCompanyAgendaAssignedStoredKey,
                             )
@@ -887,6 +890,11 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                     ) ??
                     CompanyPlanVehicleType.sedan,
                 passengers: _passengers,
+                whenNow: false,
+                rideStartUtc: DateTime.tryParse(
+                  _text(const ['pickup_iso', 'pickupIso', 'start_at']),
+                )?.toUtc(),
+                schedules: companyDriverSchedulesFromRecords(_drivers),
               ),
               language: _lang,
               unassignedLabel: kCompanyAgendaUnassignedLane.of(_lang),
@@ -1008,6 +1016,19 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
     final id = (value ?? '').trim();
     if (id.isEmpty || !allowed.contains(id)) return null;
     return id;
+  }
+
+  String _driverFirstName(String? id) {
+    final value = (id ?? '').trim();
+    if (value.isEmpty) return '—';
+    for (final driver in _drivers) {
+      if (companyAgendaDriverId(driver) == value) {
+        final first = companyAgendaDriverFirstName(driver);
+        if (first.isNotEmpty) return first;
+      }
+    }
+    final full = _driverLabel(value);
+    return full.split(RegExp(r'\s+')).first;
   }
 
   String _driverLabel(String? id) {

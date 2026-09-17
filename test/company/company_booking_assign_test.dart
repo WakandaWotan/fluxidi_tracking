@@ -567,7 +567,7 @@ void main() {
     expect(find.byKey(kCompanyAgendaAssignmentPendingKey), findsNothing);
     expect(
       tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
-      contains('Wotan'),
+      contains('Toegewezen aan Wotan'),
     );
     expect(find.text(kCompanyAgendaNotAccepted.of(AppLanguage.nl)), findsOneWidget);
   });
@@ -715,7 +715,7 @@ void main() {
     expect(stored['driver'], 'drv_wotan');
     expect(
       tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
-      contains('Wotan'),
+      contains('Toegewezen aan Wotan'),
     );
   });
 }

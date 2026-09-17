@@ -153,6 +153,9 @@ Future<void> _pumpFlow(
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     await tester.pump();
+    if (autoResolveGps) {
+      await tester.pump(const Duration(milliseconds: 400));
+    }
   }
 
 void main() {
@@ -811,7 +814,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Premium'), findsOneWidget);
-    expect(find.byKey(customerBookingVehicleKey('premium')), findsOneWidget);
+    expect(find.byKey(customerBookingVehicleKey('vh_premium')), findsOneWidget);
     expect(find.byKey(customerBookingVehicleKey('minivan')), findsNothing);
     final chrome = tester.getRect(find.byKey(kCustomerBookingAirportChromeKey));
     final map = tester.getRect(find.byKey(kCustomerBookingMapKey));
@@ -1055,5 +1058,48 @@ void main() {
       expect(find.text('Alle luchthavens bekijken'), findsWidgets);
       expect(find.text('Boeking bevestigen'), findsWidgets);
     }
+  });
+
+  testWidgets('Nu and Later sit under Particulier/Zakelijk and expose Datum/Tijd', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'All-in Taxi',
+          vehicles: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'vehicle_id': 'vh_tesla',
+              'name': 'Tesla',
+              'vehicle_type': 'sedan',
+              'passenger_capacity': 3,
+            },
+            <String, dynamic>{
+              'vehicle_id': 'vh_cadillac',
+              'name': 'Cadillac',
+              'vehicle_type': 'sedan',
+              'passenger_capacity': 4,
+            },
+          ],
+        ),
+      ),
+    );
+    final private = tester.getTopLeft(find.byKey(kCustomerBookingPrivateRideKey));
+    final later = tester.getTopLeft(find.byKey(kCustomerBookingLaterKey));
+    expect(later.dy, greaterThan(private.dy));
+    expect(find.byKey(kCustomerBookingDateKey), findsNothing);
+    await tester.tap(find.byKey(kCustomerBookingLaterKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCustomerBookingDateKey), findsOneWidget);
+    expect(find.byKey(kCustomerBookingTimeKey), findsOneWidget);
+    expect(find.text('Datum'), findsWidgets);
+    expect(find.text('Tijd'), findsWidgets);
+    expect(find.byKey(customerBookingVehicleKey('vh_tesla')), findsOneWidget);
+    expect(find.byKey(customerBookingVehicleKey('vh_cadillac')), findsOneWidget);
+    expect(find.text('3 passagiers'), findsOneWidget);
+    expect(find.text('4 passagiers'), findsOneWidget);
   });
 }

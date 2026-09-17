@@ -171,16 +171,48 @@ int _companyAgendaCountField(Map<String, dynamic> raw, List<String> keys) {
   return 0;
 }
 
+int? _companyAgendaOptionalCount(
+  Map<String, dynamic> raw,
+  List<String> keys,
+) {
+  for (final key in keys) {
+    if (!raw.containsKey(key)) continue;
+    final value = raw[key];
+    if (value is num && value.isFinite) return value.round();
+    final parsed = int.tryParse(value?.toString().trim() ?? '');
+    if (parsed != null && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+/// Passenger seats of this vehicle. Null when the fleet record has none.
+///
+/// `passenger_capacity` is the stored passenger count and does not include
+/// the driver. Generic `seats` / `capacity` are only used when no passenger
+/// field exists, and are never reduced again.
+int? companyAgendaVehiclePassengerSeats(Map<String, dynamic> raw) {
+  return _companyAgendaOptionalCount(raw, const [
+        'passenger_capacity',
+        'passengerCapacity',
+        'max_passengers',
+        'maxPassengers',
+        'pax',
+      ]) ??
+      _companyAgendaOptionalCount(raw, const ['seats', 'capacity']);
+}
+
 int companyAgendaVehicleCapacity(Map<String, dynamic> raw) {
-  return _companyAgendaCountField(raw, const [
-    'passenger_capacity',
-    'passengerCapacity',
-    'max_passengers',
-    'maxPassengers',
-    'seats',
-    'capacity',
-    'pax',
-  ]);
+  return companyAgendaVehiclePassengerSeats(raw) ?? 0;
+}
+
+String companyAgendaDriverFirstName(Map<String, dynamic> raw) {
+  final first = (raw['first_name'] ?? raw['firstName'] ?? raw['given_name'] ?? '')
+      .toString()
+      .trim();
+  if (first.isNotEmpty && !companyPlanLooksLikeInternalId(first)) return first;
+  final full = companyAgendaDriverName(raw);
+  if (full.isEmpty) return '';
+  return full.split(RegExp(r'\s+')).first;
 }
 
 int companyAgendaVehicleBagCapacity(Map<String, dynamic> raw) {

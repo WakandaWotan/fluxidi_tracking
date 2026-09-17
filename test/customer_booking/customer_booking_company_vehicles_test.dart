@@ -45,6 +45,19 @@ void main() {
     );
   });
 
+  test('missing passenger seats stay unknown instead of a sedan default', () {
+    expect(
+      customerBookingVehicleCapacityLabel(
+        vehicle: const <String, dynamic>{
+          'vehicle_id': 'vh_unknown',
+        },
+        category: CompanyPlanVehicleCategory.sedan,
+        language: AppLanguage.nl,
+      ),
+      'Capaciteit onbekend',
+    );
+  });
+
   test('registered capacity is shown instead of a default sedan guess', () {
     expect(
       customerBookingVehicleCapacityLabel(

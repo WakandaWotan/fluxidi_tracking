@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_plan_assignment.dart';
 import 'package:fluxidi_tracking/company/company_plan_media.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
 import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 
@@ -83,6 +84,9 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
   required CompanyPlanVehicleType type,
   required int passengers,
   bool whenNow = true,
+  DateTime? rideStartUtc,
+  DateTime? rideEndUtc,
+  Map<String, CompanyDriverSchedule>? schedules,
 }) {
   final typed = companyPlanVehiclesForType(
     vehicles: vehicles,
@@ -102,6 +106,9 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
         driver: driver,
         whenNow: whenNow,
         vehicles: const <Map<String, dynamic>>[],
+        schedule: schedules?[driverId],
+        rideStartUtc: rideStartUtc,
+        rideEndUtc: rideEndUtc,
       );
       combos.add(
         CompanyCrewCombo(
@@ -124,6 +131,9 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
         driver: driver,
         whenNow: whenNow,
         vehicles: [vehicle],
+        schedule: schedules?[driverId],
+        rideStartUtc: rideStartUtc,
+        rideEndUtc: rideEndUtc,
       );
       combos.add(
         CompanyCrewCombo(

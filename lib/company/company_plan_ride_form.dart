@@ -18,6 +18,8 @@ const Key kCompanyAgendaCapacityWarningKey = Key(
   'company_agenda_capacity_warning',
 );
 const Key kCompanyAgendaOccupancyKey = Key('company_agenda_occupancy');
+Key companyAgendaVehicleOfferKey(String vehicleId) =>
+    Key('company_agenda_vehicle_offer_${vehicleId.trim()}');
 const Key kCompanyAgendaPlanCustomerFieldKey = Key(
   'company_agenda_plan_customer',
 );
@@ -79,6 +81,7 @@ class CompanyPlanRideForm extends StatelessWidget {
     this.unsuitableCategories = const <CompanyPlanVehicleCategory>{},
     this.categoryPhotoUrls = const <CompanyPlanVehicleCategory, String>{},
     this.categoryPassengerCaps = const <CompanyPlanVehicleCategory, int>{},
+    this.vehicleOfferCards,
   });
 
   final AppLanguage language;
@@ -128,6 +131,7 @@ class CompanyPlanRideForm extends StatelessWidget {
   final Set<CompanyPlanVehicleCategory> unsuitableCategories;
   final Map<CompanyPlanVehicleCategory, String> categoryPhotoUrls;
   final Map<CompanyPlanVehicleCategory, int> categoryPassengerCaps;
+  final Widget? vehicleOfferCards;
 
   @override
   Widget build(BuildContext context) {
@@ -319,6 +323,10 @@ class CompanyPlanRideForm extends StatelessWidget {
           categoryPhotoUrls: categoryPhotoUrls,
           categoryPassengerCaps: categoryPassengerCaps,
         ),
+        if (vehicleOfferCards != null) ...[
+          const SizedBox(height: 8),
+          vehicleOfferCards!,
+        ],
         if (capacityWarning != null && capacityWarning!.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(

@@ -43,6 +43,11 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     );
     unawaited(loadCustomerThemePreference());
     unawaited(_prefillHomePickupFromGps());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final notice = CustomerBookingHomeNotice.take();
+      if (!mounted || notice == null || notice.isEmpty) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notice)));
+    });
   }
 
   @override

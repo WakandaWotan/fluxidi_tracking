@@ -39,6 +39,8 @@ import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer/customer_home_desktop.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_home_notice.dart';
 import 'package:fluxidi_tracking/customer/local_qa_customer_session.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';

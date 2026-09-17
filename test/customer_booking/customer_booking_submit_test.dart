@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_submit.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
@@ -106,5 +107,31 @@ void main() {
       successId: 'bk_1',
     );
     expect(issues.single.code, kCustomerBookingIssueAlreadyBooked);
+  });
+
+  test('a past Later pickup is refused', () {
+    final issues = customerBookingSubmitIssues(
+      hasCompany: true,
+      pickup: ready,
+      dropoff: ready,
+      whenNow: false,
+      pickupLocal: DateTime.now().subtract(const Duration(hours: 2)),
+      name: 'Christophe',
+      phone: '+32400000000',
+      quoteLoading: false,
+      quote: const CompanyPlanQuoteResult(
+        fingerprint: 'q',
+        distanceKm: 10,
+        durationMin: 20,
+        priceAvailable: true,
+        priceInclVat: 48,
+      ),
+      quoteError: null,
+      successId: null,
+    );
+    expect(
+      issues.map((issue) => issue.code),
+      contains(kCustomerBookingIssueLaterInvalid),
+    );
   });
 }

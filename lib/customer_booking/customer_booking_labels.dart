@@ -126,6 +126,62 @@ const LocalizedText kCustomerBookingLater = LocalizedText(
   es: 'Más tarde',
 );
 
+const LocalizedText kCustomerBookingDate = LocalizedText(
+  nl: 'Datum',
+  en: 'Date',
+  fr: 'Date',
+  es: 'Fecha',
+);
+
+const LocalizedText kCustomerBookingTime = LocalizedText(
+  nl: 'Tijd',
+  en: 'Time',
+  fr: 'Heure',
+  es: 'Hora',
+);
+
+const LocalizedText kCustomerBookingLaterInvalid = LocalizedText(
+  nl: 'Kies een datum en uur dat nog niet verstreken is.',
+  en: 'Choose a date and time that has not already passed.',
+  fr: 'Choisissez une date et une heure qui ne sont pas déjà passées.',
+  es: 'Elige una fecha y hora que aún no hayan pasado.',
+);
+
+const LocalizedText kCustomerBookingDriverPending = LocalizedText(
+  nl: 'Chauffeur wordt nog toegewezen',
+  en: 'A driver will be assigned soon',
+  fr: 'Le chauffeur sera encore attribué',
+  es: 'El conductor se asignará en breve',
+);
+
+const LocalizedText kCustomerBookingDriverFallback = LocalizedText(
+  nl: 'Chauffeur',
+  en: 'Driver',
+  fr: 'Chauffeur',
+  es: 'Conductor',
+);
+
+const LocalizedText kCustomerBookingDriverNoReviews = LocalizedText(
+  nl: 'Nog geen beoordelingen',
+  en: 'No reviews yet',
+  fr: 'Pas encore d’avis',
+  es: 'Aún no hay valoraciones',
+);
+
+const LocalizedText kCustomerBookingDriverReviews = LocalizedText(
+  nl: 'Beoordelingen bekijken',
+  en: 'View reviews',
+  fr: 'Voir les avis',
+  es: 'Ver valoraciones',
+);
+
+const LocalizedText kCustomerBookingVehicleUnavailable = LocalizedText(
+  nl: 'Dit voertuig is niet beschikbaar op het gekozen tijdstip.',
+  en: 'This vehicle is not available at the chosen time.',
+  fr: 'Ce véhicule n’est pas disponible à l’heure choisie.',
+  es: 'Este vehículo no está disponible a la hora elegida.',
+);
+
 const LocalizedText kCustomerBookingBookWith = LocalizedText(
   nl: 'Je boekt bij',
   en: 'You are booking with',
@@ -295,10 +351,10 @@ const LocalizedText kCustomerBookingWaitMinutes = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingVehicle = LocalizedText(
-  nl: 'Voertuigtype',
-  en: 'Vehicle type',
-  fr: 'Type de véhicule',
-  es: 'Tipo de vehículo',
+  nl: 'Voertuig',
+  en: 'Vehicle',
+  fr: 'Véhicule',
+  es: 'Vehículo',
 );
 
 const LocalizedText kCustomerBookingSuggestLarger = LocalizedText(

@@ -239,10 +239,8 @@ String limousineMapboxForwardLanguage({
   required String query,
   required String uiLanguage,
 }) {
-  if (limousineAddressLooksLikePlaceName(query) ||
-      limousineAddressLooksLikeLocalityOnly(query)) {
-    return '';
-  }
+  // Official street names stay as the provider returns them. The UI language
+  // still localises place context (Belgium → België) when the app is Dutch.
   return uiLanguage.trim();
 }
 

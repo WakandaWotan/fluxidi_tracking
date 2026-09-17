@@ -91,20 +91,21 @@ String customerBookingVehicleCapacityLabel({
   required CompanyPlanVehicleCategory category,
   required AppLanguage language,
 }) {
-  final seats = vehicle == null ? 0 : companyAgendaVehicleCapacity(vehicle);
+  final seats = vehicle == null
+      ? null
+      : companyAgendaVehiclePassengerSeats(vehicle);
   final bags = vehicle == null ? 0 : companyAgendaVehicleBagCapacity(vehicle);
-  if (seats > 0 && bags > 0) {
+  if (seats != null && seats > 0 && bags > 0) {
     return language == AppLanguage.en
         ? '$seats pax · $bags bags'
         : '$seats pax · $bags bagage';
   }
-  if (seats > 0) {
+  if (seats != null && seats > 0) {
     return language == AppLanguage.en ? '$seats passengers' : '$seats passagiers';
   }
-  return companyPlanVehicleTypeCapacityLabel(
-    companyPlanVehicleTypeForCategory(category),
-    language,
-  );
+  return language == AppLanguage.en
+      ? 'Capacity unknown'
+      : 'Capaciteit onbekend';
 }
 
 class CustomerBookingCompanySnapshot {
@@ -152,6 +153,89 @@ Future<CustomerBookingCompanySnapshot> fetchCustomerBookingCompanySnapshot({
   return customerBookingCompanySnapshotFromProfile(
     customerBookingProfileMap(decoded),
   );
+}
+
+class CustomerBookingAvailabilitySnapshot {
+  const CustomerBookingAvailabilitySnapshot({
+    this.availableIds = const <String>{},
+    this.unavailableIds = const <String>{},
+    this.reasons = const <String, String>{},
+    this.driverIds = const <String, String>{},
+    this.loadFailed = false,
+  });
+
+  final Set<String> availableIds;
+  final Set<String> unavailableIds;
+  final Map<String, String> reasons;
+  final Map<String, String> driverIds;
+  final bool loadFailed;
+}
+
+CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
+  Object? decoded,
+) {
+  if (decoded is! Map) {
+    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+  }
+  final root = Map<String, dynamic>.from(decoded);
+  if (root['ok'] == false) {
+    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+  }
+  final rows = root['vehicles'];
+  if (rows is! List) {
+    return const CustomerBookingAvailabilitySnapshot();
+  }
+  final available = <String>{};
+  final unavailable = <String>{};
+  final reasons = <String, String>{};
+  final drivers = <String, String>{};
+  for (final item in rows) {
+    if (item is! Map) continue;
+    final id = (item['vehicle_id'] ?? item['vehicleId'] ?? '').toString().trim();
+    if (id.isEmpty) continue;
+    final driverId = (item['driver_id'] ?? item['driverId'] ?? '').toString().trim();
+    if (driverId.isNotEmpty) drivers[id] = driverId;
+    if (item['available'] == true) {
+      available.add(id);
+    } else {
+      unavailable.add(id);
+      reasons[id] = (item['reason'] ?? '').toString();
+    }
+  }
+  return CustomerBookingAvailabilitySnapshot(
+    availableIds: available,
+    unavailableIds: unavailable,
+    reasons: reasons,
+    driverIds: drivers,
+  );
+}
+
+Future<CustomerBookingAvailabilitySnapshot> fetchCustomerBookingAvailability({
+  required String bookingBaseUrl,
+  required String partnerId,
+  required DateTime pickupUtc,
+  required int passengers,
+  int durationMin = 30,
+  CustomerBookingProfileGet? httpGet,
+}) async {
+  final id = partnerId.trim();
+  if (id.isEmpty || bookingBaseUrl.trim().isEmpty) {
+    return const CustomerBookingAvailabilitySnapshot();
+  }
+  final uri = Uri.parse('$bookingBaseUrl/partners/availability').replace(
+    queryParameters: <String, String>{
+      'partner_id': id,
+      'pickup_iso': pickupUtc.toUtc().toIso8601String(),
+      'pax': '$passengers',
+      'duration_min': '$durationMin',
+    },
+  );
+  final getter = httpGet ?? http.get;
+  final res = await getter(uri).timeout(const Duration(seconds: 12));
+  if (res.statusCode != 200) {
+    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+  }
+  return parseCustomerBookingAvailability(jsonDecode(res.body));
 }
 
 Future<List<Map<String, dynamic>>> fetchCustomerBookingCompanyVehicles({

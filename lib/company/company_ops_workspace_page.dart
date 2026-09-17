@@ -52,6 +52,7 @@ import 'package:fluxidi_tracking/company/company_plan_ride_form.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_layout.dart';
 import 'package:fluxidi_tracking/company/company_plan_route_map.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_offers.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/company/company_trip_route.dart';
 import 'package:fluxidi_tracking/company/company_rate_card_hint.dart';
@@ -1027,12 +1028,21 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     required String driverId,
     required String vehicleId,
   }) {
+    final pickup = whenNow
+        ? companyPlanNowLocal().toUtc()
+        : (_planPickupLocal ?? _draft?.pickupLocal)?.toUtc();
+    final durationMin = _planDurationMin;
     final raw = companyPlanCrewCombos(
       drivers: _drivers,
       vehicles: _vehicles,
       type: _planVehicleType,
       passengers: _passengers,
       whenNow: whenNow,
+      rideStartUtc: pickup,
+      rideEndUtc: pickup == null || durationMin == null
+          ? pickup
+          : pickup.add(Duration(minutes: durationMin)),
+      schedules: companyDriverSchedulesFromRecords(_drivers),
     );
     final overlap = (_planOverlapPreview ?? '').trim();
     if (overlap.isEmpty ||
@@ -1166,6 +1176,90 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         vehicleType: companyPlanVehicleCategoryWire(category),
       );
     });
+  }
+
+  Widget? _planVehicleOfferCards() {
+    final offers = customerBookingVehicleOffers(
+      vehicles: _vehicles,
+      drivers: _drivers,
+      passengers: _passengers,
+      pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)
+          ?.toUtc(),
+      durationMin: _planDurationMin ?? 30,
+    );
+    if (offers.length < 2) return null;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final offer in offers)
+          SizedBox(
+            width: 148,
+            child: InkWell(
+              key: companyAgendaVehicleOfferKey(offer.vehicleId),
+              onTap: offer.available
+                  ? () {
+                      final category = classifyCompanyPlanVehicleCategory(
+                        offer.vehicle,
+                      );
+                      setState(() {
+                        _planVehicleId = offer.vehicleId;
+                        _planVehicleUserPicked = true;
+                        if (offer.driverId.isNotEmpty) {
+                          _planDriverId = offer.driverId;
+                          _planDriverUserPicked = true;
+                        }
+                        if (category != null) {
+                          _planVehicleCategory = category;
+                          _rideOptions = _rideOptions.copyWith(
+                            vehicleType: companyPlanVehicleCategoryWire(
+                              category,
+                            ),
+                          );
+                        }
+                      });
+                      _syncPlanAssignmentProposal();
+                      _schedulePlanQuote();
+                    }
+                  : null,
+              child: Opacity(
+                opacity: offer.available ? 1 : 0.55,
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: _planVehicleId == offer.vehicleId
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.outline,
+                        width: _planVehicleId == offer.vehicleId ? 2 : 1,
+                      ),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        customerBookingVehicleOfferTitle(
+                          offer: offer,
+                          language: _lang,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                      ),
+                      Text(
+                        customerBookingVehicleOfferCapacityLabel(
+                          offer: offer,
+                          language: _lang,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   void _setPlanVehicleType(CompanyPlanVehicleType type) {
@@ -2920,6 +3014,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         categoryPassengerCaps: companyPlanCategoryPassengerCaps(
           vehicles: _vehicles,
         ),
+        vehicleOfferCards: _planVehicleOfferCards(),
         bookableCategories: companyPlanBookableCategories(
           vehicles: _vehicles,
           passengers: _passengers,

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
 import 'package:fluxidi_tracking/company/company_timezone.dart';
 
 const Key kCompanyDriverSchedulePageKey = Key('company_driver_schedule_page');
@@ -217,6 +218,12 @@ class _CompanyDriverSchedulePageState extends State<CompanyDriverSchedulePage> {
 
   @override
   Widget build(BuildContext context) {
+    return CompanyOpsThemedSurface(
+      child: Builder(builder: _buildThemed),
+    );
+  }
+
+  Widget _buildThemed(BuildContext context) {
     final theme = Theme.of(context);
     final timezoneResolved = companyTimezoneIsResolvable(
       widget.schedule.timezone,

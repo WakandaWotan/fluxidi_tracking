@@ -326,6 +326,62 @@ class CompanyDriverSchedule {
   }
 }
 
+/// Reads `weekly_roster` / `driver_schedule` from a company driver record.
+CompanyDriverSchedule? companyDriverScheduleFromDriverRecord(
+  Map<String, dynamic> raw,
+) {
+  final driverId = (raw['driver_id'] ?? raw['driverId'] ?? '').toString().trim();
+  if (driverId.isEmpty) return null;
+  final scheduleRaw = raw['driver_schedule'] ?? raw['driverSchedule'];
+  if (scheduleRaw is Map) {
+    final parsed = CompanyDriverSchedule.fromJson(
+      <String, dynamic>{
+        'driver_id': driverId,
+        ...Map<String, dynamic>.from(scheduleRaw),
+      },
+    );
+    if (parsed != null) return parsed;
+  }
+  final roster = raw['weekly_roster'] ?? raw['weeklyRoster'];
+  if (roster is! Map) {
+    return CompanyDriverSchedule(
+      driverId: driverId,
+      timezone: kCompanyDefaultTimezone,
+    );
+  }
+  final map = Map<String, dynamic>.from(roster);
+  final days = map['days'];
+  final weekdays = <String, dynamic>{};
+  const keys = <String>['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  if (days is Map) {
+    for (var index = 0; index < keys.length; index += 1) {
+      weekdays['${index + 1}'] = days[keys[index]];
+    }
+  }
+  return CompanyDriverSchedule.fromJson(<String, dynamic>{
+    'driver_id': driverId,
+    'timezone': (map['timezone'] ?? map['time_zone'] ?? kCompanyDefaultTimezone)
+        .toString(),
+    'weekdays': weekdays.isEmpty ? map['weekdays'] ?? map['weekday_blocks'] : weekdays,
+    'exceptions': raw['roster_exceptions'] ??
+        raw['rosterExceptions'] ??
+        map['exceptions'],
+    'explicitly_set': map['explicitly_set'] ?? map['explicitlySet'],
+  });
+}
+
+Map<String, CompanyDriverSchedule> companyDriverSchedulesFromRecords(
+  List<Map<String, dynamic>> drivers,
+) {
+  final out = <String, CompanyDriverSchedule>{};
+  for (final driver in drivers) {
+    final parsed = companyDriverScheduleFromDriverRecord(driver);
+    if (parsed == null) continue;
+    out[parsed.driverId] = parsed;
+  }
+  return out;
+}
+
 /// A concrete working window on the timeline, in UTC.
 class CompanyDriverScheduleWindow {
   const CompanyDriverScheduleWindow({
