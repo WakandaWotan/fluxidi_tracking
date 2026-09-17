@@ -128,6 +128,8 @@ class LimousineAddressFieldController extends ChangeNotifier {
   LimousineCurrentLocationFailure? currentLocationFailure;
   List<LimousinePlaceSuggestion> suggestions = const [];
   LimousineAddressValue value = const LimousineAddressValue();
+  bool locationNeedsConfirm = false;
+  LimousinePlaceSuggestion? locationCandidate;
 
   bool get isRouteReady => value.isRouteReady;
 
@@ -157,6 +159,8 @@ class LimousineAddressFieldController extends ChangeNotifier {
     hadError = false;
     loading = false;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationCandidate = null;
     notifyListeners();
   }
 
@@ -182,13 +186,39 @@ class LimousineAddressFieldController extends ChangeNotifier {
     hadError = false;
     loading = false;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationCandidate = null;
     notifyListeners();
+  }
+
+  void applyOwnedResolution(LimousineOwnedAddressResolution resolved) {
+    acceptCopy(resolved.value);
+    locationNeedsConfirm = resolved.needsConfirm;
+    locationCandidate = resolved.candidate;
+    notifyListeners();
+  }
+
+  void confirmCandidateLocation() {
+    final candidate = locationCandidate;
+    if (candidate == null || !candidate.hasCoordinates) return;
+    final kept = value.displayText.trim().isEmpty
+        ? textController.text.trim()
+        : value.displayText.trim();
+    acceptCopy(
+      limousineOwnedAddressValue(
+        kept,
+        latitude: candidate.lat,
+        longitude: candidate.lon,
+      ),
+    );
   }
 
   void onTextChanged(String raw) {
     _debounce?.cancel();
     final requestId = ++_requestId;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationCandidate = null;
     final text = raw;
     if (value.isRouteReady) {
       value = LimousineAddressValue(
@@ -245,10 +275,17 @@ class LimousineAddressFieldController extends ChangeNotifier {
   }) {
     _debounce?.cancel();
     _requestId += 1;
-    final kept = limousinePreferCanonicalLabel(
-      original: textController.text,
-      suggestion: suggestion.label,
-    );
+    final typed = textController.text.trim();
+    final agrees = limousineSuggestionAgreesWithQuery(suggestion, typed);
+    final nearMiss = limousineSuggestionIsHouseNearMiss(suggestion, typed);
+    final kept = agrees || nearMiss
+        ? (limousineAddressQueryPostcode(typed) != null
+            ? typed
+            : limousinePreferCanonicalLabel(
+                original: typed,
+                suggestion: suggestion.label,
+              ))
+        : suggestion.label;
     textController.value = TextEditingValue(
       text: kept,
       selection: TextSelection.collapsed(offset: kept.length),

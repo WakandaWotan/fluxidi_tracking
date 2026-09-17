@@ -158,6 +158,50 @@ String customerBookingVehicleOfferTitle({
   return companyPlanVehicleCategoryLabel(category, language);
 }
 
+enum CustomerBookingVehicleOfferState {
+  needCompany,
+  incompleteRide,
+  loading,
+  loadFailed,
+  noneSuitable,
+  ready,
+}
+
+bool customerBookingRideDetailsReady({
+  required bool pickupFilled,
+  required bool dropoffFilled,
+  bool airportMode = false,
+  bool toAirport = false,
+  bool hasAirport = false,
+}) {
+  if (airportMode && hasAirport) {
+    return toAirport ? pickupFilled : dropoffFilled;
+  }
+  return pickupFilled && dropoffFilled;
+}
+
+CustomerBookingVehicleOfferState customerBookingVehicleOfferState({
+  required bool hasCompany,
+  required bool rideReady,
+  required bool loading,
+  required bool loadFailed,
+  required List<CustomerBookingVehicleOffer> offers,
+}) {
+  if (!hasCompany) return CustomerBookingVehicleOfferState.needCompany;
+  if (loading && offers.isEmpty) {
+    return CustomerBookingVehicleOfferState.loading;
+  }
+  if (loadFailed && offers.isEmpty) {
+    return CustomerBookingVehicleOfferState.loadFailed;
+  }
+  if (offers.isEmpty) {
+    return rideReady
+        ? CustomerBookingVehicleOfferState.noneSuitable
+        : CustomerBookingVehicleOfferState.incompleteRide;
+  }
+  return CustomerBookingVehicleOfferState.ready;
+}
+
 String customerBookingVehicleOfferCapacityLabel({
   required CustomerBookingVehicleOffer offer,
   required AppLanguage language,

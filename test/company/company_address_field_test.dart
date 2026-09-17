@@ -2,11 +2,154 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
+import 'package:fluxidi_tracking/company/company_customer_ground.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
 void main() {
+  test('planner geocode does not attach competing Ronse coordinates', () async {
+    final controller = LimousineAddressFieldController(
+      lookup: LimousinePlaceLookup(
+        searchOverride: (query, language) async {
+          return const LimousinePlaceLookupResult(
+            suggestions: <LimousinePlaceSuggestion>[
+              LimousinePlaceSuggestion(
+                label: 'Koekamerstraat - Rue Cocambre 48a, 9600 Ronse, België',
+                lat: 50.770403,
+                lon: 3.672568,
+                placeType: 'address',
+                postcode: '9600',
+                locality: 'Ronse',
+              ),
+              LimousinePlaceSuggestion(
+                label: 'Koekamerstraat 48, 9688 Maarkedal, België',
+                lat: 50.77205,
+                lon: 3.66942,
+                placeType: 'address',
+                postcode: '9688',
+                locality: 'Maarkedal',
+              ),
+            ],
+          );
+        },
+      ),
+      fieldId: 'pickup_owned',
+    );
+    addTearDown(controller.dispose);
+    controller.acceptCopy(
+      companyAddressValueFromStored(
+        text: 'Koekamerstraat 48A, 9688 Schorisse, BE',
+      ),
+    );
+    final resolved = await companyAddressGeocodeIfNeeded(controller);
+    expect(controller.value.displayText, contains('9688 Schorisse'));
+    expect(controller.value.displayText.contains('Ronse'), isFalse);
+    expect(controller.value.hasCoordinates, isFalse);
+    expect(resolved.needsConfirm, isTrue);
+    expect(resolved.candidate?.lat, 50.77205);
+    expect(resolved.candidate?.lon, 3.66942);
+  });
+
+  test('planner geocode attaches only a proven 48A house match', () async {
+    final controller = LimousineAddressFieldController(
+      lookup: LimousinePlaceLookup(
+        searchOverride: (query, language) async {
+          return const LimousinePlaceLookupResult(
+            suggestions: <LimousinePlaceSuggestion>[
+              LimousinePlaceSuggestion(
+                label: 'Koekamerstraat 48A, 9688 Maarkedal, België',
+                lat: 50.77205,
+                lon: 3.66942,
+                placeType: 'address',
+                postcode: '9688',
+                locality: 'Maarkedal',
+              ),
+            ],
+          );
+        },
+      ),
+      fieldId: 'pickup_owned_proven',
+    );
+    addTearDown(controller.dispose);
+    controller.acceptCopy(
+      companyAddressValueFromStored(
+        text: 'Koekamerstraat 48A, 9688 Schorisse, BE',
+      ),
+    );
+    final resolved = await companyAddressGeocodeIfNeeded(controller);
+    expect(controller.value.displayText, contains('9688 Schorisse'));
+    expect(controller.value.lat, 50.77205);
+    expect(controller.value.lon, 3.66942);
+    expect(resolved.needsConfirm, isFalse);
+  });
+
+  test('Klantenbeheer transfer drops stale coords and keeps the owned street', () {
+    final pickup = LimousineAddressFieldController(
+      lookup: LimousinePlaceLookup(
+        searchOverride: (query, language) async {
+          return const LimousinePlaceLookupResult();
+        },
+      ),
+      fieldId: 'klanten_pickup',
+    );
+    final dropoff = LimousineAddressFieldController(
+      lookup: LimousinePlaceLookup(
+        searchOverride: (query, language) async {
+          return const LimousinePlaceLookupResult();
+        },
+      ),
+      fieldId: 'klanten_dropoff',
+    );
+    addTearDown(pickup.dispose);
+    addTearDown(dropoff.dispose);
+    companyApplyCustomerGroundAddress(
+      customer: const CompanyCustomer(
+        customerId: 'cus_1',
+        tenantId: 't',
+        companyId: 'c',
+        displayName: 'Christophe',
+        firstName: 'Christophe',
+        lastName: '',
+        phone: '',
+        phoneNormalized: '',
+        countryCallingCode: '32',
+        email: '',
+        locale: 'nl',
+        companyName: '',
+        vatNumber: '',
+        addresses: <CompanyCustomerAddress>[
+          CompanyCustomerAddress(
+            type: 'home',
+            label: 'Thuis',
+            line1: 'Koekamerstraat 48A',
+            city: 'Schorisse',
+            postalCode: '9688',
+            countryCode: 'BE',
+            lat: 50.770403,
+            lon: 3.672568,
+          ),
+        ],
+        internalNotes: '',
+        preferences: const CompanyCustomerPreferences(),
+        source: 'manual',
+        status: 'active',
+        createdAt: '',
+        updatedAt: '',
+        archivedAt: null,
+        revision: 1,
+      ),
+      options: const CompanyRideOptions(),
+      pickup: pickup,
+      dropoff: dropoff,
+    );
+    expect(pickup.value.displayText, contains('Koekamerstraat 48A'));
+    expect(pickup.value.displayText, contains('9688'));
+    expect(pickup.value.displayText, contains('Schorisse'));
+    expect(pickup.value.hasCoordinates, isFalse);
+  });
+
   test('Koekamerstraat 48A stays a full street address, not Maarkedal', () {
     const address = CompanyCustomerAddress(
       label: 'Thuis',

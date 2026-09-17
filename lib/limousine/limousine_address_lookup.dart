@@ -30,6 +30,8 @@ class LimousinePlaceSuggestion {
     this.placeType = '',
     this.text = '',
     this.matchingText = '',
+    this.postcode = '',
+    this.locality = '',
   });
 
   final String label;
@@ -39,6 +41,8 @@ class LimousinePlaceSuggestion {
   final String placeType;
   final String text;
   final String matchingText;
+  final String postcode;
+  final String locality;
 
   bool get hasCoordinates =>
       lat != null && lon != null && lat!.isFinite && lon!.isFinite;
@@ -185,6 +189,173 @@ bool limousineAddressLooksLikeLocalityOnly(String raw) {
       !RegExp(r'[A-Za-zÀ-ÿ]{3,}.+\d').hasMatch(text);
 }
 
+final RegExp _belgianPostcode = RegExp(r'\b([1-9]\d{3})\b');
+final RegExp _localityAfterPostcode = RegExp(
+  r'\b[1-9]\d{3}\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ''\-\s]+)',
+);
+
+String? limousineAddressQueryPostcode(String raw) {
+  final match = _belgianPostcode.firstMatch(raw.trim());
+  return match?.group(1);
+}
+
+String? limousineAddressQueryLocality(String raw) {
+  final match = _localityAfterPostcode.firstMatch(raw.trim());
+  if (match == null) return null;
+  final locality = match
+      .group(1)!
+      .split(',')
+      .first
+      .trim()
+      .replaceAll(RegExp(r'\b(BE|België|Belgie|Belgium)\b', caseSensitive: false), '')
+      .trim();
+  return locality.isEmpty ? null : locality;
+}
+
+String limousineSuggestionResolvedPostcode(LimousinePlaceSuggestion suggestion) {
+  final stored = suggestion.postcode.trim();
+  if (_belgianPostcode.hasMatch(stored)) {
+    return limousineAddressQueryPostcode(stored) ?? stored;
+  }
+  return limousineAddressQueryPostcode(suggestion.label) ?? '';
+}
+
+String limousineSuggestionResolvedLocality(LimousinePlaceSuggestion suggestion) {
+  final stored = suggestion.locality.trim();
+  if (stored.isNotEmpty) return stored;
+  return limousineAddressQueryLocality(suggestion.label) ?? '';
+}
+
+bool limousineLocalityNamesCompatible(String left, String right) {
+  final a = limousineFoldAddressToken(left);
+  final b = limousineFoldAddressToken(right);
+  if (a.isEmpty || b.isEmpty) return true;
+  return a == b || a.contains(b) || b.contains(a);
+}
+
+class LimousineStreetHouse {
+  const LimousineStreetHouse({
+    this.street = '',
+    this.number = '',
+    this.letter = '',
+  });
+
+  final String street;
+  final String number;
+  final String letter;
+
+  bool get hasNumber => number.isNotEmpty;
+  bool get hasLetter => letter.isNotEmpty;
+}
+
+LimousineStreetHouse limousineParseStreetHouse(String raw) {
+  var text = raw.trim();
+  final postcode = limousineAddressQueryPostcode(text);
+  if (postcode != null) {
+    final index = text.indexOf(postcode);
+    if (index > 0) {
+      text = text.substring(0, index);
+    }
+  }
+  text = text.replaceAll(RegExp(r'[\s,]+$'), '').trim();
+  final matches = RegExp(r'(\d+)\s*([A-Za-z])?\b').allMatches(text).toList();
+  if (matches.isEmpty) {
+    return LimousineStreetHouse(street: text);
+  }
+  final match = matches.last;
+  final street = text
+      .substring(0, match.start)
+      .replaceAll(RegExp(r'[\s,.\-]+$'), '')
+      .trim();
+  return LimousineStreetHouse(
+    street: street,
+    number: match.group(1) ?? '',
+    letter: (match.group(2) ?? '').toUpperCase(),
+  );
+}
+
+bool limousineStreetNamesCompatible(String left, String right) {
+  final a = limousineFoldAddressToken(left);
+  final b = limousineFoldAddressToken(right);
+  if (a.isEmpty || b.isEmpty) return false;
+  if (a == b) return true;
+  if (a.contains(b) || b.contains(a)) return true;
+  final firstA = a.split(' ').first;
+  final firstB = b.split(' ').first;
+  return firstA.length >= 4 && firstA == firstB;
+}
+
+bool limousineSuggestionAgreesWithQuery(
+  LimousinePlaceSuggestion suggestion,
+  String query,
+) {
+  final queryPostcode = limousineAddressQueryPostcode(query);
+  final suggestionPostcode = limousineSuggestionResolvedPostcode(suggestion);
+  if (queryPostcode != null) {
+    if (suggestionPostcode.isEmpty || suggestionPostcode != queryPostcode) {
+      return false;
+    }
+  }
+  final queryParts = limousineParseStreetHouse(query);
+  final suggestionParts = limousineParseStreetHouse(
+    [
+      suggestion.label,
+      suggestion.text,
+    ].where((part) => part.trim().isNotEmpty).join(' '),
+  );
+  if (queryParts.street.isNotEmpty &&
+      !limousineStreetNamesCompatible(queryParts.street, suggestionParts.street) &&
+      !limousineStreetNamesCompatible(queryParts.street, suggestion.label)) {
+    return false;
+  }
+  if (queryParts.hasNumber) {
+    if (suggestionParts.number != queryParts.number) return false;
+    if (queryParts.hasLetter && suggestionParts.letter != queryParts.letter) {
+      return false;
+    }
+  }
+  if (queryPostcode == null && queryParts.street.isEmpty) {
+    final queryLocality = limousineAddressQueryLocality(query);
+    if (queryLocality != null) {
+      return limousineLocalityNamesCompatible(
+        queryLocality,
+        limousineSuggestionResolvedLocality(suggestion),
+      );
+    }
+  }
+  return true;
+}
+
+bool limousineSuggestionIsHouseNearMiss(
+  LimousinePlaceSuggestion suggestion,
+  String query,
+) {
+  final queryPostcode = limousineAddressQueryPostcode(query);
+  final suggestionPostcode = limousineSuggestionResolvedPostcode(suggestion);
+  if (queryPostcode == null ||
+      suggestionPostcode.isEmpty ||
+      suggestionPostcode != queryPostcode) {
+    return false;
+  }
+  final queryParts = limousineParseStreetHouse(query);
+  final suggestionParts = limousineParseStreetHouse(suggestion.label);
+  if (!queryParts.hasNumber ||
+      !queryParts.hasLetter ||
+      suggestionParts.number != queryParts.number ||
+      suggestionParts.letter == queryParts.letter) {
+    return false;
+  }
+  if (queryParts.street.isEmpty ||
+      (!limousineStreetNamesCompatible(
+            queryParts.street,
+            suggestionParts.street,
+          ) &&
+          !limousineStreetNamesCompatible(queryParts.street, suggestion.label))) {
+    return false;
+  }
+  return suggestion.hasCoordinates && suggestion.isStreetLevel;
+}
+
 bool limousineAddressIsMoreSpecific(String original, String candidate) {
   final left = original.trim();
   final right = candidate.trim();
@@ -195,6 +366,13 @@ bool limousineAddressIsMoreSpecific(String original, String candidate) {
   final rightStreet = limousineAddressHasStreetNumber(right) &&
       !limousineAddressLooksLikeLocalityOnly(right);
   if (leftStreet && !rightStreet) return true;
+  final leftPostcode = limousineAddressQueryPostcode(left);
+  final rightPostcode = limousineAddressQueryPostcode(right);
+  if (leftPostcode != null &&
+      rightPostcode != null &&
+      leftPostcode != rightPostcode) {
+    return true;
+  }
   return false;
 }
 
@@ -224,12 +402,123 @@ LimousinePlaceSuggestion? limousinePreferStreetLevelSuggestion(
     }
     return null;
   }
-  for (final item in street) {
-    if (needle.isNotEmpty && item.label.toLowerCase().contains(needle.split(',').first.trim())) {
+  final agreeing = [
+    for (final item in street)
+      if (limousineSuggestionAgreesWithQuery(item, query)) item,
+  ];
+  final streetPostcodes = {
+    for (final item in street)
+      if (limousineSuggestionResolvedPostcode(item).isNotEmpty)
+        limousineSuggestionResolvedPostcode(item),
+  };
+  if (limousineAddressQueryPostcode(query) == null &&
+      limousineParseStreetHouse(query).street.isNotEmpty &&
+      streetPostcodes.length > 1) {
+    final agreeingPostcodes = {
+      for (final item in agreeing)
+        if (limousineSuggestionResolvedPostcode(item).isNotEmpty)
+          limousineSuggestionResolvedPostcode(item),
+    };
+    if (agreeingPostcodes.length != 1) return null;
+  }
+  final pool = agreeing.isNotEmpty ? agreeing : street;
+  if (agreeing.isEmpty &&
+      (limousineAddressQueryPostcode(query) != null ||
+          limousineAddressQueryLocality(query) != null ||
+          limousineParseStreetHouse(query).hasNumber)) {
+    return null;
+  }
+  for (final item in pool) {
+    if (needle.isNotEmpty &&
+        item.label.toLowerCase().contains(needle.split(',').first.trim())) {
       return item;
     }
   }
-  return street.first;
+  return pool.first;
+}
+
+class LimousineOwnedAddressResolution {
+  const LimousineOwnedAddressResolution({
+    required this.value,
+    this.needsConfirm = false,
+    this.candidate,
+  });
+
+  final LimousineAddressValue value;
+  final bool needsConfirm;
+  final LimousinePlaceSuggestion? candidate;
+
+  bool get houseProven => value.hasCoordinates && !needsConfirm;
+}
+
+LimousineAddressValue limousineOwnedAddressValue(
+  String text, {
+  double? latitude,
+  double? longitude,
+  bool selected = true,
+}) {
+  final label = text.trim();
+  if (label.isEmpty) return const LimousineAddressValue();
+  final hasCoords = latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite;
+  return LimousineAddressValue(
+    displayText: label,
+    canonicalLabel: label,
+    lat: hasCoords ? latitude : null,
+    lon: hasCoords ? longitude : null,
+    acceptance: hasCoords
+        ? LimousineAddressAcceptance.selected
+        : (selected
+            ? LimousineAddressAcceptance.incomplete
+            : LimousineAddressAcceptance.manualFallback),
+  );
+}
+
+LimousineOwnedAddressResolution limousineResolveOwnedAddress({
+  required String query,
+  required LimousinePlaceLookupResult result,
+}) {
+  final owned = query.trim();
+  if (owned.isEmpty) {
+    return const LimousineOwnedAddressResolution(
+      value: LimousineAddressValue(),
+    );
+  }
+  if (result.hadError) {
+    return LimousineOwnedAddressResolution(
+      value: limousineOwnedAddressValue(owned, selected: false),
+      needsConfirm: true,
+    );
+  }
+  final proven = limousinePreferStreetLevelSuggestion(owned, result.suggestions);
+  if (proven != null &&
+      proven.hasCoordinates &&
+      limousineSuggestionAgreesWithQuery(proven, owned)) {
+    return LimousineOwnedAddressResolution(
+      value: limousineOwnedAddressValue(
+        owned,
+        latitude: proven.lat,
+        longitude: proven.lon,
+      ),
+    );
+  }
+  final nearMiss = [
+    for (final item in result.suggestions)
+      if (limousineSuggestionIsHouseNearMiss(item, owned)) item,
+  ];
+  if (nearMiss.isNotEmpty) {
+    return LimousineOwnedAddressResolution(
+      value: limousineOwnedAddressValue(owned, selected: false),
+      needsConfirm: true,
+      candidate: nearMiss.first,
+    );
+  }
+  return LimousineOwnedAddressResolution(
+    value: limousineOwnedAddressValue(owned, selected: false),
+    needsConfirm: true,
+  );
 }
 
 /// UI language must not hide local toponyms such as Gent, Kortrijk or Ronse.
@@ -276,6 +565,10 @@ int limousinePlaceSuggestionRank(
   LimousinePlaceSuggestion suggestion,
   String query,
 ) {
+  final queryPostcode = limousineAddressQueryPostcode(query);
+  if (queryPostcode != null && !limousineSuggestionAgreesWithQuery(suggestion, query)) {
+    return 20;
+  }
   final needle = limousineFoldAddressToken(query);
   if (needle.isEmpty) return 0;
   final text = limousineFoldAddressToken(suggestion.text);
@@ -289,7 +582,7 @@ int limousinePlaceSuggestionRank(
       matching.contains(needle)) {
     return 3;
   }
-  return 8;
+  return queryPostcode != null ? 4 : 8;
 }
 
 List<LimousinePlaceSuggestion> limousineRankPlaceSuggestions(
@@ -406,6 +699,28 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
       (map['matching_text'] ?? '').toString().trim(),
       (map['matching_place_name'] ?? '').toString().trim(),
     ].firstWhere((part) => part.isNotEmpty, orElse: () => '');
+    String postcode = '';
+    String locality = '';
+    final context = map['context'];
+    if (context is List) {
+      for (final item in context) {
+        if (item is! Map) continue;
+        final id = (item['id'] ?? '').toString();
+        final contextText = (item['text'] ?? '').toString().trim();
+        if (contextText.isEmpty) continue;
+        if (id.startsWith('postcode.')) postcode = contextText;
+        if (locality.isEmpty &&
+            (id.startsWith('place.') || id.startsWith('locality.'))) {
+          locality = contextText;
+        }
+      }
+    }
+    if (postcode.isEmpty) {
+      final properties = map['properties'];
+      if (properties is Map) {
+        postcode = (properties['postcode'] ?? '').toString().trim();
+      }
+    }
     out.add(
       LimousinePlaceSuggestion(
         label: label,
@@ -415,6 +730,8 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
         placeType: placeType,
         text: text,
         matchingText: matchingText,
+        postcode: postcode,
+        locality: locality,
       ),
     );
     if (out.length >= kLimousineAddressMaxSuggestions) break;

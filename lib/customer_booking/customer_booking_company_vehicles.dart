@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_plan_media.dart';
@@ -51,6 +52,15 @@ Map<String, dynamic>? customerBookingExampleVehicleForCategory({
 
 String customerBookingVehiclePhotoUrl(Map<String, dynamic>? vehicle) {
   if (vehicle == null) return '';
+  for (final candidate in companyPlanVehiclePhotoCandidates(vehicle)) {
+    final https = resolvePublicHttpsMediaUrl(candidate);
+    if (https.isNotEmpty) return https;
+    final raw = candidate.trim();
+    if (raw.toLowerCase().startsWith('https://') &&
+        !isLocalOrPrivateMediaRef(raw)) {
+      return raw;
+    }
+  }
   return resolveCompanyPlanVehicleMedia(vehicle: vehicle).photoUrl.trim();
 }
 

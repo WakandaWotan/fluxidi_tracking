@@ -9,7 +9,6 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_airport_cards.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_mode.dart';
-import 'package:fluxidi_tracking/company/company_plan_vehicle_fallback.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_geometry.dart';
@@ -21,6 +20,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_billing.dart'
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_cards.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_offers.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
@@ -307,9 +307,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       );
       if (!mounted) return;
       setState(() {
-        if (snapshot.vehicles.isNotEmpty) {
-          _companyVehicles = snapshot.vehicles;
-        }
+        _companyVehicles = snapshot.vehicles;
         if (snapshot.companyName.isNotEmpty &&
             _entry.company.companyName.trim().isEmpty) {
           _entry = _entry.copyWith(
@@ -365,9 +363,29 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     } catch (_) {}
   }
 
+  int _pickupGeocodeSeq = 0;
+  bool _pickupNeedsConfirm = false;
+
   Future<void> _geocodePickupIfNeeded() async {
     if (customerBookingPickupIsVacant(_pickup.value)) return;
-    await customerBookingGeocodeIfNeeded(_pickup);
+    final seq = ++_pickupGeocodeSeq;
+    final resolved = await customerBookingGeocodeIfNeeded(_pickup);
+    if (!mounted || seq != _pickupGeocodeSeq) return;
+    setState(() => _pickupNeedsConfirm = resolved.needsConfirm);
+  }
+
+  void _applyOwnedPickup(LimousineAddressValue address) {
+    _pickup.acceptCopy(
+      customerBookingAddressFromText(address.displayText),
+    );
+    setState(() {
+      _pickupOwned = true;
+      _pickupNeedsConfirm = false;
+      _gpsFallback = false;
+      _submitError = null;
+    });
+    _onDraftChanged();
+    unawaited(_geocodePickupIfNeeded());
   }
 
   void _applyProfileAddressIfVacant() {
@@ -376,10 +394,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     if (!customerBookingPickupIsVacant(_pickup.value)) return;
     final address = customerBookingAddressFromProfile(profile);
     if (address == null) return;
-    _pickup.acceptCopy(address);
-    setState(() => _pickupOwned = true);
-    _onDraftChanged();
-    unawaited(_geocodePickupIfNeeded());
+    _applyOwnedPickup(address);
   }
 
   Future<void> _useMyAddress() async {
@@ -387,14 +402,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     if (profile == null) return;
     final address = customerBookingAddressFromProfile(profile);
     if (address == null) return;
-    _pickup.acceptCopy(address);
-    setState(() {
-      _pickupOwned = true;
-      _gpsFallback = false;
-      _submitError = null;
-    });
-    _onDraftChanged();
-    unawaited(_geocodePickupIfNeeded());
+    _applyOwnedPickup(address);
   }
 
   Future<void> _resolveGps({bool userRequested = false}) async {
@@ -661,7 +669,12 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   void _absorbQuoteCoordinates(CompanyPlanQuoteResult result) {
+    final pickupText = _pickup.value.displayText;
+    final pickupHasLocality = limousineAddressQueryPostcode(pickupText) != null ||
+        limousineAddressQueryLocality(pickupText) != null;
     if (!_pickup.value.hasCoordinates &&
+        !_pickupOwned &&
+        !pickupHasLocality &&
         result.pickupLat != null &&
         result.pickupLon != null) {
       _pickup.acceptCopy(
@@ -1455,6 +1468,36 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         showCurrentLocation: true,
         inputKey: kCustomerBookingPickupKey,
       ),
+      if (_pickupNeedsConfirm)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(kCustomerBookingAddressNeedsConfirm),
+                key: kCustomerBookingAddressConfirmKey,
+                style: TextStyle(
+                  color: _palette.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_pickup.locationCandidate != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: kCustomerBookingAddressConfirmMapKey,
+                    onPressed: () {
+                      _pickup.confirmCandidateLocation();
+                      setState(() => _pickupNeedsConfirm = false);
+                      _onDraftChanged();
+                    },
+                    child: Text(_t(kCustomerBookingAddressConfirmMap)),
+                  ),
+                ),
+            ],
+          ),
+        ),
       if (!_airportMode || _toAirport) _pickupActions(),
       ..._stopFields(inbound: false),
       if (!_airportMode || !_toAirport || _airport == null)
@@ -1505,20 +1548,22 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       const SizedBox(height: 8),
       Text(_t(kCustomerBookingVehicle), style: theme.textTheme.titleSmall),
       _vehicleRow(),
-      const SizedBox(height: 8),
-      CustomerBookingAssignedDriverCard(
-        driver: _assignedDriver,
-        language: _language,
-        palette: _palette,
-        wide: MediaQuery.sizeOf(context).width >= 720,
-      ),
+      if (_assignedDriver.assigned) ...[
+        const SizedBox(height: 8),
+        CustomerBookingAssignedDriverCard(
+          driver: _assignedDriver,
+          language: _language,
+          palette: _palette,
+          wide: MediaQuery.sizeOf(context).width >= 720,
+        ),
+      ],
       const SizedBox(height: 8),
       _countRow(
         label: _t(kCustomerBookingPassengers),
         value: _passengers,
         incrementKey: kCustomerBookingPaxIncKey,
         onChanged: (value) {
-          setState(() => _passengers = value);
+          setState(() => _passengers = _clampPassengers(value));
           _suggestVehicleIfNeeded();
           _onDraftChanged();
         },
@@ -1881,155 +1926,95 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
-  Widget _vehicleRow() {
-    final offers = _vehicleOffers;
-    if (_vehiclesLoading && offers.isEmpty) {
-      return Text(
-        _t(kCustomerBookingVehiclesLoading),
-        key: kCustomerBookingVehiclesLoadingKey,
-      );
-    }
-    if (_vehiclesFailed && offers.isEmpty) {
-      return Text(
-        _t(kCustomerBookingVehiclesLoadFailed),
-        key: kCustomerBookingVehiclesFailedKey,
-      );
-    }
-    if (_availability.loadFailed) {
-      return Text(
-        _t(kCustomerBookingVehiclesLoadFailed),
-        key: kCustomerBookingVehiclesFailedKey,
-      );
-    }
-    if (offers.isEmpty) {
-      if (!_hasChosenCompany) {
-        return Text(_t(kCustomerBookingNeedCompany));
-      }
-      return Text(
-        _t(kCustomerBookingNoCompanyVehicles),
-        key: kCustomerBookingVehicleHintKey,
-      );
-    }
-    return Column(
-      key: kCustomerBookingVehicleHintKey,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final offer in offers)
-              SizedBox(
-                width: 148,
-                child: InkWell(
-                  key: customerBookingVehicleKey(offer.vehicleId),
-                  onTap: offer.available
-                      ? () {
-                          final category = classifyCompanyPlanVehicleCategory(
-                            offer.vehicle,
-                          );
-                          setState(() {
-                            _selectedVehicleId = offer.vehicleId;
-                            _vehicleCategory = category;
-                            if (category != null) {
-                              _vehicle = companyPlanVehicleTypeForCategory(
-                                category,
-                              );
-                            }
-                            _submitError = null;
-                          });
-                          _onDraftChanged();
-                        }
-                      : null,
-                  child: Opacity(
-                    opacity: offer.available ? 1 : 0.55,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: _palette.surface,
-                        border: Border.all(
-                          color: _selectedVehicleId == offer.vehicleId
-                              ? _palette.gold
-                              : _palette.border,
-                          width: _selectedVehicleId == offer.vehicleId ? 2 : 1.2,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          _vehicleImage(offer),
-                          Text(
-                            customerBookingVehicleOfferTitle(
-                              offer: offer,
-                              language: _language,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: _palette.textPrimary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            customerBookingVehicleOfferCapacityLabel(
-                              offer: offer,
-                              language: _language,
-                            ),
-                            style: TextStyle(
-                              color: _palette.textMuted,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (!offer.available)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: Text(
-                                _t(kCustomerBookingVehicleUnavailable),
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: _palette.danger,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ],
+  bool _addressFilled(LimousineAddressValue value) {
+    return value.displayText.trim().isNotEmpty || value.isRouteReady;
+  }
+
+  bool get _rideDetailsReady {
+    final hasAirport = _airport != null;
+    return customerBookingRideDetailsReady(
+      pickupFilled: _addressFilled(_pickup.value) ||
+          (_airportMode && !_toAirport && hasAirport),
+      dropoffFilled: _addressFilled(_dropoff.value) ||
+          (_airportMode && _toAirport && hasAirport),
+      airportMode: _airportMode,
+      toAirport: _toAirport,
+      hasAirport: hasAirport,
     );
   }
 
-  Widget _vehicleImage(CustomerBookingVehicleOffer offer) {
-    final category = classifyCompanyPlanVehicleCategory(offer.vehicle) ??
-        CompanyPlanVehicleCategory.sedan;
-    final photo = customerBookingVehiclePhotoUrl(offer.vehicle);
-    if (photo.isNotEmpty) {
-      return Image.network(
-        photo,
-        height: 72,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Image.asset(
-          companyPlanVehicleFallbackAsset(category),
-          height: 72,
-          fit: BoxFit.contain,
-        ),
-      );
+  int? get _selectedVehicleSeats {
+    for (final offer in _vehicleOffers) {
+      if (offer.vehicleId == _selectedVehicleId) return offer.passengerSeats;
     }
-    return Image.asset(
-      companyPlanVehicleFallbackAsset(category),
-      height: 72,
-      fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => Icon(
-        Icons.directions_car_outlined,
-        color: _palette.textPrimary,
-      ),
+    return null;
+  }
+
+  int _clampPassengers(int value) {
+    final seats = _selectedVehicleSeats;
+    if (seats != null && seats > 0 && value > seats) return seats;
+    return value < 1 ? 1 : value;
+  }
+
+  void _selectVehicleOffer(CustomerBookingVehicleOffer offer) {
+    final category = classifyCompanyPlanVehicleCategory(offer.vehicle);
+    final seats = offer.passengerSeats;
+    setState(() {
+      _selectedVehicleId = offer.vehicleId;
+      _vehicleCategory = category;
+      if (category != null) {
+        _vehicle = companyPlanVehicleTypeForCategory(category);
+      }
+      if (seats != null && seats > 0 && _passengers > seats) {
+        _passengers = seats;
+      }
+      _submitError = null;
+    });
+    _onDraftChanged();
+  }
+
+  Widget _vehicleRow() {
+    final offers = _vehicleOffers;
+    final state = customerBookingVehicleOfferState(
+      hasCompany: _hasChosenCompany,
+      rideReady: _rideDetailsReady,
+      loading: _vehiclesLoading,
+      loadFailed: _vehiclesFailed && offers.isEmpty,
+      offers: offers,
     );
+    switch (state) {
+      case CustomerBookingVehicleOfferState.needCompany:
+        return Text(_t(kCustomerBookingNeedCompany));
+      case CustomerBookingVehicleOfferState.loading:
+        return Text(
+          _t(kCustomerBookingVehiclesLoading),
+          key: kCustomerBookingVehiclesLoadingKey,
+        );
+      case CustomerBookingVehicleOfferState.loadFailed:
+        return Text(
+          _t(kCustomerBookingVehiclesLoadFailed),
+          key: kCustomerBookingVehiclesFailedKey,
+        );
+      case CustomerBookingVehicleOfferState.incompleteRide:
+        return Text(
+          _t(kCustomerBookingVehiclesNeedRide),
+          key: kCustomerBookingVehiclesNeedRideKey,
+        );
+      case CustomerBookingVehicleOfferState.noneSuitable:
+        return Text(
+          _t(kCustomerBookingNoCompanyVehicles),
+          key: kCustomerBookingVehicleHintKey,
+        );
+      case CustomerBookingVehicleOfferState.ready:
+        return CustomerBookingVehiclePhotoCardGrid(
+          key: kCustomerBookingVehicleHintKey,
+          offers: offers,
+          language: _language,
+          selectedVehicleId: _selectedVehicleId,
+          palette: _palette,
+          onSelected: _selectVehicleOffer,
+        );
+    }
   }
 
   Widget _countRow({

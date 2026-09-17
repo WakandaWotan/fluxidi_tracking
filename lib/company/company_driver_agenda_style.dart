@@ -143,6 +143,7 @@ String companyAgendaVehiclePlate(Map<String, dynamic> raw) {
 String companyAgendaVehicleName(Map<String, dynamic> raw) {
   return (raw['vehicle_name'] ??
           raw['vehicleName'] ??
+          raw['name'] ??
           raw['brand_model'] ??
           raw['brandModel'] ??
           raw['label'] ??

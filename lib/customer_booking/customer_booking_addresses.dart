@@ -1,7 +1,11 @@
 import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
+import 'package:fluxidi_tracking/company/company_address_field.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
+
+export 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart'
+    show limousineResolveOwnedAddress, LimousineOwnedAddressResolution;
 
 import 'customer_booking_entry.dart';
 
@@ -46,14 +50,16 @@ LimousineAddressValue customerBookingAddressFromPlace(
 
 String customerProfileDefaultAddressLine(CustomerProfile profile) {
   final street = profile.billingStreet.trim();
-  final postal = profile.billingPostalCode.trim();
-  final city = profile.billingCity.trim();
-  final postcode = postal.isNotEmpty ? postal : profile.preferredPostcode.trim();
-  return [
-    if (street.isNotEmpty) street,
-    if (postcode.isNotEmpty || city.isNotEmpty)
-      [postcode, city].where((part) => part.trim().isNotEmpty).join(' '),
-  ].join(', ');
+  if (street.isEmpty) return '';
+  final postal = profile.billingPostalCode.trim().isNotEmpty
+      ? profile.billingPostalCode.trim()
+      : profile.preferredPostcode.trim();
+  return companyPlanCanonicalAddressLine(
+    street: street,
+    postalCode: postal,
+    city: profile.billingCity.trim(),
+    country: profile.billingCountry.trim(),
+  );
 }
 
 LimousineAddressValue? customerBookingAddressFromProfile(CustomerProfile profile) {
@@ -61,6 +67,8 @@ LimousineAddressValue? customerBookingAddressFromProfile(CustomerProfile profile
   if (line.isEmpty) return null;
   return customerBookingAddressFromText(line);
 }
+
+typedef CustomerBookingOwnedAddressResolution = LimousineOwnedAddressResolution;
 
 bool customerBookingPickupIsVacant(LimousineAddressValue value) {
   return value.displayText.trim().isEmpty && !value.isRouteReady;
@@ -74,42 +82,23 @@ String customerBookingAirportSummary(AirportCatalogAirport airport) {
   return '✈ $name ($iata)';
 }
 
-Future<void> customerBookingGeocodeIfNeeded(
+Future<CustomerBookingOwnedAddressResolution> customerBookingGeocodeIfNeeded(
   LimousineAddressFieldController controller,
 ) async {
-  final value = controller.value;
-  if (value.hasCoordinates) return;
-  final query = value.routeText.trim().isEmpty
-      ? value.displayText.trim()
-      : value.routeText.trim();
-  if (query.length < kLimousineAddressMinQueryLength) return;
+  final query = controller.value.displayText.trim().isEmpty
+      ? controller.textController.text.trim()
+      : controller.value.displayText.trim();
+  if (query.length < kLimousineAddressMinQueryLength) {
+    return CustomerBookingOwnedAddressResolution(value: controller.value);
+  }
   final result = await controller.lookup.search(
     query,
     language: controller.language,
   );
-  if (controller.textController.text.trim() != query) return;
-  final best = limousinePreferStreetLevelSuggestion(query, result.suggestions);
-  if (best == null || !best.hasCoordinates) return;
-  if (best.isStreetLevel == false &&
-      !limousineAddressLooksLikeLocalityOnly(query)) {
-    return;
+  if (controller.textController.text.trim() != query) {
+    return CustomerBookingOwnedAddressResolution(value: controller.value);
   }
-  // A saved or typed street stays on screen. Geocoding may only attach
-  // coordinates when the suggestion still describes that same street.
-  final kept = limousinePreferCanonicalLabel(
-    original: query,
-    suggestion: best.label,
-  );
-  final sameStreet = limousinePlaceSuggestionMatchesQuery(best, query) ||
-      limousineAddressIsMoreSpecific(query, best.label);
-  controller.acceptCopy(
-    LimousineAddressValue(
-      displayText: sameStreet ? query : kept,
-      canonicalLabel: sameStreet ? query : kept,
-      lat: best.lat,
-      lon: best.lon,
-      placeId: best.placeId,
-      acceptance: LimousineAddressAcceptance.selected,
-    ),
-  );
+  final resolved = limousineResolveOwnedAddress(query: query, result: result);
+  controller.applyOwnedResolution(resolved);
+  return resolved;
 }

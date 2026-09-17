@@ -106,7 +106,9 @@ void companyApplySavedAddress(
   LimousineAddressFieldController field,
   CompanyCustomerAddress address,
 ) {
-  field.acceptCopy(companyAddressValueFromSaved(address));
+  field.acceptCopy(
+    companyAddressValueFromSaved(address, trustStoredCoordinates: false),
+  );
 }
 
 void companyApplyCustomerGroundAddress({

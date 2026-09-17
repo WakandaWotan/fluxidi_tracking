@@ -41,6 +41,15 @@ const Key kCustomerBookingReturnNoWaitKey = Key(
 const Key kCustomerBookingReturnWaitKey = Key('customer_booking_return_wait');
 const Key kCustomerBookingConfirmKey = Key('customer_booking_confirm');
 const Key kCustomerBookingGpsFallbackKey = Key('customer_booking_gps_fallback');
+const Key kCustomerBookingAddressConfirmKey = Key(
+  'customer_booking_address_confirm',
+);
+const Key kCustomerBookingAddressConfirmMapKey = Key(
+  'customer_booking_address_confirm_map',
+);
+const Key kCustomerBookingVehiclesNeedRideKey = Key(
+  'customer_booking_vehicles_need_ride',
+);
 const Key kCustomerBookingQuoteStatusKey = Key('customer_booking_quote_status');
 const Key kCustomerBookingQuoteRetryKey = Key('customer_booking_quote_retry');
 const Key kCustomerBookingPriceKey = Key('customer_booking_price');

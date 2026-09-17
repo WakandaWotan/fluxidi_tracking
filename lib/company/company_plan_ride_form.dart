@@ -309,24 +309,23 @@ class CompanyPlanRideForm extends StatelessWidget {
           style: theme.textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        _TypeCards(
-          language: language,
-          vehicleType: vehicleType,
-          onVehicleTypeChanged: onVehicleTypeChanged,
-          categories: bookableCategories,
-          visuals: vehicleVisuals,
-          badges: categoryBadges,
-          unavailableReasons: unavailableReasons,
-          selectedCategory: selectedCategory,
-          onCategoryChanged: onCategoryChanged,
-          unsuitableCategories: unsuitableCategories,
-          categoryPhotoUrls: categoryPhotoUrls,
-          categoryPassengerCaps: categoryPassengerCaps,
-        ),
-        if (vehicleOfferCards != null) ...[
-          const SizedBox(height: 8),
-          vehicleOfferCards!,
-        ],
+        if (vehicleOfferCards != null)
+          vehicleOfferCards!
+        else
+          _TypeCards(
+            language: language,
+            vehicleType: vehicleType,
+            onVehicleTypeChanged: onVehicleTypeChanged,
+            categories: bookableCategories,
+            visuals: vehicleVisuals,
+            badges: categoryBadges,
+            unavailableReasons: unavailableReasons,
+            selectedCategory: selectedCategory,
+            onCategoryChanged: onCategoryChanged,
+            unsuitableCategories: unsuitableCategories,
+            categoryPhotoUrls: categoryPhotoUrls,
+            categoryPassengerCaps: categoryPassengerCaps,
+          ),
         if (capacityWarning != null && capacityWarning!.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(

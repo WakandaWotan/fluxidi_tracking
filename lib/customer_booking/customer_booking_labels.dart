@@ -148,10 +148,10 @@ const LocalizedText kCustomerBookingLaterInvalid = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingDriverPending = LocalizedText(
-  nl: 'Chauffeur wordt nog toegewezen',
-  en: 'A driver will be assigned soon',
-  fr: 'Le chauffeur sera encore attribué',
-  es: 'El conductor se asignará en breve',
+  nl: 'Nog geen chauffeur toegewezen',
+  en: 'No driver assigned yet',
+  fr: 'Aucun chauffeur attribué pour le moment',
+  es: 'Todavía no hay conductor asignado',
 );
 
 const LocalizedText kCustomerBookingDriverFallback = LocalizedText(
@@ -229,6 +229,20 @@ const LocalizedText kCustomerBookingGpsFallback = LocalizedText(
   en: 'Location unavailable. Enter your pickup address.',
   fr: 'Position indisponible. Saisissez l’adresse de départ.',
   es: 'Ubicación no disponible. Introduce la dirección de salida.',
+);
+
+const LocalizedText kCustomerBookingAddressNeedsConfirm = LocalizedText(
+  nl: 'Dit adres kon niet tot op huisnummer worden geplaatst. Controleer straat, huisnummer en de pin op de kaart voordat je boekt.',
+  en: 'This address could not be placed to house-number accuracy. Check the street, house number and map pin before booking.',
+  fr: 'Cette adresse n’a pas pu être placée au numéro de maison. Vérifiez la rue, le numéro et l’épingle de la carte avant de réserver.',
+  es: 'Esta dirección no se pudo situar hasta el número de casa. Comprueba la calle, el número y el pin del mapa antes de reservar.',
+);
+
+const LocalizedText kCustomerBookingAddressConfirmMap = LocalizedText(
+  nl: 'Bevestig deze kaartlocatie',
+  en: 'Confirm this map location',
+  fr: 'Confirmer cet emplacement',
+  es: 'Confirmar esta ubicación',
 );
 
 const LocalizedText kCustomerBookingLandingNotPickup = LocalizedText(
@@ -540,17 +554,24 @@ const LocalizedText kCustomerBookingQuoteFailed = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingVehiclesLoading = LocalizedText(
-  nl: 'Voertuigcategorieën worden geladen…',
-  en: 'Loading vehicle categories…',
-  fr: 'Chargement des catégories de véhicules…',
-  es: 'Cargando categorías de vehículo…',
+  nl: 'Voertuigen worden geladen…',
+  en: 'Loading vehicles…',
+  fr: 'Chargement des véhicules…',
+  es: 'Cargando vehículos…',
 );
 
 const LocalizedText kCustomerBookingVehiclesLoadFailed = LocalizedText(
-  nl: 'Voertuigcategorieën konden niet worden geladen. Probeer opnieuw.',
-  en: 'Vehicle categories could not be loaded. Try again.',
-  fr: 'Les catégories de véhicules n’ont pas pu être chargées. Réessayez.',
-  es: 'No se pudieron cargar las categorías de vehículo. Inténtalo de nuevo.',
+  nl: 'Voertuigen konden niet worden geladen. Probeer opnieuw.',
+  en: 'Vehicles could not be loaded. Try again.',
+  fr: 'Les véhicules n’ont pas pu être chargés. Réessayez.',
+  es: 'No se pudieron cargar los vehículos. Inténtalo de nuevo.',
+);
+
+const LocalizedText kCustomerBookingVehiclesNeedRide = LocalizedText(
+  nl: 'Kies eerst vertrek en bestemming om beschikbare voertuigen te zien.',
+  en: 'Choose pickup and destination first to see available vehicles.',
+  fr: 'Choisissez d’abord le départ et la destination pour voir les véhicules disponibles.',
+  es: 'Elige primero salida y destino para ver los vehículos disponibles.',
 );
 
 const LocalizedText kCustomerBookingBookFailed = LocalizedText(
@@ -596,10 +617,10 @@ const LocalizedText kCustomerBookingVehicleSampleHint = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingNoCompanyVehicles = LocalizedText(
-  nl: 'Dit bedrijf heeft geen boekbare voertuigcategorieën voor deze rit.',
-  en: 'This company has no bookable vehicle categories for this ride.',
-  fr: 'Cette entreprise n’a pas de catégories de véhicules pour cette course.',
-  es: 'Esta empresa no tiene categorías de vehículo para este viaje.',
+  nl: 'Dit bedrijf heeft geen geschikte voertuigen voor deze rit.',
+  en: 'This company has no suitable vehicles for this ride.',
+  fr: 'Cette entreprise n’a pas de véhicules adaptés pour cette course.',
+  es: 'Esta empresa no tiene vehículos adecuados para este viaje.',
 );
 
 const LocalizedText kCustomerBookingArrivalDestination = LocalizedText(

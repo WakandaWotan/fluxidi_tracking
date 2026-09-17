@@ -115,6 +115,70 @@ void main() {
     expect(offers.single.vehicleId, 'vh_shared');
   });
 
+  test('Party Limo seats stay on that vehicle_id', () {
+    final party = <String, dynamic>{
+      'vehicle_id': 'vh_party',
+      'name': 'Party Limo',
+      'passenger_capacity': 16,
+    };
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[tesla, party],
+      passengers: 1,
+    );
+    expect(
+      offers.firstWhere((offer) => offer.vehicleId == 'vh_tesla').passengerSeats,
+      3,
+    );
+    expect(
+      offers.firstWhere((offer) => offer.vehicleId == 'vh_party').passengerSeats,
+      16,
+    );
+    expect(
+      customerBookingVehicleOfferCapacityLabel(
+        offer: CustomerBookingVehicleOffer(vehicle: tesla, passengerSeats: 3),
+        language: AppLanguage.en,
+      ),
+      '3 passengers',
+    );
+    expect(
+      customerBookingVehicleOfferTitle(
+        offer: CustomerBookingVehicleOffer(vehicle: tesla, passengerSeats: 3),
+        language: AppLanguage.nl,
+      ),
+      'Tesla',
+    );
+  });
+
+  test('incomplete ride is not a final no-vehicles conclusion', () {
+    expect(
+      customerBookingVehicleOfferState(
+        hasCompany: true,
+        rideReady: false,
+        loading: false,
+        loadFailed: false,
+        offers: const <CustomerBookingVehicleOffer>[],
+      ),
+      CustomerBookingVehicleOfferState.incompleteRide,
+    );
+    expect(
+      customerBookingVehicleOfferState(
+        hasCompany: true,
+        rideReady: true,
+        loading: false,
+        loadFailed: false,
+        offers: const <CustomerBookingVehicleOffer>[],
+      ),
+      CustomerBookingVehicleOfferState.noneSuitable,
+    );
+    expect(
+      customerBookingRideDetailsReady(
+        pickupFilled: true,
+        dropoffFilled: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('personal driver score is used, company aggregate is ignored', () {
     final assigned = customerBookingAssignedDriverFromMaps(
       booking: <String, dynamic>{

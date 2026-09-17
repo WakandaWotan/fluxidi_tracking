@@ -11,6 +11,26 @@ import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 
+const LocalizedText kCompanyAddressNeedsConfirm = LocalizedText(
+  nl: 'Dit adres kon niet tot op huisnummer worden geplaatst. Controleer straat, huisnummer en de pin op de kaart.',
+  en: 'This address could not be placed to house-number accuracy. Check the street, house number and map pin.',
+  fr: 'Cette adresse n’a pas pu être placée au numéro de maison. Vérifiez la rue, le numéro et l’épingle de la carte.',
+  es: 'Esta dirección no se pudo situar hasta el número de casa. Comprueba la calle, el número y el pin del mapa.',
+);
+
+const LocalizedText kCompanyAddressConfirmMap = LocalizedText(
+  nl: 'Bevestig deze kaartlocatie',
+  en: 'Confirm this map location',
+  fr: 'Confirmer cet emplacement',
+  es: 'Confirmar esta ubicación',
+);
+
+Key companyAddressConfirmKey(String fieldId) =>
+    Key('company_address_confirm_$fieldId');
+
+Key companyAddressConfirmMapKey(String fieldId) =>
+    Key('company_address_confirm_map_$fieldId');
+
 const LocalizedText kCompanySavedAddresses = LocalizedText(
   nl: 'Opgeslagen adressen',
   en: 'Saved addresses',
@@ -216,11 +236,13 @@ String companyAddressReviewLine(
 }
 
 LimousineAddressValue companyAddressValueFromSaved(
-  CompanyCustomerAddress address,
-) {
+  CompanyCustomerAddress address, {
+  bool trustStoredCoordinates = true,
+}) {
   final line = companyCustomerAddressLine(address);
   final label = line.isEmpty ? address.label.trim() : line;
-  final hasCoords = address.lat != null &&
+  final hasCoords = trustStoredCoordinates &&
+      address.lat != null &&
       address.lon != null &&
       address.lat!.isFinite &&
       address.lon!.isFinite;
@@ -281,31 +303,29 @@ LimousineAddressValue companyAddressWithCoords(
   );
 }
 
-Future<void> companyAddressGeocodeIfNeeded(
+Future<LimousineOwnedAddressResolution> companyAddressGeocodeIfNeeded(
   LimousineAddressFieldController controller,
 ) async {
   final value = controller.value;
-  if (value.lat != null && value.lon != null) return;
   final query = value.routeText.trim().isEmpty
       ? value.displayText.trim()
       : value.routeText.trim();
-  if (query.length < kLimousineAddressMinQueryLength) return;
+  if (query.length < kLimousineAddressMinQueryLength) {
+    return LimousineOwnedAddressResolution(value: value);
+  }
+  if (value.hasCoordinates && !controller.locationNeedsConfirm) {
+    return LimousineOwnedAddressResolution(value: value);
+  }
   final result = await controller.lookup.search(
     query,
     language: controller.language,
   );
-  if (controller.textController.text.trim() != query) return;
-  final best = limousinePreferStreetLevelSuggestion(query, result.suggestions);
-  if (best == null || !best.hasCoordinates) return;
-  if (!companyAddressSuggestionMatchesQuery(query, best.label)) return;
-  controller.acceptCopy(
-    value.copyWith(
-      lat: best.lat,
-      lon: best.lon,
-      placeId: best.placeId,
-      acceptance: LimousineAddressAcceptance.selected,
-    ),
-  );
+  if (controller.textController.text.trim() != query) {
+    return LimousineOwnedAddressResolution(value: controller.value);
+  }
+  final resolved = limousineResolveOwnedAddress(query: query, result: result);
+  controller.applyOwnedResolution(resolved);
+  return resolved;
 }
 
 class CompanyAddressField extends StatefulWidget {
@@ -350,7 +370,9 @@ class _CompanyAddressFieldState extends State<CompanyAddressField> {
   }
 
   Future<void> _pickSaved(CompanyCustomerAddress address) async {
-    widget.controller.acceptCopy(companyAddressValueFromSaved(address));
+    widget.controller.acceptCopy(
+      companyAddressValueFromSaved(address, trustStoredCoordinates: false),
+    );
     setState(() => _focused = false);
     await companyAddressGeocodeIfNeeded(widget.controller);
   }
@@ -378,6 +400,38 @@ class _CompanyAddressFieldState extends State<CompanyAddressField> {
                 inputKey: widget.inputKey,
                 showCanonicalEcho: false,
               ),
+              if (widget.controller.locationNeedsConfirm)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        kCompanyAddressNeedsConfirm.of(widget.language),
+                        key: companyAddressConfirmKey(widget.controller.fieldId),
+                        style: TextStyle(
+                          color: tokens.muted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (widget.controller.locationCandidate != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            key: companyAddressConfirmMapKey(
+                              widget.controller.fieldId,
+                            ),
+                            onPressed: () {
+                              widget.controller.confirmCandidateLocation();
+                            },
+                            child: Text(
+                              kCompanyAddressConfirmMap.of(widget.language),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               if (saved.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(bottom: 8),

@@ -381,6 +381,43 @@ void main() {
     expect(find.byKey(kCompanyCustomersSearchFieldKey), findsNothing);
   });
 
+  testWidgets('Rit plannen shows one photo card per vehicle with own seats', (
+    tester,
+  ) async {
+    await _pumpWorkspace(
+      tester,
+      size: const Size(800, 1280),
+      customers: customers(),
+      agenda: _FakeAgendaRepository(),
+      vehiclesLoader: () async => <Map<String, dynamic>>[
+        <String, dynamic>{
+          'vehicle_id': 'vh_tesla',
+          'name': 'Tesla',
+          'vehicle_type': 'sedan',
+          'passenger_capacity': 3,
+          'is_active': true,
+        },
+        <String, dynamic>{
+          'vehicle_id': 'vh_party',
+          'name': 'Party Limo',
+          'vehicle_type': 'premium',
+          'passenger_capacity': 16,
+          'is_active': true,
+        },
+      ],
+    );
+    await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_tesla')), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_party')), findsOneWidget);
+    expect(find.text('Tesla'), findsOneWidget);
+    expect(find.text('Party Limo'), findsOneWidget);
+    expect(find.text('3 passagiers'), findsOneWidget);
+    expect(find.text('16 passagiers'), findsOneWidget);
+    expect(find.textContaining('1–16'), findsNothing);
+    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsNothing);
+  });
+
   testWidgets('Rit plannen and cancel never write a booking', (tester) async {
     final agenda = _FakeAgendaRepository();
     await _pumpWorkspace(
@@ -392,7 +429,7 @@ void main() {
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaRideFormKey), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_sedan')), findsOneWidget);
     expect(find.byKey(kCompanyAgendaAirportModeKey), findsOneWidget);
     expect(find.byKey(kCompanyAgendaPlanRideKey), findsNothing);
     expect(find.byKey(kCompanyAgendaPlanCloseKey), findsOneWidget);
@@ -424,7 +461,7 @@ void main() {
     );
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_sedan')), findsOneWidget);
     expect(find.textContaining('2026-09'), findsNothing);
     await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
@@ -1095,10 +1132,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaAirportModeKey));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(kCompanyAgendaVehicleTypeSedanKey));
+    await tester.ensureVisible(find.byKey(companyAgendaVehicleOfferKey('vh_sedan')));
     await tester.pumpAndSettle();
-    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaVehicleTypeMinivanKey), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_sedan')), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_minivan')), findsOneWidget);
     expect(find.text(kCompanyAgendaAirportNeedsVehicle.of(AppLanguage.nl)), findsOneWidget);
     expect(find.byKey(kCompanyTripRouteToAirportKey), findsOneWidget);
     expect(find.text('Van de luchthaven'), findsOneWidget);
@@ -1112,7 +1149,7 @@ void main() {
     expect(find.textContaining('BRU'), findsWidgets);
     expect(find.byKey(kCompanyAgendaToFieldKey), findsNothing);
     expect(find.byKey(kCompanyAgendaFromFieldKey), findsOneWidget);
-    expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
+    expect(find.byKey(companyAgendaVehicleOfferKey('vh_sedan')), findsOneWidget);
     final save = tester.getRect(find.byKey(kCompanyAgendaSaveRideKey));
     expect(save.bottom, lessThanOrEqualTo(820.5));
   });

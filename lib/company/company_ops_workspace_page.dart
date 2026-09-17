@@ -52,6 +52,7 @@ import 'package:fluxidi_tracking/company/company_plan_ride_form.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_layout.dart';
 import 'package:fluxidi_tracking/company/company_plan_route_map.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_cards.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_offers.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/company/company_trip_route.dart';
@@ -837,7 +838,16 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         pickup: _fromAddress,
         dropoff: _toAddress,
       );
+      unawaited(_geocodeOwnedPlanAddresses());
+      return;
     }
+    _schedulePlanQuote();
+  }
+
+  Future<void> _geocodeOwnedPlanAddresses() async {
+    await companyAddressGeocodeIfNeeded(_fromAddress);
+    await companyAddressGeocodeIfNeeded(_toAddress);
+    if (!mounted) return;
     _schedulePlanQuote();
   }
 
@@ -1178,6 +1188,16 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     });
   }
 
+  int _clampPlanPassengers(int next) {
+    if (_planVehicleId.isEmpty) return next;
+    for (final vehicle in _vehicles) {
+      if (companyAgendaVehicleId(vehicle) != _planVehicleId) continue;
+      final seats = companyAgendaVehiclePassengerSeats(vehicle);
+      if (seats != null && seats > 0 && next > seats) return seats;
+    }
+    return next;
+  }
+
   Widget? _planVehicleOfferCards() {
     final offers = customerBookingVehicleOffers(
       vehicles: _vehicles,
@@ -1187,78 +1207,35 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           ?.toUtc(),
       durationMin: _planDurationMin ?? 30,
     );
-    if (offers.length < 2) return null;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final offer in offers)
-          SizedBox(
-            width: 148,
-            child: InkWell(
-              key: companyAgendaVehicleOfferKey(offer.vehicleId),
-              onTap: offer.available
-                  ? () {
-                      final category = classifyCompanyPlanVehicleCategory(
-                        offer.vehicle,
-                      );
-                      setState(() {
-                        _planVehicleId = offer.vehicleId;
-                        _planVehicleUserPicked = true;
-                        if (offer.driverId.isNotEmpty) {
-                          _planDriverId = offer.driverId;
-                          _planDriverUserPicked = true;
-                        }
-                        if (category != null) {
-                          _planVehicleCategory = category;
-                          _rideOptions = _rideOptions.copyWith(
-                            vehicleType: companyPlanVehicleCategoryWire(
-                              category,
-                            ),
-                          );
-                        }
-                      });
-                      _syncPlanAssignmentProposal();
-                      _schedulePlanQuote();
-                    }
-                  : null,
-              child: Opacity(
-                opacity: offer.available ? 1 : 0.55,
-                child: InputDecorator(
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: _planVehicleId == offer.vehicleId
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.outline,
-                        width: _planVehicleId == offer.vehicleId ? 2 : 1,
-                      ),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        customerBookingVehicleOfferTitle(
-                          offer: offer,
-                          language: _lang,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                      ),
-                      Text(
-                        customerBookingVehicleOfferCapacityLabel(
-                          offer: offer,
-                          language: _lang,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
+    if (offers.isEmpty) return null;
+    return CustomerBookingVehiclePhotoCardGrid(
+      offers: offers,
+      language: _lang,
+      selectedVehicleId: _planVehicleId,
+      cardKeyFor: companyAgendaVehicleOfferKey,
+      onSelected: (offer) {
+        final category = classifyCompanyPlanVehicleCategory(offer.vehicle);
+        final seats = offer.passengerSeats;
+        setState(() {
+          _planVehicleId = offer.vehicleId;
+          _planVehicleUserPicked = true;
+          if (offer.driverId.isNotEmpty) {
+            _planDriverId = offer.driverId;
+            _planDriverUserPicked = true;
+          }
+          if (category != null) {
+            _planVehicleCategory = category;
+            _rideOptions = _rideOptions.copyWith(
+              vehicleType: companyPlanVehicleCategoryWire(category),
+            );
+          }
+          if (seats != null && seats > 0 && _passengers > seats) {
+            _passengers = seats;
+          }
+        });
+        _syncPlanAssignmentProposal();
+        _schedulePlanQuote();
+      },
     );
   }
 
@@ -1337,7 +1314,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         );
       }
     });
-    _schedulePlanQuote();
+    unawaited(_geocodeOwnedPlanAddresses());
   }
 
   Future<void> _addPlanCustomer() async {
@@ -3242,11 +3219,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         ),
         passengers: _passengers,
         onPassengersChanged: (next) {
-          final type = next > kCompanyPlanSedanMaxPassengers
-              ? CompanyPlanVehicleType.minivan
-              : _planVehicleType;
+          final capped = _clampPlanPassengers(next);
+          final type = _planVehicleId.isNotEmpty
+              ? _planVehicleType
+              : (capped > kCompanyPlanSedanMaxPassengers
+                  ? CompanyPlanVehicleType.minivan
+                  : _planVehicleType);
           setState(() {
-            _passengers = next;
+            _passengers = capped;
             if (type != _planVehicleType) {
               _rideOptions = _rideOptions.copyWith(
                 vehicleType: companyPlanVehicleTypeWire(type),

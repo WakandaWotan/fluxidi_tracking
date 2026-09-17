@@ -1,5 +1,7 @@
 // COMPANY-CUSTOMER-OPS-P0
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
@@ -214,6 +216,7 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
         pickup: _pickup,
         dropoff: _dropoff,
       );
+      unawaited(_geocodeOwnedQuoteAddresses());
     }
     _price = TextEditingController(text: _initialQuotePriceText(existing));
     final existingCurrency = existing?.currency.trim() ?? '';
@@ -259,6 +262,12 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
         : 'incl';
     _pickup.addListener(_onAddressChanged);
     _dropoff.addListener(_onAddressChanged);
+  }
+
+  Future<void> _geocodeOwnedQuoteAddresses() async {
+    await companyAddressGeocodeIfNeeded(_pickup);
+    await companyAddressGeocodeIfNeeded(_dropoff);
+    if (mounted) setState(() {});
   }
 
   void _onAddressChanged() {

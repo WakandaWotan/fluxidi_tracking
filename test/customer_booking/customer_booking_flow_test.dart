@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_flow.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
 import 'package:fluxidi_tracking/payment/booking_billing_identity_form.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
@@ -127,6 +128,7 @@ Future<void> _pumpFlow(
   CustomerBookingQuoteClient? quotes,
   ThemeData? theme,
   CustomerProfile? profile,
+  CustomerBookingProfileGet? profileGet,
   AppLanguage language = AppLanguage.nl,
 }) async {
   addTearDown(() {
@@ -145,6 +147,7 @@ Future<void> _pumpFlow(
         quoteClient: quotes ?? _quotes(),
         autoResolveGps: autoResolveGps,
         profile: profile,
+        profileGet: profileGet,
       ),
       size: size,
       theme: theme,
@@ -1058,6 +1061,51 @@ void main() {
       expect(find.text('Alle luchthavens bekijken'), findsWidgets);
       expect(find.text('Boeking bevestigen'), findsWidgets);
     }
+  });
+
+  testWidgets('empty destination does not claim the company has no vehicles', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      language: AppLanguage.en,
+      profileGet: (uri) async {
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'ok': true,
+            'profile': <String, dynamic>{
+              'company_name': 'Fluxidi',
+              'vehicles': <Map<String, dynamic>>[],
+            },
+          }),
+          200,
+        );
+      },
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_fluxidi',
+          companyName: 'Fluxidi',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.scrollUntilVisible(
+      find.byKey(kCustomerBookingVehiclesNeedRideKey),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(kCustomerBookingVehiclesNeedRideKey), findsOneWidget);
+    expect(
+      find.text('This company has no bookable vehicle categories for this ride.'),
+      findsNothing,
+    );
+    expect(
+      find.text('This company has no suitable vehicles for this ride.'),
+      findsNothing,
+    );
+    expect(find.text('A driver will be assigned soon'), findsNothing);
   });
 
   testWidgets('Nu and Later sit under Particulier/Zakelijk and expose Datum/Tijd', (
