@@ -168,6 +168,10 @@ export function pickGeocodeFeature(features, query) {
   }
   const agreeing = list.filter((item) => featureAgreesWithQuery(item, query));
   if (agreeing.length) return agreeing[0];
+  if (!queryParts.number && wanted) {
+    const byPostcode = list.filter((item) => featurePostcode(item) === wanted);
+    if (byPostcode.length === 1) return byPostcode[0];
+  }
   if (wanted || queryParts.street || queryParts.number) return null;
   return list[0];
 }

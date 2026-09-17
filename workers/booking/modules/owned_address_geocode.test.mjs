@@ -57,3 +57,24 @@ test("Schorisse and Maarkedal are equivalent localities", () => {
   assert.equal(localitiesCompatible("Schorisse", "Maarkedal"), true);
   assert.equal(localitiesCompatible("Schorisse", "Ronse"), false);
 });
+
+test("an airport label without a house number can use the matching postcode feature", () => {
+  const bru = {
+    place_name: "Luchthaven Brussel-Nationaal, 1930 Zaventem, België",
+    center: [4.48444, 50.9014],
+    context: [{ id: "postcode.1930", text: "1930" }],
+  };
+  const picked = pickGeocodeFeature(
+    [bru],
+    "Brussels Airport (BRU), 1930 Zaventem, BE",
+  );
+  assert.equal(picked, bru);
+});
+
+test("a house letter still refuses a same-street number-only pin", () => {
+  const picked = pickGeocodeFeature(
+    [maarkedal48],
+    "Koekamerstraat 48A, 9688 Schorisse, BE",
+  );
+  assert.equal(picked, null);
+});

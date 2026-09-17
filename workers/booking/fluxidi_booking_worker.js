@@ -48675,8 +48675,14 @@ export default {
           return json({ ok: false, error: "partner profile not found" }, 404);
         }
         try {
-          const vehicles = await _loadVehicleInventory(env, { scope });
-          const driverIndex = await _loadDriverIndexRecord(env, scope);
+          const fleetScope = normalizeFleetTenantScope(scope);
+          const fleetRead = fleetScope.hasScope
+            ? await _loadFleetInventoryRawForScope(env, fleetScope)
+            : { vehiclesRaw: [] };
+          const vehicles = (Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [])
+            .map((entry) => _normalizeVehicleEntry(entry, { scope: fleetScope }))
+            .filter((vehicle) => vehicle && vehicle.is_active);
+          const driverIndex = await _loadDriverIndexRecord(env, fleetScope);
           const drivers = Object.values(driverIndex?.drivers || {});
           const offers = projectBookableVehicleOffers({
             vehicles,
@@ -84689,8 +84695,9 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
 
 async function _loadVehicleInventory(env, { scope = null } = {}) {
   if (!env.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
-  const fleetRead = scope?.hasScope
-    ? await _loadFleetInventoryRawForScope(env, scope)
+  const normalizedScope = scope ? normalizeFleetTenantScope(scope) : null;
+  const fleetRead = normalizedScope?.hasScope
+    ? await _loadFleetInventoryRawForScope(env, normalizedScope)
     : { vehiclesRaw: await (async () => {
       const raw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
       if (Array.isArray(raw)) return raw;
@@ -84698,7 +84705,6 @@ async function _loadVehicleInventory(env, { scope = null } = {}) {
       return [];
     })() };
   const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
-  const normalizedScope = scope?.hasScope ? normalizeFleetTenantScope(scope) : null;
   const driverAvailabilityById = new Map();
   if (normalizedScope?.hasScope) {
     try {

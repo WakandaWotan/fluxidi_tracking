@@ -83,6 +83,20 @@ test("passenger seats prefer passenger_capacity and do not invent a default", ()
   assert.equal(fleetPassengerSeats({}), null);
 });
 
+test("daytime offers hide Cadillac when only Wotan's night roster is linked", () => {
+  const pickupMs = Date.parse("2026-09-17T12:00:00.000Z"); // 14:00 Brussels
+  const offers = projectBookableVehicleOffers({
+    vehicles: [tesla(), cadillac()],
+    drivers: [christophe(), wotan()],
+    pickupMs,
+    durationMin: 40,
+    pax: 2,
+    nowMs: Date.parse("2026-09-17T10:00:00.000Z"),
+  });
+  const cadillacOffer = offers.find((row) => row.vehicle_id === "vh_cadillac");
+  assert.equal(cadillacOffer.available, false);
+});
+
 test("22:00 night shift offers Cadillac+Wotan and hides Tesla+Christophe", () => {
   const pickupMs = Date.parse("2026-09-18T20:00:00.000Z"); // 22:00 Brussels
   const offers = projectBookableVehicleOffers({
