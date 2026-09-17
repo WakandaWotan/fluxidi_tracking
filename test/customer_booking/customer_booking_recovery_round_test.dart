@@ -18,6 +18,47 @@ void main() {
     expect(limousineLocalityNamesCompatible('Schorisse', 'Ronse'), isFalse);
   });
 
+  test('quote coords stay on 48A and never follow 48 or Ronse', () {
+    const current = 'Koekamerstraat 48A, 9688 Schorisse, BE';
+    expect(
+      customerBookingQuotedLabelMatches(
+        current,
+        'Koekamerstraat 48A, 9688 Maarkedal',
+      ),
+      isTrue,
+    );
+    expect(
+      customerBookingQuotedLabelMatches(
+        current,
+        'Koekamerstraat 48, 9688 Maarkedal, België',
+      ),
+      isFalse,
+    );
+    expect(
+      customerBookingQuotedLabelMatches(
+        current,
+        'Koekamerstraat - Rue Cocambre 48a, 9600 Ronse, België',
+      ),
+      isFalse,
+    );
+    expect(
+      customerBookingReuseQuotedCoordinate(
+        currentLabel: current,
+        quotedLabel: 'Koekamerstraat 48, 9688 Maarkedal, België',
+        quoted: 50.77205,
+      ),
+      isNull,
+    );
+    expect(
+      customerBookingReuseQuotedCoordinate(
+        currentLabel: current,
+        quotedLabel: current,
+        quoted: 50.8241,
+      ),
+      50.8241,
+    );
+  });
+
   test('48A Schorisse does not accept 48 Maarkedal as a proven pin', () {
     const query = 'Koekamerstraat 48A, 9688 Schorisse, BE';
     final resolved = limousineResolveOwnedAddress(
@@ -290,7 +331,7 @@ void main() {
     );
   });
 
-  test('late geocode does not wipe a confirmed pin', () {
+  test('late geocode does not wipe a confirmed pin', () async {
     final lookup = LimousinePlaceLookup(
       searchOverride: (query, language) async {
         return const LimousinePlaceLookupResult(
@@ -341,6 +382,59 @@ void main() {
     controller.applyOwnedResolution(resolved);
     expect(controller.value.hasCoordinates, isTrue);
     expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.lat, 50.77205);
+    controller.onTextChanged(query);
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.lat, 50.77205);
+    await controller.retry();
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.displayText, contains('48A'));
+    expect(controller.value.lat, 50.77205);
+  });
+
+  test('pre-book geocode does not replace 48A with 48 or Ronse', () async {
+    final lookup = LimousinePlaceLookup(
+      searchOverride: (query, language) async {
+        return const LimousinePlaceLookupResult(
+          suggestions: <LimousinePlaceSuggestion>[
+            LimousinePlaceSuggestion(
+              label: 'Koekamerstraat 48, 9688 Maarkedal, België',
+              lat: 50.77205,
+              lon: 3.66942,
+              placeType: 'address',
+              postcode: '9688',
+              locality: 'Maarkedal',
+            ),
+            LimousinePlaceSuggestion(
+              label: 'Koekamerstraat - Rue Cocambre 48a, 9600 Ronse, België',
+              lat: 50.770403,
+              lon: 3.672568,
+              placeType: 'address',
+              postcode: '9600',
+              locality: 'Ronse',
+            ),
+          ],
+        );
+      },
+    );
+    final controller = LimousineAddressFieldController(
+      lookup: lookup,
+      fieldId: 'pickup',
+    );
+    addTearDown(controller.dispose);
+    const query = 'Koekamerstraat 48A, 9688 Schorisse, BE';
+    controller.acceptCopy(customerBookingAddressFromText(query));
+    final resolved = await customerBookingGeocodeIfNeeded(controller);
+    expect(controller.value.displayText, contains('48A'));
+    expect(controller.value.displayText, contains('Schorisse'));
+    expect(controller.value.hasCoordinates, isFalse);
+    expect(resolved.needsConfirm, isTrue);
+    expect(resolved.candidate?.label.contains('Ronse'), isFalse);
+    controller.confirmCandidateLocation();
+    expect(controller.value.displayText, contains('48A'));
+    await customerBookingGeocodeIfNeeded(controller);
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.displayText, contains('48A'));
     expect(controller.value.lat, 50.77205);
   });
 

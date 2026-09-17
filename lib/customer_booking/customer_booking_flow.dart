@@ -152,6 +152,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   bool _editingContact = false;
   int _quoteSeq = 0;
   CompanyPlanQuoteResult? _quote;
+  CompanyPlanQuoteRequest? _quoteRequest;
   String? _quoteError;
   bool _quoteLoading = false;
   String? _successId;
@@ -401,7 +402,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         ? _pickup.textController.text.trim()
         : _pickup.value.displayText.trim();
     try {
-      final stored = await CustomerConfirmedLocationStore.instance.readFor(query);
+      final stored = await CustomerConfirmedLocationStore.instance
+          .readFor(query)
+          .timeout(const Duration(milliseconds: 200), onTimeout: () => null);
       if (!mounted || seq != _pickupGeocodeSeq) return;
       if (stored != null &&
           stored.isUsable &&
@@ -459,7 +462,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
 
   Future<void> _restoreConfirmedPickup(String label) async {
     try {
-      final stored = await CustomerConfirmedLocationStore.instance.readFor(label);
+      final stored = await CustomerConfirmedLocationStore.instance
+          .readFor(label)
+          .timeout(const Duration(milliseconds: 200), onTimeout: () => null);
       if (!mounted || stored == null || !stored.isUsable) return;
       if (!customerConfirmedLocationMatches(_pickup.value.displayText, stored) &&
           !customerConfirmedLocationMatches(label, stored)) {
@@ -548,8 +553,19 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _onDraftChanged();
   }
 
+  void _clearCurrentQuote() {
+    _quote = null;
+    _quoteRequest = null;
+    _quoteError = null;
+  }
+
   void _onDraftChanged() {
     _quoteDebounce?.cancel();
+    final hadQuote = _quote != null || _quoteRequest != null;
+    if (hadQuote) {
+      _clearCurrentQuote();
+      if (mounted) setState(() {});
+    }
     _quoteDebounce = Timer(kCompanyPlanQuoteDebounce, () {
       unawaited(_refreshQuote());
       unawaited(_refreshAvailability());
@@ -717,22 +733,40 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
+  String _quotedRequestLabel(String key) {
+    final raw = _quoteRequest?.body[key];
+    return raw == null ? '' : raw.toString().trim();
+  }
+
   LimousineAddressValue _bookAddress(
     LimousineAddressFieldController field, {
     double? fallbackLat,
     double? fallbackLon,
+    String quotedLabel = '',
   }) {
     final value = _quoteAddress(field);
-    if (value.hasCoordinates || fallbackLat == null || fallbackLon == null) {
-      return value;
-    }
     final label = value.routeText.trim().isNotEmpty
         ? value.routeText
         : value.displayText;
+    final lat = customerBookingReuseQuotedCoordinate(
+      currentLabel: label,
+      quotedLabel: quotedLabel,
+      current: value.lat,
+      quoted: fallbackLat,
+    );
+    final lon = customerBookingReuseQuotedCoordinate(
+      currentLabel: label,
+      quotedLabel: quotedLabel,
+      current: value.lon,
+      quoted: fallbackLon,
+    );
+    if (value.hasCoordinates || lat == null || lon == null) {
+      return value;
+    }
     return customerBookingAddressFromText(
       label,
-      latitude: fallbackLat,
-      longitude: fallbackLon,
+      latitude: lat,
+      longitude: lon,
     );
   }
 
@@ -742,8 +776,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     final seq = ++_quoteSeq;
     if (_pickupNeedsConfirm) {
       setState(() {
-        _quote = null;
-        _quoteError = null;
+        _clearCurrentQuote();
         _quoteLoading = false;
       });
       unawaited(_refreshAvailability());
@@ -751,7 +784,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     }
     if (!_hasChosenCompany) {
       setState(() {
-        _quote = null;
+        _clearCurrentQuote();
         _quoteError = kCustomerBookingIssueNeedCompany;
         _quoteLoading = false;
       });
@@ -786,7 +819,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     if (request == null) {
       if (!mounted || seq != _quoteSeq) return;
       setState(() {
-        _quote = null;
+        _clearCurrentQuote();
         _quoteError = customerBookingIncompleteQuoteIssue(
           from: _quoteAddress(_pickup),
           to: _quoteAddress(_dropoff),
@@ -801,15 +834,16 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() {
       _quoteLoading = true;
       _quoteError = null;
-      _quote = null;
+      _clearCurrentQuote();
     });
     try {
       final result = await _quotes.quote(request);
       if (!mounted || seq != _quoteSeq) return;
-      _absorbQuoteCoordinates(result);
+      _absorbQuoteCoordinates(result, request);
       if (!mounted || seq != _quoteSeq) return;
       setState(() {
         _quote = result;
+        _quoteRequest = request;
         _quoteLoading = false;
         _quoteError = null;
       });
@@ -818,7 +852,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       if (!mounted || seq != _quoteSeq) return;
       debugPrint('[CUSTOMER_BOOKING][QUOTE][ERR] $error');
       setState(() {
-        _quote = null;
+        _clearCurrentQuote();
         _quoteLoading = false;
         _quoteError = customerBookingQuoteIssueFromRaw(error.toString());
       });
@@ -847,13 +881,21 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() => list.add(controller));
   }
 
-  void _absorbQuoteCoordinates(CompanyPlanQuoteResult result) {
+  void _absorbQuoteCoordinates(
+    CompanyPlanQuoteResult result,
+    CompanyPlanQuoteRequest request,
+  ) {
     final pickupText = _pickup.value.displayText;
+    final quotedFrom = (request.body['from'] ?? '').toString();
+    final quotedTo = (request.body['to'] ?? '').toString();
+    final pickupHasHouse = limousineParseStreetHouse(pickupText).hasNumber;
     final pickupHasLocality = limousineAddressQueryPostcode(pickupText) != null ||
         limousineAddressQueryLocality(pickupText) != null;
     if (!_pickup.value.hasCoordinates &&
         !_pickupOwned &&
+        !pickupHasHouse &&
         !pickupHasLocality &&
+        customerBookingQuotedLabelMatches(pickupText, quotedFrom) &&
         result.pickupLat != null &&
         result.pickupLon != null) {
       _pickup.acceptCopy(
@@ -863,7 +905,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         ),
       );
     }
+    final dropoffText = _dropoff.value.displayText;
     if (!_dropoff.value.hasCoordinates &&
+        customerBookingQuotedLabelMatches(dropoffText, quotedTo) &&
         result.dropoffLat != null &&
         result.dropoffLon != null) {
       _dropoff.acceptCopy(
@@ -978,8 +1022,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       _availabilityLoading = false;
       _selectedVehicleId = null;
       _assignedDriver = const CustomerBookingAssignedDriver();
-      _quote = null;
-      _quoteError = null;
+      _clearCurrentQuote();
       _submitError = null;
       _quotes = CompanyPlanQuoteCoordinator(transport: _runQuote);
       _idempotencyKey =
@@ -1092,11 +1135,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           _pickup,
           fallbackLat: _quote?.pickupLat,
           fallbackLon: _quote?.pickupLon,
+          quotedLabel: _quotedRequestLabel('from'),
         ),
         to: _bookAddress(
           _dropoff,
           fallbackLat: _quote?.dropoffLat,
           fallbackLon: _quote?.dropoffLon,
+          quotedLabel: _quotedRequestLabel('to'),
         ),
         pickupLocal: pickupAt,
         options: _options,
@@ -1910,6 +1955,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                 key: kCustomerBookingInspectPickupKey,
                 onPressed: _inspectPickupOnMap,
                 child: Text(_t(kCustomerBookingInspectPickup)),
+              ),
+              TextButton(
+                key: kCustomerBookingAddressConfirmKey,
+                onPressed: _confirmPickupOnMap,
+                child: Text(_t(kCustomerBookingAddressConfirmMap)),
               ),
             ],
           ),

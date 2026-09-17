@@ -213,6 +213,8 @@ class LimousineAddressFieldController extends ChangeNotifier {
     if (locationUserConfirmed && value.hasCoordinates) {
       return;
     }
+    _debounce?.cancel();
+    _requestId += 1;
     acceptCopy(
       resolved.value,
       userConfirmed: !resolved.needsConfirm && resolved.value.hasCoordinates,
@@ -226,6 +228,8 @@ class LimousineAddressFieldController extends ChangeNotifier {
   }
 
   void confirmCandidateLocation() {
+    _debounce?.cancel();
+    _requestId += 1;
     final candidate = locationCandidate;
     final kept = value.displayText.trim().isEmpty
         ? textController.text.trim()
@@ -254,6 +258,12 @@ class LimousineAddressFieldController extends ChangeNotifier {
   }
 
   void onTextChanged(String raw) {
+    if (raw.trim() == value.displayText.trim() &&
+        (locationUserConfirmed ||
+            locationNeedsConfirm ||
+            locationCandidate != null)) {
+      return;
+    }
     _debounce?.cancel();
     final requestId = ++_requestId;
     currentLocationFailure = null;
@@ -308,6 +318,9 @@ class LimousineAddressFieldController extends ChangeNotifier {
     if (_disposed ||
         requestId != _requestId ||
         textController.text.trim() != raw.trim()) {
+      return;
+    }
+    if (locationUserConfirmed && value.hasCoordinates) {
       return;
     }
     loading = false;

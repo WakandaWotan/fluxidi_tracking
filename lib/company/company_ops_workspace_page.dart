@@ -30,6 +30,7 @@ import 'package:fluxidi_tracking/company/company_customers_repository_factory.da
     as customer_ops_factory;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_confirmed_location.dart';
 import 'package:fluxidi_tracking/nearby/public_partner_market.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
 import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
@@ -214,6 +215,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   late final CompanyPlanQuoteCoordinator _planQuote;
   Timer? _planQuoteDebounce;
   CompanyPlanQuoteResult? _planQuoteResult;
+  String _planQuotedFrom = '';
+  String _planQuotedTo = '';
   bool _planQuoteLoading = false;
   String? _planQuoteError;
   bool _manualPriceLocked = false;
@@ -330,6 +333,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     setState(() {
       _fixedPriceSnapshot = null;
       _planQuoteResult = null;
+      _planQuotedFrom = '';
+      _planQuotedTo = '';
       _planQuoteError = null;
     });
     _schedulePlanQuote();
@@ -344,6 +349,19 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   void _schedulePlanQuote() {
     _planQuoteDebounce?.cancel();
     if (_draft == null) return;
+    final from = _fromAddress.value.routeText.trim().isNotEmpty
+        ? _fromAddress.value.routeText.trim()
+        : _fromAddress.value.displayText.trim();
+    final to = _toAddress.value.routeText.trim().isNotEmpty
+        ? _toAddress.value.routeText.trim()
+        : _toAddress.value.displayText.trim();
+    if (_planQuoteResult != null &&
+        (!customerBookingQuotedLabelMatches(from, _planQuotedFrom) ||
+            !customerBookingQuotedLabelMatches(to, _planQuotedTo))) {
+      _planQuoteResult = null;
+      _planQuotedFrom = '';
+      _planQuotedTo = '';
+    }
     _planQuoteDebounce = Timer(kCompanyPlanQuoteDebounce, () {
       unawaited(_refreshPlanQuote());
       unawaited(_refreshPlanAvailability());
@@ -427,6 +445,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       if (!mounted) return;
       setState(() {
         _planQuoteResult = _planQuote.cached;
+        _planQuotedFrom = (request.body['from'] ?? '').toString().trim();
+        _planQuotedTo = (request.body['to'] ?? '').toString().trim();
         _planQuoteLoading = false;
         _planQuoteError = null;
       });
@@ -477,6 +497,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       }
       setState(() {
         _planQuoteResult = result;
+        _planQuotedFrom = (request.body['from'] ?? '').toString().trim();
+        _planQuotedTo = (request.body['to'] ?? '').toString().trim();
         _planQuoteLoading = false;
         _planQuoteError = null;
         _fixedPriceSnapshot = result.fixedPriceSnapshot;
@@ -1585,16 +1607,48 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
         fromAddress: from,
         toAddress: to,
-        fromLat: fromValue.lat ?? _planQuoteResult?.pickupLat,
-        fromLon: fromValue.lon ?? _planQuoteResult?.pickupLon,
+        fromLat: customerBookingReuseQuotedCoordinate(
+          currentLabel: from,
+          quotedLabel: _planQuotedFrom,
+          current: fromValue.lat,
+          quoted: _planQuoteResult?.pickupLat,
+        ),
+        fromLon: customerBookingReuseQuotedCoordinate(
+          currentLabel: from,
+          quotedLabel: _planQuotedFrom,
+          current: fromValue.lon,
+          quoted: _planQuoteResult?.pickupLon,
+        ),
         fromPlaceId: fromSelected ? (fromValue.placeId ?? '') : '',
-        toLat: toValue.lat ?? _planQuoteResult?.dropoffLat,
-        toLon: toValue.lon ?? _planQuoteResult?.dropoffLon,
+        toLat: customerBookingReuseQuotedCoordinate(
+          currentLabel: to,
+          quotedLabel: _planQuotedTo,
+          current: toValue.lat,
+          quoted: _planQuoteResult?.dropoffLat,
+        ),
+        toLon: customerBookingReuseQuotedCoordinate(
+          currentLabel: to,
+          quotedLabel: _planQuotedTo,
+          current: toValue.lon,
+          quoted: _planQuoteResult?.dropoffLon,
+        ),
         toPlaceId: toSelected ? (toValue.placeId ?? '') : '',
         clearFromCoords:
-            fromValue.lat == null && _planQuoteResult?.pickupLat == null,
+            fromValue.lat == null &&
+            customerBookingReuseQuotedCoordinate(
+                  currentLabel: from,
+                  quotedLabel: _planQuotedFrom,
+                  quoted: _planQuoteResult?.pickupLat,
+                ) ==
+                null,
         clearToCoords:
-            toValue.lat == null && _planQuoteResult?.dropoffLat == null,
+            toValue.lat == null &&
+            customerBookingReuseQuotedCoordinate(
+                  currentLabel: to,
+                  quotedLabel: _planQuotedTo,
+                  quoted: _planQuoteResult?.dropoffLat,
+                ) ==
+                null,
         stops: _outboundStops.routeTexts,
         returnStops: _returnStops.routeTexts,
         passengers: _passengers,

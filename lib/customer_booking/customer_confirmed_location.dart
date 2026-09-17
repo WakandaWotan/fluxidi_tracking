@@ -35,6 +35,32 @@ bool customerConfirmedLocationMatches(String label, CustomerConfirmedLocation st
   return left.isNotEmpty && left == right;
 }
 
+/// Quote coordinates may be reused only for the same house (street, number,
+/// letter, postcode). 48A Schorisse must not inherit 48 Maarkedal or Ronse.
+bool customerBookingQuotedLabelMatches(String currentLabel, String quotedLabel) {
+  final current = currentLabel.trim();
+  final quoted = quotedLabel.trim();
+  if (current.isEmpty || quoted.isEmpty) return false;
+  if (current == quoted) return true;
+  final left = customerConfirmedLocationKey(current);
+  final right = customerConfirmedLocationKey(quoted);
+  return left.isNotEmpty && left == right;
+}
+
+double? customerBookingReuseQuotedCoordinate({
+  required String currentLabel,
+  required String quotedLabel,
+  double? current,
+  double? quoted,
+}) {
+  if (current != null && current.isFinite) return current;
+  if (quoted == null || !quoted.isFinite) return null;
+  if (!customerBookingQuotedLabelMatches(currentLabel, quotedLabel)) {
+    return null;
+  }
+  return quoted;
+}
+
 class CustomerConfirmedLocationStore {
   CustomerConfirmedLocationStore._();
   static final CustomerConfirmedLocationStore instance =
