@@ -17,14 +17,21 @@ LimousineAddressValue customerBookingAddressFromText(
 }) {
   final label = text.trim();
   if (label.isEmpty) return const LimousineAddressValue();
+  final hasCoords =
+      latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite;
   return LimousineAddressValue(
     displayText: label,
     canonicalLabel: label,
-    lat: latitude,
-    lon: longitude,
-    acceptance: selected
+    lat: hasCoords ? latitude : null,
+    lon: hasCoords ? longitude : null,
+    acceptance: hasCoords
         ? LimousineAddressAcceptance.selected
-        : LimousineAddressAcceptance.manualFallback,
+        : (selected
+              ? LimousineAddressAcceptance.incomplete
+              : LimousineAddressAcceptance.manualFallback),
   );
 }
 

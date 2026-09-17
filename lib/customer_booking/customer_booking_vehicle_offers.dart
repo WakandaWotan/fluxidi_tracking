@@ -50,6 +50,8 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
   Set<String> availableVehicleIds = const <String>{},
   Set<String> unavailableVehicleIds = const <String>{},
   Map<String, String> unavailableReasons = const <String, String>{},
+  bool availabilityResolved = false,
+  bool availabilityFailed = false,
 }) {
   final mergedDrivers = <Map<String, dynamic>>[
     ...drivers,
@@ -111,10 +113,23 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
     } else if (linked.isNotEmpty) {
       onDuty = linked.first;
     }
-    final serverKnown = availableVehicleIds.isNotEmpty;
+    if (availabilityFailed) {
+      offers.add(
+        CustomerBookingVehicleOffer(
+          vehicle: vehicle,
+          available: false,
+          reason: 'availability_load_failed',
+          passengerSeats: seats,
+        ),
+      );
+      continue;
+    }
+    final serverKnown = availabilityResolved ||
+        availableVehicleIds.isNotEmpty ||
+        unavailableVehicleIds.isNotEmpty;
     final available = serverKnown
         ? availableVehicleIds.contains(id)
-        : pickupUtc == null || linked.isEmpty || onDuty != null;
+        : pickupUtc == null || (linked.isNotEmpty && onDuty != null);
     offers.add(
       CustomerBookingVehicleOffer(
         vehicle: vehicle,

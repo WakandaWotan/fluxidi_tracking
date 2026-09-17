@@ -165,7 +165,11 @@ class LimousineAddressFieldController extends ChangeNotifier {
   }
 
   void acceptCopy(LimousineAddressValue other) {
-    final text = other.routeText;
+    final text = other.displayText.trim().isNotEmpty
+        ? other.displayText.trim()
+        : (other.canonicalLabel.trim().isNotEmpty
+              ? other.canonicalLabel.trim()
+              : other.routeText);
     textController.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: text.length),

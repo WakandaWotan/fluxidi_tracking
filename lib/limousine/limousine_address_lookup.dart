@@ -226,11 +226,18 @@ String limousineSuggestionResolvedLocality(LimousinePlaceSuggestion suggestion) 
   return limousineAddressQueryLocality(suggestion.label) ?? '';
 }
 
+const Map<String, Set<String>> kBelgianLocalityEquivalents = {
+  'schorisse': {'maarkedal'},
+  'maarkedal': {'schorisse'},
+};
+
 bool limousineLocalityNamesCompatible(String left, String right) {
   final a = limousineFoldAddressToken(left);
   final b = limousineFoldAddressToken(right);
   if (a.isEmpty || b.isEmpty) return true;
-  return a == b || a.contains(b) || b.contains(a);
+  if (a == b || a.contains(b) || b.contains(a)) return true;
+  final aliases = kBelgianLocalityEquivalents[a];
+  return aliases != null && aliases.contains(b);
 }
 
 class LimousineStreetHouse {
@@ -313,6 +320,16 @@ bool limousineSuggestionAgreesWithQuery(
     if (queryParts.hasLetter && suggestionParts.letter != queryParts.letter) {
       return false;
     }
+  }
+  final queryLocality = limousineAddressQueryLocality(query);
+  final suggestionLocality = limousineSuggestionResolvedLocality(suggestion);
+  if (queryLocality != null &&
+      suggestionLocality.isNotEmpty &&
+      !limousineLocalityNamesCompatible(queryLocality, suggestionLocality) &&
+      (queryPostcode == null ||
+          suggestionPostcode.isEmpty ||
+          suggestionPostcode != queryPostcode)) {
+    return false;
   }
   if (queryPostcode == null && queryParts.street.isEmpty) {
     final queryLocality = limousineAddressQueryLocality(query);
@@ -510,13 +527,13 @@ LimousineOwnedAddressResolution limousineResolveOwnedAddress({
   ];
   if (nearMiss.isNotEmpty) {
     return LimousineOwnedAddressResolution(
-      value: limousineOwnedAddressValue(owned, selected: false),
+      value: limousineOwnedAddressValue(owned, selected: true),
       needsConfirm: true,
       candidate: nearMiss.first,
     );
   }
   return LimousineOwnedAddressResolution(
-    value: limousineOwnedAddressValue(owned, selected: false),
+    value: limousineOwnedAddressValue(owned, selected: true),
     needsConfirm: true,
   );
 }

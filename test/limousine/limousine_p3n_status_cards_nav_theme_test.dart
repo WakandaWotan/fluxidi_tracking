@@ -366,11 +366,7 @@ void main() {
       expect(labels.contains('Boek een limousine'), isFalse);
     });
 
-    test('home card visibility is only the dart-define gate', () {
-      expect(
-        LimousineCustomerEntryContract.isVisible,
-        kLimousineMarketplaceCustomerEntryEnabled,
-      );
+    test('home card stays visible independent of one company setting', () {
       expect(kLimousineMarketplaceCustomerEntryEnabled, isFalse);
       final home = File(
         'lib/main_parts/customer_home_page.dart',
@@ -382,7 +378,7 @@ void main() {
         body.contains(
           'if (!LimousineCustomerEntryContract.isVisible) return null;',
         ),
-        isTrue,
+        isFalse,
       );
       expect(body.contains('appLanguageNotifier'), isFalse);
       expect(body.contains('customerThemeNotifier'), isFalse);
@@ -409,7 +405,7 @@ void main() {
         'lib/main_parts/customer_home_page.dart',
       ).readAsStringSync();
       expect(home.contains('if (_limousineCustomerCard('), isTrue);
-      expect(home.contains('LimousineCustomerEntryContract.isVisible'), isTrue);
+      expect(home.contains('_openLimousineFlow'), isTrue);
       expect(
         home.contains('kLimousineMarketplaceCustomerEntryEnabled'),
         isFalse,

@@ -15,6 +15,7 @@ import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'limousine/limousine_service_capability.dart';
+import 'nearby/public_company_presentation.dart';
 import 'nearby/public_fixed_prices.dart';
 import 'nearby/public_fixed_prices_page.dart';
 import 'nearby/stap3_flow_keys.dart';
@@ -1356,6 +1357,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     required String logoUrl,
     required String companyName,
     required String tagline,
+    required PublicCompanyPresentation presentation,
   }) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
@@ -1443,6 +1445,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                PublicCompanyPresentationBanner(presentation: presentation),
                 if (tagline.isNotEmpty)
                   Text(
                     tagline,
@@ -1475,6 +1478,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     required String logoUrl,
     required String companyName,
     required String tagline,
+    required PublicCompanyPresentation presentation,
     required TabletPartnerProfileHeroSplit split,
   }) {
     final heroImage = NetworkImage(heroPhotoUrl.trim());
@@ -1546,6 +1550,9 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           ),
                         ),
                       ],
+                      PublicCompanyPresentationBanner(
+                        presentation: presentation,
+                      ),
                       if (tagline.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
@@ -1586,6 +1593,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     final companyName = publicPartnerDisplayName(
       p,
       fallback: widget.companyNameFallback,
+    );
+    final presentation = publicCompanyPresentationFrom(
+      p,
+      language: appConfig.currentLanguage,
     );
     final fixedPrices = publicFixedPricesFromProfile(p);
     final tagline = _localizePublicDefaultTagline(
@@ -1894,6 +1905,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                   logoUrl: logoUrl,
                                   companyName: companyName,
                                   tagline: tagline,
+                                  presentation: presentation,
                                   split: tabletHero,
                                 );
                               }
@@ -1902,6 +1914,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 logoUrl: logoUrl,
                                 companyName: companyName,
                                 tagline: tagline,
+                                presentation: presentation,
                               );
                             },
                           )

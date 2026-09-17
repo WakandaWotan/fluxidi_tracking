@@ -385,8 +385,13 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
     distanceKm: _quoteMoney(raw['distance_km']),
     durationMin: _quoteMinutes(raw['duration_min']),
     priceInclVat: totalPrice ?? outboundPrice,
-    priceExVat: _quoteMoney(raw['price_ex_vat']),
-    priceVat: _quoteMoney(raw['price_vat']),
+    priceExVat: _quoteMoney(raw['price_ex_vat']) ??
+        _quoteMoney(raw['price_excl_vat']) ??
+        parseCompanyPlanQuoteBreakdown(raw['breakdown'] ?? raw['pricing'])
+            ?.totalEx,
+    priceVat: _quoteMoney(raw['price_vat']) ??
+        parseCompanyPlanQuoteBreakdown(raw['breakdown'] ?? raw['pricing'])
+            ?.vatAmount,
     currency: (raw['currency']?.toString().trim().isNotEmpty == true)
         ? raw['currency'].toString().trim()
         : 'EUR',
@@ -771,6 +776,7 @@ String companyPlanQuoteFingerprint({
   List<LimousineAddressValue> returnStops = const <LimousineAddressValue>[],
   bool returnEnabled = false,
   bool whenNow = false,
+  String vehicleId = '',
 }) {
   String coord(LimousineAddressValue value) {
     final lat = value.lat;
@@ -805,6 +811,7 @@ String companyPlanQuoteFingerprint({
     if (returnEnabled) coord(returnTo ?? const LimousineAddressValue()),
     for (final stop in stops) coord(stop),
     for (final stop in returnStops) 'r:${coord(stop)}',
+    vehicleId.trim(),
   ].join('|');
 }
 
@@ -822,6 +829,7 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
   bool returnEnabled = false,
   String currency = 'EUR',
   bool whenNow = false,
+  String vehicleId = '',
 }) {
   if (!companyPlanAddressIsQuoteReady(from) ||
       !companyPlanAddressIsQuoteReady(to) ||
@@ -841,6 +849,7 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     returnStops: returnStops,
     returnEnabled: returnEnabled,
     whenNow: whenNow,
+    vehicleId: vehicleId,
   );
   final stopTexts = [
     for (final stop in stops)
@@ -894,6 +903,10 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
         'return_to_lng': returnTo.lon,
       },
     if (returnStopTexts.isNotEmpty) 'return_stops': returnStopTexts,
+    if (vehicleId.trim().isNotEmpty) ...<String, dynamic>{
+      'vehicle_id': vehicleId.trim(),
+      'preferred_vehicle_id': vehicleId.trim(),
+    },
   };
   if (whenNow) {
     body.addAll(companyPlanWhenWireFields(whenNow: true));

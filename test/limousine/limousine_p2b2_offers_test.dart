@@ -599,7 +599,8 @@ void main() {
       final home = File(
         'lib/main_parts/customer_home_page.dart',
       ).readAsStringSync();
-      expect(home.contains('LimousineCustomerEntryContract.isVisible'), isTrue);
+      expect(home.contains('_limousineCustomerCard'), isTrue);
+      expect(home.contains('_openLimousineFlow'), isTrue);
     });
   });
 }

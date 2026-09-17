@@ -71,6 +71,12 @@ const Key kCustomerBookingCompanyLockKey = Key('customer_booking_company_lock');
 const Key kCustomerBookingCompanyBannerKey = Key(
   'customer_booking_company_banner',
 );
+const Key kCustomerBookingExampleBadgeKey = Key(
+  'customer_booking_example_badge',
+);
+const Key kCustomerBookingExampleNoticeKey = Key(
+  'customer_booking_example_notice',
+);
 const Key kCustomerBookingCompanyChangeKey = Key(
   'customer_booking_company_change',
 );

@@ -81,6 +81,46 @@ void main() {
     );
   });
 
+  test('daytime Wotan night shift does not make Cadillac bookable', () {
+    final thursdayAfternoon = DateTime.utc(2026, 9, 17, 11, 0);
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[cadillac],
+      drivers: <Map<String, dynamic>>[wotan],
+      passengers: 1,
+      pickupUtc: thursdayAfternoon,
+      availabilityResolved: true,
+      availableVehicleIds: const <String>{},
+      unavailableVehicleIds: const <String>{'vh_cadillac'},
+      unavailableReasons: const <String, String>{
+        'vh_cadillac': 'assignment_driver_outside_hours',
+      },
+    );
+    expect(offers.single.vehicleId, 'vh_cadillac');
+    expect(offers.single.available, isFalse);
+  });
+
+  test('availability load failure is not treated as available', () {
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[cadillac],
+      drivers: <Map<String, dynamic>>[wotan],
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 17, 11, 0),
+      availabilityFailed: true,
+    );
+    expect(offers.single.available, isFalse);
+    expect(offers.single.reason, 'availability_load_failed');
+  });
+
+  test('empty linked drivers do not grant daytime availability', () {
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[cadillac],
+      drivers: const <Map<String, dynamic>>[],
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 17, 11, 0),
+    );
+    expect(offers.single.available, isFalse);
+  });
+
   test('server unavailable id hides Tesla while Cadillac stays bookable', () {
     final night = DateTime.utc(2026, 9, 17, 20, 0); // Thursday 22:00 Brussels
     final offers = customerBookingVehicleOffers(

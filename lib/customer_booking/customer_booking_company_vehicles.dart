@@ -122,12 +122,78 @@ class CustomerBookingCompanySnapshot {
   const CustomerBookingCompanySnapshot({
     this.companyName = '',
     this.vehicles = const <Map<String, dynamic>>[],
+    this.drivers = const <Map<String, dynamic>>[],
     this.payment = const BookingPaymentCapability.unavailable(),
+    this.limousineOffered = false,
+    this.profile = const <String, dynamic>{},
   });
 
   final String companyName;
   final List<Map<String, dynamic>> vehicles;
+  final List<Map<String, dynamic>> drivers;
   final BookingPaymentCapability payment;
+  final bool limousineOffered;
+  final Map<String, dynamic> profile;
+}
+
+List<Map<String, dynamic>> customerBookingDriversFromProfile(
+  Map<String, dynamic> profile,
+) {
+  final raw = profile['drivers'];
+  if (raw is! List) return const <Map<String, dynamic>>[];
+  return [
+    for (final item in raw)
+      if (item is Map) Map<String, dynamic>.from(item),
+  ];
+}
+
+bool customerBookingProfileOffersLimousine(Map<String, dynamic> profile) {
+  if (profile['limousine_available'] == true ||
+      profile['limousine_service_enabled'] == true) {
+    return true;
+  }
+  final services = profile['services'];
+  if (services is List &&
+      services.any((item) => item.toString().trim().toLowerCase() == 'limousine')) {
+    return true;
+  }
+  final projection = profile['limousine_projection'];
+  if (projection is Map &&
+      (projection['limousine_available'] == true ||
+          projection['limousine_service_enabled'] == true)) {
+    return true;
+  }
+  return false;
+}
+
+bool customerBookingVehicleIsLimousineOffer(Map<String, dynamic> vehicle) {
+  if (publicPartnerVehicleAssignedToLimousine(vehicle)) return true;
+  final token = [
+    vehicle['name'],
+    vehicle['display_name'],
+    vehicle['vehicle_type'],
+    vehicle['vehicleType'],
+    vehicle['model'],
+    vehicle['service_category'],
+    vehicle['serviceCategory'],
+  ].whereType<Object>().map((part) => part.toString().toLowerCase()).join(' ');
+  return token.contains('limousine') ||
+      token.contains('party limo') ||
+      token.contains('stretch');
+}
+
+List<Map<String, dynamic>> customerBookingFilterVehiclesForEnabledServices({
+  required List<Map<String, dynamic>> vehicles,
+  required bool limousineOffered,
+  Set<String> limousineVehicleIds = const <String>{},
+}) {
+  if (limousineOffered) return vehicles;
+  return [
+    for (final vehicle in vehicles)
+      if (!limousineVehicleIds.contains(companyAgendaVehicleId(vehicle)) &&
+          !customerBookingVehicleIsLimousineOffer(vehicle))
+        vehicle,
+  ];
 }
 
 CustomerBookingCompanySnapshot customerBookingCompanySnapshotFromProfile(
@@ -136,7 +202,10 @@ CustomerBookingCompanySnapshot customerBookingCompanySnapshotFromProfile(
   return CustomerBookingCompanySnapshot(
     companyName: customerBookingCompanyNameFromProfile(profile),
     vehicles: customerBookingVehiclesFromProfile(profile),
+    drivers: customerBookingDriversFromProfile(profile),
     payment: BookingPaymentCapability.fromPublicJson(profile),
+    limousineOffered: customerBookingProfileOffersLimousine(profile),
+    profile: profile,
   );
 }
 
@@ -172,6 +241,7 @@ class CustomerBookingAvailabilitySnapshot {
     this.reasons = const <String, String>{},
     this.driverIds = const <String, String>{},
     this.loadFailed = false,
+    this.fetched = false,
   });
 
   final Set<String> availableIds;
@@ -179,21 +249,30 @@ class CustomerBookingAvailabilitySnapshot {
   final Map<String, String> reasons;
   final Map<String, String> driverIds;
   final bool loadFailed;
+  final bool fetched;
+
+  bool get resolved => fetched && !loadFailed;
 }
 
 CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
   Object? decoded,
 ) {
   if (decoded is! Map) {
-    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+    return const CustomerBookingAvailabilitySnapshot(
+      loadFailed: true,
+      fetched: true,
+    );
   }
   final root = Map<String, dynamic>.from(decoded);
   if (root['ok'] == false) {
-    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+    return const CustomerBookingAvailabilitySnapshot(
+      loadFailed: true,
+      fetched: true,
+    );
   }
   final rows = root['vehicles'];
   if (rows is! List) {
-    return const CustomerBookingAvailabilitySnapshot();
+    return const CustomerBookingAvailabilitySnapshot(fetched: true);
   }
   final available = <String>{};
   final unavailable = <String>{};
@@ -217,6 +296,7 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
     unavailableIds: unavailable,
     reasons: reasons,
     driverIds: drivers,
+    fetched: true,
   );
 }
 
@@ -243,7 +323,10 @@ Future<CustomerBookingAvailabilitySnapshot> fetchCustomerBookingAvailability({
   final getter = httpGet ?? http.get;
   final res = await getter(uri).timeout(const Duration(seconds: 12));
   if (res.statusCode != 200) {
-    return const CustomerBookingAvailabilitySnapshot(loadFailed: true);
+    return const CustomerBookingAvailabilitySnapshot(
+      loadFailed: true,
+      fetched: true,
+    );
   }
   return parseCustomerBookingAvailability(jsonDecode(res.body));
 }

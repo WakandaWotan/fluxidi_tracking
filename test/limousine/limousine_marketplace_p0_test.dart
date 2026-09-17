@@ -392,7 +392,7 @@ void main() {
       expect(source.contains("token == 'airport_transfer'"), isTrue);
     });
 
-    test('customer home does not show a live limousine card in P0', () {
+    test('customer home keeps a general limousine section', () {
       final source = File(
         'lib/main_parts/customer_home_page.dart',
       ).readAsStringSync();
@@ -400,11 +400,14 @@ void main() {
       expect(source.contains('_openAirportFlow'), isTrue);
       expect(source.contains('_openHotelsPage'), isTrue);
       expect(source.contains('_openEventsPage'), isTrue);
+      expect(source.contains('_limousineCustomerCard'), isTrue);
+      expect(source.contains('_openLimousineFlow'), isTrue);
       expect(
-        source.contains('LimousineCustomerEntryContract.isVisible'),
-        isTrue,
+        source.contains(
+          'if (!LimousineCustomerEntryContract.isVisible) return null;',
+        ),
+        isFalse,
       );
-      expect(LimousineCustomerEntryContract.isVisible, isFalse);
     });
   });
 

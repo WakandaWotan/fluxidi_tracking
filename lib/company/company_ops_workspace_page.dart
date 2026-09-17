@@ -29,6 +29,8 @@ import 'package:fluxidi_tracking/company/company_customers_repository_factory.da
     if (dart.library.html) 'package:fluxidi_tracking/company/company_customers_repository_factory_web.dart'
     as customer_ops_factory;
 import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
+import 'package:fluxidi_tracking/nearby/public_partner_market.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
 import 'package:fluxidi_tracking/company/company_assignment_choice_field.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart';
@@ -183,6 +185,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   List<CompanyAgendaRide> _nowRides = const <CompanyAgendaRide>[];
   List<Map<String, dynamic>> _drivers = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _vehicles = const <Map<String, dynamic>>[];
+  bool _limousineOffered = true;
+  Set<String> _limousineVehicleIds = const <String>{};
   bool _fleetLoading = true;
   String? _fleetError;
   String _planDriverId = '';
@@ -580,6 +584,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         _fleetError = null;
       });
       unawaited(_reloadNowRides());
+      unawaited(_reloadPublicServiceFlags());
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -1198,9 +1203,43 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     return next;
   }
 
+  List<Map<String, dynamic>> get _planOfferVehicles {
+    return customerBookingFilterVehiclesForEnabledServices(
+      vehicles: _vehicles,
+      limousineOffered: _limousineOffered,
+      limousineVehicleIds: _limousineVehicleIds,
+    );
+  }
+
+  Future<void> _reloadPublicServiceFlags() async {
+    final companyId =
+        (_boundCompanyId ?? companyOpsIdentityNotifier.value.companyId).trim();
+    if (companyId.isEmpty) return;
+    try {
+      final snapshot = await fetchCustomerBookingCompanySnapshot(
+        bookingBaseUrl: kBookingBaseUrl,
+        partnerId: 'company:$companyId:$companyId',
+      );
+      if (!mounted) return;
+      setState(() {
+        _limousineOffered = snapshot.limousineOffered;
+        _limousineVehicleIds = publicPartnerLimousineAssignedVehicleIds(
+          snapshot.profile,
+        );
+        if (_planVehicleId.isNotEmpty &&
+            !_planOfferVehicles.any(
+              (vehicle) => companyAgendaVehicleId(vehicle) == _planVehicleId,
+            )) {
+          _planVehicleId = '';
+          _planVehicleUserPicked = false;
+        }
+      });
+    } catch (_) {}
+  }
+
   Widget? _planVehicleOfferCards() {
     final offers = customerBookingVehicleOffers(
-      vehicles: _vehicles,
+      vehicles: _planOfferVehicles,
       drivers: _drivers,
       passengers: _passengers,
       pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)
@@ -2984,21 +3023,21 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         selectedCategory: _planVehicleCategory,
         onCategoryChanged: _setPlanVehicleCategory,
         categoryPhotoUrls: companyPlanCategoryPhotoUrls(
-          vehicles: _vehicles,
+          vehicles: _planOfferVehicles,
           tenantId: _agenda.scope?['tenant_id'] ?? '',
           companyId: _boundCompanyId ?? '',
         ),
         categoryPassengerCaps: companyPlanCategoryPassengerCaps(
-          vehicles: _vehicles,
+          vehicles: _planOfferVehicles,
         ),
         vehicleOfferCards: _planVehicleOfferCards(),
         bookableCategories: companyPlanBookableCategories(
-          vehicles: _vehicles,
+          vehicles: _planOfferVehicles,
           passengers: _passengers,
         ),
         unsuitableCategories: <CompanyPlanVehicleCategory>{
           for (final category in companyPlanBookableCategories(
-            vehicles: _vehicles,
+            vehicles: _planOfferVehicles,
             passengers: _passengers,
           ))
             if (!companyPlanVehicleTypeFitsCapacity(
@@ -3020,7 +3059,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
             passengers: _passengers,
             bags: _rideOptions.bags,
             available: companyPlanBookableCategories(
-              vehicles: _vehicles,
+              vehicles: _planOfferVehicles,
               passengers: _passengers,
             ).map(companyPlanVehicleTypeForCategory),
           );
@@ -3036,12 +3075,12 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         }(),
         unavailableReasons: <CompanyPlanVehicleCategory, String>{
           for (final category in companyPlanBookableCategories(
-            vehicles: _vehicles,
+            vehicles: _planOfferVehicles,
             passengers: _passengers,
           ))
             if (companyPlanCategoryUnavailableReason(
                   category: category,
-                  vehicles: _vehicles,
+                  vehicles: _planOfferVehicles,
                   passengers: _passengers,
                   language: _lang,
                 )

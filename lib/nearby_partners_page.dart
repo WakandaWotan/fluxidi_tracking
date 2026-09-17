@@ -16,6 +16,7 @@ import 'customer_theme_store.dart';
 import 'nearby/nearby_partner_hero_media.dart';
 import 'nearby/public_partner_bookability.dart';
 import 'nearby/stap3_flow_keys.dart';
+import 'nearby/public_company_presentation.dart';
 import 'nearby/public_partner_market.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'partner_public_profile_page.dart';
@@ -1017,22 +1018,34 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           ),
           const SizedBox(width: 7),
           Expanded(
-            child: Text(
-              company.isEmpty
-                  ? _t(
-                      nl: 'Partner',
-                      en: 'Partner',
-                      fr: 'Partenaire',
-                      es: 'Socio',
-                    )
-                  : company,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: _textPrimary,
-                fontWeight: FontWeight.w800,
-                fontSize: 14.2,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  company.isEmpty
+                      ? _t(
+                          nl: 'Partner',
+                          en: 'Partner',
+                          fr: 'Partenaire',
+                          es: 'Socio',
+                        )
+                      : company,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14.2,
+                  ),
+                ),
+                PublicCompanyPresentationBanner(
+                  presentation: publicCompanyPresentationFrom(
+                    p,
+                    language: appConfig.currentLanguage,
+                  ),
+                  compact: true,
+                ),
+              ],
             ),
           ),
         ],
@@ -1329,6 +1342,13 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           fontWeight: FontWeight.w800,
                           fontSize: 13.8,
                         ),
+                      ),
+                      PublicCompanyPresentationBanner(
+                        presentation: publicCompanyPresentationFrom(
+                          p,
+                          language: appConfig.currentLanguage,
+                        ),
+                        compact: true,
                       ),
                       if (!isBookable) ...[
                         const SizedBox(height: 4),

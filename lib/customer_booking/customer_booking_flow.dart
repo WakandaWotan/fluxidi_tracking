@@ -29,8 +29,11 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_payment_page.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_price_block.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_submit.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_confirmed_location.dart';
+import 'package:fluxidi_tracking/nearby/public_company_presentation.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
@@ -116,6 +119,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   CompanyPlanVehicleCategory? _vehicleCategory;
   CustomerProfile? _profile;
   List<Map<String, dynamic>> _companyVehicles = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _companyDrivers = const <Map<String, dynamic>>[];
+  PublicCompanyPresentation _presentation = const PublicCompanyPresentation();
   /// Never starts from the demo capability: in the real customer flow an
   /// unverified company may not be shown an online checkout it cannot honour.
   BookingPaymentCapability _paymentCapability =
@@ -141,6 +146,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   CustomerBookingAvailabilitySnapshot _availability =
       const CustomerBookingAvailabilitySnapshot();
   int _availabilitySeq = 0;
+  int _quoteSeq = 0;
   CompanyPlanQuoteResult? _quote;
   String? _quoteError;
   bool _quoteLoading = false;
@@ -308,6 +314,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       if (!mounted) return;
       setState(() {
         _companyVehicles = snapshot.vehicles;
+        _companyDrivers = snapshot.drivers;
+        _presentation = publicCompanyPresentationFrom(
+          snapshot.profile,
+          language: _language,
+        );
         if (snapshot.companyName.isNotEmpty &&
             _entry.company.companyName.trim().isEmpty) {
           _entry = _entry.copyWith(
@@ -375,17 +386,49 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   void _applyOwnedPickup(LimousineAddressValue address) {
-    _pickup.acceptCopy(
-      customerBookingAddressFromText(address.displayText),
+    final label = address.displayText.trim().isNotEmpty
+        ? address.displayText.trim()
+        : address.canonicalLabel.trim();
+    final next = customerBookingAddressFromText(
+      label,
+      latitude: address.lat,
+      longitude: address.lon,
     );
+    _pickup.acceptCopy(next);
     setState(() {
       _pickupOwned = true;
-      _pickupNeedsConfirm = false;
+      _pickupNeedsConfirm = !next.hasCoordinates;
       _gpsFallback = false;
       _submitError = null;
     });
     _onDraftChanged();
-    unawaited(_geocodePickupIfNeeded());
+    unawaited(_restoreConfirmedPickup(label));
+    if (!next.hasCoordinates) {
+      unawaited(_geocodePickupIfNeeded());
+    }
+  }
+
+  Future<void> _restoreConfirmedPickup(String label) async {
+    try {
+      final stored = await CustomerConfirmedLocationStore.instance.readFor(label);
+      if (!mounted || stored == null || !stored.isUsable) return;
+      if (!customerConfirmedLocationMatches(_pickup.value.displayText, stored) &&
+          !customerConfirmedLocationMatches(label, stored)) {
+        return;
+      }
+      _pickup.acceptCopy(
+        customerBookingAddressFromText(
+          stored.label,
+          latitude: stored.latitude,
+          longitude: stored.longitude,
+        ),
+      );
+      setState(() {
+        _pickupNeedsConfirm = false;
+        _gpsFallback = false;
+      });
+      _onDraftChanged();
+    } catch (_) {}
   }
 
   void _applyProfileAddressIfVacant() {
@@ -489,7 +532,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       setState(() {
         _availability = snapshot;
         if (_selectedVehicleId != null &&
-            snapshot.unavailableIds.contains(_selectedVehicleId)) {
+            snapshot.resolved &&
+            !snapshot.availableIds.contains(_selectedVehicleId)) {
           _selectedVehicleId = null;
           _submitError = _t(kCustomerBookingVehicleUnavailable);
         }
@@ -499,6 +543,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       setState(() {
         _availability = const CustomerBookingAvailabilitySnapshot(
           loadFailed: true,
+          fetched: true,
         );
       });
     }
@@ -584,6 +629,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   Future<void> _refreshQuote() async {
     if (!mounted) return;
     _syncReturnDefaults();
+    final seq = ++_quoteSeq;
     final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
     final request = companyPlanQuoteRequestFromAddresses(
       from: _quoteAddress(_pickup),
@@ -608,8 +654,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       stops: [for (final stop in _stops) _quoteAddress(stop)],
       returnStops: [for (final stop in _returnStops) _quoteAddress(stop)],
       whenNow: _whenNow,
+      vehicleId: _selectedVehicleId ?? '',
     );
     if (request == null) {
+      if (!mounted || seq != _quoteSeq) return;
       setState(() {
         _quote = null;
         _quoteError = customerBookingIncompleteQuoteIssue(
@@ -629,16 +677,16 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     });
     try {
       final result = await _quotes.quote(request);
-      if (!mounted) return;
+      if (!mounted || seq != _quoteSeq) return;
       _absorbQuoteCoordinates(result);
-      if (!mounted) return;
+      if (!mounted || seq != _quoteSeq) return;
       setState(() {
         _quote = result;
         _quoteLoading = false;
         _quoteError = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || seq != _quoteSeq) return;
       debugPrint('[CUSTOMER_BOOKING][QUOTE][ERR] $error');
       setState(() {
         _quote = null;
@@ -793,6 +841,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() {
       _entry = _entry.copyWith(company: picked);
       _companyVehicles = List<Map<String, dynamic>>.from(picked.vehicles);
+      _companyDrivers = const <Map<String, dynamic>>[];
+      _presentation = const PublicCompanyPresentation();
+      _availability = const CustomerBookingAvailabilitySnapshot();
+      _selectedVehicleId = null;
       _quote = null;
       _quoteError = null;
       _submitError = null;
@@ -857,6 +909,26 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       _revealSubmitIssue(issues.first);
       return;
     }
+    if (_pickupNeedsConfirm) {
+      setState(() => _submitError = _t(kCustomerBookingAddressNeedsConfirm));
+      return;
+    }
+    if (_availability.loadFailed) {
+      setState(() => _submitError = _t(kCustomerBookingVehiclesLoadFailed));
+      return;
+    }
+    if (_selectedVehicleId != null) {
+      final selected = _vehicleOffers.where(
+        (offer) => offer.vehicleId == _selectedVehicleId,
+      );
+      if (selected.isEmpty || !selected.first.available) {
+        setState(() {
+          _selectedVehicleId = null;
+          _submitError = _t(kCustomerBookingVehicleUnavailable);
+        });
+        return;
+      }
+    }
     setState(() => _submitError = null);
     final selection = await openCustomerBookingPaymentOptions(
       context,
@@ -902,6 +974,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         stops: [for (final stop in _stops) _quoteAddress(stop)],
         returnStops: [for (final stop in _returnStops) _quoteAddress(stop)],
         whenNow: _whenNow,
+        vehicleId: _selectedVehicleId ?? '',
       );
       if (request == null) {
         throw StateError(kCustomerBookingIssueNeedRoute);
@@ -910,6 +983,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       final headers = <String, String>{};
       if (token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
+      }
+      String assignedDriverId = '';
+      for (final offer in _vehicleOffers) {
+        if (offer.vehicleId == _selectedVehicleId && offer.driverId.isNotEmpty) {
+          assignedDriverId = offer.driverId;
+          break;
+        }
       }
       final body = <String, dynamic>{
         ...request.body,
@@ -920,6 +1000,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         'pax': _passengers,
         if ((_selectedVehicleId ?? '').trim().isNotEmpty)
           'preferred_vehicle_id': _selectedVehicleId!.trim(),
+        if ((_selectedVehicleId ?? '').trim().isNotEmpty)
+          'vehicle_id': _selectedVehicleId!.trim(),
+        if (assignedDriverId.isNotEmpty) 'assigned_driver_id': assignedDriverId,
         'idempotency_key': _idempotencyKey,
         'idempotencyKey': _idempotencyKey,
         ...customerBookingBillingPayloadFields(
@@ -1365,6 +1448,30 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
+                            if (_presentation.hasBadge)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  _presentation.badge,
+                                  key: kCustomerBookingExampleBadgeKey,
+                                  style: TextStyle(
+                                    color: _palette.textMuted,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            if (_presentation.hasNotice)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  _presentation.notice,
+                                  key: kCustomerBookingExampleNoticeKey,
+                                  style: TextStyle(
+                                    color: _palette.textMuted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
                           ],
                         )
                       : Text(
@@ -1489,6 +1596,16 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                     key: kCustomerBookingAddressConfirmMapKey,
                     onPressed: () {
                       _pickup.confirmCandidateLocation();
+                      final confirmed = _pickup.value;
+                      if (confirmed.hasCoordinates) {
+                        unawaited(
+                          CustomerConfirmedLocationStore.instance.save(
+                            label: confirmed.displayText,
+                            latitude: confirmed.lat!,
+                            longitude: confirmed.lon!,
+                          ),
+                        );
+                      }
                       setState(() => _pickupNeedsConfirm = false);
                       _onDraftChanged();
                     },
@@ -1917,12 +2034,15 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   List<CustomerBookingVehicleOffer> get _vehicleOffers {
     return customerBookingVehicleOffers(
       vehicles: _companyVehicles,
+      drivers: _companyDrivers,
       passengers: _passengers,
       pickupUtc: _effectivePickupUtc,
       durationMin: _quote?.durationMin ?? 30,
       availableVehicleIds: _availability.availableIds,
       unavailableVehicleIds: _availability.unavailableIds,
       unavailableReasons: _availability.reasons,
+      availabilityResolved: _availability.resolved,
+      availabilityFailed: _availability.loadFailed,
     );
   }
 
@@ -2160,60 +2280,24 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   Widget _quotePanel() {
-    if (_quoteLoading) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          _t(kCustomerBookingRouteLoading),
-          key: kCustomerBookingQuoteStatusKey,
-        ),
-      );
-    }
-    if (_quoteError != null) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          customerBookingQuoteErrorText(_quoteError, _language),
-          key: kCustomerBookingQuoteStatusKey,
-        ),
-      );
-    }
-    final quote = _quote;
-    if (quote == null) return const SizedBox.shrink();
-    final onRequest = customerBookingQuoteIsOnRequest(quote);
-    final priceFailed = customerBookingQuotePriceFailed(quote);
-    final arrival = formatCompanyPlanQuoteEta(
-      result: quote,
-      pickupLocal: _whenNow ? DateTime.now() : _pickupAt,
-    );
-    final lines = <String>[
-      if (quote.hasRoute) formatCompanyPlanQuoteRoute(quote, _language),
-      if (priceFailed)
-        _t(kCustomerBookingPriceFailed)
-      else if (onRequest)
-        _t(kCustomerBookingPriceOnRequest)
-      else
-        formatCompanyPlanQuotePrice(quote, _language, includeSource: false),
-      if (arrival.isNotEmpty)
-        '${_t(kCustomerBookingArrivalDestination)} $arrival',
-      if (_returnKind != CustomerBookingReturnKind.oneWay)
-        formatCompanyPlanQuoteLegLine(
-          label: _t(kCustomerBookingOutboundWhen),
-          result: quote,
-          inbound: false,
-          language: _language,
-        ),
-      if (_returnKind != CustomerBookingReturnKind.oneWay)
-        formatCompanyPlanQuoteLegLine(
-          label: _t(kCustomerBookingReturnWhen),
-          result: quote,
-          inbound: true,
-          language: _language,
-        ),
-    ].where((line) => line.trim().isNotEmpty).toList();
-    return Text(
-      lines.join('\n'),
-      key: kCustomerBookingPriceKey,
+    final arrival = _quote == null
+        ? ''
+        : formatCompanyPlanQuoteEta(
+            result: _quote!,
+            pickupLocal: _whenNow ? DateTime.now() : _pickupAt,
+          );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: CustomerBookingPriceBlock(
+        language: _language,
+        loading: _quoteLoading,
+        quote: _quote,
+        error: _quoteError,
+        onRetry: () => unawaited(_refreshQuote()),
+        arrivalText: arrival.isEmpty
+            ? ''
+            : '${_t(kCustomerBookingArrivalDestination)} $arrival',
+      ),
     );
   }
 

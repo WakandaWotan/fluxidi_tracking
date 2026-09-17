@@ -363,7 +363,6 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   }
 
   void _openLimousineFlow(BuildContext context) {
-    if (!LimousineCustomerEntryContract.isVisible) return;
     openLimousineCustomerDiscovery(
       context,
       customerHomeBuilder: (_) => const CustomerHomePage(),
@@ -374,7 +373,6 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     required BuildContext context,
     required double visualHeight,
   }) {
-    if (!LimousineCustomerEntryContract.isVisible) return null;
     return KeyedSubtree(
       key: const ValueKey<String>('limousine_customer_entry_card'),
       child: _customerWideCard(
