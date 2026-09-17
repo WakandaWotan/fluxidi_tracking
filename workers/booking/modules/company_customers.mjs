@@ -375,6 +375,39 @@ function toListRow(record) {
   };
 }
 
+function firstClip(item, keys, max) {
+  for (const key of keys) {
+    const value = clip(item?.[key], max);
+    if (value) return value;
+  }
+  return "";
+}
+
+function composeStoredStreetLine(item) {
+  const line1 = firstClip(item, ["line1", "address_line1", "addressLine1", "line_1"], 160);
+  const street = firstClip(item, ["street", "streetAddress", "street_address"], 160);
+  const house = firstClip(item, ["house_number", "houseNumber", "huisnummer"], 20);
+  if (line1) {
+    if (house && !line1.toLowerCase().includes(house.toLowerCase())) {
+      return `${line1} ${house}`.trim();
+    }
+    return line1;
+  }
+  if (street && house && !street.toLowerCase().includes(house.toLowerCase())) {
+    return `${street} ${house}`.trim();
+  }
+  return street || house;
+}
+
+function optionalCoord(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function normalizeCompanyCustomerAddresses(raw) {
+  return normalizeAddresses(raw);
+}
+
 function normalizeAddresses(raw) {
   if (raw == null) return [];
   if (!Array.isArray(raw)) {
@@ -387,16 +420,23 @@ function normalizeAddresses(raw) {
     const type = safeStr(item.type || "other").toLowerCase();
     if (!ADDRESS_TYPES.has(type)) return { error: "invalid_type" };
     const addressId = clip(item.address_id, 40) || newAddressId();
+    const line1 = composeStoredStreetLine(item);
+    const lat = optionalCoord(item.lat ?? item.latitude);
+    const lon = optionalCoord(item.lon ?? item.lng ?? item.longitude);
     out.push({
       address_id: addressId,
       type,
       label: clip(item.label, 80),
-      line1: clip(item.line1, 160),
+      line1,
       line2: clip(item.line2, 160),
+      street: firstClip(item, ["street", "streetAddress", "street_address"], 160),
+      house_number: firstClip(item, ["house_number", "houseNumber", "huisnummer"], 20),
       city: clip(item.city, 80),
-      postal_code: clip(item.postal_code, 20),
-      country_code: clip(item.country_code, 2).toUpperCase(),
+      postal_code: clip(item.postal_code ?? item.postalCode, 20),
+      country_code: clip(item.country_code ?? item.countryCode, 2).toUpperCase(),
       notes: clip(item.notes, 160),
+      ...(lat != null ? { lat } : {}),
+      ...(lon != null ? { lon } : {}),
     });
   }
   return out;

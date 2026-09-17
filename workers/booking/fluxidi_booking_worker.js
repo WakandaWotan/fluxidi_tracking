@@ -840,6 +840,12 @@ import {
   syncDriverAvailabilityForBookingStatus,
 } from "./modules/company_dispatch.mjs";
 import {
+  filterVehiclesByRosterOffers,
+  fleetDriverId,
+  projectBookableVehicleOffers,
+  publicBookableVehicleRows,
+} from "./modules/fleet_roster_availability.mjs";
+import {
   directionsWithNoSegmentRetry,
   isUsableMapboxRoute,
   routeFailureFromError,
@@ -13101,9 +13107,53 @@ export class FleetAllocatorDO {
       reservationsDirty = false;
     }
 
-    const freeVehicles = suitableVehicles
+    let freeVehicles = suitableVehicles
       .filter((v) => !occupiedAssignedIds.has(v.vehicle_id))
       .sort((a, b) => String(a.vehicle_id).localeCompare(String(b.vehicle_id)));
+    let rosterOffers = [];
+    try {
+      const driverIndex = tenantScope?.hasScope
+        ? await _loadDriverIndexRecord(this.env, tenantScope)
+        : null;
+      const drivers = Object.values(driverIndex?.drivers || {});
+      rosterOffers = projectBookableVehicleOffers({
+        vehicles: freeVehicles,
+        drivers,
+        pickupMs: req.pickupMs,
+        durationMin: req.serviceMin,
+        pax: req.pax,
+      });
+      const preferredVehicleId = safeStr(
+        body?.preferred_vehicle_id ?? body?.preferredVehicleId,
+        128,
+      );
+      const rosterFree = filterVehiclesByRosterOffers(freeVehicles, rosterOffers);
+      if (preferredVehicleId) {
+        rosterFree.sort((left, right) => {
+          const leftId = String(left.vehicle_id || "");
+          const rightId = String(right.vehicle_id || "");
+          if (leftId === preferredVehicleId) return -1;
+          if (rightId === preferredVehicleId) return 1;
+          return leftId.localeCompare(rightId);
+        });
+      }
+      freeVehicles = rosterFree;
+    } catch (rosterErr) {
+      console.log(
+        `[FLEET_ALLOCATOR][ROSTER_FILTER] booking=${_bookingIntentMask(bookingId)} ok=false reason=${safeStr(rosterErr?.message || rosterErr, 80) || "roster_load_failed"}`,
+      );
+      return this._json({
+        ok: true,
+        allowed: false,
+        reason: "assignment_schedule_undeterminable",
+        reason_code: "assignment_schedule_undeterminable",
+        block_reason: "assignment_schedule_undeterminable",
+        suitable_vehicle_count: suitableVehicles.length,
+        occupied_assigned_count: occupiedAssignedIds.size,
+        overlapping_unassigned_demand: overlappingUnassignedDemand,
+        available_slots: 0,
+      });
+    }
     const availableSlots = freeVehicles.length - overlappingUnassignedDemand;
     // G3-H: per-vehicle diagnostics over the suitable pool, showing why
     // each candidate is or is not in `freeVehicles`. The freeVehicles
@@ -13417,12 +13467,20 @@ export class FleetAllocatorDO {
       created_at: Date.now(),
     };
     await this._saveReservations(reservations);
+    const rosterOffer = (rosterOffers || []).find(
+      (row) => row?.vehicle_id === chosen.vehicle_id && row.available,
+    );
+    const assignedDriver = rosterOffer?.driver
+      || _assignedDriverFromVehicle(chosen);
+    const assignedDriverId = fleetDriverId(assignedDriver)
+      || fleetDriverId(rosterOffer?.driver);
     return this._json({
       ok: true,
       allowed: true,
       booking_id: bookingId,
       assigned_vehicle_id: chosen.vehicle_id,
-      assigned_driver: _assignedDriverFromVehicle(chosen),
+      assigned_driver_id: assignedDriverId || null,
+      assigned_driver: assignedDriver,
       source: "new_reservation",
     });
   }
@@ -48488,6 +48546,52 @@ export default {
           },
           200,
         );
+      }
+
+      if (url.pathname === "/partners/availability" && request.method === "GET") {
+        const partnerId = String(
+          url.searchParams.get("partner_id") || url.searchParams.get("partnerId") || "",
+        ).trim();
+        if (!partnerId) {
+          return json({ ok: false, error: "partner_id is required" }, 400);
+        }
+        const pickupIso = String(
+          url.searchParams.get("pickup_iso") || url.searchParams.get("pickupIso") || "",
+        ).trim();
+        const pickupMs = Date.parse(pickupIso);
+        const pax = Math.max(1, Number(url.searchParams.get("pax") || 1) || 1);
+        const durationMin = Math.max(
+          1,
+          Number(url.searchParams.get("duration_min") || url.searchParams.get("durationMin") || 30) || 30,
+        );
+        const scope = await resolvePublicPartnerBookingScope(env, partnerId);
+        if (!scope?.ok) {
+          return json({ ok: false, error: "partner profile not found" }, 404);
+        }
+        try {
+          const vehicles = await _loadVehicleInventory(env, { scope });
+          const driverIndex = await _loadDriverIndexRecord(env, scope);
+          const drivers = Object.values(driverIndex?.drivers || {});
+          const offers = projectBookableVehicleOffers({
+            vehicles,
+            drivers,
+            pickupMs: Number.isFinite(pickupMs) ? pickupMs : Date.now(),
+            durationMin,
+            pax,
+          });
+          return json({
+            ok: true,
+            partner_id: partnerId,
+            pickup_iso: Number.isFinite(pickupMs) ? new Date(pickupMs).toISOString() : "",
+            vehicles: publicBookableVehicleRows(offers),
+          });
+        } catch (error) {
+          return json({
+            ok: false,
+            error: "assignment_schedule_undeterminable",
+            reason: safeStr(error?.message || error, 80) || "availability_failed",
+          }, 503);
+        }
       }
 
       // POST /bookings/availability-check (alias for existing /availability)
@@ -108929,6 +109033,15 @@ async function _dispatchFleetAssignmentForBooking(
     env,
   });
   const pickupMs = Date.parse(outboundPickupIso);
+  const preferredVehicleId = safeStr(
+    fields.preferred_vehicle_id
+      ?? fields.preferredVehicleId
+      ?? bookingObj?.preferred_vehicle_id
+      ?? bookingObj?.preferredVehicleId
+      ?? rec?.preferred_vehicle_id
+      ?? rec?.preferredVehicleId,
+    128,
+  );
   const allocatorPayload = {
     action: "allocate",
     booking_id: safeParentId,
@@ -108947,6 +109060,7 @@ async function _dispatchFleetAssignmentForBooking(
     pickup_lat: outboundPickupLat,
     pickup_lng: outboundPickupLng,
     ...(pinnedVehicleId ? { required_vehicle_id: pinnedVehicleId } : {}),
+    ...(preferredVehicleId ? { preferred_vehicle_id: preferredVehicleId } : {}),
     tenantScope: fleetScope,
   };
   console.log(
