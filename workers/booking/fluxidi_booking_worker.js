@@ -678,6 +678,9 @@ import {
   projectPublicPaymentCapability,
 } from "./modules/public_payment_capability.mjs";
 import {
+  buildPublicPartnerPaymentCapability,
+} from "./modules/public_partner_payment_capability.mjs";
+import {
   resolveInvoiceLogoSrc,
   buildFluxidiInvoiceLogoDataUri,
 } from "./modules/invoice_logo_embedded.js";
@@ -47787,12 +47790,24 @@ export default {
           );
           return portraitUrl ? count + 1 : count;
         }, 0);
+        // Customer-safe payment capability, opt-in per company. Off means the
+        // response stays byte-identical for every existing customer.
+        const paymentCapability = await buildPublicPartnerPaymentCapability({
+          env,
+          partnerId: profile.partner_id,
+          scopeFromPartnerId: _scopeFromCanonicalPublicPartnerId,
+          loadBusinessProfile: (scope) => loadBusinessProfile(env, scope),
+          livePaymentsEnabled: mollieCompanyLivePaymentsEnabled(env),
+        });
         return json(
           {
             ok: true,
             profile: {
               ...profile,
               drivers,
+              ...(paymentCapability
+                ? { payment_capability: paymentCapability }
+                : {}),
             },
             profiles_source: sanitizeTenantString(profileResult.meta?.profiles_source, 48) || "unknown",
             projection_updated_at: sanitizeTenantString(

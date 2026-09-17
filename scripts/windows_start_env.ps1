@@ -77,6 +77,8 @@ if ($isLocal) {
   $defines += '--dart-define=BOOKING_BASE_URL=http://127.0.0.1:8788'
   $defines += '--dart-define=COMPANY_SESSION_TOKEN=cst_local_demo_synthetic'
   $defines += '--dart-define=FLUXIDI_DEV_COMPANY_ID=demo_company_p0'
+  $defines += '--dart-define=FLUXIDI_LOCAL_QA_CUSTOMER_SESSION=true'
+  $defines += '--dart-define=FLUXIDI_LOCAL_QA_ADMIN_TOKEN=local-demo-admin'
 }
 
 if (-not $isLocal) {
