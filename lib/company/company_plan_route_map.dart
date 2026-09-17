@@ -107,15 +107,18 @@ class CompanyPlanRouteMap extends StatelessWidget {
     final mapUrl = fromPoint != null && toPoint != null
         ? fluxidiStaticRoutePreviewUrl(pickup: fromPoint, dropoff: toPoint)
         : null;
-    final returnFrom = quote?.hasReturnRoute == true &&
-            quote?.returnPickupLat != null &&
-            quote?.returnPickupLon != null
-        ? FluxidiMapLonLat(quote!.returnPickupLon!, quote.returnPickupLat!)
+    final quoted = quote;
+    final returnFrom = quoted != null &&
+            quoted.hasReturnRoute &&
+            quoted.returnPickupLat != null &&
+            quoted.returnPickupLon != null
+        ? FluxidiMapLonLat(quoted.returnPickupLon!, quoted.returnPickupLat!)
         : null;
-    final returnTo = quote?.hasReturnRoute == true &&
-            quote?.returnDropoffLat != null &&
-            quote?.returnDropoffLon != null
-        ? FluxidiMapLonLat(quote!.returnDropoffLon!, quote.returnDropoffLat!)
+    final returnTo = quoted != null &&
+            quoted.hasReturnRoute &&
+            quoted.returnDropoffLat != null &&
+            quoted.returnDropoffLon != null
+        ? FluxidiMapLonLat(quoted.returnDropoffLon!, quoted.returnDropoffLat!)
         : null;
     final restore = status == CompanyPlanRouteStatus.needsRestore ||
         status == CompanyPlanRouteStatus.confirmPickup ||
