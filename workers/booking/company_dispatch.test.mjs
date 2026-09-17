@@ -650,6 +650,16 @@ test("a pickup that already started is not soon", () => {
   assert.equal(rideIsSoon(new Date(attempt + 10 * 60 * 1000).toISOString(), attempt), true);
 });
 
+test("a Nu stamp a few seconds in the past stays soon", () => {
+  const now = Date.parse("2026-09-18T16:00:08.000Z");
+  const stamped = Date.parse("2026-09-18T16:00:00.000Z");
+  assert.equal(rideIsSoon(new Date(stamped).toISOString(), now), true);
+  assert.equal(
+    rideIsSoon(new Date(now - 5 * 60 * 1000).toISOString(), now),
+    false,
+  );
+});
+
 test("past pickup without a roster is not blocked as unscheduled or not-live", () => {
   const pickupIso = "2026-09-16T18:00:00.000Z";
   const at = Date.parse("2026-09-16T18:29:00.000Z");

@@ -273,6 +273,7 @@ import {
 import {
   requiredVehicleIdFromBookingRecord as _requiredVehicleIdFromBookingRecord,
   requiredVehicleIdFromRequest as _requiredVehicleIdFromRequest,
+  taxiRequestedVehicleIdFromPayload as _taxiRequestedVehicleIdFromPayload,
   vehicleMatchesRequiredVehicle as _vehicleMatchesRequiredVehicle,
 } from "./modules/required_vehicle_constraint.mjs";
 import {
@@ -831,6 +832,7 @@ import {
 } from "./modules/company_customers.mjs";
 import { serveCompanyCustomerImportHttp } from "./modules/company_customers_import.mjs";
 import {
+  checkAssignmentOverlap,
   matchCompanyAgendaPath,
   serveCompanyAgendaHttp,
 } from "./modules/company_agenda.mjs";
@@ -48691,11 +48693,56 @@ export default {
             durationMin,
             pax,
           });
+          const waitMin = Math.max(
+            0,
+            Number(url.searchParams.get("wait_min") || url.searchParams.get("waitMin") || 0) || 0,
+          );
+          const returnDurationMin = Math.max(
+            0,
+            Number(
+              url.searchParams.get("return_duration_min") ||
+                url.searchParams.get("returnDurationMin") ||
+                0,
+            ) || 0,
+          );
+          const resolvedPickupMs = Number.isFinite(pickupMs) ? pickupMs : Date.now();
+          const pickupIsoForOccupancy = new Date(resolvedPickupMs).toISOString();
+          const returnPickupIso =
+            waitMin > 0 && returnDurationMin > 0
+              ? new Date(resolvedPickupMs + (durationMin + waitMin) * 60000).toISOString()
+              : "";
+          const occupied = [];
+          for (const row of offers) {
+            if (!row.available) {
+              occupied.push(row);
+              continue;
+            }
+            const overlap = await checkAssignmentOverlap(env, {
+              scope: fleetScope,
+              driverId: row.driver_id,
+              vehicleId: row.vehicle_id,
+              pickupIso: pickupIsoForOccupancy,
+              durationMin,
+              returnPickupIso,
+              returnDurationMin: returnDurationMin || null,
+              roundtripMode:
+                waitMin > 0 && returnDurationMin > 0 ? "continuous_wait" : "single",
+            });
+            if (!overlap.ok) {
+              occupied.push({
+                ...row,
+                available: false,
+                reason: overlap.error || "assignment_vehicle_busy",
+              });
+              continue;
+            }
+            occupied.push(row);
+          }
           return json({
             ok: true,
             partner_id: partnerId,
             pickup_iso: Number.isFinite(pickupMs) ? new Date(pickupMs).toISOString() : "",
-            vehicles: publicBookableVehicleRows(offers),
+            vehicles: publicBookableVehicleRows(occupied),
           });
         } catch (error) {
           return json({
@@ -68755,6 +68802,11 @@ async function handleBooking(payload, env, request, options = {}) {
       _limousineAccepted?.snapshot?.vehicle_id,
       128,
     );
+    const _taxiRequestedVehicleId = !_limousineAccepted
+      ? _taxiRequestedVehicleIdFromPayload(payload)
+      : "";
+    const _bookingRequiredVehicleId =
+      _limousineRequiredVehicleId || _taxiRequestedVehicleId;
     // Stable server-side identifier of the accepted quote. Only the accepted
     // manual-quote path has one; it is read from the authoritative record the
     // pre-flight re-loaded, never from the request body.
@@ -69664,7 +69716,7 @@ async function handleBooking(payload, env, request, options = {}) {
               bookingDropoffLatForAllocator,
               bookingDropoffLngForAllocator,
               bookingServiceMin,
-              requiredVehicleId: _limousineRequiredVehicleId,
+              requiredVehicleId: _bookingRequiredVehicleId,
             });
             const failedLeg = (dispatchOutcome?.legResults || []).find(
               (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -69745,7 +69797,7 @@ async function handleBooking(payload, env, request, options = {}) {
               pickupLng: bookingPickupLngForAllocator,
               dropoffLat: bookingDropoffLatForAllocator,
               dropoffLng: bookingDropoffLngForAllocator,
-              requiredVehicleId: _limousineRequiredVehicleId,
+              requiredVehicleId: _bookingRequiredVehicleId,
             });
             if (!vehicleCapacity.ok) {
               console.log(
@@ -70573,7 +70625,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           bookingDropoffLatForAllocator,
           bookingDropoffLngForAllocator,
           bookingServiceMin,
-          requiredVehicleId: _limousineRequiredVehicleId,
+          requiredVehicleId: _bookingRequiredVehicleId,
         });
         const failedLeg = (dispatchOutcome?.legResults || []).find(
           (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -70654,7 +70706,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           pickupLng: bookingPickupLngForAllocator,
           dropoffLat: bookingDropoffLatForAllocator,
           dropoffLng: bookingDropoffLngForAllocator,
-          requiredVehicleId: _limousineRequiredVehicleId,
+          requiredVehicleId: _bookingRequiredVehicleId,
         });
         if (!vehicleCapacity.ok) {
           console.log(
@@ -71156,10 +71208,18 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         resolvedAssignedDriver?.id,
       96,
     ) || null;
-    const bookingAssignmentFields = _bookingAssignmentAliasFields(
-      resolvedAssignedDriver,
-      resolvedAssignedVehicleId,
-    );
+    const bookingAssignmentFields = {
+      ..._bookingAssignmentAliasFields(
+        resolvedAssignedDriver,
+        resolvedAssignedVehicleId,
+      ),
+      ...(_taxiRequestedVehicleId
+        ? {
+            customer_requested_vehicle_id: _taxiRequestedVehicleId,
+            customerRequestedVehicleId: _taxiRequestedVehicleId,
+          }
+        : {}),
+    };
     const bookingOperationalLegs = _buildOperationalLegsFoundation({
       parentBookingId: canonicalBookingId,
       service,

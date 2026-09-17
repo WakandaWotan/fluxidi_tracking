@@ -196,11 +196,12 @@ test("12) handleBooking derives the pin from the snapshot, not from the payload"
   const marker = "const _limousineRequiredVehicleId = safeStr(";
   const at = worker.indexOf(marker);
   assert.ok(at > 0);
-  const assignment = worker.slice(at, at + 200);
+  const assignment = worker.slice(at, at + 130);
   assert.ok(assignment.includes("_limousineAccepted?.snapshot?.vehicle_id"));
   assert.ok(!assignment.includes("payload"));
-  // All four canonical dispatch entry points receive it.
-  const wired = worker.match(/requiredVehicleId: _limousineRequiredVehicleId,/g) || [];
+  assert.ok(worker.includes("const _taxiRequestedVehicleId = !_limousineAccepted"));
+  assert.ok(worker.includes("const _bookingRequiredVehicleId ="));
+  const wired = worker.match(/requiredVehicleId: _bookingRequiredVehicleId,/g) || [];
   assert.equal(wired.length, 4);
 });
 
@@ -233,6 +234,7 @@ test("14) no parallel limousine dispatch engine was introduced", () => {
   const exported = constraintModule.match(/export function (\w+)/g) || [];
   assert.deepEqual(exported, [
     "export function requiredVehicleIdFromRequest",
+    "export function taxiRequestedVehicleIdFromPayload",
     "export function vehicleMatchesRequiredVehicle",
     "export function requiredVehicleIdFromBookingRecord",
   ]);

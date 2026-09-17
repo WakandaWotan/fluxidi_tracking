@@ -9,6 +9,8 @@ export const LIVE_HEARTBEAT_TTL_MS = 3 * 60 * 1000;
 export const HEARTBEAT_WRITE_THROTTLE_MS = 45 * 1000;
 export const ASSIGNMENT_SAFETY_MARGIN_MIN = 15;
 export const SOON_WINDOW_MIN = 30;
+/** Processing delay for a Nu stamp. Not a substitute for a planned pickup that already elapsed. */
+export const NOW_PICKUP_GRACE_MS = 2 * 60 * 1000;
 export const PRESENCE_KEY_SUFFIX = ":driver_presence:v1";
 
 export const AVAILABILITY = {
@@ -544,9 +546,9 @@ export function rideIsSoon(pickupIso, atMs, soonWindowMin = SOON_WINDOW_MIN) {
   const start = Date.parse(String(pickupIso || ""));
   if (!Number.isFinite(start)) return true;
   const now = Number(atMs);
-  // A pickup that already started is not an upcoming "soon" ride. Treating a
-  // 20:00 trip as soon at 20:29 falsely demanded a live connection.
-  if (start < now) return false;
+  // A Nu stamp that is a few seconds old is still "soon". A planned pickup
+  // that already elapsed beyond the grace window is not.
+  if (start < now - NOW_PICKUP_GRACE_MS) return false;
   return start <= now + soonWindowMin * 60000;
 }
 

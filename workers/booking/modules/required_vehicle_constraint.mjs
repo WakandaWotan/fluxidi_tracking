@@ -25,6 +25,18 @@ export function requiredVehicleIdFromRequest(req) {
   return safeStr(req.required_vehicle_id ?? req.requiredVehicleId);
 }
 
+/// Explicit taxi/airport vehicle choice from the booking contract.
+/// Older clients that omit these fields stay unpinned.
+export function taxiRequestedVehicleIdFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  return safeStr(
+    payload.preferred_vehicle_id ??
+      payload.preferredVehicleId ??
+      payload.vehicle_id ??
+      payload.vehicleId,
+  );
+}
+
 /// True when `vehicle` satisfies the constraint. An empty constraint accepts
 /// every vehicle, so unpinned taxi/airport allocation is unaffected.
 export function vehicleMatchesRequiredVehicle(vehicle, requiredVehicleId) {
@@ -53,5 +65,7 @@ export function requiredVehicleIdFromBookingRecord(rec) {
     const vehicleId = safeStr(snapshot.vehicle_id ?? snapshot.vehicleId);
     if (vehicleId) return vehicleId;
   }
-  return "";
+  return safeStr(
+    rec.customer_requested_vehicle_id ?? rec.customerRequestedVehicleId,
+  );
 }

@@ -189,12 +189,42 @@ export function filterVehiclesByRosterOffers(vehicles, offers) {
   );
 }
 
+export function publicDriverPreviewFromFleet(driver) {
+  const id = fleetDriverId(driver);
+  if (!id) return { driver_id: "" };
+  const profileOn =
+    driver?.public_profile_enabled === true || driver?.publicProfileEnabled === true;
+  const photoOn =
+    driver?.public_photo_enabled === true || driver?.publicPhotoEnabled === true;
+  const name = profileOn
+    ? sanitizeTenantString(driver?.public_display_name ?? driver?.publicDisplayName, 160)
+    : "";
+  const photo = photoOn
+    ? sanitizeTenantString(
+        driver?.public_portrait_url ?? driver?.publicPortraitUrl,
+        400,
+      )
+    : "";
+  return {
+    driver_id: id,
+    ...(name ? { public_display_name: name } : {}),
+    ...(photo ? { public_photo_url: photo } : {}),
+  };
+}
+
 export function publicBookableVehicleRows(offers) {
-  return (Array.isArray(offers) ? offers : []).map((row) => ({
-    vehicle_id: row.vehicle_id,
-    available: row.available === true,
-    reason: row.reason || "",
-    driver_id: row.driver_id || "",
-    passenger_seats: row.passenger_seats,
-  }));
+  return (Array.isArray(offers) ? offers : []).map((row) => {
+    const preview = publicDriverPreviewFromFleet(row.driver);
+    return {
+      vehicle_id: row.vehicle_id,
+      available: row.available === true,
+      reason: row.reason || "",
+      driver_id: preview.driver_id || row.driver_id || "",
+      ...(preview.public_display_name
+        ? { public_display_name: preview.public_display_name }
+        : {}),
+      ...(preview.public_photo_url ? { public_photo_url: preview.public_photo_url } : {}),
+      passenger_seats: row.passenger_seats,
+    };
+  });
 }
