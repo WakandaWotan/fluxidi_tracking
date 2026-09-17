@@ -12,23 +12,51 @@ import {
   clearPublicEventsCache,
   ALL_CATEGORY_CLASSIFICATIONS,
   FLUXIDI_LAUNCH_EVENT_COUNTRIES,
+  FLUXIDI_EVENT_MARKET_KEYS,
+  FLUXIDI_EVENT_MARKETS_SOURCE,
+  FLUXIDI_TM_PROVEN_EXTRA_COUNTRIES,
+  eventDedupeKey,
+  ticketmasterDiscoveryAttempts,
   isLuxembourgEvent,
   luxembourgNeighborQueries,
 } from "./public_events_search_plan.mjs";
 
-test("UK becomes GB for Ticketmaster, launch list is Fluxidi EU", () => {
+test("UK becomes GB for Ticketmaster, launch list is Fluxidi Europe plus billing countries", () => {
   assert.equal(normalizeEventCountry("UK"), "GB");
   assert.equal(normalizeEventCountry("", "uk"), "GB");
   assert.equal(ticketmasterLocale("ES"), "es-es");
   assert.equal(ticketmasterLocale("FR"), "fr-fr");
+  assert.equal(ticketmasterLocale("IT"), "it-it");
   assert.deepEqual(FLUXIDI_LAUNCH_EVENT_COUNTRIES, [
     "BE",
     "NL",
     "FR",
+    "GB",
     "DE",
     "LU",
     "ES",
+    "PT",
+    "IT",
+    "AT",
+    "IE",
+    "CH",
   ]);
+  assert.deepEqual(FLUXIDI_EVENT_MARKET_KEYS, [
+    "be",
+    "nl",
+    "fr",
+    "uk",
+    "de",
+    "lu",
+    "es",
+    "pt",
+    "it",
+    "at",
+    "ie",
+    "ch",
+  ]);
+  assert.ok(FLUXIDI_TM_PROVEN_EXTRA_COUNTRIES.includes("DK"));
+  assert.ok(!FLUXIDI_EVENT_MARKET_KEYS.includes("dk"));
 });
 
 test("empty category and keyword must fan out, music must not", () => {
@@ -68,6 +96,38 @@ test("seed rows and incomplete rows are not real events", () => {
     }),
     false,
   );
+});
+
+test("official market source includes company countries and billing Europe", () => {
+  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /_kBusinessCountryCodes/);
+  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /IT\/AT\/IE\/CH/);
+  assert.ok(ticketmasterDiscoveryAttempts({ country: "FR" }).some((row) => row.id === "minimal"));
+});
+
+test("distinct showtimes with the same id stay separate", () => {
+  const merged = mergePublicEvents(
+    [
+      [
+        {
+          id: "show",
+          title: "Evening",
+          provider: "ticketmaster",
+          starts_at_utc: "2026-10-01T19:00:00.000Z",
+          city: "Paris",
+        },
+        {
+          id: "show",
+          title: "Matinee",
+          provider: "ticketmaster",
+          starts_at_utc: "2026-10-01T14:00:00.000Z",
+          city: "Paris",
+        },
+      ],
+    ],
+    50,
+  );
+  assert.equal(merged.length, 2);
+  assert.notEqual(eventDedupeKey(merged[0]), eventDedupeKey(merged[1]));
 });
 
 test("merge dedupes and keeps earliest dates within the cap", () => {

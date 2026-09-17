@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'event_data_source.dart';
+import 'event_markets.dart';
 import 'event_models.dart';
 import 'events_detail_page.dart';
 
@@ -423,30 +424,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   }
 
   String _marketLabel(String key) {
-    switch (key) {
-      case 'be':
-        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
-      case 'nl':
-        return _t(
-          nl: 'Nederland',
-          en: 'Netherlands',
-          fr: 'Pays-Bas',
-          es: 'Países Bajos',
-        );
-      case 'fr':
-        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
-      case 'uk':
-        return _t(
-          nl: 'Verenigd Koninkrijk',
-          en: 'United Kingdom',
-          fr: 'Royaume-Uni',
-          es: 'Reino Unido',
-        );
-      case 'es':
-        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
-      default:
-        return key.toUpperCase();
-    }
+    return fluxidiEventMarketLabel(key, appConfig.currentLanguage.name);
   }
 
   String _dateFilterLabel(String key) {

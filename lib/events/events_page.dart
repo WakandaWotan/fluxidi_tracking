@@ -10,6 +10,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'event_ai_intent_parser.dart';
 import 'event_category_results_page.dart';
 import 'event_data_source.dart';
+import 'event_markets.dart';
 import 'event_models.dart';
 import 'saved_events_page.dart';
 
@@ -67,13 +68,7 @@ class _EventsPageState extends State<EventsPage> {
     EventCategoryKey.family,
     EventCategoryKey.culture,
   ];
-  static const List<String> _marketKeys = <String>[
-    'be',
-    'nl',
-    'fr',
-    'uk',
-    'es',
-  ];
+  static const List<String> _marketKeys = kFluxidiEventMarketKeys;
   static const List<String> _sortModes = <String>[
     'default',
     'soonest',
@@ -163,30 +158,7 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   String _marketLabel(String key) {
-    switch (key) {
-      case 'be':
-        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
-      case 'nl':
-        return _t(
-          nl: 'Nederland',
-          en: 'Netherlands',
-          fr: 'Pays-Bas',
-          es: 'Países Bajos',
-        );
-      case 'fr':
-        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
-      case 'uk':
-        return _t(
-          nl: 'Verenigd Koninkrijk',
-          en: 'United Kingdom',
-          fr: 'Royaume-Uni',
-          es: 'Reino Unido',
-        );
-      case 'es':
-        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
-      default:
-        return key.toUpperCase();
-    }
+    return fluxidiEventMarketLabel(key, appConfig.currentLanguage.name);
   }
 
   String _dateFilterLabel(String key) {
