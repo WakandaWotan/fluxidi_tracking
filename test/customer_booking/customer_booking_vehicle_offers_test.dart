@@ -189,6 +189,68 @@ void main() {
     );
   });
 
+  test('incomplete ride keeps photos from looking like a roster block', () {
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[tesla],
+      drivers: <Map<String, dynamic>>[chris],
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 17, 12, 0),
+      rideReady: false,
+      durationKnown: false,
+    );
+    expect(offers.single.available, isFalse);
+    expect(offers.single.reason, 'need_ride');
+    expect(
+      customerBookingVehicleOfferState(
+        hasCompany: true,
+        rideReady: false,
+        loading: false,
+        loadFailed: false,
+        offers: offers,
+      ),
+      CustomerBookingVehicleOfferState.incompleteRide,
+    );
+    expect(customerBookingVehicleReasonIsPending('need_ride'), isTrue);
+  });
+
+  test('missing duration is not a final unavailable mark', () {
+    final mondayAfternoon = DateTime.utc(2026, 9, 14, 12, 0);
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[tesla],
+      drivers: <Map<String, dynamic>>[chris],
+      passengers: 1,
+      pickupUtc: mondayAfternoon,
+      durationKnown: false,
+      rideReady: true,
+    );
+    expect(offers.single.reason, 'need_duration');
+    expect(offers.single.available, isFalse);
+    expect(customerBookingVehicleReasonIsPending('need_duration'), isTrue);
+  });
+
+  test('proven start-time roster block stays visible without duration', () {
+    final thursdayAfternoon = DateTime.utc(2026, 9, 17, 11, 0);
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[cadillac],
+      drivers: <Map<String, dynamic>>[wotan],
+      passengers: 1,
+      pickupUtc: thursdayAfternoon,
+      durationKnown: false,
+      rideReady: true,
+    );
+    expect(offers.single.reason, 'assignment_driver_outside_hours');
+    expect(offers.single.available, isFalse);
+    expect(customerBookingVehicleReasonIsPending(offers.single.reason), isFalse);
+  });
+
+  test('availability response without vehicles is a load failure', () {
+    final snapshot = parseCustomerBookingAvailability(
+      <String, dynamic>{'ok': true, 'profile': <String, dynamic>{}},
+    );
+    expect(snapshot.loadFailed, isTrue);
+    expect(snapshot.resolved, isFalse);
+  });
+
   test('incomplete ride is not a final no-vehicles conclusion', () {
     expect(
       customerBookingVehicleOfferState(

@@ -1535,6 +1535,27 @@ const LocalizedText kCompanyAgendaRouteMissingCompact = LocalizedText(
   es: 'No hay coordenadas de ruta utilizables para estas direcciones.',
 );
 
+const LocalizedText kCompanyAgendaConfirmPickup = LocalizedText(
+  nl: 'Bevestig je vertrekpunt',
+  en: 'Confirm your pickup point',
+  fr: 'Confirmez votre point de départ',
+  es: 'Confirma tu punto de salida',
+);
+
+const LocalizedText kCompanyAgendaConfirmDropoff = LocalizedText(
+  nl: 'Bevestig je bestemming',
+  en: 'Confirm your destination',
+  fr: 'Confirmez votre destination',
+  es: 'Confirma tu destino',
+);
+
+const LocalizedText kCompanyAgendaChooseEndpoints = LocalizedText(
+  nl: 'Kies vertrek en bestemming om de route te zien.',
+  en: 'Choose pickup and destination to see the route.',
+  fr: 'Choisissez le départ et la destination pour voir l’itinéraire.',
+  es: 'Elige salida y destino para ver la ruta.',
+);
+
 const LocalizedText kCompanyAgendaSameCrewIfAvailable = LocalizedText(
   nl: 'Zelfde chauffeur en voertuig indien beschikbaar',
   en: 'Same driver and vehicle if available',

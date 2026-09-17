@@ -272,7 +272,10 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
   }
   final rows = root['vehicles'];
   if (rows is! List) {
-    return const CustomerBookingAvailabilitySnapshot(fetched: true);
+    return const CustomerBookingAvailabilitySnapshot(
+      loadFailed: true,
+      fetched: true,
+    );
   }
   final available = <String>{};
   final unavailable = <String>{};

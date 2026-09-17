@@ -667,12 +667,15 @@ String formatCompanyPlanQuoteEta({
 
 bool companyPlanAddressIsQuoteReady(LimousineAddressValue value) {
   if (!value.isRouteReady) return false;
+  if (!value.hasCoordinates) return false;
   final text = value.routeText;
   return text.isNotEmpty;
 }
 
 enum CompanyPlanRouteStatus {
   missingEndpoints,
+  confirmPickup,
+  confirmDropoff,
   needsRestore,
   calculating,
   ready,
@@ -703,17 +706,24 @@ CompanyPlanRouteStatus companyPlanRouteStatus({
   final toReady = companyPlanAddressIsQuoteReady(to);
   final hasText =
       from.displayText.trim().isNotEmpty && to.displayText.trim().isNotEmpty;
+  final addressCoords = from.lat != null &&
+      from.lon != null &&
+      to.lat != null &&
+      to.lon != null &&
+      from.lat!.isFinite &&
+      from.lon!.isFinite &&
+      to.lat!.isFinite &&
+      to.lon!.isFinite;
   final hasCoords = hasPolyline ||
-      companyPlanQuoteHasUsableCoords(quote) ||
-      (from.lat != null &&
-          from.lon != null &&
-          to.lat != null &&
-          to.lon != null &&
-          from.lat!.isFinite &&
-          from.lon!.isFinite &&
-          to.lat!.isFinite &&
-          to.lon!.isFinite);
+      addressCoords ||
+      (fromReady && toReady && companyPlanQuoteHasUsableCoords(quote));
   if (!hasCoords) {
+    if (from.displayText.trim().isNotEmpty && !fromReady) {
+      return CompanyPlanRouteStatus.confirmPickup;
+    }
+    if (to.displayText.trim().isNotEmpty && !toReady) {
+      return CompanyPlanRouteStatus.confirmDropoff;
+    }
     if (hasText) return CompanyPlanRouteStatus.needsRestore;
     return CompanyPlanRouteStatus.missingEndpoints;
   }

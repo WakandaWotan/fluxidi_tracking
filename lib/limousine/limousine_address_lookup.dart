@@ -199,17 +199,105 @@ String? limousineAddressQueryPostcode(String raw) {
   return match?.group(1);
 }
 
+final RegExp _explicitCountryToken = RegExp(
+  r'\b(belgi[eë]|belgium|belgique|nederland|netherlands|holland|france|'
+  r'frankrijk|duitsland|germany|deutschland|luxemburg|luxembourg|spanje|'
+  r'spain|espa[nñ]a|united kingdom|verenigd koninkrijk|england|canada|'
+  r'australi[eë]|australia|united states|verenigde staten|usa)\b',
+  caseSensitive: false,
+);
+
+final Map<String, String> kLimousineNamedCountries = {
+  'belgie': 'be',
+  'belgium': 'be',
+  'belgique': 'be',
+  'nederland': 'nl',
+  'netherlands': 'nl',
+  'holland': 'nl',
+  'france': 'fr',
+  'frankrijk': 'fr',
+  'duitsland': 'de',
+  'germany': 'de',
+  'deutschland': 'de',
+  'luxemburg': 'lu',
+  'luxembourg': 'lu',
+  'spanje': 'es',
+  'spain': 'es',
+  'espana': 'es',
+  'united kingdom': 'gb',
+  'verenigd koninkrijk': 'gb',
+  'england': 'gb',
+  'canada': 'ca',
+  'australie': 'au',
+  'australia': 'au',
+  'united states': 'us',
+  'verenigde staten': 'us',
+  'usa': 'us',
+};
+
+String limousineStripCountryTokens(String raw) {
+  return raw
+      .replaceAll(_explicitCountryToken, ' ')
+      .replaceAll(RegExp(r'\b(be|nl|fr|de|lu|es|gb|uk|us|ca|au)\b', caseSensitive: false), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 String? limousineAddressQueryLocality(String raw) {
   final match = _localityAfterPostcode.firstMatch(raw.trim());
-  if (match == null) return null;
-  final locality = match
-      .group(1)!
-      .split(',')
-      .first
-      .trim()
-      .replaceAll(RegExp(r'\b(BE|België|Belgie|Belgium)\b', caseSensitive: false), '')
-      .trim();
-  return locality.isEmpty ? null : locality;
+  if (match != null) {
+    final locality = limousineStripCountryTokens(
+      match.group(1)!.split(',').first.trim(),
+    );
+    if (locality.isNotEmpty) return locality;
+  }
+  return limousineAddressQueryTrailingLocality(raw);
+}
+
+/// Locality after a house number when the user typed no postcode,
+/// e.g. `koekamerstraat 48A maarkedal`.
+String? limousineAddressQueryTrailingLocality(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+  final number = RegExp(r'\d+\s*[A-Za-z]?\b').firstMatch(text);
+  if (number == null) return null;
+  var rest = limousineStripCountryTokens(
+    text.substring(number.end).replaceAll(',', ' '),
+  );
+  rest = rest.replaceFirst(RegExp(r'^[1-9]\d{3}\s*'), '').trim();
+  if (rest.isEmpty) return null;
+  final words = rest
+      .split(RegExp(r'\s+'))
+      .where((word) => RegExp(r'[A-Za-zÀ-ÿ]{3,}').hasMatch(word))
+      .toList();
+  if (words.isEmpty) return null;
+  return words.take(2).join(' ');
+}
+
+/// Country bias from the current query. Never a hard Belgium-only lock:
+/// an explicit foreign country or a query without local clues omits the filter.
+String? limousineMapboxCountryForQuery(
+  String query, {
+  String fallback = '',
+}) {
+  final folded = ' ${limousineFoldAddressToken(query)} ';
+  for (final entry in kLimousineNamedCountries.entries) {
+    if (folded.contains(' ${entry.key} ')) return entry.value;
+  }
+  final trailingIso = RegExp(r',\s*([A-Za-z]{2})\s*$').firstMatch(query.trim());
+  if (trailingIso != null) {
+    return trailingIso.group(1)!.toLowerCase();
+  }
+  if (limousineAddressQueryPostcode(query) != null) return 'be';
+  final hasLowCountryStreet = RegExp(
+    r'(straat|laan|steenweg|dreef|lei)\b',
+    caseSensitive: false,
+  ).hasMatch(query);
+  if (hasLowCountryStreet && limousineAddressQueryLocality(query) != null) {
+    return 'be';
+  }
+  final fb = fallback.trim();
+  return fb.isEmpty ? null : fb;
 }
 
 String limousineSuggestionResolvedPostcode(LimousinePlaceSuggestion suggestion) {
@@ -602,11 +690,72 @@ int limousinePlaceSuggestionRank(
   return queryPostcode != null ? 4 : 8;
 }
 
+bool limousineSuggestionSharesStreet(
+  LimousinePlaceSuggestion suggestion,
+  String query,
+) {
+  final queryParts = limousineParseStreetHouse(query);
+  if (queryParts.street.trim().length < 4) return true;
+  final suggestionParts = limousineParseStreetHouse(
+    [suggestion.label, suggestion.text]
+        .where((part) => part.trim().isNotEmpty)
+        .join(' '),
+  );
+  return limousineStreetNamesCompatible(queryParts.street, suggestionParts.street) ||
+      limousineStreetNamesCompatible(queryParts.street, suggestion.label);
+}
+
+bool limousineSuggestionIsHouseNumberOnlyMatch(
+  LimousinePlaceSuggestion suggestion,
+  String query,
+) {
+  final queryParts = limousineParseStreetHouse(query);
+  if (queryParts.street.trim().length < 4 || !queryParts.hasNumber) {
+    return false;
+  }
+  if (limousineSuggestionSharesStreet(suggestion, query)) return false;
+  final suggestionParts = limousineParseStreetHouse(suggestion.label);
+  return suggestionParts.number == queryParts.number;
+}
+
+List<LimousinePlaceSuggestion> limousineFilterPlaceSuggestions(
+  String query,
+  List<LimousinePlaceSuggestion> suggestions,
+) {
+  final parts = limousineParseStreetHouse(query);
+  final hasStreet = parts.street.trim().length >= 4;
+  final hasPlaceHint = limousineAddressQueryLocality(query) != null ||
+      limousineAddressQueryPostcode(query) != null;
+  if (!hasStreet && !hasPlaceHint) return suggestions;
+
+  final agreeing = [
+    for (final item in suggestions)
+      if (limousineSuggestionAgreesWithQuery(item, query)) item,
+  ];
+  if (hasStreet && parts.hasNumber) {
+    if (agreeing.isNotEmpty) return agreeing;
+    final streetMatches = [
+      for (final item in suggestions)
+        if (limousineSuggestionSharesStreet(item, query) &&
+            !limousineSuggestionIsHouseNumberOnlyMatch(item, query))
+          item,
+    ];
+    if (streetMatches.isNotEmpty) return streetMatches;
+    if (hasPlaceHint) return const <LimousinePlaceSuggestion>[];
+  }
+  if (agreeing.isNotEmpty) return agreeing;
+  return [
+    for (final item in suggestions)
+      if (!limousineSuggestionIsHouseNumberOnlyMatch(item, query)) item,
+  ];
+}
+
 List<LimousinePlaceSuggestion> limousineRankPlaceSuggestions(
   String query,
   List<LimousinePlaceSuggestion> suggestions,
 ) {
-  final ranked = List<LimousinePlaceSuggestion>.from(suggestions)
+  final filtered = limousineFilterPlaceSuggestions(query, suggestions);
+  final ranked = List<LimousinePlaceSuggestion>.from(filtered)
     ..sort((left, right) {
       final byRank = limousinePlaceSuggestionRank(left, query)
           .compareTo(limousinePlaceSuggestionRank(right, query));
@@ -821,11 +970,15 @@ class LimousinePlaceLookup {
       query: query,
       uiLanguage: language,
     );
+    final inferredCountry = limousineMapboxCountryForQuery(
+      query,
+      fallback: country,
+    );
     final uri = limousineMapboxPlacesUri(
       query: query,
       token: token,
       language: searchLanguage,
-      country: country,
+      country: inferredCountry,
       types: types,
     );
     final client = _client ?? http.Client();

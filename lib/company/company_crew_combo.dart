@@ -373,6 +373,7 @@ String companyCrewComboLabel({
   required AppLanguage language,
   bool includePlate = false,
   DateTime? plannedLocal,
+  bool durationKnown = true,
 }) {
   final driver = companyPlanPublicDriverName(combo.driver, language);
   final vehicle = includePlate
@@ -382,6 +383,7 @@ String companyCrewComboLabel({
     combo.presence,
     language,
     plannedLocal: plannedLocal,
+    durationKnown: durationKnown,
   );
   return '$driver · $status · $vehicle';
 }
@@ -453,6 +455,7 @@ class CompanyCrewComboCard extends StatelessWidget {
     required this.title,
     required this.combo,
     this.plannedLocal,
+    this.durationKnown = true,
     this.statusText,
     this.includePlate = false,
     this.selected = false,
@@ -463,6 +466,7 @@ class CompanyCrewComboCard extends StatelessWidget {
   final String title;
   final CompanyCrewCombo? combo;
   final DateTime? plannedLocal;
+  final bool durationKnown;
   final String? statusText;
   final bool includePlate;
   final bool selected;
@@ -490,6 +494,7 @@ class CompanyCrewComboCard extends StatelessWidget {
                 chosen.presence,
                 language,
                 plannedLocal: plannedLocal,
+                durationKnown: durationKnown,
               ));
     final card = Card(
       margin: EdgeInsets.zero,
@@ -552,6 +557,7 @@ class CompanyCrewComboPicker extends StatefulWidget {
     required this.selectedId,
     required this.onSelected,
     this.plannedLocal,
+    this.durationKnown = true,
     this.includePlate = false,
     this.unassignedLabel,
     this.unsuitableChoices = const <CompanyAssignmentChoice>[],
@@ -563,6 +569,7 @@ class CompanyCrewComboPicker extends StatefulWidget {
   final String selectedId;
   final ValueChanged<String> onSelected;
   final DateTime? plannedLocal;
+  final bool durationKnown;
   final bool includePlate;
   final String? unassignedLabel;
   final List<CompanyAssignmentChoice> unsuitableChoices;
@@ -652,6 +659,7 @@ class _CompanyCrewComboPickerState extends State<CompanyCrewComboPicker> {
             language: widget.language,
             includePlate: false,
             plannedLocal: widget.plannedLocal,
+            durationKnown: widget.durationKnown,
           );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -705,6 +713,7 @@ class _CompanyCrewComboPickerState extends State<CompanyCrewComboPicker> {
                                 title: '',
                                 combo: selected,
                                 plannedLocal: widget.plannedLocal,
+                                durationKnown: widget.durationKnown,
                                 includePlate: widget.includePlate,
                                 selected: true,
                               ),
@@ -977,6 +986,7 @@ class _CompanyCrewComboOptionTile extends StatelessWidget {
       combo.presence,
       language,
       plannedLocal: plannedLocal,
+      durationKnown: true,
     );
     final plate = includePlate ? companyAgendaVehiclePlate(combo.vehicle) : '';
     return Semantics(

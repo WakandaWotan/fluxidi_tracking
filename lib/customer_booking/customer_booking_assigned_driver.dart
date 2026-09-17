@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 
@@ -74,6 +75,24 @@ CustomerBookingAssignedDriver customerBookingAssignedDriverFromMaps({
   );
 }
 
+CustomerBookingAssignedDriver customerBookingProposedDriverFromRecord(
+  Map<String, dynamic>? driver,
+) {
+  if (driver == null) return const CustomerBookingAssignedDriver();
+  final parsed = customerBookingAssignedDriverFromMaps(driver: driver);
+  if (parsed.driverId.isEmpty && parsed.firstName.isEmpty) {
+    return const CustomerBookingAssignedDriver();
+  }
+  return CustomerBookingAssignedDriver(
+    driverId: parsed.driverId,
+    firstName: parsed.firstName,
+    photoUrl: parsed.photoUrl,
+    ratingAverage: parsed.ratingAverage,
+    ratingCount: parsed.ratingCount,
+    assigned: false,
+  );
+}
+
 ({double? average, int count}) _personalRating(Map<String, dynamic> raw) {
   // Company aggregates stay on the company. Only personal driver fields.
   final avgRaw = raw['driver_rating_avg'] ??
@@ -92,6 +111,79 @@ CustomerBookingAssignedDriver customerBookingAssignedDriverFromMaps({
     return (average: null, count: 0);
   }
   return (average: avg, count: count);
+}
+
+class CustomerBookingProposedDriverLine extends StatelessWidget {
+  const CustomerBookingProposedDriverLine({
+    super.key,
+    required this.driver,
+    required this.language,
+    required this.titleColor,
+    required this.mutedColor,
+    required this.surfaceAlt,
+  });
+
+  final CustomerBookingAssignedDriver driver;
+  final AppLanguage language;
+  final Color titleColor;
+  final Color mutedColor;
+  final Color surfaceAlt;
+
+  @override
+  Widget build(BuildContext context) {
+    if (driver.driverId.isEmpty && driver.firstName.isEmpty) {
+      return Text(
+        kCustomerBookingDriverPending.of(language),
+        key: kCustomerBookingProposedDriverKey,
+        style: TextStyle(color: mutedColor, fontSize: 12, fontWeight: FontWeight.w600),
+      );
+    }
+    final name = driver.firstName.isEmpty
+        ? kCustomerBookingDriverFallback.of(language)
+        : driver.firstName;
+    final score = driver.ratingAverage == null
+        ? kCustomerBookingDriverProposed.of(language)
+        : '${driver.ratingAverage!.toStringAsFixed(1)} · ${driver.ratingCount}';
+    final photo = driver.photoUrl.trim();
+    return Row(
+      key: kCustomerBookingProposedDriverKey,
+      children: [
+        if (photo.isNotEmpty)
+          ClipOval(
+            child: Image.network(
+              photo,
+              width: 28,
+              height: 28,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _dot(),
+            ),
+          )
+        else
+          _dot(),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '$name · $score',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: titleColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dot() {
+    return CircleAvatar(
+      radius: 14,
+      backgroundColor: surfaceAlt,
+      child: Icon(Icons.person_outline, size: 16, color: titleColor),
+    );
+  }
 }
 
 class CustomerBookingAssignedDriverCard extends StatelessWidget {

@@ -141,6 +141,24 @@ const Key kCustomerBookingVehiclesLoadingKey = Key(
 const Key kCustomerBookingVehiclesFailedKey = Key(
   'customer_booking_vehicles_failed',
 );
+const Key kCustomerBookingAvailabilityCheckingKey = Key(
+  'customer_booking_availability_checking',
+);
+const Key kCustomerBookingAvailabilityRetryKey = Key(
+  'customer_booking_availability_retry',
+);
+const Key kCustomerBookingCompanyInfoKey = Key(
+  'customer_booking_company_info',
+);
+const Key kCustomerBookingContactSummaryKey = Key(
+  'customer_booking_contact_summary',
+);
+const Key kCustomerBookingConfirmPickupBannerKey = Key(
+  'customer_booking_confirm_pickup_banner',
+);
+const Key kCustomerBookingProposedDriverKey = Key(
+  'customer_booking_proposed_driver',
+);
 
 Key customerBookingPaymentMethodKey(String methodId) {
   return Key('customer_booking_payment_${methodId.trim().toLowerCase()}');

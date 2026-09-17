@@ -296,7 +296,7 @@ void main() {
         ),
         error: null,
       ),
-      CompanyPlanRouteStatus.needsRestore,
+      CompanyPlanRouteStatus.confirmPickup,
     );
     expect(
       companyPlanQuoteErrorIsMissingRoute('route_required', from, to),

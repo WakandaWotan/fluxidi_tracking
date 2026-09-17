@@ -112,7 +112,7 @@ Future<void> _capture(WidgetTester tester, String name) async {
     () => image!.toByteData(format: ui.ImageByteFormat.png),
   );
   final dir = Directory(
-    r'C:\_flutter_work\fluxidi_customer_ops_client_p0\.qa-local\restore-20260916',
+    r'C:\_flutter_work\fluxidi_customer_ops_client_p0\.qa-local\restore-20260917',
   )..createSync(recursive: true);
   File('${dir.path}${Platform.pathSeparator}$name.png').writeAsBytesSync(
     bytes!.buffer.asUint8List(),
@@ -230,7 +230,7 @@ void main() {
 
     expect(
       File(
-        r'C:\_flutter_work\fluxidi_customer_ops_client_p0\.qa-local\restore-20260916\01_phone_taxi_quote.png',
+        r'C:\_flutter_work\fluxidi_customer_ops_client_p0\.qa-local\restore-20260917\01_phone_taxi_quote.png',
       ).existsSync(),
       isTrue,
     );

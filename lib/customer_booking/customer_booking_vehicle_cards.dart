@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_fallback.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
@@ -24,6 +26,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
     required this.dangerColor,
     this.cardKey,
     this.unavailableLabel,
+    this.proposedDriver,
   });
 
   factory CustomerBookingVehiclePhotoCard.palette({
@@ -35,6 +38,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
     required CustomerThemePalette palette,
     Key? cardKey,
     String? unavailableLabel,
+    CustomerBookingAssignedDriver? proposedDriver,
   }) {
     return CustomerBookingVehiclePhotoCard(
       key: key,
@@ -51,6 +55,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
       dangerColor: palette.danger,
       cardKey: cardKey,
       unavailableLabel: unavailableLabel,
+      proposedDriver: proposedDriver,
     );
   }
 
@@ -67,6 +72,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
   final Color dangerColor;
   final Key? cardKey;
   final String? unavailableLabel;
+  final CustomerBookingAssignedDriver? proposedDriver;
 
   @override
   Widget build(BuildContext context) {
@@ -101,7 +107,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               AspectRatio(
-                aspectRatio: 16 / 10,
+                aspectRatio: 16 / 9,
                 child: ColoredBox(
                   color: surfaceAlt,
                   child: photo.isNotEmpty
@@ -134,35 +140,50 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: titleColor,
                         fontWeight: FontWeight.w800,
+                        fontSize: 13,
                       ),
                     ),
-                    const SizedBox(height: 2),
                     Text(
                       capacity,
                       style: TextStyle(
                         color: mutedColor,
                         fontWeight: FontWeight.w600,
+                        fontSize: 12,
                       ),
                     ),
-                    if (!offer.available) ...[
+                    if (selected && proposedDriver != null) ...[
+                      const SizedBox(height: 4),
+                      CustomerBookingProposedDriverLine(
+                        driver: proposedDriver!,
+                        language: language,
+                        titleColor: titleColor,
+                        mutedColor: mutedColor,
+                        surfaceAlt: surfaceAlt,
+                      ),
+                    ],
+                    if (!offer.available &&
+                        !customerBookingVehicleReasonIsPending(offer.reason) &&
+                        !customerBookingVehicleReasonIsLoadFailed(
+                          offer.reason,
+                        )) ...[
                       const SizedBox(height: 4),
                       Text(
                         unavailableLabel ??
                             kCustomerBookingVehicleUnavailable.of(language),
                         style: TextStyle(
                           color: dangerColor,
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -234,6 +255,15 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
                         mutedColor: scheme.onSurfaceVariant,
                         dangerColor: scheme.error,
                         cardKey: cardKeyFor?.call(offer.vehicleId),
+                        unavailableLabel: customerBookingVehicleOfferReasonLabel(
+                          offer,
+                          language,
+                        ),
+                        proposedDriver: selectedVehicleId == offer.vehicleId
+                            ? customerBookingProposedDriverFromRecord(
+                                offer.driver,
+                              )
+                            : null,
                       )
                     : CustomerBookingVehiclePhotoCard.palette(
                         offer: offer,
@@ -245,6 +275,15 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
                         palette: palette!,
                         cardKey: cardKeyFor?.call(offer.vehicleId) ??
                             customerBookingVehicleKey(offer.vehicleId),
+                        unavailableLabel: customerBookingVehicleOfferReasonLabel(
+                          offer,
+                          language,
+                        ),
+                        proposedDriver: selectedVehicleId == offer.vehicleId
+                            ? customerBookingProposedDriverFromRecord(
+                                offer.driver,
+                              )
+                            : null,
                       ),
               ),
           ],
@@ -252,4 +291,24 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
       },
     );
   }
+}
+
+String customerBookingVehicleOfferReasonLabel(
+  CustomerBookingVehicleOffer offer,
+  AppLanguage language,
+) {
+  final reason = offer.reason.trim();
+  if (reason.isEmpty ||
+      customerBookingVehicleReasonIsPending(reason) ||
+      customerBookingVehicleReasonIsLoadFailed(reason)) {
+    return '';
+  }
+  return companyPlanPresenceLabel(
+    CompanyPlanPresence(
+      tone: CompanyPlanPresenceTone.blocked,
+      code: reason,
+      icon: Icons.event_busy_outlined,
+    ),
+    language,
+  );
 }

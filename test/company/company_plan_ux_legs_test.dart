@@ -388,7 +388,7 @@ void main() {
           durationMin: 41,
         ),
       ),
-      CompanyPlanRouteStatus.needsRestore,
+      CompanyPlanRouteStatus.confirmPickup,
     );
   });
 

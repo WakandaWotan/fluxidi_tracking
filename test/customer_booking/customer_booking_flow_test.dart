@@ -101,6 +101,28 @@ CustomerBookingQuoteClient _quotes({
   );
 }
 
+CustomerBookingProfileGet _defaultProfileGet() {
+  return (uri) async {
+    if (uri.path.contains('availability')) {
+      return http.Response(
+        jsonEncode(<String, dynamic>{
+          'ok': true,
+          'vehicles': <Map<String, dynamic>>[
+            <String, dynamic>{'vehicle_id': 'vh_1', 'available': true},
+            <String, dynamic>{'vehicle_id': 'vh_tesla', 'available': true},
+            <String, dynamic>{'vehicle_id': 'vh_cadillac', 'available': true},
+            <String, dynamic>{'vehicle_id': 'vh_premium', 'available': true},
+            <String, dynamic>{'vehicle_id': 'vh_sedan', 'available': true},
+            <String, dynamic>{'vehicle_id': 'vh_van', 'available': true},
+          ],
+        }),
+        200,
+      );
+    }
+    return http.Response('partner_profile_skipped', 404);
+  };
+}
+
 LimousineCurrentLocationPlatform _gpsDenied() {
   return LimousineCurrentLocationPlatform(
     isLocationServiceEnabled: () async => false,
@@ -147,7 +169,7 @@ Future<void> _pumpFlow(
         quoteClient: quotes ?? _quotes(),
         autoResolveGps: autoResolveGps,
         profile: profile,
-        profileGet: profileGet,
+        profileGet: profileGet ?? _defaultProfileGet(),
       ),
       size: size,
       theme: theme,
@@ -533,11 +555,15 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.byKey(kCustomerBookingConfirmKey), findsOneWidget);
-      expect(find.byKey(kCustomerBookingNarrowStackKey), findsOneWidget);
-      expect(find.byKey(kCustomerBookingWideSplitKey), findsNothing);
-      final map = tester.getRect(find.byKey(kCustomerBookingMapKey));
-      final confirm = tester.getRect(find.byKey(kCustomerBookingConfirmKey));
-      expect(confirm.top, greaterThanOrEqualTo(map.bottom - 1));
+      if (size.width >= 720) {
+        expect(find.byKey(kCustomerBookingWideSplitKey), findsOneWidget);
+      } else {
+        expect(find.byKey(kCustomerBookingNarrowStackKey), findsOneWidget);
+        expect(find.byKey(kCustomerBookingWideSplitKey), findsNothing);
+        final map = tester.getRect(find.byKey(kCustomerBookingMapKey));
+        final confirm = tester.getRect(find.byKey(kCustomerBookingConfirmKey));
+        expect(confirm.top, greaterThanOrEqualTo(map.bottom - 1));
+      }
     }
   });
 
@@ -625,7 +651,9 @@ void main() {
         ),
       ),
     );
-    expect(find.textContaining('2026-09-16 09:45'), findsWidgets);
+    expect(find.textContaining('2026-09-16'), findsWidgets);
+    expect(find.textContaining('09:45'), findsWidgets);
+    expect(find.textContaining('2026-09-16 09:45'), findsNothing);
   });
 
   testWidgets('large catalog search stays bounded', (tester) async {
@@ -764,10 +792,7 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 600));
-    await tester.ensureVisible(find.byKey(kCustomerBookingNameKey));
-    await tester.enterText(find.byKey(kCustomerBookingNameKey), 'Christophe');
-    await tester.enterText(find.byKey(kCustomerBookingPhoneKey), '+32469788891');
-    await tester.pump();
+    expect(find.byKey(kCustomerBookingContactSummaryKey), findsOneWidget);
     await tester.ensureVisible(find.byKey(kCustomerBookingConfirmKey));
     await tester.tap(find.byKey(kCustomerBookingConfirmKey));
     await tester.pumpAndSettle();
@@ -787,7 +812,7 @@ void main() {
     expect(books, 1);
   });
 
-  testWidgets('airport chrome sits above the map and keeps the company vehicles', (
+  testWidgets('airport map sits above chrome and keeps the company vehicles', (
     tester,
   ) async {
     await _pumpFlow(
@@ -821,7 +846,7 @@ void main() {
     expect(find.byKey(customerBookingVehicleKey('minivan')), findsNothing);
     final chrome = tester.getRect(find.byKey(kCustomerBookingAirportChromeKey));
     final map = tester.getRect(find.byKey(kCustomerBookingMapKey));
-    expect(chrome.bottom, lessThanOrEqualTo(map.top + 1));
+    expect(map.bottom, lessThanOrEqualTo(chrome.top + 1));
   });
 
   testWidgets('profile address and GPS actions do not overwrite a chosen pickup', (
@@ -1020,9 +1045,7 @@ void main() {
     await tester.tap(find.byKey(kCustomerBookingPrivateRideKey));
     await tester.pumpAndSettle();
     expect(find.text('Bedrijfsnaam'), findsNothing);
-    await tester.ensureVisible(find.byKey(kCustomerBookingNameKey));
-    await tester.enterText(find.byKey(kCustomerBookingNameKey), 'Christophe');
-    await tester.enterText(find.byKey(kCustomerBookingPhoneKey), '+32469788891');
+    expect(find.byKey(kCustomerBookingContactSummaryKey), findsOneWidget);
     await tester.ensureVisible(find.byKey(kCustomerBookingConfirmKey));
     await tester.tap(find.byKey(kCustomerBookingConfirmKey));
     await tester.pumpAndSettle();

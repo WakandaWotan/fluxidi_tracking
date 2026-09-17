@@ -47,9 +47,12 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
   required int passengers,
   DateTime? pickupUtc,
   int durationMin = 30,
+  bool durationKnown = true,
+  bool rideReady = true,
   Set<String> availableVehicleIds = const <String>{},
   Set<String> unavailableVehicleIds = const <String>{},
   Map<String, String> unavailableReasons = const <String, String>{},
+  Map<String, String> proposedDriverIds = const <String, String>{},
   bool availabilityResolved = false,
   bool availabilityFailed = false,
 }) {
@@ -75,10 +78,33 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
       );
       continue;
     }
-    if (unavailableVehicleIds.contains(id)) {
+    if (!rideReady) {
       offers.add(
         CustomerBookingVehicleOffer(
           vehicle: vehicle,
+          available: false,
+          reason: 'need_ride',
+          passengerSeats: seats,
+        ),
+      );
+      continue;
+    }
+    if (availabilityFailed) {
+      offers.add(
+        CustomerBookingVehicleOffer(
+          vehicle: vehicle,
+          available: false,
+          reason: 'availability_load_failed',
+          passengerSeats: seats,
+        ),
+      );
+      continue;
+    }
+    if (durationKnown && unavailableVehicleIds.contains(id)) {
+      offers.add(
+        CustomerBookingVehicleOffer(
+          vehicle: vehicle,
+          driver: _driverById(mergedDrivers, proposedDriverIds[id] ?? ''),
           available: false,
           reason: unavailableReasons[id] ?? 'unavailable',
           passengerSeats: seats,
@@ -101,7 +127,9 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
           passengers: passengers,
           schedule: schedules[companyAgendaDriverId(driver)],
           rideStartUtc: pickupUtc,
-          rideEndUtc: pickupUtc.add(Duration(minutes: durationMin)),
+          rideEndUtc: durationKnown
+              ? pickupUtc.add(Duration(minutes: durationMin))
+              : pickupUtc,
         );
         if (presence.suitable) {
           onDuty = driver;
@@ -110,37 +138,59 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
         }
         blockedReason = presence.code;
       }
-    } else if (linked.isNotEmpty) {
-      onDuty = linked.first;
     }
-    if (availabilityFailed) {
+    final proposedId = (proposedDriverIds[id] ?? '').trim();
+    final proposed = _driverById(mergedDrivers, proposedId) ?? onDuty;
+    if (!durationKnown &&
+        !availabilityResolved &&
+        blockedReason != 'assignment_driver_outside_hours' &&
+        blockedReason != 'assignment_driver_not_scheduled' &&
+        blockedReason != 'assignment_driver_planned_break' &&
+        blockedReason != 'assignment_driver_absent') {
       offers.add(
         CustomerBookingVehicleOffer(
           vehicle: vehicle,
+          driver: proposed,
           available: false,
-          reason: 'availability_load_failed',
+          reason: 'need_duration',
           passengerSeats: seats,
         ),
       );
       continue;
     }
-    final serverKnown = availabilityResolved ||
-        availableVehicleIds.isNotEmpty ||
-        unavailableVehicleIds.isNotEmpty;
+    final serverKnown = durationKnown &&
+        (availabilityResolved ||
+            availableVehicleIds.isNotEmpty ||
+            unavailableVehicleIds.isNotEmpty);
     final available = serverKnown
         ? availableVehicleIds.contains(id)
         : pickupUtc == null || (linked.isNotEmpty && onDuty != null);
     offers.add(
       CustomerBookingVehicleOffer(
         vehicle: vehicle,
-        driver: onDuty,
+        driver: proposed,
         available: available,
-        reason: available ? '' : (unavailableReasons[id] ?? blockedReason),
+        reason: available
+            ? ''
+            : (unavailableReasons[id] ??
+                (blockedReason.isNotEmpty ? blockedReason : 'unavailable')),
         passengerSeats: seats,
       ),
     );
   }
   return offers;
+}
+
+Map<String, dynamic>? _driverById(
+  List<Map<String, dynamic>> drivers,
+  String driverId,
+) {
+  final id = driverId.trim();
+  if (id.isEmpty) return null;
+  for (final driver in drivers) {
+    if (companyAgendaDriverId(driver) == id) return driver;
+  }
+  return null;
 }
 
 bool _driverUsesVehicle(
@@ -177,6 +227,7 @@ enum CustomerBookingVehicleOfferState {
   needCompany,
   incompleteRide,
   loading,
+  checking,
   loadFailed,
   noneSuitable,
   ready,
@@ -201,6 +252,7 @@ CustomerBookingVehicleOfferState customerBookingVehicleOfferState({
   required bool loading,
   required bool loadFailed,
   required List<CustomerBookingVehicleOffer> offers,
+  bool availabilityLoading = false,
 }) {
   if (!hasCompany) return CustomerBookingVehicleOfferState.needCompany;
   if (loading && offers.isEmpty) {
@@ -209,12 +261,25 @@ CustomerBookingVehicleOfferState customerBookingVehicleOfferState({
   if (loadFailed && offers.isEmpty) {
     return CustomerBookingVehicleOfferState.loadFailed;
   }
-  if (offers.isEmpty) {
-    return rideReady
-        ? CustomerBookingVehicleOfferState.noneSuitable
-        : CustomerBookingVehicleOfferState.incompleteRide;
+  if (!rideReady) {
+    return CustomerBookingVehicleOfferState.incompleteRide;
   }
+  if (availabilityLoading) {
+    return CustomerBookingVehicleOfferState.checking;
+  }
+  if (loadFailed) return CustomerBookingVehicleOfferState.loadFailed;
+  if (offers.isEmpty) return CustomerBookingVehicleOfferState.noneSuitable;
   return CustomerBookingVehicleOfferState.ready;
+}
+
+bool customerBookingVehicleReasonIsPending(String reason) {
+  return reason == 'need_ride' ||
+      reason == 'need_duration' ||
+      reason == 'pending';
+}
+
+bool customerBookingVehicleReasonIsLoadFailed(String reason) {
+  return reason == 'availability_load_failed';
 }
 
 String customerBookingVehicleOfferCapacityLabel({

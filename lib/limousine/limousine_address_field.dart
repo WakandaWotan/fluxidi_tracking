@@ -395,7 +395,7 @@ class LimousineAddressField extends StatelessWidget {
     this.showCurrentLocation = false,
     this.inputKey,
     this.decoration,
-    this.showCanonicalEcho = true,
+    this.showCanonicalEcho = false,
   });
 
   final LimousineAddressFieldController controller;

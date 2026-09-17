@@ -31,6 +31,9 @@ class CustomerBookingRouteMap extends StatefulWidget {
     this.onRetry,
     this.pickupLocal,
     this.geometryClient,
+    this.pickupNeedsConfirm = false,
+    this.confirmLat,
+    this.confirmLon,
   });
 
   final AppLanguage language;
@@ -44,6 +47,9 @@ class CustomerBookingRouteMap extends StatefulWidget {
   final VoidCallback? onRetry;
   final DateTime? pickupLocal;
   final CustomerBookingRouteGeometryClient? geometryClient;
+  final bool pickupNeedsConfirm;
+  final double? confirmLat;
+  final double? confirmLon;
 
   @override
   State<CustomerBookingRouteMap> createState() =>
@@ -85,6 +91,11 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
   @override
   void didUpdateWidget(covariant CustomerBookingRouteMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.pickupNeedsConfirm != oldWidget.pickupNeedsConfirm ||
+        widget.confirmLat != oldWidget.confirmLat ||
+        widget.confirmLon != oldWidget.confirmLon) {
+      _userMovedCamera = false;
+    }
     if (_routeFingerprint() != _requestFingerprint) {
       unawaited(_syncGeometry());
     }
@@ -96,7 +107,15 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     super.dispose();
   }
 
+  FluxidiMapLonLat? get _confirmPoint {
+    return customerBookingLonLat(widget.confirmLat, widget.confirmLon);
+  }
+
   FluxidiMapLonLat? get _pickupPoint {
+    if (widget.pickupNeedsConfirm) {
+      return _confirmPoint ??
+          customerBookingLonLat(widget.pickup.lat, widget.pickup.lon);
+    }
     return customerBookingLonLat(
       widget.quote?.pickupLat ?? widget.pickup.lat,
       widget.quote?.pickupLon ?? widget.pickup.lon,
@@ -126,6 +145,9 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
   }
 
   List<FluxidiMapLonLat> get _framePoints {
+    if (widget.pickupNeedsConfirm && _pickupPoint != null) {
+      return <FluxidiMapLonLat>[_pickupPoint!];
+    }
     return <FluxidiMapLonLat>[
       if (_pickupPoint != null) _pickupPoint!,
       ..._stopPoints,
@@ -143,7 +165,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     final pickup = _pickupPoint;
     final dropoff = _dropoffPoint;
     final fingerprint = _routeFingerprint();
-    if (pickup == null || dropoff == null) {
+    if (widget.pickupNeedsConfirm || pickup == null || dropoff == null) {
       _requestFingerprint = fingerprint;
       if (!mounted) return;
       setState(() {
@@ -234,6 +256,13 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     }
     final failed = customerBookingQuoteErrorText(raw, widget.language);
     if (failed.isNotEmpty) return failed;
+    if (widget.pickupNeedsConfirm ||
+        (_pickupPoint == null && widget.pickup.displayText.trim().isNotEmpty)) {
+      return kCustomerBookingConfirmPickup.of(widget.language);
+    }
+    if (_dropoffPoint == null && widget.dropoff.displayText.trim().isNotEmpty) {
+      return kCustomerBookingConfirmDropoff.of(widget.language);
+    }
     if (_pickupPoint == null || _dropoffPoint == null) {
       return kCustomerBookingMissingAddresses.of(widget.language);
     }

@@ -84,10 +84,12 @@ class PublicCompanyPresentationBanner extends StatelessWidget {
     super.key,
     required this.presentation,
     this.compact = false,
+    this.onInfo,
   });
 
   final PublicCompanyPresentation presentation;
   final bool compact;
+  final VoidCallback? onInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +97,33 @@ class PublicCompanyPresentationBanner extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final theme = Theme.of(context);
+    if (compact) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (presentation.hasBadge)
+            Flexible(
+              child: Text(
+                presentation.badge,
+                key: kCustomerBookingExampleBadgeKey,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          if (presentation.hasNotice && onInfo != null)
+            IconButton(
+              key: kCustomerBookingCompanyInfoKey,
+              tooltip: presentation.badge,
+              onPressed: onInfo,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.info_outline, size: 18),
+            ),
+        ],
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -108,7 +137,7 @@ class PublicCompanyPresentationBanner extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-          if (!compact && presentation.hasNotice) ...[
+          if (presentation.hasNotice) ...[
             const SizedBox(height: 4),
             Text(
               presentation.notice,

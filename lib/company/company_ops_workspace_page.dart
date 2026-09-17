@@ -1238,13 +1238,17 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Widget? _planVehicleOfferCards() {
+    final duration = _planDurationMin;
     final offers = customerBookingVehicleOffers(
       vehicles: _planOfferVehicles,
       drivers: _drivers,
       passengers: _passengers,
       pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)
           ?.toUtc(),
-      durationMin: _planDurationMin ?? 30,
+      durationMin: duration ?? 30,
+      durationKnown: duration != null && duration > 0,
+      rideReady: companyPlanAddressIsQuoteReady(_fromAddress.value) &&
+          companyPlanAddressIsQuoteReady(_toAddress.value),
     );
     if (offers.isEmpty) return null;
     return CustomerBookingVehiclePhotoCardGrid(
@@ -2911,6 +2915,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           selectedId:
               outbound?.id ?? companyCrewComboId(_planDriverId, _planVehicleId),
           plannedLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+          durationKnown: !_planDurationUnknown,
           includePlate: true,
           unsuitableChoices: unsuitable,
           onSelected: (id) {
@@ -2972,6 +2977,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 inbound?.id ??
                 companyCrewComboId(_planReturnDriverId, _planReturnVehicleId),
             plannedLocal: _returnPickupLocal,
+            durationKnown: !_planDurationUnknown,
             includePlate: true,
             unsuitableChoices: unsuitable,
             onSelected: (id) {
@@ -3370,6 +3376,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 onRetry: () => unawaited(_refreshPlanQuote(force: true)),
                 pickupLocal:
                     _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+                pickupNeedsConfirm: _fromAddress.locationNeedsConfirm,
+                confirmLat: _fromAddress.locationCandidate?.lat ??
+                    _fromAddress.value.lat,
+                confirmLon: _fromAddress.locationCandidate?.lon ??
+                    _fromAddress.value.lon,
               );
             }
             return KeyedSubtree(
@@ -3386,6 +3397,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
               onRetry: () => unawaited(_refreshPlanQuote(force: true)),
               pickupLocal:
                   _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+              pickupNeedsConfirm: _fromAddress.locationNeedsConfirm,
+              confirmLat: _fromAddress.locationCandidate?.lat ??
+                  _fromAddress.value.lat,
+              confirmLon: _fromAddress.locationCandidate?.lon ??
+                  _fromAddress.value.lon,
               ),
             );
           },

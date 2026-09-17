@@ -182,6 +182,55 @@ const LocalizedText kCustomerBookingVehicleUnavailable = LocalizedText(
   es: 'Este vehículo no está disponible a la hora elegida.',
 );
 
+const LocalizedText kCustomerBookingAvailabilityChecking = LocalizedText(
+  nl: 'Beschikbaarheid wordt gecontroleerd…',
+  en: 'Checking availability…',
+  fr: 'Vérification de la disponibilité…',
+  es: 'Comprobando disponibilidad…',
+);
+
+const LocalizedText kCustomerBookingAvailabilityRetry = LocalizedText(
+  nl: 'Beschikbaarheid opnieuw controleren',
+  en: 'Check availability again',
+  fr: 'Vérifier à nouveau la disponibilité',
+  es: 'Volver a comprobar la disponibilidad',
+);
+
+const LocalizedText kCustomerBookingConfirmPickup = LocalizedText(
+  nl: 'Bevestig je vertrekpunt',
+  en: 'Confirm your pickup point',
+  fr: 'Confirmez votre point de départ',
+  es: 'Confirma tu punto de salida',
+);
+
+const LocalizedText kCustomerBookingConfirmDropoff = LocalizedText(
+  nl: 'Bevestig je bestemming',
+  en: 'Confirm your destination',
+  fr: 'Confirmez votre destination',
+  es: 'Confirma tu destino',
+);
+
+const LocalizedText kCustomerBookingCheckPickup = LocalizedText(
+  nl: 'Controleer je vertrekpunt',
+  en: 'Check your pickup point',
+  fr: 'Vérifiez votre point de départ',
+  es: 'Comprueba tu punto de salida',
+);
+
+const LocalizedText kCustomerBookingContactChange = LocalizedText(
+  nl: 'Wijzigen',
+  en: 'Edit',
+  fr: 'Modifier',
+  es: 'Editar',
+);
+
+const LocalizedText kCustomerBookingDriverProposed = LocalizedText(
+  nl: 'Voorstel',
+  en: 'Proposed',
+  fr: 'Proposition',
+  es: 'Propuesta',
+);
+
 const LocalizedText kCustomerBookingBookWith = LocalizedText(
   nl: 'Je boekt bij',
   en: 'You are booking with',

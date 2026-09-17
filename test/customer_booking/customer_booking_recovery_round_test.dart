@@ -172,6 +172,98 @@ void main() {
     );
   });
 
+  test('street plus locality drops worldwide house-number-only matches', () {
+    const query = 'koekamerstraat 48A maarkedal';
+    expect(limousineAddressQueryLocality(query)?.toLowerCase(), 'maarkedal');
+    expect(limousineMapboxCountryForQuery(query), 'be');
+    expect(limousineMapboxCountryForQuery('Champs-Élysées Paris, France'), 'fr');
+    final filtered = limousineFilterPlaceSuggestions(query, const [
+      LimousinePlaceSuggestion(
+        label: '48A, Millbrook, South Australia, Australia',
+        placeType: 'address',
+        text: '48A',
+        locality: 'Millbrook',
+      ),
+      LimousinePlaceSuggestion(
+        label: '48a, Alberta Beach, Canada',
+        placeType: 'address',
+        text: '48a',
+        locality: 'Alberta Beach',
+      ),
+      LimousinePlaceSuggestion(
+        label: 'Koekamerstraat / Rue Cocambre, 9600 Ronse, België',
+        placeType: 'address',
+        postcode: '9600',
+        locality: 'Ronse',
+      ),
+      LimousinePlaceSuggestion(
+        label: 'Koekamerstraat 48A, 9688 Maarkedal, België',
+        placeType: 'address',
+        postcode: '9688',
+        locality: 'Maarkedal',
+        lat: 50.772,
+        lon: 3.669,
+      ),
+    ]);
+    expect(filtered, hasLength(1));
+    expect(filtered.single.label, contains('Maarkedal'));
+    expect(filtered.single.label.contains('Ronse'), isFalse);
+  });
+
+  test('confirmed 48A plus Kortrijk coords are quote ready', () {
+    final from = customerBookingAddressFromText(
+      'Koekamerstraat 48A, 9688 Schorisse, BE',
+      latitude: 50.77205,
+      longitude: 3.66942,
+    );
+    final to = customerBookingAddressFromText(
+      'Kortrijk, West-Vlaanderen, België',
+      latitude: 50.828,
+      longitude: 3.264,
+    );
+    expect(from.displayText, contains('48A'));
+    expect(from.displayText, contains('Schorisse'));
+    expect(companyPlanAddressIsQuoteReady(from), isTrue);
+    expect(companyPlanAddressIsQuoteReady(to), isTrue);
+    expect(
+      companyPlanRouteStatus(
+        from: from,
+        to: to,
+        loading: false,
+        quote: const CompanyPlanQuoteResult(
+          fingerprint: 'ok',
+          distanceKm: 38.5,
+          durationMin: 45,
+          pickupLat: 50.77205,
+          pickupLon: 3.66942,
+          dropoffLat: 50.828,
+          dropoffLon: 3.264,
+        ),
+      ),
+      CompanyPlanRouteStatus.ready,
+    );
+  });
+
+  test('unconfirmed pickup asks for confirmation instead of a generic route', () {
+    final from = customerBookingAddressFromText(
+      'Koekamerstraat 48A, 9688 Schorisse, BE',
+    );
+    final to = customerBookingAddressFromText(
+      'Brussels South Charleroi Airport',
+      latitude: 50.459,
+      longitude: 4.453,
+    );
+    expect(
+      companyPlanRouteStatus(
+        from: from,
+        to: to,
+        loading: false,
+        quote: null,
+      ),
+      CompanyPlanRouteStatus.confirmPickup,
+    );
+  });
+
   test('example presentation does not change the legal company name', () {
     final presentation = publicCompanyPresentationFrom(
       <String, dynamic>{
@@ -183,6 +275,18 @@ void main() {
     expect(presentation.isExample, isTrue);
     expect(presentation.badge, 'Voorbeeldbedrijf');
     expect(presentation.notice, contains('voorbeeldbedrijf van Fluxidi'));
+  });
+
+  test('quote ready requires a confirmed pin, not only selected text', () {
+    expect(
+      companyPlanAddressIsQuoteReady(
+        const LimousineAddressValue(
+          displayText: 'Koekamerstraat 48A, 9688 Schorisse, BE',
+          acceptance: LimousineAddressAcceptance.manualFallback,
+        ),
+      ),
+      isFalse,
+    );
   });
 }
 

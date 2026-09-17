@@ -24,6 +24,9 @@ class CompanyPlanRouteMap extends StatelessWidget {
     this.showPriceSource = false,
     this.polyline = '',
     this.compactPlaceholder = false,
+    this.pickupNeedsConfirm = false,
+    this.confirmLat,
+    this.confirmLon,
   });
 
   final AppLanguage language;
@@ -37,10 +40,17 @@ class CompanyPlanRouteMap extends StatelessWidget {
   final bool showPriceSource;
   final String polyline;
   final bool compactPlaceholder;
+  final bool pickupNeedsConfirm;
+  final double? confirmLat;
+  final double? confirmLon;
 
   FluxidiMapLonLat? get _from {
-    final lat = quote?.pickupLat ?? pickup.lat;
-    final lon = quote?.pickupLon ?? pickup.lon;
+    final lat = pickupNeedsConfirm
+        ? (confirmLat ?? pickup.lat)
+        : (pickup.lat ?? quote?.pickupLat);
+    final lon = pickupNeedsConfirm
+        ? (confirmLon ?? pickup.lon)
+        : (pickup.lon ?? quote?.pickupLon);
     if (lat == null || lon == null || !lat.isFinite || !lon.isFinite) {
       return null;
     }
@@ -84,14 +94,25 @@ class CompanyPlanRouteMap extends StatelessWidget {
           ].where((part) => part.trim().isNotEmpty).join(' · ')
         : '';
     final fromPoint = _from;
-    final toPoint = _to;
+    final toPoint = pickupNeedsConfirm ? fromPoint : _to;
     final mapUrl = fromPoint != null && toPoint != null
         ? fluxidiStaticRoutePreviewUrl(pickup: fromPoint, dropoff: toPoint)
         : null;
     final restore = status == CompanyPlanRouteStatus.needsRestore ||
+        status == CompanyPlanRouteStatus.confirmPickup ||
+        status == CompanyPlanRouteStatus.confirmDropoff ||
         (status == CompanyPlanRouteStatus.missingEndpoints &&
             compactPlaceholder);
     if (restore && mapUrl == null) {
+      final statusText = switch (status) {
+        CompanyPlanRouteStatus.confirmPickup =>
+          kCompanyAgendaConfirmPickup.of(language),
+        CompanyPlanRouteStatus.confirmDropoff =>
+          kCompanyAgendaConfirmDropoff.of(language),
+        CompanyPlanRouteStatus.missingEndpoints =>
+          kCompanyAgendaChooseEndpoints.of(language),
+        _ => kCompanyAgendaRouteMissingCompact.of(language),
+      };
       return DecoratedBox(
         key: kCompanyAgendaPlanMapKey,
         decoration: BoxDecoration(
@@ -116,7 +137,7 @@ class CompanyPlanRouteMap extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                kCompanyAgendaRouteMissingCompact.of(language),
+                statusText,
                 style: theme.textTheme.bodySmall,
               ),
               TextButton(
@@ -172,6 +193,16 @@ class CompanyPlanRouteMap extends StatelessWidget {
                           key: kCompanyPlanQuoteStatusKey,
                           style: theme.textTheme.titleSmall,
                         )
+                      else if (status == CompanyPlanRouteStatus.confirmPickup)
+                        Text(
+                          kCompanyAgendaConfirmPickup.of(language),
+                          style: theme.textTheme.titleSmall,
+                        )
+                      else if (status == CompanyPlanRouteStatus.confirmDropoff)
+                        Text(
+                          kCompanyAgendaConfirmDropoff.of(language),
+                          style: theme.textTheme.titleSmall,
+                        )
                       else if (status == CompanyPlanRouteStatus.failed) ...[
                         Text(
                           companyPlanQuoteErrorText(error, language),
@@ -185,7 +216,7 @@ class CompanyPlanRouteMap extends StatelessWidget {
                             onPressed: onRetry,
                             child: Text(kCompanyAgendaRouteRetry.of(language)),
                           ),
-                      ] else if (summary.isNotEmpty)
+                      ] else if (!pickupNeedsConfirm && summary.isNotEmpty)
                         Text(summary, style: theme.textTheme.titleSmall),
                       const Spacer(),
                       _MapEnd(
