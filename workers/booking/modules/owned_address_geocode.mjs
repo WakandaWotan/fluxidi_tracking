@@ -60,6 +60,33 @@ export function parseStreetHouse(raw) {
   };
 }
 
+const LOCALITY_EQUIVALENTS = {
+  schorisse: new Set(["maarkedal"]),
+  maarkedal: new Set(["schorisse"]),
+};
+
+export function localitiesCompatible(left, right) {
+  const a = foldToken(left);
+  const b = foldToken(right);
+  if (!a || !b) return true;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  return LOCALITY_EQUIVALENTS[a]?.has(b) === true;
+}
+
+export function featureLocality(feature) {
+  const context = Array.isArray(feature?.context) ? feature.context : [];
+  for (const item of context) {
+    const id = String(item?.id || "");
+    if (id.startsWith("place.") || id.startsWith("locality.") || id.startsWith("neighborhood.")) {
+      const text = String(item.text || "").trim();
+      if (text) return text;
+    }
+  }
+  const label = String(feature?.place_name || feature?.placeName || "").trim();
+  const match = label.match(/\b\d{4}\s+([^,]+)/);
+  return match ? match[1].trim() : "";
+}
+
 export function streetNamesCompatible(left, right) {
   const a = foldToken(left);
   const b = foldToken(right);
@@ -94,6 +121,13 @@ export function featureAgreesWithQuery(feature, query) {
   if (queryParts.number) {
     if (suggestionParts.number !== queryParts.number) return false;
     if (queryParts.letter && suggestionParts.letter !== queryParts.letter) {
+      return false;
+    }
+  }
+  const queryLocality = String(query || "").match(/\b\d{4}\s+([^,]+)/);
+  const suggestionLocality = featureLocality(feature);
+  if (queryLocality?.[1] && suggestionLocality) {
+    if (!localitiesCompatible(queryLocality[1], suggestionLocality) && wanted && got && wanted !== got) {
       return false;
     }
   }

@@ -15,6 +15,7 @@ export const REGISTRY_ENVIRONMENT = Object.freeze([
   "production",
   "test",
   "review",
+  "example",
   "local_qa",
   "unknown",
 ]);

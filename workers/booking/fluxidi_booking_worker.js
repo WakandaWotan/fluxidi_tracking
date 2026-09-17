@@ -29,6 +29,16 @@ import {
   logKvPass,
 } from "./modules/kv_op_budget.js";
 import { upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
+import {
+  applyPublicMarketplaceProfileOverlay,
+  configuredExampleCompanyCode,
+  isPublicMarketplaceCompanyCode,
+  isPublicMarketplacePartner,
+  loadPublicCompanyVisibilityIndexCached,
+  localizedPublicPresentationCopy,
+  publicPresentationForCompanyCode,
+  publicPresentationForPartner,
+} from "./modules/public_company_visibility.mjs";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
   scheduleBaseCancellation,
@@ -20799,6 +20809,14 @@ function _playReviewConfiguredCompanyCode(env) {
   return hard;
 }
 
+async function _publicMarketplaceVisibilityIndex(env) {
+  return loadPublicCompanyVisibilityIndexCached(env);
+}
+
+function _publicMarketplaceUnavailable() {
+  return { ok: false, error: "company_not_found", status: 404 };
+}
+
 function _playReviewAccessCodeHashFromEnv(env) {
   const raw = sanitizeTenantString(env?.PLAY_REVIEW_ACCESS_CODE_HASH, 128).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(raw)) return "";
@@ -21219,7 +21237,7 @@ async function _syncCompanyRegistryMembership(env, {
       lifecycle_status: linkingEnabled === false ? "inactive" : "active",
       environment_class: playReviewCode && normalizedCode === playReviewCode
         ? "review"
-        : "unknown",
+        : (normalizedCode === configuredExampleCompanyCode(env) ? "example" : "unknown"),
       created_at: createdAt || nowIso,
       updated_at: nowIso,
     }, { nowIso });
@@ -28623,6 +28641,10 @@ async function _resolvePublicCompanyBookingScope(env, body) {
   if (!record || record.linking_enabled !== true) {
     return { ok: false, status: 404, error: "company_not_found" };
   }
+  const visibility = await _publicMarketplaceVisibilityIndex(env);
+  if (!isPublicMarketplaceCompanyCode(visibility, codeValidation.code)) {
+    return _publicMarketplaceUnavailable();
+  }
   const tenantId = sanitizeTenantString(record.tenant_id, 80);
   const companyId = sanitizeTenantString(record.company_id, 80);
   if (!tenantId || !companyId) {
@@ -33157,6 +33179,10 @@ async function handlePublicBookingPreview(url, env) {
     if (!record || record.linking_enabled !== true) {
       return renderPublicBookingUnavailablePage(lang, 404);
     }
+    const visibility = await _publicMarketplaceVisibilityIndex(env);
+    if (!isPublicMarketplaceCompanyCode(visibility, codeValidation.code)) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
     resolvedScope = {
       tenant_id: sanitizeTenantString(record.tenant_id, 80),
       company_id: sanitizeTenantString(record.company_id, 80),
@@ -33171,6 +33197,14 @@ async function handlePublicBookingPreview(url, env) {
       "";
     const companyId = sanitizePublicCompanyId(rawCompanyId);
     if (!companyId) {
+      return renderPublicBookingUnavailablePage(lang, 404);
+    }
+    const visibility = await _publicMarketplaceVisibilityIndex(env);
+    if (!isPublicMarketplacePartner(visibility, {
+      company_id: companyId,
+      tenant_id: companyId,
+      partner_id: `company:${companyId}:${companyId}`,
+    })) {
       return renderPublicBookingUnavailablePage(lang, 404);
     }
     resolvedScope = { tenant_id: companyId, company_id: companyId };
@@ -33211,6 +33245,15 @@ async function handlePublicBookingPreview(url, env) {
   const contactWebsiteHref = _publicWebsiteHref(contactWebsite);
   const hasContact = !!(contactEmail || contactPhone || contactWebsite);
   const companyCodeForUi = sanitizeTenantString(data?.company_code, 80);
+  const marketplaceVisibility = await _publicMarketplaceVisibilityIndex(env);
+  const marketplacePresentation = localizedPublicPresentationCopy(
+    publicPresentationForCompanyCode(marketplaceVisibility, companyCodeForUi) ||
+      publicPresentationForPartner(marketplaceVisibility, {
+        company_id: resolvedScope?.company_id,
+        tenant_id: resolvedScope?.tenant_id,
+      }),
+    lang,
+  );
   const companyIdForUi = sanitizeTenantString(resolvedScope?.company_id, 80);
   const supportedLanguages = Array.isArray(data?.supported_languages)
     ? data.supported_languages.filter((code) => ["nl", "en", "fr", "es"].includes(String(code || "").toLowerCase()))
@@ -33250,6 +33293,25 @@ async function handlePublicBookingPreview(url, env) {
         --fx-gold-strong: #f0c85d;
         --fx-gold-dark: #30230f;
         --fx-ok: #31b66b;
+      }
+      .fx-example-badge,
+      .fx-review-badge {
+        display: inline-block;
+        margin: 0 0 8px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--fx-gold);
+        background: var(--fx-gold-dark);
+        color: var(--fx-gold-strong);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+      }
+      .fx-example-notice {
+        margin: 8px 0 0;
+        color: var(--fx-subtle);
+        font-size: 13px;
+        line-height: 1.45;
       }
       * { box-sizing: border-box; }
       .fx-page {
@@ -33639,6 +33701,16 @@ async function handlePublicBookingPreview(url, env) {
             <div class="fx-brand-row">
               <div class="fx-brand-copy">
                 <div class="fx-brand-name">${escapeHtml(displayName)}</div>
+                ${
+                  marketplacePresentation
+                    ? `<div class="${marketplacePresentation.role === "example" ? "fx-example-badge" : "fx-review-badge"}">${escapeHtml(marketplacePresentation.badge)}</div>`
+                    : ""
+                }
+                ${
+                  marketplacePresentation
+                    ? `<p class="fx-example-notice">${escapeHtml(marketplacePresentation.notice)}</p>`
+                    : ""
+                }
                 ${
                   companyCodeForUi
                     ? `<div class="fx-brand-code">${escapeHtml(copy.codeLabel)}: ${escapeHtml(companyCodeForUi)}</div>`
@@ -82839,7 +82911,11 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       .filter((entry) => entry && typeof entry === "object")
       .map((entry) => [entry.partner_id, entry]),
   );
-  const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
+  const visibility = await _publicMarketplaceVisibilityIndex(env);
+  const visibleProfiles = profiles.filter((profile) => {
+    return _isPublicPartnerProfileVisible(profile)
+      && isPublicMarketplacePartner(visibility, profile);
+  });
   const profileByPartnerId = new Map(
     visibleProfiles.map((profile) => [profile.partner_id, profile]),
   );
@@ -83053,6 +83129,11 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
   return dedupeOrder
     .map((dedupeKey) => dedupedByKey.get(dedupeKey))
     .filter((entry) => !!entry)
+    .filter((entry) => isPublicMarketplacePartner(visibility, {
+      partner_id: entry.p?.partner_id,
+      company_id: entry.routeCompanyId,
+      tenant_id: entry.routeTenantId,
+    }))
     .map((entry) => {
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
@@ -83073,6 +83154,14 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
           }
         : {};
       _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
+      const presentation = publicPresentationForPartner(visibility, {
+        partner_id: p.partner_id,
+        company_id: entry.routeCompanyId || nearbySignalCompanyId,
+        tenant_id: entry.routeTenantId,
+      });
+      const presented = applyPublicMarketplaceProfileOverlay({
+        company_name: p.company_name,
+      }, presentation);
       return {
         partner_id: p.partner_id,
         company_name: p.company_name,
@@ -83088,6 +83177,12 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
         ...capabilitySignals,
         ...limousineSignals,
+        ...(presented?.example_company ? { example_company: true } : {}),
+        ...(presented?.review_environment ? { review_environment: true } : {}),
+        ...(presented?.public_presentation
+          ? { public_presentation: presented.public_presentation }
+          : {}),
+        ...(presented?.tagline ? { tagline: presented.tagline } : {}),
       };
     });
 }
@@ -83330,6 +83425,10 @@ async function resolvePublicPartnerBookingScope(env, partnerId) {
   }
   if (!_isPartnerBookingRouteActive(match)) {
     return { ok: false, error: "public partner is inactive", status: 409 };
+  }
+  const visibility = await _publicMarketplaceVisibilityIndex(env);
+  if (!isPublicMarketplacePartner(visibility, match)) {
+    return { ok: false, error: "public partner not found", status: 404 };
   }
   return {
     ok: true,
@@ -84211,7 +84310,10 @@ async function getPublicPartnerProfileById(env, partnerId) {
   const profile = profiles.find((p) => p.partner_id === needle);
   if (!profile) return null;
   if (!_isPublicPartnerProfileVisible(profile)) return null;
-  let normalizedProfile = {
+  const visibility = await _publicMarketplaceVisibilityIndex(env);
+  if (!isPublicMarketplacePartner(visibility, profile)) return null;
+  const presentation = publicPresentationForPartner(visibility, profile);
+  let normalizedProfile = applyPublicMarketplaceProfileOverlay({
     partner_id: profile.partner_id,
     company_name: profile.company_name,
     profile_enabled: true,
@@ -84238,7 +84340,7 @@ async function getPublicPartnerProfileById(env, partnerId) {
       ? _publicLimousineShowroomFieldsFromStoredProfile(profile)
       : {}),
     ..._publicPublishedLimousineIdentityFields(profile, { publicSurface: true }),
-  };
+  }, presentation);
   try {
     const ratingScope = await _resolvePublicPartnerRatingScope(env, needle);
     if (ratingScope?.hasScope) {

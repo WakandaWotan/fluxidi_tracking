@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pickGeocodeFeature, queryPostcode } from "./owned_address_geocode.mjs";
+import {
+  localitiesCompatible,
+  pickGeocodeFeature,
+  queryPostcode,
+} from "./owned_address_geocode.mjs";
 
 const maarkedal48 = {
   place_name: "Koekamerstraat 48, 9688 Maarkedal, België",
@@ -47,4 +51,9 @@ test("query postcode without an agreeing feature refuses the first guess", () =>
 test("competing postcodes without a query postcode refuse the first guess", () => {
   const picked = pickGeocodeFeature([ronse, maarkedal48], "Koekamerstraat 48A");
   assert.equal(picked, null);
+});
+
+test("Schorisse and Maarkedal are equivalent localities", () => {
+  assert.equal(localitiesCompatible("Schorisse", "Maarkedal"), true);
+  assert.equal(localitiesCompatible("Schorisse", "Ronse"), false);
 });
