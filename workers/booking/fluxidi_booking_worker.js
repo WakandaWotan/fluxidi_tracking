@@ -845,6 +845,8 @@ import {
   projectBookableVehicleOffers,
   publicBookableVehicleRows,
 } from "./modules/fleet_roster_availability.mjs";
+import { pickGeocodeFeature as _pickGeocodeFeature } from "./modules/owned_address_geocode.mjs";
+import { mergePublicBookingVehicles as _mergePublicBookingVehicles } from "./modules/public_booking_vehicles.mjs";
 import {
   directionsWithNoSegmentRetry,
   isUsableMapboxRoute,
@@ -48518,6 +48520,37 @@ export default {
               company_id: fixedPriceScope.company_id,
             })
           : null;
+        let bookingVehicles = Array.isArray(profile.vehicles) ? profile.vehicles : [];
+        try {
+          if (fixedPriceScope.ok) {
+            const fleetScope = {
+              tenant_id: fixedPriceScope.tenant_id,
+              company_id: fixedPriceScope.company_id,
+              hasScope: true,
+            };
+            const fleetRead = await _loadFleetInventoryRawForScope(env, fleetScope);
+            const fleet = (Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [])
+              .map((entry) => _normalizeVehicleEntry(entry, { scope: fleetScope }))
+              .filter((row) => row);
+            bookingVehicles = _mergePublicBookingVehicles({
+              stored: bookingVehicles,
+              fleet,
+              origin: requestOrigin,
+            });
+          } else {
+            bookingVehicles = _mergePublicBookingVehicles({
+              stored: bookingVehicles,
+              fleet: [],
+              origin: requestOrigin,
+            });
+          }
+        } catch (_) {
+          bookingVehicles = _mergePublicBookingVehicles({
+            stored: bookingVehicles,
+            fleet: [],
+            origin: requestOrigin,
+          });
+        }
         const paymentProjection = await projectPublicPartnerPaymentForProfile({
           env,
           partnerId: profile.partner_id || partnerId,
@@ -48531,6 +48564,7 @@ export default {
             profile: {
               ...profile,
               drivers,
+              vehicles: bookingVehicles,
               ...(publicFixedPrices ? { fixed_prices: publicFixedPrices } : {}),
               payment_capability_status: paymentProjection.status,
               ...(paymentProjection.payment_capability
@@ -78261,13 +78295,14 @@ async function geocode(query, token) {
   const u =
     "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
     encodeURIComponent(query) +
-    `.json?limit=1&country=${encodeURIComponent(countryCode)}&language=nl&access_token=` +
+    `.json?limit=5&country=${encodeURIComponent(countryCode)}&language=nl&access_token=` +
     token;
 
   const r = await fetch(u);
   const j = await r.json();
-  if (!j.features?.length) throw new Error("Geocode failed");
-  const [lng, lat] = j.features[0].center;
+  const feature = _pickGeocodeFeature(j.features, query);
+  if (!feature?.center?.length) throw new Error("Geocode failed");
+  const [lng, lat] = feature.center;
   return { lat, lng };
 }
 
@@ -83562,17 +83597,38 @@ function _normalizePublicVehicles(raw) {
       fallbackPhotoUrl,
     });
     const publicVehicleId = _safePublicText(row.vehicle_id ?? row.vehicleId, 96);
+    const passengerCapacity = _safePublicInt(
+      row.passenger_capacity ?? row.passengerCapacity ?? row.pax,
+      0,
+      0,
+      99,
+    );
+    const vehicleName = _safePublicText(
+      row.name ?? row.vehicle_name ?? row.vehicleName,
+      120,
+    );
     out.push({
-      name: _safePublicText(row.name, 120),
+      name: vehicleName,
       brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
       category: _safePublicText(row.category, 80),
       ...(serviceCategory ? { service_category: serviceCategory } : {}),
       ...(serviceClass ? { service_class: serviceClass } : {}),
-      ...(serviceCategory === "limousine" && publicVehicleId
-        ? { vehicle_id: publicVehicleId }
+      ...(publicVehicleId
+        ? { vehicle_id: publicVehicleId, vehicleId: publicVehicleId }
         : {}),
-      pax: _safePublicInt(row.pax, 0, 0, 99),
-      luggage: _safePublicInt(row.luggage, 0, 0, 99),
+      ...(passengerCapacity > 0
+        ? {
+            passenger_capacity: passengerCapacity,
+            passengerCapacity: passengerCapacity,
+            pax: passengerCapacity,
+          }
+        : { pax: _safePublicInt(row.pax, 0, 0, 99) }),
+      luggage: _safePublicInt(
+        row.luggage ?? row.luggage_capacity ?? row.luggageCapacity,
+        0,
+        0,
+        99,
+      ),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
       ...publicMedia,
     });

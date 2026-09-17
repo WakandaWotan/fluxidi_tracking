@@ -238,7 +238,7 @@ test("nearby summary prefers lowest from-price over featured and never labels a 
 test("worker preserves public hero fields and limousine vehicle_id", () => {
   assert.match(worker, /limousine_hero_url/);
   assert.match(worker, /_applyPublicLimousineHeroFields/);
-  assert.match(worker, /serviceCategory === "limousine" && publicVehicleId/);
+  assert.match(worker, /vehicle_id: publicVehicleId, vehicleId: publicVehicleId/);
   assert.match(worker, /applies_to_all_selected_vehicles/);
   assert.doesNotMatch(worker, /hero_photo_url:\s*hero\.photo_url/);
 });
