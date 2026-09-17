@@ -294,21 +294,19 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             baseUrl: kBookingBaseUrl,
           ),
           onBookEvent: (event) async {
-            final destination = event.address.trim().isNotEmpty
-                ? event.address.trim()
-                : (event.locationName.trim().isNotEmpty
-                      ? event.locationName.trim()
-                      : event.title.trim());
+            final dest = eventTaxiDestination(event);
             _openCalculator(
               context,
-              scheduledIntent: false,
-              initialToAddress: destination,
-              initialToLat: event.lat,
-              initialToLng: event.lng,
+              scheduledIntent: event.startAtUtc != null,
+              initialToAddress: dest.text,
+              initialToLat: dest.lat,
+              initialToLng: dest.lng,
               initialServiceId: 'event',
               publicPartnerId: _homeCompany?.partnerId,
               publicPartnerName: _homeCompany?.companyName,
               entryContext: 'event_flow',
+              pickupAt: event.startAtUtc,
+              whenNow: event.startAtUtc == null,
             );
           },
         ),

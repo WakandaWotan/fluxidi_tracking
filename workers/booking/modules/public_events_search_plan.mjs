@@ -2,7 +2,7 @@
  * Search plan for GET /public/events.
  *
  * Country list: `./public_event_markets.mjs`
- * (company 8 + billing/phone Europe IT/AT/IE/CH).
+ * Event catalog is independent of company/billing/phone countries.
  * The Worker does not allow-list countries; any ISO code may be queried.
  *
  * Ticketmaster Discovery often returns an empty page for an unfiltered

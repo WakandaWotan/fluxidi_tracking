@@ -21,7 +21,7 @@ import {
   luxembourgNeighborQueries,
 } from "./public_events_search_plan.mjs";
 
-test("UK becomes GB for Ticketmaster, launch list is Fluxidi Europe plus billing countries", () => {
+test("UK becomes GB for Ticketmaster, launch list is 18 selectable event countries", () => {
   assert.equal(normalizeEventCountry("UK"), "GB");
   assert.equal(normalizeEventCountry("", "uk"), "GB");
   assert.equal(ticketmasterLocale("ES"), "es-es");
@@ -40,6 +40,12 @@ test("UK becomes GB for Ticketmaster, launch list is Fluxidi Europe plus billing
     "AT",
     "IE",
     "CH",
+    "DK",
+    "SE",
+    "NO",
+    "FI",
+    "PL",
+    "CZ",
   ]);
   assert.deepEqual(FLUXIDI_EVENT_MARKET_KEYS, [
     "be",
@@ -54,9 +60,16 @@ test("UK becomes GB for Ticketmaster, launch list is Fluxidi Europe plus billing
     "at",
     "ie",
     "ch",
+    "dk",
+    "se",
+    "no",
+    "fi",
+    "pl",
+    "cz",
   ]);
-  assert.ok(FLUXIDI_TM_PROVEN_EXTRA_COUNTRIES.includes("DK"));
-  assert.ok(!FLUXIDI_EVENT_MARKET_KEYS.includes("dk"));
+  assert.equal(FLUXIDI_EVENT_MARKET_KEYS.length, 18);
+  assert.ok(FLUXIDI_EVENT_MARKET_KEYS.includes("dk"));
+  assert.deepEqual(FLUXIDI_TM_PROVEN_EXTRA_COUNTRIES, []);
 });
 
 test("empty category and keyword must fan out, music must not", () => {
@@ -98,9 +111,9 @@ test("seed rows and incomplete rows are not real events", () => {
   );
 });
 
-test("official market source includes company countries and billing Europe", () => {
-  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /_kBusinessCountryCodes/);
-  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /IT\/AT\/IE\/CH/);
+test("event catalog source is independent of company registration", () => {
+  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /independent of company/);
+  assert.match(FLUXIDI_EVENT_MARKETS_SOURCE, /not full Europe/);
   assert.ok(ticketmasterDiscoveryAttempts({ country: "FR" }).some((row) => row.id === "minimal"));
 });
 

@@ -12,6 +12,7 @@ import 'event_category_results_page.dart';
 import 'event_data_source.dart';
 import 'event_markets.dart';
 import 'event_models.dart';
+import 'event_taxi_availability.dart';
 import 'saved_events_page.dart';
 
 EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
@@ -381,10 +382,29 @@ class _EventsPageState extends State<EventsPage> {
     });
   }
 
+  Future<void> _handleBookEvent(EventDetailData event) async {
+    final EventTaxiDestination dest = eventTaxiDestination(event);
+    final EventTaxiAvailability availability = await checkEventTaxiAvailability(
+      baseUrl: kBookingBaseUrl,
+      destination: dest,
+    );
+    if (!mounted) return;
+    if (!availability.hasBookable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            fluxidiEventNoCarriersLabel(appConfig.currentLanguage.name),
+          ),
+        ),
+      );
+    }
+    widget.onBookEvent?.call(event);
+  }
+
   Future<void> _openSavedEventsPage() async {
     await Navigator.of(context).push(
       MaterialPageRoute<SavedEventsPage>(
-        builder: (_) => SavedEventsPage(onBookEvent: widget.onBookEvent),
+        builder: (_) => SavedEventsPage(onBookEvent: _handleBookEvent),
       ),
     );
   }
@@ -421,7 +441,7 @@ class _EventsPageState extends State<EventsPage> {
           categoryKey: categoryKey,
           searchQuery: searchQuery.trim(),
           sortMode: targetSortMode,
-          onBookEvent: widget.onBookEvent,
+          onBookEvent: _handleBookEvent,
         ),
       ),
     );
@@ -1840,6 +1860,16 @@ class _EventsPageState extends State<EventsPage> {
               emphasizeGold: true,
             ),
           ],
+        ),
+        SizedBox(height: isTabletLayout ? 9 : 8),
+        Text(
+          fluxidiEventCatalogCoverageNote(appConfig.currentLanguage.name),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: _softText,
+            fontSize: isTabletLayout ? 12.5 : 11.5,
+            height: 1.35,
+          ),
         ),
         SizedBox(height: isTabletLayout ? 9 : 8),
         _buildActiveSummaryBar(isTabletLayout: isTabletLayout),

@@ -201,6 +201,7 @@ import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/fluxidi_host_form_factor.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
 import 'driver_login_qr_scanner_page.dart';
+import 'events/event_taxi_availability.dart';
 import 'events/events_page.dart';
 import 'hotels/hotels_page.dart';
 import 'nearby_partners_page.dart';
