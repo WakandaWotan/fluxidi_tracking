@@ -7,7 +7,6 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
-const String kCustomerBookingIssueNeedCompany = 'need_company';
 const String kCustomerBookingIssueNeedPickup = 'need_pickup';
 const String kCustomerBookingIssueNeedDropoff = 'need_dropoff';
 const String kCustomerBookingIssueNeedName = 'need_name';
@@ -15,6 +14,9 @@ const String kCustomerBookingIssueNeedPhone = 'need_phone';
 const String kCustomerBookingIssueNeedQuote = 'need_quote';
 const String kCustomerBookingIssueAlreadyBooked = 'already_booked';
 const String kCustomerBookingIssueBookFailed = 'book_failed';
+const String kCustomerBookingIssueUnavailable = 'vehicle_unavailable';
+const String kCustomerBookingIssuePayment = 'payment_failed';
+const String kCustomerBookingIssueNetwork = 'network_failed';
 
 class CustomerBookingSubmitIssue {
   const CustomerBookingSubmitIssue({
@@ -184,6 +186,12 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
       return kCustomerBookingNeedRoute.of(language);
     case kCustomerBookingIssueFailed:
       return kCustomerBookingRouteFailed.of(language);
+    case kCustomerBookingIssueUnavailable:
+      return kCustomerBookingBookUnavailable.of(language);
+    case kCustomerBookingIssuePayment:
+      return kCustomerBookingBookPayment.of(language);
+    case kCustomerBookingIssueNetwork:
+      return kCustomerBookingBookNetwork.of(language);
     default:
       return kCustomerBookingBookFailed.of(language);
   }
@@ -193,6 +201,19 @@ String customerBookingBookIssueFromRaw(String? raw) {
   final text = raw?.trim() ?? '';
   if (text.isEmpty) return kCustomerBookingIssueBookFailed;
   final lower = text.toLowerCase().replaceFirst('stateerror: ', '');
+  if (lower.contains('timeout') ||
+      lower.contains('socket') ||
+      lower.contains('network') ||
+      lower.contains('failed host lookup') ||
+      lower.contains('connection refused')) {
+    return kCustomerBookingIssueNetwork;
+  }
+  if (lower.contains('geocode') ||
+      lower.contains('route_failed') ||
+      lower.contains('route_config') ||
+      lower.contains('mapbox')) {
+    return kCustomerBookingIssueFailed;
+  }
   if (lower.contains('duplicate') || lower.contains('idempotency')) {
     return kCustomerBookingIssueAlreadyBooked;
   }
@@ -204,7 +225,24 @@ String customerBookingBookIssueFromRaw(String? raw) {
       (lower.contains('date') || lower.contains('time'))) {
     return kCustomerBookingIssueNeedWhen;
   }
-  if (lower.contains('partner') || lower.contains('company')) {
+  if (lower.contains('payment') ||
+      lower.contains('mollie') ||
+      lower.contains('betaal')) {
+    return kCustomerBookingIssuePayment;
+  }
+  if (lower.contains('vehicle') ||
+      lower.contains('voertuig') ||
+      lower.contains('unavailable') ||
+      lower.contains('niet beschikbaar') ||
+      lower.contains('allocator') ||
+      lower.contains('required_vehicle') ||
+      lower.contains('assignment_')) {
+    return kCustomerBookingIssueUnavailable;
+  }
+  if (lower.contains('partner_required') ||
+      lower.contains('need_company') ||
+      lower.contains('missing tenant') ||
+      lower.contains('public_partner')) {
     return kCustomerBookingIssueNeedCompany;
   }
   return kCustomerBookingIssueBookFailed;

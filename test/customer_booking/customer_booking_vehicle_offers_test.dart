@@ -243,6 +243,44 @@ void main() {
     expect(customerBookingVehicleReasonIsPending(offers.single.reason), isFalse);
   });
 
+  test('availability driver record is used when the profile omits that id', () {
+    final snapshot = parseCustomerBookingAvailability(
+      <String, dynamic>{
+        'ok': true,
+        'vehicles': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'vehicle_id': 'vh_cadillac',
+            'available': true,
+            'driver_id': 'drv_night',
+            'driver': <String, dynamic>{
+              'driver_id': 'drv_night',
+              'first_name': 'Night',
+            },
+          },
+        ],
+      },
+    );
+    expect(snapshot.driverIds['vh_cadillac'], 'drv_night');
+    expect(snapshot.drivers, isNotEmpty);
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[cadillac],
+      drivers: snapshot.drivers,
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 18, 0, 0),
+      durationMin: 40,
+      durationKnown: true,
+      rideReady: true,
+      availableVehicleIds: snapshot.availableIds,
+      proposedDriverIds: snapshot.driverIds,
+      availabilityResolved: true,
+    );
+    expect(offers.single.available, isTrue);
+    expect(offers.single.driverId, 'drv_night');
+    final proposed = customerBookingProposedDriverFromRecord(offers.single.driver);
+    expect(proposed.firstName, 'Night');
+    expect(proposed.assigned, isFalse);
+  });
+
   test('availability response without vehicles is a load failure', () {
     final snapshot = parseCustomerBookingAvailability(
       <String, dynamic>{'ok': true, 'profile': <String, dynamic>{}},

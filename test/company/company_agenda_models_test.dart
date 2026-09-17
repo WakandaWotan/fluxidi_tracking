@@ -3,6 +3,10 @@ import 'package:fluxidi_tracking/company/company_address_field.dart'
     show companyCustomerAddressChoiceLabel;
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
+
+DateTime _brussels(DateTime utc) =>
+    companyTimezoneUtcToLocal(utc.toUtc(), kCompanyDefaultTimezone);
 
 void main() {
   test('week period starts Monday and stays closed at the far end', () {
@@ -11,7 +15,7 @@ void main() {
       view: CompanyAgendaView.week,
       anchorLocal: wednesday,
     );
-    final from = period.fromUtc.toLocal();
+    final from = _brussels(period.fromUtc);
     expect(from.weekday, DateTime.monday);
     expect(from.hour, 0);
     expect(period.toUtc.difference(period.fromUtc), const Duration(days: 7));
@@ -24,8 +28,8 @@ void main() {
       view: CompanyAgendaView.byDriver,
       anchorLocal: day,
     );
-    expect(period.fromUtc.toLocal(), DateTime(2026, 9, 11));
-    expect(period.toUtc.toLocal(), DateTime(2026, 9, 12));
+    expect(_brussels(period.fromUtc).day, 11);
+    expect(_brussels(period.toUtc).day, 12);
     expect(period.cacheKey.contains('byDriver'), isTrue);
   });
 
@@ -34,17 +38,17 @@ void main() {
       view: CompanyAgendaView.week,
       anchorLocal: DateTime(2026, 9, 12, 16),
     );
-    expect(current.fromUtc.toLocal(), DateTime(2026, 9, 7));
+    expect(_brussels(current.fromUtc).day, 7);
     expect(
-      current.toUtc.toLocal().subtract(const Duration(minutes: 1)).day,
+      _brussels(current.toUtc).subtract(const Duration(minutes: 1)).day,
       13,
     );
     final next = companyAgendaPeriodFor(
       view: CompanyAgendaView.week,
       anchorLocal: DateTime(2026, 9, 12).add(const Duration(days: 7)),
     );
-    expect(next.fromUtc.toLocal(), DateTime(2026, 9, 14));
-    expect(next.fromUtc.toLocal().weekday, DateTime.monday);
+    expect(_brussels(next.fromUtc).day, 14);
+    expect(_brussels(next.fromUtc).weekday, DateTime.monday);
   });
 
   test('linked bookings period covers three weeks around today', () {
@@ -59,8 +63,8 @@ void main() {
       view: CompanyAgendaView.day,
       anchorLocal: day,
     );
-    expect(period.fromUtc.toLocal(), DateTime(2026, 9, 11));
-    expect(period.toUtc.toLocal(), DateTime(2026, 9, 12));
+    expect(_brussels(period.fromUtc).day, 11);
+    expect(_brussels(period.toUtc).day, 12);
   });
 
   test('ride parser keeps unknown duration and unassigned visible', () {

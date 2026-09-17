@@ -170,6 +170,10 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
       fieldId: 'quote_return_to',
       language: _lang.name,
     );
+    limousineBindSiblingSearchBias(field: _pickup, sibling: _dropoff);
+    limousineBindSiblingSearchBias(field: _dropoff, sibling: _pickup);
+    limousineBindSiblingSearchBias(field: _returnFrom, sibling: _returnTo);
+    limousineBindSiblingSearchBias(field: _returnTo, sibling: _returnFrom);
     if (existing != null) {
       _pickup.acceptCopy(
         companyAddressValueFromStored(

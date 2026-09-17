@@ -34,6 +34,8 @@ class CustomerBookingRouteMap extends StatefulWidget {
     this.pickupNeedsConfirm = false,
     this.confirmLat,
     this.confirmLon,
+    this.onConfirmPickup,
+    this.pickupInspectSeq = 0,
   });
 
   final AppLanguage language;
@@ -50,6 +52,8 @@ class CustomerBookingRouteMap extends StatefulWidget {
   final bool pickupNeedsConfirm;
   final double? confirmLat;
   final double? confirmLon;
+  final VoidCallback? onConfirmPickup;
+  final int pickupInspectSeq;
 
   @override
   State<CustomerBookingRouteMap> createState() =>
@@ -93,7 +97,8 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     super.didUpdateWidget(oldWidget);
     if (widget.pickupNeedsConfirm != oldWidget.pickupNeedsConfirm ||
         widget.confirmLat != oldWidget.confirmLat ||
-        widget.confirmLon != oldWidget.confirmLon) {
+        widget.confirmLon != oldWidget.confirmLon ||
+        widget.pickupInspectSeq != oldWidget.pickupInspectSeq) {
       _userMovedCamera = false;
     }
     if (_routeFingerprint() != _requestFingerprint) {
@@ -270,6 +275,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
   }
 
   String get _metricsText {
+    if (widget.pickupNeedsConfirm) return '';
     final quote = widget.quote;
     final geometry = _geometry;
     final minutes = quote?.durationMin ?? geometry?.durationMin;
@@ -474,7 +480,18 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                               textAlign: TextAlign.center,
                               style: theme.textTheme.titleSmall,
                             ),
-                            if (widget.onRetry != null)
+                            if (widget.pickupNeedsConfirm &&
+                                widget.onConfirmPickup != null)
+                              TextButton(
+                                key: kCustomerBookingAddressConfirmMapKey,
+                                onPressed: widget.onConfirmPickup,
+                                child: Text(
+                                  kCustomerBookingAddressConfirmMap.of(
+                                    widget.language,
+                                  ),
+                                ),
+                              )
+                            else if (widget.onRetry != null)
                               TextButton(
                                 key: kCustomerBookingQuoteRetryKey,
                                 onPressed: _retry,

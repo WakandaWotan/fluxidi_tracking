@@ -897,7 +897,7 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     if (stopTexts.isNotEmpty) 'stops': stopTexts,
     'return_enabled': returnEnabled,
     if (returnEnabled && returnPickupLocal != null)
-      'return_pickup_iso': returnPickupLocal.toUtc().toIso8601String(),
+      'return_pickup_iso': companyPlanPickupIso(returnPickupLocal),
     if (returnEnabled && returnFrom != null && returnFrom.routeText.isNotEmpty)
       'return_from': returnFrom.routeText,
     if (returnEnabled && returnTo != null && returnTo.routeText.isNotEmpty)
@@ -922,7 +922,7 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     body.addAll(companyPlanWhenWireFields(whenNow: true));
     companyPlanStripClientScheduleFields(body);
   } else if (pickupLocal != null) {
-    body['pickup_iso'] = pickupLocal.toUtc().toIso8601String();
+    body['pickup_iso'] = companyPlanPickupIso(pickupLocal);
   }
   return CompanyPlanQuoteRequest(fingerprint: fingerprint, body: body);
 }

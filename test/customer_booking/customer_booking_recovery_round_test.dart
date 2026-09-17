@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_addresses.dar
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_price_block.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_confirmed_location.dart';
+import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 import 'package:fluxidi_tracking/nearby/public_company_presentation.dart';
 
@@ -287,6 +288,104 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('late geocode does not wipe a confirmed pin', () {
+    final lookup = LimousinePlaceLookup(
+      searchOverride: (query, language) async {
+        return const LimousinePlaceLookupResult(
+          suggestions: <LimousinePlaceSuggestion>[
+            LimousinePlaceSuggestion(
+              label: 'Koekamerstraat 48, 9688 Maarkedal, België',
+              lat: 50.77205,
+              lon: 3.66942,
+              placeType: 'address',
+              postcode: '9688',
+              locality: 'Maarkedal',
+            ),
+          ],
+        );
+      },
+    );
+    final controller = LimousineAddressFieldController(
+      lookup: lookup,
+      fieldId: 'pickup',
+    );
+    addTearDown(controller.dispose);
+    const query = 'Koekamerstraat 48A, 9688 Schorisse, BE';
+    controller.acceptCopy(customerBookingAddressFromText(query));
+    final resolved = limousineResolveOwnedAddress(
+      query: query,
+      result: const LimousinePlaceLookupResult(
+        suggestions: <LimousinePlaceSuggestion>[
+          LimousinePlaceSuggestion(
+            label: 'Koekamerstraat 48, 9688 Maarkedal, België',
+            lat: 50.77205,
+            lon: 3.66942,
+            placeType: 'address',
+            postcode: '9688',
+            locality: 'Maarkedal',
+          ),
+        ],
+      ),
+    );
+    controller.applyOwnedResolution(resolved);
+    expect(controller.locationNeedsConfirm, isTrue);
+    expect(controller.value.hasCoordinates, isFalse);
+    expect(resolved.candidate?.hasCoordinates, isTrue);
+    controller.confirmCandidateLocation();
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.hasCoordinates, isTrue);
+    expect(controller.value.displayText, contains('48A'));
+    expect(customerBookingPickupNeedsConfirm(controller), isFalse);
+    controller.applyOwnedResolution(resolved);
+    expect(controller.value.hasCoordinates, isTrue);
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(controller.value.lat, 50.77205);
+  });
+
+  test('selecting a proven house leaves a stale confirm behind', () {
+    final lookup = LimousinePlaceLookup(
+      searchOverride: (query, language) async =>
+          const LimousinePlaceLookupResult(),
+    );
+    final controller = LimousineAddressFieldController(
+      lookup: lookup,
+      fieldId: 'pickup',
+    );
+    addTearDown(controller.dispose);
+    controller.applyOwnedResolution(
+      limousineResolveOwnedAddress(
+        query: 'Koekamerstraat 48A, 9688 Schorisse, BE',
+        result: const LimousinePlaceLookupResult(
+          suggestions: <LimousinePlaceSuggestion>[
+            LimousinePlaceSuggestion(
+              label: 'Koekamerstraat 48, 9688 Maarkedal, België',
+              lat: 50.77205,
+              lon: 3.66942,
+              placeType: 'address',
+              postcode: '9688',
+              locality: 'Maarkedal',
+            ),
+          ],
+        ),
+      ),
+    );
+    expect(customerBookingPickupNeedsConfirm(controller), isTrue);
+    controller.selectSuggestion(
+      const LimousinePlaceSuggestion(
+        label: 'Koekamerstraat 50, 9688 Maarkedal, België',
+        lat: 50.7722,
+        lon: 3.6696,
+        placeType: 'address',
+        postcode: '9688',
+        locality: 'Maarkedal',
+      ),
+    );
+    expect(controller.locationNeedsConfirm, isFalse);
+    expect(controller.locationUserConfirmed, isTrue);
+    expect(customerBookingPickupNeedsConfirm(controller), isFalse);
+    expect(companyPlanAddressIsQuoteReady(controller.value), isTrue);
   });
 }
 

@@ -32,6 +32,7 @@ class LimousinePlaceSuggestion {
     this.matchingText = '',
     this.postcode = '',
     this.locality = '',
+    this.country = '',
   });
 
   final String label;
@@ -43,6 +44,7 @@ class LimousinePlaceSuggestion {
   final String matchingText;
   final String postcode;
   final String locality;
+  final String country;
 
   bool get hasCoordinates =>
       lat != null && lon != null && lat!.isFinite && lon!.isFinite;
@@ -613,16 +615,29 @@ LimousineOwnedAddressResolution limousineResolveOwnedAddress({
     for (final item in result.suggestions)
       if (limousineSuggestionIsHouseNearMiss(item, owned)) item,
   ];
+  LimousinePlaceSuggestion? pinCandidate;
   if (nearMiss.isNotEmpty) {
-    return LimousineOwnedAddressResolution(
-      value: limousineOwnedAddressValue(owned, selected: true),
-      needsConfirm: true,
-      candidate: nearMiss.first,
-    );
+    pinCandidate = nearMiss.first;
+  } else {
+    for (final item in result.suggestions) {
+      if (item.hasCoordinates && item.isStreetLevel) {
+        pinCandidate = item;
+        break;
+      }
+    }
+    if (pinCandidate == null) {
+      for (final item in result.suggestions) {
+        if (item.hasCoordinates) {
+          pinCandidate = item;
+          break;
+        }
+      }
+    }
   }
   return LimousineOwnedAddressResolution(
     value: limousineOwnedAddressValue(owned, selected: true),
     needsConfirm: true,
+    candidate: pinCandidate,
   );
 }
 
@@ -633,9 +648,19 @@ String limousineMapboxForwardLanguage({
   required String query,
   required String uiLanguage,
 }) {
-  // Official street names stay as the provider returns them. The UI language
-  // still localises place context (Belgium → België) when the app is Dutch.
+  // Place-name queries omit Mapbox `language=` so Dutch names stay findable
+  // when the app itself is English (Gent, not only Ghent / Genthin).
+  if (limousineAddressLooksLikePlaceName(query) ||
+      limousineAddressLooksLikeLocalityOnly(query)) {
+    return '';
+  }
   return uiLanguage.trim();
+}
+
+bool limousineFoldedStartsAsWord(String haystack, String needle) {
+  if (needle.isEmpty || haystack.isEmpty) return false;
+  if (haystack == needle) return true;
+  return haystack.startsWith('$needle ');
 }
 
 String limousineFoldAddressToken(String raw) {
@@ -668,8 +693,9 @@ bool limousinePlaceSuggestionMatchesQuery(
 
 int limousinePlaceSuggestionRank(
   LimousinePlaceSuggestion suggestion,
-  String query,
-) {
+  String query, {
+  String? contextCountry,
+}) {
   final queryPostcode = limousineAddressQueryPostcode(query);
   if (queryPostcode != null && !limousineSuggestionAgreesWithQuery(suggestion, query)) {
     return 20;
@@ -679,15 +705,48 @@ int limousinePlaceSuggestionRank(
   final text = limousineFoldAddressToken(suggestion.text);
   final matching = limousineFoldAddressToken(suggestion.matchingText);
   final label = limousineFoldAddressToken(suggestion.label);
-  if (text == needle || matching == needle) return 0;
-  if (label.startsWith(needle)) return 1;
-  if (text.startsWith(needle) || matching.startsWith(needle)) return 2;
-  if (label.contains(needle) ||
+  final locality = limousineFoldAddressToken(suggestion.locality);
+  final placeQuery = limousineAddressLooksLikePlaceName(query) ||
+      limousineAddressLooksLikeLocalityOnly(query);
+  int rank;
+  if (text == needle || matching == needle || locality == needle) {
+    rank = 0;
+  } else if (placeQuery) {
+    if (limousineFoldedStartsAsWord(label, needle) ||
+        limousineFoldedStartsAsWord(text, needle) ||
+        limousineFoldedStartsAsWord(matching, needle) ||
+        limousineFoldedStartsAsWord(locality, needle)) {
+      rank = 1;
+    } else if (label.contains(needle) ||
+        text.contains(needle) ||
+        matching.contains(needle) ||
+        locality.contains(needle)) {
+      // Genthin / Gentilly share the letters but are not Gent.
+      rank = 6;
+    } else {
+      rank = 8;
+    }
+  } else if (label.startsWith(needle)) {
+    rank = 1;
+  } else if (text.startsWith(needle) || matching.startsWith(needle)) {
+    rank = 2;
+  } else if (label.contains(needle) ||
       text.contains(needle) ||
       matching.contains(needle)) {
-    return 3;
+    rank = 3;
+  } else {
+    rank = queryPostcode != null ? 4 : 8;
   }
-  return queryPostcode != null ? 4 : 8;
+  final bias = (limousineMapboxCountryForQuery(query) ?? contextCountry ?? '')
+      .trim()
+      .toLowerCase();
+  final suggestionCountry = suggestion.country.trim().toLowerCase();
+  if (bias.isNotEmpty &&
+      suggestionCountry.isNotEmpty &&
+      suggestionCountry != bias) {
+    rank += 10;
+  }
+  return rank;
 }
 
 bool limousineSuggestionSharesStreet(
@@ -752,13 +811,23 @@ List<LimousinePlaceSuggestion> limousineFilterPlaceSuggestions(
 
 List<LimousinePlaceSuggestion> limousineRankPlaceSuggestions(
   String query,
-  List<LimousinePlaceSuggestion> suggestions,
-) {
+  List<LimousinePlaceSuggestion> suggestions, {
+  String? contextCountry,
+}) {
   final filtered = limousineFilterPlaceSuggestions(query, suggestions);
   final ranked = List<LimousinePlaceSuggestion>.from(filtered)
     ..sort((left, right) {
-      final byRank = limousinePlaceSuggestionRank(left, query)
-          .compareTo(limousinePlaceSuggestionRank(right, query));
+      final byRank = limousinePlaceSuggestionRank(
+        left,
+        query,
+        contextCountry: contextCountry,
+      ).compareTo(
+        limousinePlaceSuggestionRank(
+          right,
+          query,
+          contextCountry: contextCountry,
+        ),
+      );
       if (byRank != 0) return byRank;
       return left.label.compareTo(right.label);
     });
@@ -771,6 +840,8 @@ Uri limousineMapboxPlacesUri({
   String language = 'nl',
   String? country = 'be',
   String types = 'address',
+  double? proximityLat,
+  double? proximityLon,
 }) {
   final encoded = Uri.encodeComponent(query);
   final countryPart = (country ?? '').trim().isEmpty
@@ -782,6 +853,10 @@ Uri limousineMapboxPlacesUri({
   final languagePart = language.trim().isEmpty
       ? ''
       : '&language=${Uri.encodeComponent(language.trim())}';
+  final proximityPart = limousineMapboxProximitySuffix(
+    latitude: proximityLat,
+    longitude: proximityLon,
+  );
   return Uri.parse(
     'https://$kLimousineMapboxGeocodingV5Host$kLimousineMapboxGeocodingV5PathPrefix$encoded.json'
     '?access_token=${Uri.encodeComponent(token)}'
@@ -789,6 +864,7 @@ Uri limousineMapboxPlacesUri({
     '$countryPart'
     '$typesPart'
     '$languagePart'
+    '$proximityPart'
     '&limit=$kLimousineAddressMaxSuggestions',
   );
 }
@@ -867,12 +943,26 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
     ].firstWhere((part) => part.isNotEmpty, orElse: () => '');
     String postcode = '';
     String locality = '';
+    String country = '';
     final context = map['context'];
     if (context is List) {
       for (final item in context) {
         if (item is! Map) continue;
         final id = (item['id'] ?? '').toString();
         final contextText = (item['text'] ?? '').toString().trim();
+        if (id.startsWith('country.') && country.isEmpty) {
+          final code = (item['short_code'] ?? item['shortCode'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (code.isNotEmpty) {
+            country = code.contains('-') ? code.split('-').last : code;
+          } else if (contextText.isNotEmpty) {
+            country =
+                kLimousineNamedCountries[limousineFoldAddressToken(contextText)] ??
+                '';
+          }
+        }
         if (contextText.isEmpty) continue;
         if (id.startsWith('postcode.')) postcode = contextText;
         if (locality.isEmpty &&
@@ -881,10 +971,24 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
         }
       }
     }
-    if (postcode.isEmpty) {
+    if (postcode.isEmpty || country.isEmpty) {
       final properties = map['properties'];
       if (properties is Map) {
-        postcode = (properties['postcode'] ?? '').toString().trim();
+        if (postcode.isEmpty) {
+          postcode = (properties['postcode'] ?? '').toString().trim();
+        }
+        if (country.isEmpty) {
+          final code = (properties['short_code'] ??
+                  properties['iso_3166_1'] ??
+                  properties['iso3166_1'] ??
+                  '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (code.isNotEmpty) {
+            country = code.contains('-') ? code.split('-').last : code;
+          }
+        }
       }
     }
     out.add(
@@ -898,6 +1002,7 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
         matchingText: matchingText,
         postcode: postcode,
         locality: locality,
+        country: country,
       ),
     );
     if (out.length >= kLimousineAddressMaxSuggestions) break;
@@ -929,18 +1034,40 @@ class LimousinePlaceLookup {
   int searchesStarted = 0;
   int reverseGeocodesStarted = 0;
 
-  String _cacheKey(String query, String language) =>
-      '$language\u0001$country\u0001${limousineNormalizeAddressQuery(query)}';
+  String _cacheKey(
+    String query,
+    String language, {
+    double? proximityLat,
+    double? proximityLon,
+    String? contextCountry,
+  }) {
+    final prox =
+        proximityLat != null &&
+            proximityLon != null &&
+            limousineCoordinatesAreValid(proximityLat, proximityLon)
+        ? '${proximityLat.toStringAsFixed(2)},${proximityLon.toStringAsFixed(2)}'
+        : '';
+    return '$language\u0001$country\u0001${contextCountry ?? ''}\u0001$prox\u0001${limousineNormalizeAddressQuery(query)}';
+  }
 
   Future<LimousinePlaceLookupResult> search(
     String rawQuery, {
     String language = 'nl',
+    double? proximityLat,
+    double? proximityLon,
+    String? contextCountry,
   }) async {
     final query = limousineNormalizeAddressQuery(rawQuery);
     if (query.length < kLimousineAddressMinQueryLength) {
       return const LimousinePlaceLookupResult();
     }
-    final cached = _sessionCache[_cacheKey(rawQuery, language)];
+    final cached = _sessionCache[_cacheKey(
+      rawQuery,
+      language,
+      proximityLat: proximityLat,
+      proximityLon: proximityLon,
+      contextCountry: contextCountry,
+    )];
     if (cached != null && !cached.hadError) {
       return cached;
     }
@@ -948,17 +1075,32 @@ class LimousinePlaceLookup {
     final override = _searchOverride;
     final result = override != null
         ? await override(query, language)
-        : await _searchMapbox(query, language);
+        : await _searchMapbox(
+            query,
+            language,
+            proximityLat: proximityLat,
+            proximityLon: proximityLon,
+            contextCountry: contextCountry,
+          );
     if (!result.hadError) {
-      _sessionCache[_cacheKey(rawQuery, language)] = result;
+      _sessionCache[_cacheKey(
+        rawQuery,
+        language,
+        proximityLat: proximityLat,
+        proximityLon: proximityLon,
+        contextCountry: contextCountry,
+      )] = result;
     }
     return result;
   }
 
   Future<LimousinePlaceLookupResult> _searchMapbox(
     String query,
-    String language,
-  ) async {
+    String language, {
+    double? proximityLat,
+    double? proximityLon,
+    String? contextCountry,
+  }) async {
     if (token.isEmpty) {
       return const LimousinePlaceLookupResult(hadError: true);
     }
@@ -980,6 +1122,8 @@ class LimousinePlaceLookup {
       language: searchLanguage,
       country: inferredCountry,
       types: types,
+      proximityLat: proximityLat,
+      proximityLon: proximityLon,
     );
     final client = _client ?? http.Client();
     try {
@@ -995,6 +1139,7 @@ class LimousinePlaceLookup {
         suggestions: limousineRankPlaceSuggestions(
           query,
           parseLimousineMapboxPlaceFeatures(data['features']),
+          contextCountry: contextCountry ?? inferredCountry,
         ),
       );
     } catch (_) {

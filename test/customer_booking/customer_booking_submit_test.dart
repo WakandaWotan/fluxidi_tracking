@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_book_result.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_submit.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
@@ -132,6 +134,54 @@ void main() {
     expect(
       issues.map((issue) => issue.code),
       contains(kCustomerBookingIssueLaterInvalid),
+    );
+  });
+
+  test('book errors map to availability, payment and network — not fields', () {
+    expect(
+      customerBookingBookIssueFromRaw(
+        'Niet beschikbaar: geen geschikt voertuig beschikbaar.',
+      ),
+      kCustomerBookingIssueUnavailable,
+    );
+    expect(
+      customerBookingBookIssueFromRaw('required_vehicle_unavailable'),
+      kCustomerBookingIssueUnavailable,
+    );
+    expect(
+      customerBookingBookIssueFromRaw('payment_method_disabled_for_company'),
+      kCustomerBookingIssuePayment,
+    );
+    expect(
+      customerBookingBookIssueFromRaw('TimeoutException after 0:00:20'),
+      kCustomerBookingIssueNetwork,
+    );
+    expect(
+      customerBookingBookIssueFromRaw('missing fields: from, to'),
+      kCustomerBookingIssueNeedRoute,
+    );
+    expect(
+      customerBookingBookIssueFromRaw('Geocode failed'),
+      kCustomerBookingIssueFailed,
+    );
+  });
+
+  test('uncertain network after send is not a field error', () {
+    final mapped = customerBookingBookExceptionFromCaught(
+      Exception('TimeoutException after 0:00:20'),
+    );
+    expect(mapped.uncertain, isTrue);
+    expect(mapped.sent, isFalse);
+    expect(
+      customerBookingBookIssueFromException(mapped),
+      kCustomerBookingIssueNetwork,
+    );
+    expect(
+      customerBookingSubmitIssueText(
+        kCustomerBookingIssueNetwork,
+        AppLanguage.nl,
+      ),
+      isNot(contains('velden')),
     );
   });
 }

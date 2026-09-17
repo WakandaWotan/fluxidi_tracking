@@ -288,10 +288,17 @@ const LocalizedText kCustomerBookingAddressNeedsConfirm = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingAddressConfirmMap = LocalizedText(
-  nl: 'Bevestig deze kaartlocatie',
-  en: 'Confirm this map location',
-  fr: 'Confirmer cet emplacement',
-  es: 'Confirmar esta ubicación',
+  nl: 'Bevestigen',
+  en: 'Confirm',
+  fr: 'Confirmer',
+  es: 'Confirmar',
+);
+
+const LocalizedText kCustomerBookingInspectPickup = LocalizedText(
+  nl: 'Locatie controleren',
+  en: 'Check location',
+  fr: 'Vérifier l’emplacement',
+  es: 'Comprobar ubicación',
 );
 
 const LocalizedText kCustomerBookingLandingNotPickup = LocalizedText(
@@ -628,6 +635,27 @@ const LocalizedText kCustomerBookingBookFailed = LocalizedText(
   en: 'The booking was not confirmed. Check the fields and try again.',
   fr: 'La réservation n’a pas été confirmée. Vérifiez les champs et réessayez.',
   es: 'La reserva no se confirmó. Comprueba los campos e inténtalo de nuevo.',
+);
+
+const LocalizedText kCustomerBookingBookUnavailable = LocalizedText(
+  nl: 'Er is geen beschikbaar voertuig voor dit tijdstip.',
+  en: 'No vehicle is available at this time.',
+  fr: 'Aucun véhicule n’est disponible à cette heure.',
+  es: 'No hay ningún vehículo disponible a esta hora.',
+);
+
+const LocalizedText kCustomerBookingBookPayment = LocalizedText(
+  nl: 'De betaling kon niet worden bevestigd. Kies een andere betaalmethode.',
+  en: 'Payment could not be confirmed. Choose another payment method.',
+  fr: 'Le paiement n’a pas pu être confirmé. Choisissez un autre moyen de paiement.',
+  es: 'No se pudo confirmar el pago. Elige otro método de pago.',
+);
+
+const LocalizedText kCustomerBookingBookNetwork = LocalizedText(
+  nl: 'De boeking is niet bevestigd door een verbindingsfout. Controleer of de rit is opgeslagen voordat je opnieuw boekt.',
+  en: 'The booking was not confirmed because of a connection error. Check whether the ride was saved before booking again.',
+  fr: 'La réservation n’a pas été confirmée à cause d’une erreur de connexion. Vérifiez si la course a été enregistrée avant de réserver à nouveau.',
+  es: 'La reserva no se confirmó por un error de conexión. Comprueba si el viaje se guardó antes de volver a reservar.',
 );
 
 const LocalizedText kCustomerBookingAlreadyBooked = LocalizedText(

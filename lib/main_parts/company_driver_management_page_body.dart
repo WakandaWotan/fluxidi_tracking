@@ -922,9 +922,29 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                       Navigator.of(ctx).pop();
                       unawaited(_openDriverSchedule(context, existing));
                     },
-                    icon: const Icon(Icons.schedule_outlined, size: 20),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 52),
+                      foregroundColor: _textPrimary,
+                      side: BorderSide(
+                        color: _border.withOpacity(_isDark ? 0.45 : 0.92),
+                      ),
+                      backgroundColor: _isDark ? _subPanelBg : _panelBg,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: Icon(
+                      Icons.schedule_outlined,
+                      size: 20,
+                      color: _textPrimary,
+                    ),
                     label: Text(
                       kCompanyDriverScheduleTitle.of(appLanguageNotifier.value),
+                      style: TextStyle(
+                        fontSize: 15.8,
+                        fontWeight: FontWeight.w600,
+                        color: _textPrimary,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),

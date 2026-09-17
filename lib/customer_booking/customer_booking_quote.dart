@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_book_result.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 
@@ -134,9 +135,7 @@ class CustomerBookingQuoteClient {
         res.statusCode < 300 &&
         (decoded['ok'] == null || decoded['ok'] == true);
     if (!ok) {
-      final error = (decoded['error'] ?? decoded['message'] ?? 'HTTP ${res.statusCode}')
-          .toString();
-      throw StateError(error);
+      throw customerBookingBookExceptionFromResponse(res: res, decoded: decoded);
     }
     return decoded;
   }

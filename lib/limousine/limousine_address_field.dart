@@ -42,6 +42,13 @@ const LocalizedText kLimousineAddressPlaceCenter = LocalizedText(
   es: 'Centro del pueblo — aún no es una dirección exacta',
 );
 
+const LocalizedText kLimousineAddressPlaceCenterDropoff = LocalizedText(
+  nl: 'Plaatscentrum',
+  en: 'Place centre',
+  fr: 'Centre-ville',
+  es: 'Centro del pueblo',
+);
+
 const LocalizedText kLimousineAddressManualFallback = LocalizedText(
   nl: 'Gebruik dit adres',
   en: 'Use this address',
@@ -129,7 +136,11 @@ class LimousineAddressFieldController extends ChangeNotifier {
   List<LimousinePlaceSuggestion> suggestions = const [];
   LimousineAddressValue value = const LimousineAddressValue();
   bool locationNeedsConfirm = false;
+  bool locationUserConfirmed = false;
   LimousinePlaceSuggestion? locationCandidate;
+  double? Function()? proximityLatitude;
+  double? Function()? proximityLongitude;
+  String? Function()? searchContextCountry;
 
   bool get isRouteReady => value.isRouteReady;
 
@@ -160,11 +171,12 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = false;
     currentLocationFailure = null;
     locationNeedsConfirm = false;
+    locationUserConfirmed = false;
     locationCandidate = null;
     notifyListeners();
   }
 
-  void acceptCopy(LimousineAddressValue other) {
+  void acceptCopy(LimousineAddressValue other, {bool? userConfirmed}) {
     final text = other.displayText.trim().isNotEmpty
         ? other.displayText.trim()
         : (other.canonicalLabel.trim().isNotEmpty
@@ -192,29 +204,53 @@ class LimousineAddressFieldController extends ChangeNotifier {
     currentLocationFailure = null;
     locationNeedsConfirm = false;
     locationCandidate = null;
+    locationUserConfirmed = userConfirmed ??
+        (other.hasCoordinates && other.isRouteReady);
     notifyListeners();
   }
 
   void applyOwnedResolution(LimousineOwnedAddressResolution resolved) {
-    acceptCopy(resolved.value);
+    if (locationUserConfirmed && value.hasCoordinates) {
+      return;
+    }
+    acceptCopy(
+      resolved.value,
+      userConfirmed: !resolved.needsConfirm && resolved.value.hasCoordinates,
+    );
     locationNeedsConfirm = resolved.needsConfirm;
     locationCandidate = resolved.candidate;
+    if (resolved.needsConfirm) {
+      locationUserConfirmed = false;
+    }
     notifyListeners();
   }
 
   void confirmCandidateLocation() {
     final candidate = locationCandidate;
-    if (candidate == null || !candidate.hasCoordinates) return;
     final kept = value.displayText.trim().isEmpty
         ? textController.text.trim()
         : value.displayText.trim();
-    acceptCopy(
-      limousineOwnedAddressValue(
-        kept,
-        latitude: candidate.lat,
-        longitude: candidate.lon,
-      ),
-    );
+    if (candidate != null && candidate.hasCoordinates) {
+      acceptCopy(
+        limousineOwnedAddressValue(
+          kept,
+          latitude: candidate.lat,
+          longitude: candidate.lon,
+        ),
+        userConfirmed: true,
+      );
+      return;
+    }
+    if (value.hasCoordinates) {
+      acceptCopy(
+        limousineOwnedAddressValue(
+          kept,
+          latitude: value.lat,
+          longitude: value.lon,
+        ),
+        userConfirmed: true,
+      );
+    }
   }
 
   void onTextChanged(String raw) {
@@ -222,6 +258,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
     final requestId = ++_requestId;
     currentLocationFailure = null;
     locationNeedsConfirm = false;
+    locationUserConfirmed = false;
     locationCandidate = null;
     final text = raw;
     if (value.isRouteReady) {
@@ -261,7 +298,13 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = true;
     searched = true;
     notifyListeners();
-    final result = await lookup.search(raw, language: language);
+    final result = await lookup.search(
+      raw,
+      language: language,
+      proximityLat: proximityLatitude?.call(),
+      proximityLon: proximityLongitude?.call(),
+      contextCountry: searchContextCountry?.call(),
+    );
     if (_disposed ||
         requestId != _requestId ||
         textController.text.trim() != raw.trim()) {
@@ -308,6 +351,9 @@ class LimousineAddressFieldController extends ChangeNotifier {
     searched = false;
     hadError = false;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationCandidate = null;
+    locationUserConfirmed = suggestion.hasCoordinates;
     notifyListeners();
   }
 
@@ -326,6 +372,9 @@ class LimousineAddressFieldController extends ChangeNotifier {
     searched = false;
     hadError = false;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationUserConfirmed = false;
+    locationCandidate = null;
     notifyListeners();
     return true;
   }
@@ -340,6 +389,9 @@ class LimousineAddressFieldController extends ChangeNotifier {
     searched = false;
     hadError = false;
     currentLocationFailure = null;
+    locationNeedsConfirm = false;
+    locationUserConfirmed = false;
+    locationCandidate = null;
     notifyListeners();
   }
 
@@ -396,6 +448,7 @@ class LimousineAddressField extends StatelessWidget {
     this.inputKey,
     this.decoration,
     this.showCanonicalEcho = false,
+    this.isPickupField = false,
   });
 
   final LimousineAddressFieldController controller;
@@ -406,6 +459,7 @@ class LimousineAddressField extends StatelessWidget {
   final Key? inputKey;
   final InputDecoration? decoration;
   final bool showCanonicalEcho;
+  final bool isPickupField;
 
   static const double _suggestionsMaxHeight = 180;
 
@@ -513,7 +567,11 @@ class LimousineAddressField extends StatelessWidget {
                             subtitle: suggestion.isStreetLevel
                                 ? null
                                 : Text(
-                                    _t(kLimousineAddressPlaceCenter),
+                                    _t(
+                                      isPickupField
+                                          ? kLimousineAddressPlaceCenter
+                                          : kLimousineAddressPlaceCenterDropoff,
+                                    ),
                                     style: TextStyle(
                                       color: tokens.muted,
                                       fontSize: 11,
@@ -699,4 +757,15 @@ class LimousineAddressField extends StatelessWidget {
       ],
     );
   }
+}
+
+void limousineBindSiblingSearchBias({
+  required LimousineAddressFieldController field,
+  required LimousineAddressFieldController sibling,
+}) {
+  field.proximityLatitude = () => sibling.value.lat;
+  field.proximityLongitude = () => sibling.value.lon;
+  field.searchContextCountry = () =>
+      limousineMapboxCountryForQuery(sibling.value.displayText) ??
+      limousineMapboxCountryForQuery(field.value.displayText);
 }

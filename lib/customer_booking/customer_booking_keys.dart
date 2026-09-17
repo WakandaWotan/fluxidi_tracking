@@ -47,6 +47,9 @@ const Key kCustomerBookingAddressConfirmKey = Key(
 const Key kCustomerBookingAddressConfirmMapKey = Key(
   'customer_booking_address_confirm_map',
 );
+const Key kCustomerBookingInspectPickupKey = Key(
+  'customer_booking_inspect_pickup',
+);
 const Key kCustomerBookingVehiclesNeedRideKey = Key(
   'customer_booking_vehicles_need_ride',
 );

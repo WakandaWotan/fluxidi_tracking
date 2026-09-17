@@ -12,6 +12,7 @@ const String kCustomerBookingIssueLaterInvalid = 'later_invalid';
 const String kCustomerBookingIssueFailed = 'route_failed';
 const String kCustomerBookingIssuePriceFailed = 'price_failed';
 const String kCustomerBookingIssueQuoteFailed = 'quote_failed';
+const String kCustomerBookingIssueNeedCompany = 'need_company';
 
 String customerBookingFormatDateYmd(DateTime value) {
   final local = value.toLocal();
@@ -123,6 +124,12 @@ String customerBookingQuoteIssueFromRaw(String? raw) {
       lower.contains('geometry')) {
     return kCustomerBookingIssueFailed;
   }
+  if (lower == kCustomerBookingIssueNeedCompany ||
+      lower.contains('need_company') ||
+      lower.contains('public_partner') ||
+      lower.contains('partner_required')) {
+    return kCustomerBookingIssueNeedCompany;
+  }
   if (lower.contains('quote_failed') ||
       lower.contains('quote_http') ||
       lower == kCustomerBookingIssueQuoteFailed) {
@@ -146,6 +153,8 @@ String customerBookingQuoteErrorText(String? raw, AppLanguage language) {
       return kCustomerBookingPriceFailed.of(language);
     case kCustomerBookingIssueQuoteFailed:
       return kCustomerBookingQuoteFailed.of(language);
+    case kCustomerBookingIssueNeedCompany:
+      return kCustomerBookingNeedCompany.of(language);
     default:
       return '';
   }

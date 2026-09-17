@@ -731,7 +731,7 @@ class _CompanyDriverNowCard extends StatelessWidget {
                       theme,
                       text: '${kCompanyDriverDutyLabel.of(language)}: '
                           '${_dutyText(facets)}',
-                      color: _dutyColor(facets.duty),
+                      color: _dutyColor(facets),
                     ),
                     _facetLine(
                       theme,
@@ -810,6 +810,10 @@ class _CompanyDriverNowCard extends StatelessWidget {
   }
 
   String _dutyText(CompanyDriverStatusFacets facets) {
+    if (facets.duty == CompanyDriverDutyState.working &&
+        facets.connection != CompanyDriverConnectionState.live) {
+      return kCompanyDriverDutyStoredAvailable.of(language);
+    }
     return switch (facets.duty) {
       CompanyDriverDutyState.working => kCompanyDriverDutyWorking.of(language),
       CompanyDriverDutyState.onBreak =>
@@ -819,8 +823,12 @@ class _CompanyDriverNowCard extends StatelessWidget {
     };
   }
 
-  Color _dutyColor(CompanyDriverDutyState state) {
-    return switch (state) {
+  Color _dutyColor(CompanyDriverStatusFacets facets) {
+    if (facets.duty == CompanyDriverDutyState.working &&
+        facets.connection != CompanyDriverConnectionState.live) {
+      return kCompanyPlanPresenceGrey;
+    }
+    return switch (facets.duty) {
       CompanyDriverDutyState.working => kCompanyPlanPresenceGreen,
       CompanyDriverDutyState.onBreak => kCompanyPlanPresenceOrange,
       CompanyDriverDutyState.dutyEnded => kCompanyPlanPresenceGrey,

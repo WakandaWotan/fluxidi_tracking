@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
 
 const LocalizedText kCompanyFormDate = LocalizedText(
   nl: 'Datum',
@@ -127,7 +128,7 @@ DateTime? companyFormDateTimeFromIso(String raw) {
 }
 
 String companyFormIsoFromLocal(DateTime local) {
-  return local.toUtc().toIso8601String();
+  return companyPlanPickupIso(local);
 }
 
 DateTime? parseCompanyFormDate(String raw, AppLanguage language) {

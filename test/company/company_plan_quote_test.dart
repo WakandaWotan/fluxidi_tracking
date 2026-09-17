@@ -23,6 +23,22 @@ LimousineAddressValue _selected(
 }
 
 void main() {
+  test('Friday 22:00 wall clock is sent as Friday 20:00Z, not Thursday', () {
+    final request = companyPlanQuoteRequestFromAddresses(
+      from: _selected('Maarkedal 48A', lat: 50.82, lon: 3.64),
+      to: _selected('Kuurne', lat: 50.85, lon: 3.28),
+      pickupLocal: DateTime(2026, 9, 18, 22, 0),
+      options: const CompanyRideOptions(waitMin: 45),
+      passengers: 2,
+      returnEnabled: true,
+      returnPickupLocal: DateTime(2026, 9, 18, 23, 29),
+    );
+    expect(request, isNotNull);
+    expect(request!.body['pickup_iso'], '2026-09-18T20:00:00.000Z');
+    expect(request.body['return_pickup_iso'], '2026-09-18T21:29:00.000Z');
+    expect(request.body['pickup_iso'], isNot('2026-09-17T20:00:00.000Z'));
+  });
+
   test('incomplete typing does not build a quote request', () {
     final request = companyPlanQuoteRequestFromAddresses(
       from: const LimousineAddressValue(

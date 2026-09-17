@@ -81,6 +81,20 @@ bool customerBookingPickupIsVacant(LimousineAddressValue value) {
   return value.displayText.trim().isEmpty && !value.isRouteReady;
 }
 
+bool customerBookingPickupNeedsConfirm(LimousineAddressFieldController pickup) {
+  if (pickup.locationUserConfirmed && pickup.value.hasCoordinates) {
+    return false;
+  }
+  if (pickup.locationNeedsConfirm) return true;
+  if (pickup.value.isRouteReady && pickup.value.hasCoordinates) {
+    return false;
+  }
+  final text = pickup.value.displayText.trim();
+  if (text.isEmpty) return false;
+  return limousineParseStreetHouse(text).hasNumber &&
+      !pickup.value.hasCoordinates;
+}
+
 String customerBookingAirportSummary(AirportCatalogAirport airport) {
   final iata = airport.iata.trim().toUpperCase();
   final name = airport.name.trim();
@@ -92,6 +106,11 @@ String customerBookingAirportSummary(AirportCatalogAirport airport) {
 Future<CustomerBookingOwnedAddressResolution> customerBookingGeocodeIfNeeded(
   LimousineAddressFieldController controller,
 ) async {
+  if (controller.locationUserConfirmed && controller.value.hasCoordinates) {
+    return CustomerBookingOwnedAddressResolution(
+      value: controller.value,
+    );
+  }
   final query = controller.value.displayText.trim().isEmpty
       ? controller.textController.text.trim()
       : controller.value.displayText.trim();
@@ -101,7 +120,13 @@ Future<CustomerBookingOwnedAddressResolution> customerBookingGeocodeIfNeeded(
   final result = await controller.lookup.search(
     query,
     language: controller.language,
+    proximityLat: controller.proximityLatitude?.call(),
+    proximityLon: controller.proximityLongitude?.call(),
+    contextCountry: controller.searchContextCountry?.call(),
   );
+  if (controller.locationUserConfirmed && controller.value.hasCoordinates) {
+    return CustomerBookingOwnedAddressResolution(value: controller.value);
+  }
   if (controller.textController.text.trim() != query) {
     return CustomerBookingOwnedAddressResolution(value: controller.value);
   }

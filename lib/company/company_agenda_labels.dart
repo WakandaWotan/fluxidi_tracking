@@ -856,6 +856,13 @@ const LocalizedText kCompanyDriverDutyWorking = LocalizedText(
   es: 'Trabajando',
 );
 
+const LocalizedText kCompanyDriverDutyStoredAvailable = LocalizedText(
+  nl: 'Opgeslagen status beschikbaar, geen actueel signaal',
+  en: 'Stored as available, no live signal',
+  fr: 'Statut enregistré disponible, aucun signal actuel',
+  es: 'Estado guardado disponible, sin señal actual',
+);
+
 const LocalizedText kCompanyDriverDutyEnded = LocalizedText(
   nl: 'Dienst beëindigd',
   en: 'Duty ended',

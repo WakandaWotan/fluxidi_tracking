@@ -230,6 +230,9 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       CompanyPlanVehicleCategory.sedan;
   bool _planDriverUserPicked = false;
   bool _planVehicleUserPicked = false;
+  CustomerBookingAvailabilitySnapshot _planAvailability =
+      const CustomerBookingAvailabilitySnapshot();
+  int _planAvailabilitySeq = 0;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
 
@@ -270,6 +273,16 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       lookup: _placeLookup,
       fieldId: 'agenda_return_to',
       language: _lang.name,
+    );
+    limousineBindSiblingSearchBias(field: _fromAddress, sibling: _toAddress);
+    limousineBindSiblingSearchBias(field: _toAddress, sibling: _fromAddress);
+    limousineBindSiblingSearchBias(
+      field: _returnFromAddress,
+      sibling: _returnToAddress,
+    );
+    limousineBindSiblingSearchBias(
+      field: _returnToAddress,
+      sibling: _returnFromAddress,
     );
     _outboundStops = CompanyPlanStopList(
       lookup: _placeLookup,
@@ -333,10 +346,54 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     if (_draft == null) return;
     _planQuoteDebounce = Timer(kCompanyPlanQuoteDebounce, () {
       unawaited(_refreshPlanQuote());
+      unawaited(_refreshPlanAvailability());
     });
   }
 
+  Future<void> _refreshPlanAvailability() async {
+    final pickup = _planWhenNow ? companyPlanNowLocal() : _planPickupLocal;
+    final duration = _planDurationMin;
+    final companyId = (_boundCompanyId ?? '').trim();
+    if (pickup == null || duration == null || duration <= 0 || companyId.isEmpty) {
+      return;
+    }
+    final seq = ++_planAvailabilitySeq;
+    try {
+      final snapshot = await fetchCustomerBookingAvailability(
+        bookingBaseUrl: kBookingBaseUrl,
+        partnerId: 'company:$companyId:$companyId',
+        pickupUtc: companyPlanPickupUtc(pickup),
+        passengers: _passengers,
+        durationMin: duration,
+        waitMin: _rideOptions.waitMin,
+        returnDurationMin: _roundtripChoice == CompanyRoundtripChoice.single
+            ? 0
+            : (_planQuoteResult?.returnDurationMin ?? duration),
+      );
+      if (!mounted || seq != _planAvailabilitySeq) return;
+      setState(() => _planAvailability = snapshot);
+    } catch (_) {
+      if (!mounted || seq != _planAvailabilitySeq) return;
+      setState(
+        () => _planAvailability = const CustomerBookingAvailabilitySnapshot(
+          loadFailed: true,
+          fetched: true,
+        ),
+      );
+    }
+  }
+
   Future<void> _refreshPlanQuote({bool force = false}) async {
+    if (_fromAddress.locationNeedsConfirm &&
+        !_fromAddress.locationUserConfirmed) {
+      if (!mounted) return;
+      setState(() {
+        _planQuoteResult = null;
+        _planQuoteLoading = false;
+        _planQuoteError = null;
+      });
+      return;
+    }
     final returnTo = _canonicalReturnTo();
     final request = companyPlanQuoteRequestFromAddresses(
       from: _fromAddress.value,
@@ -1045,7 +1102,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }) {
     final pickup = whenNow
         ? companyPlanNowLocal().toUtc()
-        : (_planPickupLocal ?? _draft?.pickupLocal)?.toUtc();
+        : (_planPickupLocal ?? _draft?.pickupLocal) == null
+        ? null
+        : companyPlanPickupUtc(
+            (_planPickupLocal ?? _draft!.pickupLocal),
+          );
     final durationMin = _planDurationMin;
     final raw = companyPlanCrewCombos(
       drivers: _drivers,
@@ -1243,12 +1304,21 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       vehicles: _planOfferVehicles,
       drivers: _drivers,
       passengers: _passengers,
-      pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)
-          ?.toUtc(),
+      pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal) == null
+          ? null
+          : companyPlanPickupUtc(
+              (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)!,
+            ),
       durationMin: duration ?? 30,
       durationKnown: duration != null && duration > 0,
       rideReady: companyPlanAddressIsQuoteReady(_fromAddress.value) &&
           companyPlanAddressIsQuoteReady(_toAddress.value),
+      availableVehicleIds: _planAvailability.availableIds,
+      unavailableVehicleIds: _planAvailability.unavailableIds,
+      unavailableReasons: _planAvailability.reasons,
+      proposedDriverIds: _planAvailability.driverIds,
+      availabilityResolved: _planAvailability.resolved,
+      availabilityFailed: _planAvailability.loadFailed,
     );
     if (offers.isEmpty) return null;
     return CustomerBookingVehiclePhotoCardGrid(
@@ -1406,15 +1476,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       final check = await _agenda.checkOverlap(
         driverId: driverId,
         vehicleId: vehicleId,
-        pickupIso: pickupAt.toUtc().toIso8601String(),
+        pickupIso: companyPlanPickupIso(pickupAt),
         durationMin: _planDurationMin,
-        returnPickupIso:
-            (_roundtripChoice == CompanyRoundtripChoice.continuousWait
-                    ? _continuousWaitReturnPickup()
-                    : _returnPickupLocal)
-                ?.toUtc()
-                .toIso8601String() ??
-            '',
+        returnPickupIso: () {
+          final ret = _roundtripChoice == CompanyRoundtripChoice.continuousWait
+              ? _continuousWaitReturnPickup()
+              : _returnPickupLocal;
+          return ret == null ? '' : companyPlanPickupIso(ret);
+        }(),
         returnDurationMin: companyPlanReturnDurationMin(
           choice: _roundtripChoice,
           outboundDurationMin: _planDurationMin,
@@ -2497,6 +2566,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 drivers: _drivers,
                 rides: _nowRides,
                 nowUtc: DateTime.now().toUtc(),
+                schedules: companyDriverSchedulesFromRecords(_drivers),
               ),
               onSelectDriver: (driverId) {
                 setState(() {
@@ -3370,13 +3440,15 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 language: _lang,
                 pickup: _fromAddress.value,
                 dropoff: _toAddress.value,
+                stops: _outboundStops.values,
                 quote: _planQuoteResult,
                 loading: _planQuoteLoading,
                 error: _planQuoteError,
                 onRetry: () => unawaited(_refreshPlanQuote(force: true)),
                 pickupLocal:
                     _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
-                pickupNeedsConfirm: _fromAddress.locationNeedsConfirm,
+                pickupNeedsConfirm: _fromAddress.locationNeedsConfirm &&
+                    !_fromAddress.locationUserConfirmed,
                 confirmLat: _fromAddress.locationCandidate?.lat ??
                     _fromAddress.value.lat,
                 confirmLon: _fromAddress.locationCandidate?.lon ??
@@ -3397,11 +3469,17 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
               onRetry: () => unawaited(_refreshPlanQuote(force: true)),
               pickupLocal:
                   _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
-              pickupNeedsConfirm: _fromAddress.locationNeedsConfirm,
+              pickupNeedsConfirm: _fromAddress.locationNeedsConfirm &&
+                  !_fromAddress.locationUserConfirmed,
               confirmLat: _fromAddress.locationCandidate?.lat ??
                   _fromAddress.value.lat,
               confirmLon: _fromAddress.locationCandidate?.lon ??
                   _fromAddress.value.lon,
+              onConfirmPickup: () {
+                _fromAddress.confirmCandidateLocation();
+                setState(() {});
+                _schedulePlanQuote();
+              },
               ),
             );
           },

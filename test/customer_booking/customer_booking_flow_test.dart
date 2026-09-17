@@ -453,6 +453,10 @@ void main() {
       size: const Size(800, 1280),
       entry: const CustomerBookingEntryContext(
         kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'Demo Taxi',
+        ),
         pickup: CustomerBookingPlace(
           address: 'A Straat 1, Brussel',
           latitude: 50.85,
@@ -603,6 +607,10 @@ void main() {
       size: const Size(800, 1280),
       entry: const CustomerBookingEntryContext(
         kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'Demo Taxi',
+        ),
         pickup: CustomerBookingPlace(
           address: 'A Straat 1, Brussel',
           latitude: 50.85,
@@ -628,6 +636,39 @@ void main() {
     expect(decoded['date'], isNotEmpty);
     expect(decoded['time'], isNotEmpty);
     expect(decoded.containsKey('flight_at'), isFalse);
+  });
+
+  testWidgets('airport route without a company asks to choose a company', (
+    tester,
+  ) async {
+    var quotes = 0;
+    await _pumpFlow(
+      tester,
+      size: const Size(800, 1280),
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.airport,
+        pickup: CustomerBookingPlace(
+          address: 'Koekamerstraat 48, Maarkedal',
+          latitude: 50.77,
+          longitude: 3.66,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'Brussels Airport',
+          latitude: 50.90,
+          longitude: 4.48,
+        ),
+      ),
+      quotes: _quotes(
+        onPost: (path) {
+          if (path.endsWith('/quote')) quotes += 1;
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(quotes, 0);
+    expect(find.textContaining('taxibedrijf'), findsWidgets);
+    expect(find.textContaining('offerte kon niet'), findsNothing);
+    expect(find.byKey(kCustomerBookingPriceKey), findsNothing);
   });
 
   testWidgets('scheduled pickup time from home is not replaced by flight time', (

@@ -418,18 +418,19 @@ CompanyAgendaDayPack companyAgendaPackDayRides({
 }
 
 List<DateTime> companyAgendaVisibleDays(CompanyAgendaPeriod period) {
-  final start = DateTime(
-    period.fromUtc.toLocal().year,
-    period.fromUtc.toLocal().month,
-    period.fromUtc.toLocal().day,
+  final anchor = DateTime(
+    period.anchor.year,
+    period.anchor.month,
+    period.anchor.day,
   );
   if (period.view == CompanyAgendaView.week) {
+    final monday = anchor.subtract(Duration(days: anchor.weekday - DateTime.monday));
     return List<DateTime>.generate(
       7,
-      (index) => start.add(Duration(days: index)),
+      (index) => monday.add(Duration(days: index)),
     );
   }
-  return <DateTime>[start];
+  return <DateTime>[anchor];
 }
 
 class CompanyAgendaCalendar extends StatelessWidget {

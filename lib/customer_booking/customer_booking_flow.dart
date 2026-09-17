@@ -16,6 +16,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_route_map.dar
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_addresses.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_book_result.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_billing.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
@@ -224,6 +225,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _dropoff = _makeAddress('dropoff');
     _returnPickup = _makeAddress('return_pickup');
     _returnDropoff = _makeAddress('return_dropoff');
+    limousineBindSiblingSearchBias(field: _pickup, sibling: _dropoff);
+    limousineBindSiblingSearchBias(field: _dropoff, sibling: _pickup);
+    limousineBindSiblingSearchBias(field: _returnPickup, sibling: _returnDropoff);
+    limousineBindSiblingSearchBias(field: _returnDropoff, sibling: _returnPickup);
     _airportMode = _entry.kind == CustomerBookingKind.airport;
     _toAirport = _entry.toAirport;
     _airport = _entry.airport;
@@ -264,11 +269,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     }
   }
 
+  Future<void>? _profileLoad;
+
   Future<void> _resolveGpsAfterProfile() async {
-    // A saved profile address must win over a later GPS fix. A hanging
-    // local store must not block current-location fallback forever.
+    // A saved profile address must win over a later GPS fix. Wait for the
+    // profile itself; only fall back to GPS when the pickup is still vacant.
     try {
-      await _loadProfile().timeout(const Duration(milliseconds: 250));
+      await _loadProfile();
     } catch (_) {}
     if (!mounted) return;
     if (_pickupOwned || !customerBookingPickupIsVacant(_pickup.value)) return;
@@ -355,7 +362,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     }
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile() {
+    return _profileLoad ??= _loadProfileOnce();
+  }
+
+  Future<void> _loadProfileOnce() async {
     try {
       final profile = widget.profile ?? await CustomerProfileStore.instance.load();
       if (!mounted || profile == null) return;
@@ -378,14 +389,42 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   int _pickupGeocodeSeq = 0;
-  bool _pickupNeedsConfirm = false;
+  int _pickupInspectSeq = 0;
+
+  bool get _pickupNeedsConfirm => customerBookingPickupNeedsConfirm(_pickup);
 
   Future<void> _geocodePickupIfNeeded() async {
     if (customerBookingPickupIsVacant(_pickup.value)) return;
+    if (_pickup.locationUserConfirmed && _pickup.value.hasCoordinates) return;
     final seq = ++_pickupGeocodeSeq;
-    final resolved = await customerBookingGeocodeIfNeeded(_pickup);
+    final query = _pickup.value.displayText.trim().isEmpty
+        ? _pickup.textController.text.trim()
+        : _pickup.value.displayText.trim();
+    try {
+      final stored = await CustomerConfirmedLocationStore.instance.readFor(query);
+      if (!mounted || seq != _pickupGeocodeSeq) return;
+      if (stored != null &&
+          stored.isUsable &&
+          (customerConfirmedLocationMatches(_pickup.value.displayText, stored) ||
+              customerConfirmedLocationMatches(query, stored))) {
+        _pickup.acceptCopy(
+          customerBookingAddressFromText(
+            stored.label,
+            latitude: stored.latitude,
+            longitude: stored.longitude,
+          ),
+          userConfirmed: true,
+        );
+        setState(() => _gpsFallback = false);
+        _onDraftChanged();
+        return;
+      }
+    } catch (_) {}
     if (!mounted || seq != _pickupGeocodeSeq) return;
-    setState(() => _pickupNeedsConfirm = resolved.needsConfirm);
+    await customerBookingGeocodeIfNeeded(_pickup);
+    if (!mounted || seq != _pickupGeocodeSeq) return;
+    setState(() {});
+    _onDraftChanged();
   }
 
   void _applyOwnedPickup(LimousineAddressValue address) {
@@ -397,18 +436,25 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       latitude: address.lat,
       longitude: address.lon,
     );
-    _pickup.acceptCopy(next);
+    _pickup.acceptCopy(next, userConfirmed: next.hasCoordinates);
     setState(() {
       _pickupOwned = true;
-      _pickupNeedsConfirm = !next.hasCoordinates;
       _gpsFallback = false;
       _submitError = null;
     });
     _onDraftChanged();
-    unawaited(_restoreConfirmedPickup(label));
-    if (!next.hasCoordinates) {
-      unawaited(_geocodePickupIfNeeded());
+    unawaited(_resolveOwnedPickup(label));
+  }
+
+  Future<void> _resolveOwnedPickup(String label) async {
+    await _restoreConfirmedPickup(label);
+    if (!mounted) return;
+    if (_pickup.locationUserConfirmed && _pickup.value.hasCoordinates) {
+      setState(() {});
+      _onDraftChanged();
+      return;
     }
+    await _geocodePickupIfNeeded();
   }
 
   Future<void> _restoreConfirmedPickup(String label) async {
@@ -425,11 +471,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           latitude: stored.latitude,
           longitude: stored.longitude,
         ),
+        userConfirmed: true,
       );
-      setState(() {
-        _pickupNeedsConfirm = false;
-        _gpsFallback = false;
-      });
+      setState(() => _gpsFallback = false);
       _onDraftChanged();
     } catch (_) {}
   }
@@ -437,7 +481,6 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   void _applyProfileAddressIfVacant() {
     final profile = _profile;
     if (profile == null || _pickupOwned) return;
-    if (!customerBookingPickupIsVacant(_pickup.value)) return;
     final address = customerBookingAddressFromProfile(profile);
     if (address == null) return;
     _applyOwnedPickup(address);
@@ -482,6 +525,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
             latitude: place.lat,
             longitude: place.lon,
           ),
+          userConfirmed: true,
         );
         setState(() {
           _gpsBusy = false;
@@ -513,14 +557,26 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   DateTime? get _effectivePickupUtc {
-    final local = _whenNow ? DateTime.now() : _pickupAt;
-    return local?.toUtc();
+    if (_whenNow) return DateTime.now().toUtc();
+    final local = _pickupAt;
+    if (local == null) return null;
+    return companyPlanPickupUtc(local);
   }
 
   Future<void> _refreshAvailability() async {
     if (!_hasChosenCompany) return;
     final pickup = _effectivePickupUtc;
     if (pickup == null) return;
+    if (_pickupNeedsConfirm) {
+      _availabilitySeq += 1;
+      if (_availability.fetched || _availabilityLoading) {
+        setState(() {
+          _availability = const CustomerBookingAvailabilitySnapshot();
+          _availabilityLoading = false;
+        });
+      }
+      return;
+    }
     if (!_rideDetailsReady) {
       _availabilitySeq += 1;
       if (_availability.fetched || _availabilityLoading) {
@@ -551,6 +607,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         pickupUtc: pickup,
         passengers: _passengers,
         durationMin: duration,
+        waitMin: _options.waitMin,
+        returnDurationMin: _returnKind == CustomerBookingReturnKind.oneWay
+            ? 0
+            : (_quote?.returnDurationMin ?? duration),
         httpGet: widget.profileGet,
       );
       if (!mounted || seq != _availabilitySeq) return;
@@ -644,6 +704,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   LimousineAddressValue _quoteAddress(LimousineAddressFieldController field) {
+    if (field.locationNeedsConfirm && !field.locationUserConfirmed) {
+      return field.value;
+    }
     if (field.value.isRouteReady) return field.value;
     final text = field.textController.text.trim();
     if (text.isEmpty) return field.value;
@@ -654,10 +717,46 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
+  LimousineAddressValue _bookAddress(
+    LimousineAddressFieldController field, {
+    double? fallbackLat,
+    double? fallbackLon,
+  }) {
+    final value = _quoteAddress(field);
+    if (value.hasCoordinates || fallbackLat == null || fallbackLon == null) {
+      return value;
+    }
+    final label = value.routeText.trim().isNotEmpty
+        ? value.routeText
+        : value.displayText;
+    return customerBookingAddressFromText(
+      label,
+      latitude: fallbackLat,
+      longitude: fallbackLon,
+    );
+  }
+
   Future<void> _refreshQuote() async {
     if (!mounted) return;
     _syncReturnDefaults();
     final seq = ++_quoteSeq;
+    if (_pickupNeedsConfirm) {
+      setState(() {
+        _quote = null;
+        _quoteError = null;
+        _quoteLoading = false;
+      });
+      unawaited(_refreshAvailability());
+      return;
+    }
+    if (!_hasChosenCompany) {
+      setState(() {
+        _quote = null;
+        _quoteError = kCustomerBookingIssueNeedCompany;
+        _quoteLoading = false;
+      });
+      return;
+    }
     final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
     final request = companyPlanQuoteRequestFromAddresses(
       from: _quoteAddress(_pickup),
@@ -744,6 +843,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       inbound ? 'return_stop_${_stopSeq++}' : 'stop_${_stopSeq++}',
     );
     controller.addListener(_onDraftChanged);
+    limousineBindSiblingSearchBias(field: controller, sibling: _pickup);
     setState(() => list.add(controller));
   }
 
@@ -983,10 +1083,21 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() => _submitError = null);
     try {
       _syncReturnDefaults();
+      if (!_quoteAddress(_pickup).hasCoordinates) {
+        await _geocodePickupIfNeeded();
+      }
       final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
       final request = companyPlanQuoteRequestFromAddresses(
-        from: _quoteAddress(_pickup),
-        to: _quoteAddress(_dropoff),
+        from: _bookAddress(
+          _pickup,
+          fallbackLat: _quote?.pickupLat,
+          fallbackLon: _quote?.pickupLon,
+        ),
+        to: _bookAddress(
+          _dropoff,
+          fallbackLat: _quote?.dropoffLat,
+          fallbackLon: _quote?.dropoffLon,
+        ),
         pickupLocal: pickupAt,
         options: _options,
         passengers: _passengers,
@@ -1059,7 +1170,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         companyId: _entry.company.companyId,
         from: _pickup.value.routeText,
         to: _dropoff.value.routeText,
-        pickupIso: pickupAt?.toIso8601String() ?? '',
+        pickupIso: pickupAt == null
+            ? ''
+            : (_whenNow
+                ? pickupAt.toUtc().toIso8601String()
+                : companyPlanPickupIso(pickupAt)),
         price: _quote?.displayTotalPrice?.toDouble(),
         currency: _quote?.currency ?? 'EUR',
         service: _options.service,
@@ -1091,13 +1206,33 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       _returnToCustomerHome();
     } catch (error) {
       if (!mounted) return;
+      final mapped = customerBookingBookExceptionFromCaught(error);
+      customerBookingLogBookFailure(mapped);
+      final code = customerBookingBookIssueFromException(mapped);
       setState(() {
         _submitting = false;
-        _submitError = customerBookingSubmitIssueText(
-          customerBookingBookIssueFromRaw(error.toString()),
-          _language,
-        );
+        _submitError = customerBookingSubmitIssueText(code, _language);
       });
+      if (code == kCustomerBookingIssueNeedPickup ||
+          code == kCustomerBookingIssueNeedDropoff ||
+          code == kCustomerBookingIssueNeedWhen ||
+          code == kCustomerBookingIssueNeedName ||
+          code == kCustomerBookingIssueNeedPhone ||
+          code == kCustomerBookingIssueNeedCompany) {
+        _revealSubmitIssue(
+          CustomerBookingSubmitIssue(
+            code: code,
+            focusKey: switch (code) {
+              kCustomerBookingIssueNeedPickup => 'pickup',
+              kCustomerBookingIssueNeedDropoff => 'dropoff',
+              kCustomerBookingIssueNeedWhen => 'when',
+              kCustomerBookingIssueNeedName => 'name',
+              kCustomerBookingIssueNeedPhone => 'phone',
+              _ => 'company',
+            },
+          ),
+        );
+      }
     }
   }
 
@@ -1404,6 +1539,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       pickupNeedsConfirm: _pickupNeedsConfirm,
       confirmLat: candidate?.lat ?? _pickup.value.lat,
       confirmLon: candidate?.lon ?? _pickup.value.lon,
+      onConfirmPickup: _confirmPickupOnMap,
+      pickupInspectSeq: _pickupInspectSeq,
     );
   }
 
@@ -1534,20 +1671,36 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
+  void _inspectPickupOnMap() {
+    setState(() => _pickupInspectSeq += 1);
+  }
+
   void _confirmPickupOnMap() {
+    _pickupGeocodeSeq += 1;
     final candidate = _pickup.locationCandidate;
     if (candidate != null && candidate.hasCoordinates) {
       _pickup.confirmCandidateLocation();
     } else if (_pickup.value.hasCoordinates) {
-      _pickup.acceptCopy(
-        customerBookingAddressFromText(
-          _pickup.value.displayText,
-          latitude: _pickup.value.lat,
-          longitude: _pickup.value.lon,
-        ),
-      );
+      _pickup.confirmCandidateLocation();
     } else {
-      return;
+      LimousinePlaceSuggestion? pin;
+      for (final item in _pickup.suggestions) {
+        if (item.hasCoordinates && item.isStreetLevel) {
+          pin = item;
+          break;
+        }
+      }
+      if (pin == null) {
+        for (final item in _pickup.suggestions) {
+          if (item.hasCoordinates) {
+            pin = item;
+            break;
+          }
+        }
+      }
+      if (pin == null) return;
+      _pickup.locationCandidate = pin;
+      _pickup.confirmCandidateLocation();
     }
     final confirmed = _pickup.value;
     if (confirmed.hasCoordinates) {
@@ -1559,7 +1712,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         ),
       );
     }
-    setState(() => _pickupNeedsConfirm = false);
+    setState(() {});
     _onDraftChanged();
   }
 
@@ -1735,37 +1888,28 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         language: _language,
         showCanonicalEcho: false,
         showCurrentLocation: true,
+        isPickupField: true,
         inputKey: kCustomerBookingPickupKey,
       ),
       if (_pickupNeedsConfirm)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Text(
-                _t(kCustomerBookingCheckPickup),
-                key: kCustomerBookingConfirmPickupBannerKey,
-                style: TextStyle(
-                  color: _palette.textPrimary,
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  _t(kCustomerBookingCheckPickup),
+                  key: kCustomerBookingConfirmPickupBannerKey,
+                  style: TextStyle(
+                    color: _palette.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-              Text(
-                _t(kCustomerBookingAddressNeedsConfirm),
-                key: kCustomerBookingAddressConfirmKey,
-                style: TextStyle(
-                  color: _palette.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  key: kCustomerBookingAddressConfirmMapKey,
-                  onPressed: _confirmPickupOnMap,
-                  child: Text(_t(kCustomerBookingAddressConfirmMap)),
-                ),
+              TextButton(
+                key: kCustomerBookingInspectPickupKey,
+                onPressed: _inspectPickupOnMap,
+                child: Text(_t(kCustomerBookingInspectPickup)),
               ),
             ],
           ),
@@ -2162,7 +2306,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     final duration = _quote?.durationMin;
     return customerBookingVehicleOffers(
       vehicles: _companyVehicles,
-      drivers: _companyDrivers,
+      drivers: <Map<String, dynamic>>[
+        for (final driver in _companyDrivers)
+          customerBookingPublishedDriverCard(driver),
+        ..._availability.drivers,
+      ],
       passengers: _passengers,
       pickupUtc: _effectivePickupUtc,
       durationMin: duration ?? 30,
@@ -2184,7 +2332,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   bool get _rideDetailsReady {
     final hasAirport = _airport != null;
     return customerBookingRideDetailsReady(
-      pickupFilled: _addressQuoteReady(_pickup.value) ||
+      pickupFilled: (!_pickupNeedsConfirm && _addressQuoteReady(_pickup.value)) ||
           (_airportMode && !_toAirport && hasAirport),
       dropoffFilled: _addressQuoteReady(_dropoff.value) ||
           (_airportMode && _toAirport && hasAirport),
@@ -2447,8 +2595,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       child: CustomerBookingPriceBlock(
         language: _language,
         loading: _quoteLoading,
-        quote: _quote,
-        error: _quoteError,
+        quote: _pickupNeedsConfirm ? null : _quote,
+        error: _pickupNeedsConfirm ? null : _quoteError,
         onRetry: () => unawaited(_refreshQuote()),
       ),
     );

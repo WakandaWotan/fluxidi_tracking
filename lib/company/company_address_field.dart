@@ -19,10 +19,17 @@ const LocalizedText kCompanyAddressNeedsConfirm = LocalizedText(
 );
 
 const LocalizedText kCompanyAddressConfirmMap = LocalizedText(
-  nl: 'Bevestig deze kaartlocatie',
-  en: 'Confirm this map location',
-  fr: 'Confirmer cet emplacement',
-  es: 'Confirmar esta ubicación',
+  nl: 'Bevestigen',
+  en: 'Confirm',
+  fr: 'Confirmer',
+  es: 'Confirmar',
+);
+
+const LocalizedText kCompanyAddressCheckPickup = LocalizedText(
+  nl: 'Controleer het vertrekpunt',
+  en: 'Check the pickup point',
+  fr: 'Vérifiez le point de départ',
+  es: 'Comprueba el punto de salida',
 );
 
 Key companyAddressConfirmKey(String fieldId) =>
@@ -313,13 +320,22 @@ Future<LimousineOwnedAddressResolution> companyAddressGeocodeIfNeeded(
   if (query.length < kLimousineAddressMinQueryLength) {
     return LimousineOwnedAddressResolution(value: value);
   }
+  if (controller.locationUserConfirmed && value.hasCoordinates) {
+    return LimousineOwnedAddressResolution(value: value);
+  }
   if (value.hasCoordinates && !controller.locationNeedsConfirm) {
     return LimousineOwnedAddressResolution(value: value);
   }
   final result = await controller.lookup.search(
     query,
     language: controller.language,
+    proximityLat: controller.proximityLatitude?.call(),
+    proximityLon: controller.proximityLongitude?.call(),
+    contextCountry: controller.searchContextCountry?.call(),
   );
+  if (controller.locationUserConfirmed && controller.value.hasCoordinates) {
+    return LimousineOwnedAddressResolution(value: controller.value);
+  }
   if (controller.textController.text.trim() != query) {
     return LimousineOwnedAddressResolution(value: controller.value);
   }
@@ -336,6 +352,7 @@ class CompanyAddressField extends StatefulWidget {
     required this.language,
     this.inputKey,
     this.savedAddresses = const <CompanyCustomerAddress>[],
+    this.isPickupField = false,
   });
 
   final LimousineAddressFieldController controller;
@@ -343,6 +360,7 @@ class CompanyAddressField extends StatefulWidget {
   final AppLanguage language;
   final Key? inputKey;
   final List<CompanyCustomerAddress> savedAddresses;
+  final bool isPickupField;
 
   @override
   State<CompanyAddressField> createState() => _CompanyAddressFieldState();
@@ -399,34 +417,34 @@ class _CompanyAddressFieldState extends State<CompanyAddressField> {
                 language: widget.language,
                 inputKey: widget.inputKey,
                 showCanonicalEcho: false,
+                isPickupField: widget.isPickupField,
               ),
               if (widget.controller.locationNeedsConfirm)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        kCompanyAddressNeedsConfirm.of(widget.language),
-                        key: companyAddressConfirmKey(widget.controller.fieldId),
-                        style: TextStyle(
-                          color: tokens.muted,
-                          fontWeight: FontWeight.w600,
+                      Expanded(
+                        child: Text(
+                          kCompanyAddressCheckPickup.of(widget.language),
+                          key: companyAddressConfirmKey(widget.controller.fieldId),
+                          style: TextStyle(
+                            color: tokens.muted,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                      if (widget.controller.locationCandidate != null)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton(
-                            key: companyAddressConfirmMapKey(
-                              widget.controller.fieldId,
-                            ),
-                            onPressed: () {
-                              widget.controller.confirmCandidateLocation();
-                            },
-                            child: Text(
-                              kCompanyAddressConfirmMap.of(widget.language),
-                            ),
+                      if (widget.controller.locationCandidate != null ||
+                          widget.controller.value.hasCoordinates)
+                        TextButton(
+                          key: companyAddressConfirmMapKey(
+                            widget.controller.fieldId,
+                          ),
+                          onPressed: () {
+                            widget.controller.confirmCandidateLocation();
+                          },
+                          child: Text(
+                            kCompanyAddressConfirmMap.of(widget.language),
                           ),
                         ),
                     ],

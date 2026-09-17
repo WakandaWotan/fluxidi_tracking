@@ -263,6 +263,7 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
     required String? label,
     required Key? inputKey,
     required String fallbackLabel,
+    bool isPickupField = false,
   }) {
     return CompanyAddressField(
       controller: controller,
@@ -270,6 +271,7 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
       language: language,
       inputKey: inputKey,
       savedAddresses: savedAddresses,
+      isPickupField: isPickupField,
     );
   }
 
@@ -500,6 +502,7 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
             label: pickupLabel,
             inputKey: pickupInputKey,
             fallbackLabel: kCompanyCustomerQuotePickup.of(language),
+            isPickupField: true,
           ),
         if (showGroundAddresses && widget.betweenEndpoints != null) ...[
           const SizedBox(height: 4),

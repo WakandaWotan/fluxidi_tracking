@@ -1,6 +1,7 @@
 // COMPANY-AGENDA-P0 — Nu uses backend server time; Later keeps a local concept.
 
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 
 typedef CompanyPlanClock = DateTime Function();
 
@@ -38,9 +39,42 @@ DateTime companyPlanLaterFirstDate([DateTime? now]) {
   return DateTime(clock.year, clock.month, clock.day);
 }
 
+DateTime companyPlanWallClock(DateTime value) {
+  return DateTime(
+    value.year,
+    value.month,
+    value.day,
+    value.hour,
+    value.minute,
+    value.second,
+  );
+}
+
+DateTime companyPlanCompanyNow([CompanyPlanClock? clock]) {
+  return companyTimezoneUtcToLocal(
+    (clock ?? companyPlanClock)().toUtc(),
+    kCompanyDefaultTimezone,
+  );
+}
+
+DateTime companyPlanPickupUtc(DateTime laterPickup) {
+  return companyTimezoneLocalToUtc(
+    companyPlanWallClock(laterPickup),
+    kCompanyDefaultTimezone,
+  );
+}
+
+String companyPlanPickupIso(DateTime laterPickup) {
+  return companyPlanPickupUtc(laterPickup).toIso8601String();
+}
+
 bool companyPlanLaterPickupIsValid(DateTime pickup, {DateTime? now}) {
-  final clock = (now ?? companyPlanNowLocal()).toLocal();
-  return !pickup.toLocal().isBefore(clock);
+  final clock = companyPlanWallClock(
+    now != null
+        ? companyTimezoneUtcToLocal(now.toUtc(), kCompanyDefaultTimezone)
+        : companyPlanCompanyNow(),
+  );
+  return !companyPlanWallClock(pickup).isBefore(clock);
 }
 
 String companyPlanQuoteFingerprintWhen({
@@ -68,7 +102,7 @@ Map<String, dynamic> companyPlanWhenWireFields({
     return const <String, dynamic>{};
   }
   return <String, dynamic>{
-    'pickup_iso': laterPickup.toUtc().toIso8601String(),
+    'pickup_iso': companyPlanPickupIso(laterPickup),
   };
 }
 
@@ -111,7 +145,7 @@ void companyPlanApplyCreateWhenFields(
     body.remove('pickupIso');
     return;
   }
-  body['pickup_iso'] = draft.pickupLocal.toUtc().toIso8601String();
+  body['pickup_iso'] = companyPlanPickupIso(draft.pickupLocal);
 }
 
 bool companyPlanFlightDepartsBeforePickup({

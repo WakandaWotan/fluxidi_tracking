@@ -240,6 +240,7 @@ class CustomerBookingAvailabilitySnapshot {
     this.unavailableIds = const <String>{},
     this.reasons = const <String, String>{},
     this.driverIds = const <String, String>{},
+    this.drivers = const <Map<String, dynamic>>[],
     this.loadFailed = false,
     this.fetched = false,
   });
@@ -248,10 +249,93 @@ class CustomerBookingAvailabilitySnapshot {
   final Set<String> unavailableIds;
   final Map<String, String> reasons;
   final Map<String, String> driverIds;
+  final List<Map<String, dynamic>> drivers;
   final bool loadFailed;
   final bool fetched;
 
   bool get resolved => fetched && !loadFailed;
+}
+
+Map<String, dynamic>? customerBookingAvailabilityDriverRecord(
+  Map<dynamic, dynamic> item,
+) {
+  final nested = item['driver'] ??
+      item['assigned_driver'] ??
+      item['assignedDriver'];
+  final driverId = (item['driver_id'] ?? item['driverId'] ?? '')
+      .toString()
+      .trim();
+  if (nested is Map) {
+    final record = Map<String, dynamic>.from(nested);
+    if (companyAgendaDriverId(record).isEmpty && driverId.isNotEmpty) {
+      record['driver_id'] = driverId;
+    }
+    return customerBookingPublishedDriverCard(record);
+  }
+  if (driverId.isEmpty) return null;
+  final stub = <String, dynamic>{'driver_id': driverId};
+  for (final key in const <String>[
+    'first_name',
+    'firstName',
+    'display_name',
+    'displayName',
+    'public_display_name',
+    'publicDisplayName',
+    'name',
+    'public_photo_url',
+    'publicPhotoUrl',
+    'driver_photo_url',
+    'driverPhotoUrl',
+    'photo_url',
+    'portrait_url',
+    'public_profile_enabled',
+    'publicProfileEnabled',
+    'public_photo_enabled',
+    'publicPhotoEnabled',
+    'driver_rating_avg',
+    'rating_avg',
+    'driver_rating_count',
+    'rating_count',
+  ]) {
+    if (item[key] != null) stub[key] = item[key];
+  }
+  return customerBookingPublishedDriverCard(stub);
+}
+
+/// Keep only fields the public publication contract already allows.
+Map<String, dynamic> customerBookingPublishedDriverCard(
+  Map<String, dynamic> driver,
+) {
+  final profileOn = driver['public_profile_enabled'] == true ||
+      driver['publicProfileEnabled'] == true ||
+      (driver['public_display_name'] ?? driver['publicDisplayName'] ?? '')
+          .toString()
+          .trim()
+          .isNotEmpty;
+  final photoOn = driver['public_photo_enabled'] == true ||
+      driver['publicPhotoEnabled'] == true;
+  final publicName = (driver['public_display_name'] ??
+          driver['publicDisplayName'] ??
+          '')
+      .toString()
+      .trim();
+  final publicPhoto = (driver['public_photo_url'] ??
+          driver['publicPhotoUrl'] ??
+          '')
+      .toString()
+      .trim();
+  final id = companyAgendaDriverId(driver);
+  return <String, dynamic>{
+    if (id.isNotEmpty) 'driver_id': id,
+    if (profileOn && publicName.isNotEmpty) ...<String, dynamic>{
+      'public_display_name': publicName,
+      'display_name': publicName,
+    },
+    if (photoOn && publicPhoto.isNotEmpty) ...<String, dynamic>{
+      'public_photo_url': publicPhoto,
+      'photo_url': publicPhoto,
+    },
+  };
 }
 
 CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
@@ -281,12 +365,22 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
   final unavailable = <String>{};
   final reasons = <String, String>{};
   final drivers = <String, String>{};
+  final records = <Map<String, dynamic>>[];
+  final seenDrivers = <String>{};
   for (final item in rows) {
     if (item is! Map) continue;
     final id = (item['vehicle_id'] ?? item['vehicleId'] ?? '').toString().trim();
     if (id.isEmpty) continue;
-    final driverId = (item['driver_id'] ?? item['driverId'] ?? '').toString().trim();
+    final record = customerBookingAvailabilityDriverRecord(item);
+    final driverId = record == null
+        ? (item['driver_id'] ?? item['driverId'] ?? '').toString().trim()
+        : companyAgendaDriverId(record);
     if (driverId.isNotEmpty) drivers[id] = driverId;
+    if (record != null &&
+        driverId.isNotEmpty &&
+        seenDrivers.add(driverId)) {
+      records.add(record);
+    }
     if (item['available'] == true) {
       available.add(id);
     } else {
@@ -299,6 +393,7 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
     unavailableIds: unavailable,
     reasons: reasons,
     driverIds: drivers,
+    drivers: records,
     fetched: true,
   );
 }
@@ -309,6 +404,8 @@ Future<CustomerBookingAvailabilitySnapshot> fetchCustomerBookingAvailability({
   required DateTime pickupUtc,
   required int passengers,
   int durationMin = 30,
+  int waitMin = 0,
+  int returnDurationMin = 0,
   CustomerBookingProfileGet? httpGet,
 }) async {
   final id = partnerId.trim();
@@ -321,6 +418,8 @@ Future<CustomerBookingAvailabilitySnapshot> fetchCustomerBookingAvailability({
       'pickup_iso': pickupUtc.toUtc().toIso8601String(),
       'pax': '$passengers',
       'duration_min': '$durationMin',
+      if (waitMin > 0) 'wait_min': '$waitMin',
+      if (returnDurationMin > 0) 'return_duration_min': '$returnDurationMin',
     },
   );
   final getter = httpGet ?? http.get;

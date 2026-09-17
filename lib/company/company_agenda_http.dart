@@ -266,7 +266,7 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
         draft.roundtripChoice != CompanyRoundtripChoice.single,
     'roundtrip_dispatch_mode': companyRoundtripChoiceWire(draft.roundtripChoice),
     if (draft.returnPickupLocal != null)
-      'return_pickup_iso': draft.returnPickupLocal!.toUtc().toIso8601String(),
+      'return_pickup_iso': companyPlanPickupIso(draft.returnPickupLocal!),
     if (draft.returnFromAddress.trim().isNotEmpty)
       'return_from': draft.returnFromAddress.trim(),
     if (draft.returnToAddress.trim().isNotEmpty)
@@ -351,7 +351,7 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
           customerName: draft.customer.displayName,
           fromAddress: draft.fromAddress,
           toAddress: draft.toAddress,
-          pickupIso: draft.pickupLocal.toUtc().toIso8601String(),
+          pickupIso: companyPlanPickupIso(draft.pickupLocal),
           status: 'PENDING',
           assignedDriverId: '',
           assignedVehicleId: '',
@@ -386,7 +386,7 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
       customerName: draft.customer.displayName,
       fromAddress: draft.fromAddress,
       toAddress: draft.toAddress,
-      pickupIso: draft.pickupLocal.toUtc().toIso8601String(),
+      pickupIso: companyPlanPickupIso(draft.pickupLocal),
       status: 'PENDING',
       assignedDriverId: draft.driverId,
       assignedVehicleId: draft.vehicleId,
@@ -700,7 +700,7 @@ class CompanyAgendaRepository {
       bookingId: bookingId,
       action: 'reschedule',
       body: <String, dynamic>{
-        'pickup_iso': pickupLocal.toUtc().toIso8601String(),
+        'pickup_iso': companyPlanPickupIso(pickupLocal),
         if (revision != null) 'revision': revision,
         if (legId.trim().isNotEmpty) 'leg_id': legId.trim(),
         if (legType.trim().isNotEmpty) 'leg_type': legType.trim(),

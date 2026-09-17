@@ -3,6 +3,7 @@ import 'package:fluxidi_tracking/company/company_agenda_http.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 
@@ -55,6 +56,20 @@ void main() {
     expect(body.toString(), isNot(contains('1970-01-01')));
   });
 
+  test('Friday 22:00 Brussels wall clock is Friday 20:00Z, not Thursday', () {
+    final later = DateTime(2026, 9, 18, 22, 0);
+    expect(companyPlanPickupIso(later), '2026-09-18T20:00:00.000Z');
+    final reopened = companyTimezoneUtcToLocal(
+      DateTime.parse(companyPlanPickupIso(later)),
+      kCompanyDefaultTimezone,
+    );
+    expect(reopened.year, 2026);
+    expect(reopened.month, 9);
+    expect(reopened.day, 18);
+    expect(reopened.hour, 22);
+    expect(reopened.minute, 0);
+  });
+
   test('Later keeps the chosen Brussels-local concept as UTC iso', () {
     final later = DateTime(2026, 9, 16, 9, 15);
     final body = <String, dynamic>{};
@@ -66,7 +81,7 @@ void main() {
         whenNow: false,
       ),
     );
-    expect(body['pickup_iso'], later.toUtc().toIso8601String());
+    expect(body['pickup_iso'], companyPlanPickupIso(later));
     expect(body['when_now'], isNull);
     expect(companyPlanPickupIsEpoch(later), isFalse);
   });
@@ -109,7 +124,7 @@ void main() {
       whenNow: false,
       laterPickup: after,
     );
-    expect(fields['pickup_iso'], after.toUtc().toIso8601String());
+    expect(fields['pickup_iso'], companyPlanPickupIso(after));
     expect(fields['pickup_iso'], isNot(contains('1970')));
   });
 

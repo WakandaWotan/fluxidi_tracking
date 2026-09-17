@@ -72,4 +72,57 @@ void main() {
     expect(limousinePlaceSuggestionMatchesQuery(ranked.first, 'Gent'), isTrue);
     expect(ranked.first.text, 'Gent');
   });
+
+  test('Gent ranks above Genthin, Genthod and Gentilly', () {
+    final ranked = limousineRankPlaceSuggestions(
+      'gent',
+      const <LimousinePlaceSuggestion>[
+        LimousinePlaceSuggestion(
+          label: 'Genthin, Germany',
+          text: 'Genthin',
+          placeType: 'place',
+          locality: 'Genthin',
+          country: 'de',
+        ),
+        LimousinePlaceSuggestion(
+          label: 'Genthod, Switzerland',
+          text: 'Genthod',
+          placeType: 'place',
+          locality: 'Genthod',
+          country: 'ch',
+        ),
+        LimousinePlaceSuggestion(
+          label: 'Gentilly, France',
+          text: 'Gentilly',
+          placeType: 'place',
+          locality: 'Gentilly',
+          country: 'fr',
+        ),
+        LimousinePlaceSuggestion(
+          label: 'Gent, België',
+          text: 'Gent',
+          matchingText: 'Gent',
+          placeType: 'place',
+          locality: 'Gent',
+          country: 'be',
+        ),
+      ],
+      contextCountry: 'be',
+    );
+    expect(ranked.first.text, 'Gent');
+    expect(ranked.first.country, 'be');
+  });
+
+  test('Mapbox URI sends sibling proximity without locking the country', () {
+    final uri = limousineMapboxPlacesUri(
+      query: 'gent',
+      token: 'test-token',
+      country: '',
+      types: 'address,place,postcode',
+      proximityLat: 50.77205,
+      proximityLon: 3.66942,
+    );
+    expect(uri.queryParameters.containsKey('country'), isFalse);
+    expect(uri.queryParameters['proximity'], '3.669420,50.772050');
+  });
 }

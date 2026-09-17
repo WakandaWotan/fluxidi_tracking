@@ -74,6 +74,18 @@ void main() {
       customerBookingQuoteErrorText('mapbox_down', AppLanguage.nl),
       contains('opnieuw'),
     );
+    expect(
+      customerBookingQuoteIssueFromRaw('need_company'),
+      kCustomerBookingIssueNeedCompany,
+    );
+    expect(
+      customerBookingQuoteErrorText('need_company', AppLanguage.nl),
+      contains('taxibedrijf'),
+    );
+    expect(
+      customerBookingQuoteIssueFromRaw('quote_failed'),
+      isNot(kCustomerBookingIssueNeedCompany),
+    );
   });
 
   test('incomplete later ride asks for pickup time only when addresses exist', () {

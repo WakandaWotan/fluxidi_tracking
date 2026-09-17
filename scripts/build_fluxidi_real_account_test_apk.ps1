@@ -36,10 +36,21 @@ if ([string]::IsNullOrWhiteSpace($env:MAPBOX_TOKEN)) {
 
 if (Test-Path -LiteralPath $adb) {
   & $adb start-server | Out-Null
-  & $adb devices -l | Tee-Object -FilePath (Join-Path $outDir 'adb_devices.txt')
+  $adbList = & $adb devices -l 2>&1 | ForEach-Object { "$_" }
+  $adbList | Set-Content -LiteralPath (Join-Path $outDir 'adb_devices.txt') -Encoding utf8
+  Write-Host ($adbList -join "`n")
   foreach ($serial in @($phoneSerial, $tabletSerial)) {
-    $state = (& $adb -s $serial get-state 2>$null | Out-String).Trim()
     $deviceLog = Join-Path $outDir ("device_{0}.txt" -f $serial)
+    $listed = $adbList | Where-Object { $_ -match [regex]::Escape($serial) }
+    if (-not $listed) {
+      "serial=$serial state=not_listed" | Set-Content -LiteralPath $deviceLog -Encoding utf8
+      Add-Content -LiteralPath $deviceLog -Value 'device_not_connected'
+      continue
+    }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $state = ((& $adb -s $serial get-state) 2>&1 | Out-String).Trim()
+    $ErrorActionPreference = $prevEap
     "serial=$serial state=$state" | Set-Content -LiteralPath $deviceLog -Encoding utf8
     if ($state -ne 'device') {
       Add-Content -LiteralPath $deviceLog -Value 'device_not_connected'

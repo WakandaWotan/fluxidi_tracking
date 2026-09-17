@@ -2,6 +2,7 @@ import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/company/company_roundtrip.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 
 enum CompanyAgendaView { day, week, byDriver }
 
@@ -470,16 +471,22 @@ CompanyAgendaPeriod companyAgendaPeriodFor({
     return CompanyAgendaPeriod(
       view: view,
       anchor: date,
-      fromUtc: from.toUtc(),
-      toUtc: from.add(const Duration(days: 1)).toUtc(),
+      fromUtc: companyTimezoneLocalToUtc(from, kCompanyDefaultTimezone),
+      toUtc: companyTimezoneLocalToUtc(
+        from.add(const Duration(days: 1)),
+        kCompanyDefaultTimezone,
+      ),
     );
   }
   final monday = date.subtract(Duration(days: date.weekday - 1));
   return CompanyAgendaPeriod(
     view: view,
     anchor: date,
-    fromUtc: monday.toUtc(),
-    toUtc: monday.add(const Duration(days: 7)).toUtc(),
+    fromUtc: companyTimezoneLocalToUtc(monday, kCompanyDefaultTimezone),
+    toUtc: companyTimezoneLocalToUtc(
+      monday.add(const Duration(days: 7)),
+      kCompanyDefaultTimezone,
+    ),
   );
 }
 

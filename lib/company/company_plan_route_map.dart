@@ -1,9 +1,12 @@
 // COMPANY-AGENDA-P0 — leftover-space route canvas. Real Mapbox static preview.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_route_geometry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 import 'package:fluxidi_tracking/maps/fluxidi_static_route_preview.dart';
 
@@ -23,6 +26,9 @@ class CompanyPlanRouteMap extends StatelessWidget {
     this.pickupLocal,
     this.showPriceSource = false,
     this.polyline = '',
+    this.stops = const <LimousineAddressValue>[],
+    this.returnStops = const <LimousineAddressValue>[],
+    this.geometryClient,
     this.compactPlaceholder = false,
     this.pickupNeedsConfirm = false,
     this.confirmLat,
@@ -39,6 +45,9 @@ class CompanyPlanRouteMap extends StatelessWidget {
   final DateTime? pickupLocal;
   final bool showPriceSource;
   final String polyline;
+  final List<LimousineAddressValue> stops;
+  final List<LimousineAddressValue> returnStops;
+  final CustomerBookingRouteGeometryClient? geometryClient;
   final bool compactPlaceholder;
   final bool pickupNeedsConfirm;
   final double? confirmLat;
@@ -97,6 +106,16 @@ class CompanyPlanRouteMap extends StatelessWidget {
     final toPoint = pickupNeedsConfirm ? fromPoint : _to;
     final mapUrl = fromPoint != null && toPoint != null
         ? fluxidiStaticRoutePreviewUrl(pickup: fromPoint, dropoff: toPoint)
+        : null;
+    final returnFrom = quote?.hasReturnRoute == true &&
+            quote?.returnPickupLat != null &&
+            quote?.returnPickupLon != null
+        ? FluxidiMapLonLat(quote!.returnPickupLon!, quote.returnPickupLat!)
+        : null;
+    final returnTo = quote?.hasReturnRoute == true &&
+            quote?.returnDropoffLat != null &&
+            quote?.returnDropoffLon != null
+        ? FluxidiMapLonLat(quote!.returnDropoffLon!, quote.returnDropoffLat!)
         : null;
     final restore = status == CompanyPlanRouteStatus.needsRestore ||
         status == CompanyPlanRouteStatus.confirmPickup ||
@@ -164,14 +183,19 @@ class CompanyPlanRouteMap extends StatelessWidget {
             return Stack(
               fit: StackFit.expand,
               children: [
-                if (mapUrl != null)
-                  Image.network(
-                    mapUrl,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.center,
-                    errorBuilder: (_, __, ___) => ColoredBox(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                    ),
+                if (fromPoint != null && toPoint != null)
+                  _CompanyPlanRouteGeometryImage(
+                    pickup: fromPoint,
+                    dropoff: toPoint,
+                    fallbackUrl: mapUrl,
+                    stops: [
+                      for (final stop in stops)
+                        if (stop.lat != null && stop.lon != null)
+                          FluxidiMapLonLat(stop.lon!, stop.lat!),
+                    ],
+                    returnPickup: returnFrom,
+                    returnDropoff: returnTo,
+                    geometryClient: geometryClient,
                   )
                 else
                   ColoredBox(color: theme.colorScheme.surfaceContainerHighest),
@@ -268,5 +292,103 @@ class _MapEnd extends StatelessWidget {
     return alignEnd
         ? Align(alignment: Alignment.centerRight, child: child)
         : child;
+  }
+}
+
+class _CompanyPlanRouteGeometryImage extends StatefulWidget {
+  const _CompanyPlanRouteGeometryImage({
+    required this.pickup,
+    required this.dropoff,
+    required this.fallbackUrl,
+    this.stops = const <FluxidiMapLonLat>[],
+    this.returnPickup,
+    this.returnDropoff,
+    this.geometryClient,
+  });
+
+  final FluxidiMapLonLat pickup;
+  final FluxidiMapLonLat dropoff;
+  final String? fallbackUrl;
+  final List<FluxidiMapLonLat> stops;
+  final FluxidiMapLonLat? returnPickup;
+  final FluxidiMapLonLat? returnDropoff;
+  final CustomerBookingRouteGeometryClient? geometryClient;
+
+  @override
+  State<_CompanyPlanRouteGeometryImage> createState() =>
+      _CompanyPlanRouteGeometryImageState();
+}
+
+class _CompanyPlanRouteGeometryImageState
+    extends State<_CompanyPlanRouteGeometryImage> {
+  late final CustomerBookingRouteGeometryClient _client;
+  String? _url;
+
+  @override
+  void initState() {
+    super.initState();
+    _client = widget.geometryClient ?? CustomerBookingRouteGeometryClient();
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant _CompanyPlanRouteGeometryImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pickup.lat != widget.pickup.lat ||
+        oldWidget.pickup.lon != widget.pickup.lon ||
+        oldWidget.dropoff.lat != widget.dropoff.lat ||
+        oldWidget.dropoff.lon != widget.dropoff.lon ||
+        oldWidget.returnPickup?.lat != widget.returnPickup?.lat ||
+        oldWidget.returnDropoff?.lat != widget.returnDropoff?.lat) {
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _load() async {
+    final points = <FluxidiMapLonLat>[];
+    try {
+      final outbound = await _client.fetch(
+        pickup: widget.pickup,
+        dropoff: widget.dropoff,
+        stops: widget.stops,
+      );
+      points.addAll(outbound.points);
+      final backFrom = widget.returnPickup;
+      final backTo = widget.returnDropoff;
+      if (backFrom != null && backTo != null) {
+        final inbound = await _client.fetch(
+          pickup: backFrom,
+          dropoff: backTo,
+        );
+        points.addAll(inbound.points);
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _url = fluxidiStaticRoutePreviewUrl(
+        pickup: widget.pickup,
+        dropoff: widget.dropoff,
+        route: points,
+      ) ??
+          widget.fallbackUrl;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = _url ?? widget.fallbackUrl;
+    if (url == null) {
+      return ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      );
+    }
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      errorBuilder: (_, __, ___) => ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+    );
   }
 }
