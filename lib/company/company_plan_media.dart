@@ -249,6 +249,49 @@ List<String> companyPlanVehiclePhotoCandidates(Map<String, dynamic> raw) {
   return ordered;
 }
 
+Map<CompanyPlanVehicleCategory, String> companyPlanCategoryPhotoUrls({
+  required List<Map<String, dynamic>> vehicles,
+  String tenantId = '',
+  String companyId = '',
+}) {
+  final out = <CompanyPlanVehicleCategory, String>{};
+  for (final category in CompanyPlanVehicleCategory.values) {
+    for (final vehicle in vehicles) {
+      if (!companyAgendaVehicleIsActive(vehicle)) continue;
+      if (classifyCompanyPlanVehicleCategory(vehicle) != category) continue;
+      final media = resolveCompanyPlanVehicleMedia(
+        vehicle: vehicle,
+        tenantId: tenantId,
+        companyId: companyId,
+      );
+      if (media.kind == CompanyPlanVehicleVisualKind.companyPhoto &&
+          media.photoUrl.isNotEmpty) {
+        out[category] = media.photoUrl;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+Map<CompanyPlanVehicleCategory, int> companyPlanCategoryPassengerCaps({
+  required List<Map<String, dynamic>> vehicles,
+}) {
+  final out = <CompanyPlanVehicleCategory, int>{};
+  for (final vehicle in vehicles) {
+    if (!companyAgendaVehicleIsActive(vehicle)) continue;
+    final category = classifyCompanyPlanVehicleCategory(vehicle);
+    if (category == null) continue;
+    final cap = companyAgendaVehicleCapacity(vehicle);
+    if (cap <= 0) continue;
+    final previous = out[category];
+    if (previous == null || cap > previous) {
+      out[category] = cap;
+    }
+  }
+  return out;
+}
+
 CompanyPlanVehicleMedia resolveCompanyPlanVehicleMedia({
   required Map<String, dynamic> vehicle,
   CompanyPlanVehicleType type = CompanyPlanVehicleType.sedan,

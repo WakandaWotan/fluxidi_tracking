@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
 import 'package:fluxidi_tracking/company/company_drivers_admin_page.dart';
 
 void main() {
@@ -104,5 +105,33 @@ void main() {
     await tester.tap(find.byKey(kCompanyDriverAgendaColorSaveKey));
     await tester.pumpAndSettle();
     expect(drivers.first['agenda_color'], '#2F6B4F');
+  });
+
+  testWidgets('Uurrooster from Chauffeurs opens the roster of that driver', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyDriversAdminPage(
+          language: AppLanguage.nl,
+          driversLoader: () async => <Map<String, dynamic>>[
+            <String, dynamic>{
+              'driver_id': 'drv_karel',
+              'display_name': 'Karel Peeters',
+              'phone': '+32470000011',
+            },
+          ],
+          subscriptionLoader: () async => <String, dynamic>{'max_drivers': 3},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(companyDriverScheduleActionKey('drv_karel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyDriverSchedulePageKey), findsOneWidget);
+    expect(find.textContaining('Karel Peeters'), findsWidgets);
+    expect(find.byKey(kCompanyDriverScheduleSaveUnavailableKey), findsOneWidget);
   });
 }

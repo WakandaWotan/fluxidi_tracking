@@ -133,6 +133,38 @@ class CompanyCustomer {
     required this.revision,
   });
 
+  /// Placeholder for a ride draft whose customer has not been picked yet.
+  ///
+  /// Lets the planner open on an empty, searchable customer field instead of
+  /// refusing, without ever standing in for a real customer: [isChosen] is
+  /// false and saving is blocked until a real one is selected.
+  const CompanyCustomer.unchosen()
+    : customerId = '',
+      tenantId = '',
+      companyId = '',
+      displayName = '',
+      firstName = '',
+      lastName = '',
+      phone = '',
+      phoneNormalized = '',
+      countryCallingCode = '',
+      email = '',
+      locale = '',
+      companyName = '',
+      vatNumber = '',
+      addresses = const <CompanyCustomerAddress>[],
+      internalNotes = '',
+      preferences = const CompanyCustomerPreferences(),
+      source = '',
+      status = '',
+      createdAt = '',
+      updatedAt = '',
+      archivedAt = '',
+      revision = 0;
+
+  /// False only for [CompanyCustomer.unchosen].
+  bool get isChosen => customerId.trim().isNotEmpty;
+
   final String customerId;
   final String tenantId;
   final String companyId;
@@ -289,23 +321,49 @@ normalizeCompanyCustomerPhone(String raw, String countryCallingCode) {
   if (text.isEmpty) {
     return (normalized: '', e164: '', countryCallingCode: cc);
   }
-  final keepPlus = text.startsWith('+');
-  final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
+  var digits = text.replaceAll(RegExp(r'[^0-9]'), '');
   if (digits.isEmpty) {
     return (normalized: '', e164: '', countryCallingCode: cc);
   }
+  final explicitPlus = text.startsWith('+');
+  final explicitIntl = explicitPlus || text.startsWith('00');
+  if (!explicitPlus && digits.startsWith('00')) {
+    digits = digits.substring(2);
+  }
   var e164 = '';
-  if (keepPlus && digits.length >= 8 && digits.length <= 15) {
+  if (explicitIntl && digits.length >= 8 && digits.length <= 15) {
     e164 = '+$digits';
   } else if (cc.isNotEmpty && digits.length >= 4 && digits.length <= 15) {
-    final national = digits.startsWith(cc) ? digits.substring(cc.length) : digits;
+    var national = digits;
+    if (national.startsWith(cc)) {
+      national = national.substring(cc.length);
+    } else if (national.startsWith('0')) {
+      national = national.substring(1);
+    }
     final combined = '$cc$national';
     if (combined.length >= 8 && combined.length <= 15) {
       e164 = '+$combined';
     }
   }
-  final normalized = e164.isNotEmpty ? e164 : (keepPlus ? '+$digits' : digits);
+  final normalized = e164.isNotEmpty
+      ? e164
+      : (explicitPlus ? '+$digits' : digits);
   return (normalized: normalized, e164: e164, countryCallingCode: cc);
+}
+
+String companyCustomerInternationalPhone(CompanyCustomer customer) {
+  final stored = customer.phoneNormalized.trim();
+  if (stored.startsWith('+') &&
+      isUsableCompanyCustomerPhone(stored) &&
+      !stored.startsWith('+00')) {
+    return stored;
+  }
+  final parsed = normalizeCompanyCustomerPhone(
+    stored.isNotEmpty ? stored : customer.phone,
+    customer.countryCallingCode,
+  );
+  if (parsed.e164.isNotEmpty) return parsed.e164;
+  return parsed.normalized;
 }
 
 bool isUsableCompanyCustomerEmail(String raw) {
@@ -393,6 +451,39 @@ String _optionalText(Map<dynamic, dynamic> map, String key) {
   return map[key]?.toString().trim() ?? '';
 }
 
+String _firstOptionalText(Map<dynamic, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final text = _optionalText(map, key);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+String _composeStreetAndHouseNumber(Map<dynamic, dynamic> raw) {
+  final street = _firstOptionalText(raw, const <String>[
+    'line1',
+    'street',
+    'address_line1',
+    'addressLine1',
+    'line_1',
+    'streetAddress',
+    'street_address',
+  ]);
+  final house = _firstOptionalText(raw, const <String>[
+    'house_number',
+    'houseNumber',
+    'huisnummer',
+  ]);
+  if (house.isEmpty) return street;
+  if (street.isEmpty) return house;
+  final streetNorm = street.toLowerCase();
+  final houseNorm = house.toLowerCase();
+  if (streetNorm.endsWith(houseNorm) || streetNorm.contains(' $houseNorm')) {
+    return street;
+  }
+  return '$street $house';
+}
+
 double? _optionalCoord(Map<dynamic, dynamic> map, List<String> keys) {
   for (final key in keys) {
     final raw = map[key];
@@ -412,7 +503,9 @@ CompanyCustomerAddress parseCompanyCustomerAddress(Map<dynamic, dynamic> raw) {
     addressId: _optionalText(raw, 'address_id'),
     type: allowed.contains(type) ? type : 'other',
     label: _optionalText(raw, 'label'),
-    line1: _optionalText(raw, 'line1'),
+    // Records written by other surfaces name the street differently. Reading
+    // only `line1` silently turned a full address into a bare locality.
+    line1: _composeStreetAndHouseNumber(raw),
     line2: _optionalText(raw, 'line2'),
     city: _optionalText(raw, 'city'),
     postalCode: _optionalText(raw, 'postal_code'),

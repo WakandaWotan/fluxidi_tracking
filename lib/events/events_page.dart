@@ -1579,133 +1579,110 @@ class _EventsPageState extends State<EventsPage> {
             final categoryTileInset = isTabletLayout ? 11.0 : 8.0;
             final categoryLabelMaxLines = 1;
             final categoryLabelSpacing = isTabletLayout ? 5.0 : 3.0;
-            final availableGridWidth =
-                constraints.maxWidth - (horizontalPadding * 2);
-            final cardWidth =
-                (availableGridWidth - (tileSpacing * (columns - 1))) / columns;
             final categoryRows = (_landingCategoryKeys.length / columns).ceil();
-            final estimatedHeaderHeight = isTabletLayout ? 52.0 : 44.0;
-            final estimatedSearchHeight = isTabletLayout ? 54.0 : 48.0;
-            final estimatedFilterControlsHeight = isTabletLayout ? 112.0 : 96.0;
-            final estimatedCategoryHeadingHeight = isTabletLayout ? 32.0 : 28.0;
-            final usedTopContentHeight =
-                topPadding +
-                estimatedHeaderHeight +
-                (isTabletLayout ? 9.0 : 8.0) +
-                estimatedSearchHeight +
-                (isTabletLayout ? 8.0 : 7.0) +
-                estimatedFilterControlsHeight +
-                (isTabletLayout ? 10.0 : 9.0) +
-                estimatedCategoryHeadingHeight +
-                (isTabletLayout ? 10.0 : 8.0);
-            final bottomReserve = bottomPadding + (isTabletLayout ? 10.0 : 8.0);
-            final availableGridHeight =
-                constraints.maxHeight - usedTopContentHeight - bottomReserve;
-            final cardHeightFromHeight =
-                (availableGridHeight - (tileSpacing * (categoryRows - 1))) /
-                categoryRows;
-            final minCardHeight = cardWidth * 0.82;
-            final maxCardHeight = isTabletPortrait
-                ? cardWidth * 1.42
-                : cardWidth * (isTabletLayout ? 1.12 : 1.08);
-            final cardHeight = cardHeightFromHeight.clamp(
-              minCardHeight,
-              maxCardHeight,
-            );
-            final tileAspectRatio = cardWidth / cardHeight;
 
-            return ListView(
+            return Padding(
               padding: const EdgeInsets.fromLTRB(
                 horizontalPadding,
                 topPadding,
                 horizontalPadding,
                 bottomPadding,
               ),
-              children: [
-                _buildHeader(context, isTabletLayout: isTabletLayout),
-                SizedBox(height: isTabletLayout ? 9 : 8),
-                _buildSearchField(isTabletLayout: isTabletLayout),
-                SizedBox(height: isTabletLayout ? 8 : 7),
-                _buildCompactDiscoveryControls(isTabletLayout: isTabletLayout),
-                SizedBox(height: isTabletLayout ? 10 : 9),
-                Row(
-                  children: [
-                    Text(
-                      _t(
-                        nl: 'Categorieën',
-                        en: 'Categories',
-                        fr: 'Categories',
-                        es: 'Categorias',
-                      ),
-                      style: TextStyle(
-                        color: _textPrimary,
-                        fontSize: headingFontSize,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => _openResultsPage(
-                        title: _t(
-                          nl: 'Alle events',
-                          en: 'All events',
-                          fr: 'Tous les événements',
-                          es: 'Todos los eventos',
-                        ),
-                        categoryKey: 'all',
-                        searchQuery: _searchController.text,
-                      ),
-                      style: TextButton.styleFrom(
-                        foregroundColor: _gold,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: Text(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildHeader(context, isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 9 : 8),
+                  _buildSearchField(isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 8 : 7),
+                  _buildCompactDiscoveryControls(isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 10 : 9),
+                  Row(
+                    children: [
+                      Text(
                         _t(
-                          nl: 'Bekijk alles →',
-                          en: 'View all →',
-                          fr: 'Voir tout →',
-                          es: 'Ver todo →',
+                          nl: 'Categorieën',
+                          en: 'Categories',
+                          fr: 'Categories',
+                          es: 'Categorias',
                         ),
                         style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: isTabletLayout ? 13.8 : 12,
+                          color: _textPrimary,
+                          fontSize: headingFontSize,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: isTabletLayout ? 10 : 8),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _landingCategoryKeys.length,
-                  gridDelegate: isTabletPortrait
-                      ? SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: tileSpacing,
-                          mainAxisSpacing: tileSpacing,
-                          mainAxisExtent: cardHeight,
-                        )
-                      : SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: tileSpacing,
-                          mainAxisSpacing: tileSpacing,
-                          childAspectRatio: tileAspectRatio,
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => _openResultsPage(
+                          title: _t(
+                            nl: 'Alle events',
+                            en: 'All events',
+                            fr: 'Tous les événements',
+                            es: 'Todos los eventos',
+                          ),
+                          categoryKey: 'all',
+                          searchQuery: _searchController.text,
                         ),
-                  itemBuilder: (context, index) => _buildCategoryTile(
-                    _landingCategoryKeys[index],
-                    isTabletLayout: isTabletLayout,
-                    labelFontSize: categoryLabelFontSize,
-                    labelMaxLines: categoryLabelMaxLines,
-                    contentInset: categoryTileInset,
-                    labelSpacing: categoryLabelSpacing,
+                        style: TextButton.styleFrom(
+                          foregroundColor: _gold,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Bekijk alles →',
+                            en: 'View all →',
+                            fr: 'Voir tout →',
+                            es: 'Ver todo →',
+                          ),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: isTabletLayout ? 13.8 : 12,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  SizedBox(height: isTabletLayout ? 10 : 8),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, gridConstraints) {
+                        final cardHeight =
+                            ((gridConstraints.maxHeight -
+                                        (tileSpacing *
+                                            (categoryRows - 1))) /
+                                    categoryRows)
+                                .clamp(72.0, gridConstraints.maxHeight);
+                        return GridView.builder(
+                          key: const Key('events_landing_category_grid'),
+                          padding: EdgeInsets.zero,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _landingCategoryKeys.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                crossAxisSpacing: tileSpacing,
+                                mainAxisSpacing: tileSpacing,
+                                mainAxisExtent: cardHeight,
+                              ),
+                          itemBuilder: (context, index) => _buildCategoryTile(
+                            _landingCategoryKeys[index],
+                            isTabletLayout: isTabletLayout,
+                            labelFontSize: categoryLabelFontSize,
+                            labelMaxLines: categoryLabelMaxLines,
+                            contentInset: categoryTileInset,
+                            labelSpacing: categoryLabelSpacing,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             );
           },
         ),

@@ -3301,10 +3301,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           isCancelled: () => !mounted,
         );
     if (backendBundle != null) return backendBundle;
-    if (_ReceiptPdfActionRunner.lastBackendPdfState ==
-        InvoicePdfFetchState.pending) {
-      return null;
-    }
+    // A backend artifact that is still being prepared (202) must not block the
+    // local ritbon: the customer asked to see a PDF, not to wait.
     try {
       final smartRef = _businessReferenceDisplayForItem(
         item,
@@ -3646,11 +3644,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       await file.writeAsBytes(bytes, flush: true);
       return _ReceiptPdfBundle(bytes: bytes, file: file);
     } catch (err) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_receiptText('pdfGenerationFailed'))),
-        );
-      }
+      debugPrint('[PDF][STATIC_LAYOUT][ERROR] $err');
       return null;
     }
   }
@@ -3659,7 +3653,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     final bundle = await _buildReceiptPdfBundle(context);
     if (bundle == null) {
       if (!mounted) return;
-      await _shareReceipt(this.context);
+      // Copying receipt text is not a PDF view. Say what is actually wrong.
+      await _ReceiptPdfActionRunner._showPdfUnavailable(context: this.context);
       return;
     }
     if (!widget.showReceiptUi) {

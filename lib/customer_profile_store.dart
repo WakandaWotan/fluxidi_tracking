@@ -16,6 +16,8 @@ class CustomerProfile {
     required this.preferredPostcode,
     required this.companyName,
     required this.vatNumber,
+    this.phoneCountry = '',
+    this.registrationNumber = '',
     this.invoiceEmail = '',
     this.billingStreet = '',
     this.billingPostalCode = '',
@@ -35,8 +37,16 @@ class CustomerProfile {
   final String preferredPostcode;
   final String companyName;
   final String vatNumber;
+
+  /// Country the phone number belongs to, as the customer recorded it.
+  ///
+  /// Separate from the billing country on purpose: where someone is invoiced
+  /// says nothing about which network their number belongs to.
+  final String phoneCountry;
+
   // Optional business billing identity (provider-neutral). All default to ''
   // and never affect existing behavior when blank.
+  final String registrationNumber;
   final String invoiceEmail;
   final String billingStreet;
   final String billingPostalCode;
@@ -112,6 +122,22 @@ class CustomerProfile {
       ]),
       companyName: read('companyName'),
       vatNumber: read('vatNumber'),
+      phoneCountry: readAny(const [
+        'phoneCountry',
+        'phone_country',
+        'phoneCountryCode',
+        'phone_country_code',
+      ]),
+      registrationNumber: readAny(const [
+        'registrationNumber',
+        'registration_number',
+        'companyRegistrationNumber',
+        'company_registration_number',
+        'enterpriseNumber',
+        'enterprise_number',
+        'kboNumber',
+        'kbo_number',
+      ]),
       invoiceEmail: readAny(const [
         'invoiceEmail',
         'invoice_email',
@@ -185,6 +211,11 @@ class CustomerProfile {
       'preferred_postcode': preferredPostcode,
       'companyName': companyName,
       'vatNumber': vatNumber,
+      'phoneCountry': phoneCountry,
+      'phone_country': phoneCountry,
+      'registrationNumber': registrationNumber,
+      'registration_number': registrationNumber,
+      'company_registration_number': registrationNumber,
       'invoiceEmail': invoiceEmail,
       'invoice_email': invoiceEmail,
       'billingStreet': billingStreet,
@@ -271,6 +302,11 @@ Map<String, dynamic> buildPublicCustomerProfilePayload({
       putIfNonEmpty(out, 'preferred_postcode', profile.preferredPostcode);
       putIfNonEmpty(out, 'company_name', profile.companyName);
       putIfNonEmpty(out, 'vat_number', profile.vatNumber);
+      putIfNonEmpty(
+        out,
+        'company_registration_number',
+        profile.registrationNumber,
+      );
       putIfNonEmpty(out, 'invoice_email', profile.invoiceEmail);
       putIfNonEmpty(out, 'billing_street', profile.billingStreet);
       putIfNonEmpty(out, 'billing_postal_code', profile.billingPostalCode);
@@ -319,6 +355,7 @@ Map<String, dynamic> buildPublicCustomerProfilePayload({
         'preferred_postcode': profile.preferredPostcode.trim(),
         'company_name': profile.companyName.trim(),
         'vat_number': profile.vatNumber.trim(),
+        'company_registration_number': profile.registrationNumber.trim(),
         'invoice_email': profile.invoiceEmail.trim().toLowerCase(),
         'billing_street': profile.billingStreet.trim(),
         'billing_postal_code': profile.billingPostalCode.trim(),
@@ -703,6 +740,8 @@ class CustomerProfileStore {
     String preferredPostcode = '',
     String companyName = '',
     String vatNumber = '',
+    String? phoneCountry,
+    String? registrationNumber,
     String? invoiceEmail,
     String? billingStreet,
     String? billingPostalCode,
@@ -744,6 +783,14 @@ class CustomerProfileStore {
       preferredPostcode: preferredPostcode.trim().toUpperCase(),
       companyName: companyName.trim(),
       vatNumber: vatNumber.trim(),
+      phoneCountry: resolveOptional(
+        phoneCountry,
+        existing?.phoneCountry ?? '',
+      ).toUpperCase(),
+      registrationNumber: resolveOptional(
+        registrationNumber,
+        existing?.registrationNumber ?? '',
+      ),
       invoiceEmail: resolveOptional(
         invoiceEmail,
         existing?.invoiceEmail ?? '',
@@ -852,6 +899,22 @@ class CustomerProfileStore {
     ]).toUpperCase();
     final backendCompanyName = readAny(const ['company_name', 'companyName']);
     final backendVatNumber = readAny(const ['vat_number', 'vatNumber']);
+    final backendPhoneCountry = readAny(const [
+      'phone_country',
+      'phoneCountry',
+      'phone_country_code',
+      'phoneCountryCode',
+    ]);
+    final backendRegistrationNumber = readAny(const [
+      'company_registration_number',
+      'companyRegistrationNumber',
+      'registration_number',
+      'registrationNumber',
+      'enterprise_number',
+      'enterpriseNumber',
+      'kbo_number',
+      'kboNumber',
+    ]);
     final backendBillingAddress = profile['billing_address'] is Map
         ? Map<String, dynamic>.from(profile['billing_address'] as Map)
         : const <String, dynamic>{};
@@ -989,6 +1052,14 @@ class CustomerProfileStore {
         existing?.companyName ?? '',
       ),
       vatNumber: pickPreferBackend(backendVatNumber, existing?.vatNumber ?? ''),
+      phoneCountry: pickPreferBackend(
+        backendPhoneCountry,
+        existing?.phoneCountry ?? '',
+      ).toUpperCase(),
+      registrationNumber: pickPreferBackend(
+        backendRegistrationNumber,
+        existing?.registrationNumber ?? '',
+      ),
       invoiceEmail: pickPreferBackend(
         backendInvoiceEmail,
         existing?.invoiceEmail ?? '',
@@ -1051,6 +1122,8 @@ extension _CustomerProfileCopy on CustomerProfile {
       preferredPostcode: preferredPostcode,
       companyName: companyName,
       vatNumber: vatNumber,
+      phoneCountry: phoneCountry,
+      registrationNumber: registrationNumber,
       invoiceEmail: invoiceEmail,
       billingStreet: billingStreet,
       billingPostalCode: billingPostalCode,

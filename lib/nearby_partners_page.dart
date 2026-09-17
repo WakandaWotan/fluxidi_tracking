@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 
 import 'app_config.dart';
 import 'app_strings.dart';
-import 'calculator_page.dart';
+import 'customer/local_qa_customer_session.dart';
+import 'customer_booking/customer_booking_entry.dart';
+import 'customer_booking/customer_booking_open.dart';
 import 'customer_profile_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
@@ -26,6 +28,7 @@ class NearbyPartnersPage extends StatefulWidget {
   final WidgetBuilder regionRegistrationBuilder;
   final CustomerProfileBackendSync syncCustomerProfileFromBackend;
   final bool selectionMode;
+  final bool airportCapableOnly;
 
   const NearbyPartnersPage({
     super.key,
@@ -33,6 +36,7 @@ class NearbyPartnersPage extends StatefulWidget {
     required this.regionRegistrationBuilder,
     required this.syncCustomerProfileFromBackend,
     this.selectionMode = false,
+    this.airportCapableOnly = false,
   });
 
   @override
@@ -86,6 +90,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   void initState() {
     super.initState();
     unawaited(_refreshFavoritePartners(reason: 'nearby_init'));
+    if (canUseLocalQaCustomerSession()) {
+      _postalCodeCtrl.text = '3000';
+      unawaited(_searchPartners());
+    }
   }
 
   @override
@@ -848,21 +856,19 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     if (partnerId.isEmpty) return;
     final companyName = publicPartnerDisplayName(p);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CalculatorPage(
-          bookingBaseUrl: kBookingBaseUrl,
-          mapboxToken: kMapboxToken,
-          persistToCustomerBookings: true,
-          onGoToStartPage: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: widget.customerHomeBuilder),
-              (route) => false,
-            );
-          },
-          publicPartnerId: partnerId,
-          publicPartnerName: companyName,
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.companyPage,
+          company: CustomerBookingCompany(
+            partnerId: partnerId,
+            companyName: companyName,
+          ),
+          lockCompany: true,
+          sourceLabel: 'nearby_partners',
         ),
+        onGoToStartPage: widget.customerHomeBuilder,
       ),
     );
   }
@@ -870,17 +876,24 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   Map<String, String>? _partnerSelectionResult(Map<String, dynamic> p) {
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     if (partnerId.isEmpty) return null;
-    final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
+    final companyName = publicPartnerDisplayName(p);
     final companyCode = _mapTextAny(p, const [
       'public_company_code',
       'publicCompanyCode',
       'company_code',
       'companyCode',
     ]);
+    final scoped = partnerId.split(':');
+    final scopedCompany = scoped.length == 3 && scoped[0] == 'company'
+        ? scoped[2].trim()
+        : '';
+    final scopedTenant = scoped.length == 3 && scoped[0] == 'company'
+        ? scoped[1].trim()
+        : '';
     return <String, String>{
       'partner_id': partnerId,
-      'tenant_id': partnerId,
-      'company_id': partnerId,
+      'tenant_id': scopedTenant.isNotEmpty ? scopedTenant : partnerId,
+      'company_id': scopedCompany.isNotEmpty ? scopedCompany : partnerId,
       'company_name': companyName,
       'company_code': companyCode.isNotEmpty ? companyCode : partnerId,
     };
@@ -1428,7 +1441,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   Widget _favoritePartnersSection() {
-    final visibleFavoritePartners = widget.selectionMode
+    final visibleFavoritePartners = widget.airportCapableOnly
         ? _favoritePartnerProfiles
               .where(_airportServiceEnabledFromPartner)
               .toList(growable: false)
@@ -1484,7 +1497,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             ],
             if (visibleFavoritePartners.isEmpty)
               Text(
-                widget.selectionMode
+                widget.airportCapableOnly
                     ? _t(
                         nl: 'Geen luchthaven-geschikte favoriete partners beschikbaar.',
                         en: 'No airport-capable favorite partners available.',
@@ -1533,7 +1546,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final visiblePartners = widget.selectionMode
+    final visiblePartners = widget.airportCapableOnly
         ? _partners
               .where(_airportServiceEnabledFromPartner)
               .toList(growable: false)

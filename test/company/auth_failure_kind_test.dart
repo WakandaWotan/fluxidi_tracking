@@ -22,6 +22,43 @@ void main() {
     );
   });
 
+  test('customer OTP on loopback stays verification_failed, not wrong environment', () {
+    expect(
+      classifyRemoteAuthFailure(
+        statusCode: 403,
+        error: 'verification_failed',
+        loopbackHost: true,
+        companyResolvable: false,
+        customerAuth: true,
+      ),
+      AuthFailureKind.verificationFailed,
+    );
+    expect(
+      classifyThrownAuthFailure(
+        Exception('verification_failed'),
+        loopbackHost: true,
+        customerAuth: true,
+      ),
+      AuthFailureKind.verificationFailed,
+    );
+    expect(
+      classifyThrownAuthFailure(
+        Exception('customer_phone_auth_verify_failed'),
+        loopbackHost: true,
+        customerAuth: true,
+      ),
+      AuthFailureKind.verificationFailed,
+    );
+    expect(
+      classifyThrownAuthFailure(
+        Exception('session_missing'),
+        loopbackHost: true,
+        customerAuth: true,
+      ),
+      AuthFailureKind.verificationFailed,
+    );
+  });
+
   test('resolvable local company plus bad code stays verification_failed', () {
     expect(
       classifyRemoteAuthFailure(

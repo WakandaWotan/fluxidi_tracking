@@ -15,6 +15,9 @@ void main() {
 
     expect(searchPublishedAirports('z'), isNotEmpty);
     expect(searchPublishedAirports(''), isEmpty);
+
+    final byIcao = searchPublishedAirports('EBKT');
+    expect(byIcao.any((airport) => airport.iata == 'KJK'), isTrue);
   });
 
   test('exact IATA outranks a weaker name match', () {

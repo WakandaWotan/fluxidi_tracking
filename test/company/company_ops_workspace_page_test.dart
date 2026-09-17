@@ -179,6 +179,44 @@ CompanyCustomerListItem _item(String id, String name) {
   );
 }
 
+/// Registered vehicles covering the two categories the planner offers.
+List<Map<String, dynamic>> _defaultFleet() => <Map<String, dynamic>>[
+  <String, dynamic>{
+    'vehicle_id': 'vh_sedan',
+    // A neutral name: 'S-Klasse' classifies as limousine, not sedan.
+    'vehicle_name': 'Berline 1',
+    'vehicle_type': 'sedan',
+    'license_plate': '1-FLX-001',
+    'passenger_capacity': 3,
+    'is_active': true,
+  },
+  <String, dynamic>{
+    'vehicle_id': 'vh_minivan',
+    'vehicle_name': 'Monovolume 1',
+    'vehicle_type': 'minivan',
+    'license_plate': '1-FLX-002',
+    'passenger_capacity': 7,
+    'is_active': true,
+  },
+];
+
+/// Picks the customer inside the open plan form.
+///
+/// The planner deliberately opens without a customer, so a test that saves a
+/// booking must choose one exactly like the operator does.
+Future<void> _choosePlanCustomer(
+  WidgetTester tester, {
+  String name = 'Ada Lovelace',
+}) async {
+  await tester.ensureVisible(find.byKey(kCompanyAgendaPlanCustomerFieldKey));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(kCompanyAgendaPlanCustomerFieldKey));
+  await tester.enterText(find.byKey(kCompanyAgendaPlanCustomerFieldKey), name);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(name).last);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _pumpWorkspace(
   WidgetTester tester, {
   required Size size,
@@ -202,8 +240,9 @@ Future<void> _pumpWorkspace(
           agendaRepository: agenda,
           driversLoader:
               driversLoader ?? () async => const <Map<String, dynamic>>[],
-          vehiclesLoader:
-              vehiclesLoader ?? () async => const <Map<String, dynamic>>[],
+          // A real fleet: the planner only offers categories it actually has,
+          // so the vehicle-type chips must come from registered vehicles.
+          vehiclesLoader: vehiclesLoader ?? () async => _defaultFleet(),
           planQuoteTransport: (request) async => CompanyPlanQuoteResult(
             fingerprint: request.fingerprint,
             distanceKm: 34.2,
@@ -295,12 +334,23 @@ void main() {
     );
     expect(find.byKey(kCompanyDriversNowPaneKey), findsOneWidget);
     expect(find.text('Karel Peeters'), findsWidgets);
+    // `updated_at` is not an operational signal, so no signal was recorded.
+    // That is "unknown", which is not the same as a dropped connection.
     expect(
-      find.text(kCompanyDriversNowNoLiveLink.of(AppLanguage.nl)),
+      find.textContaining(kCompanyDriverConnectionUnknown.of(AppLanguage.nl)),
       findsOneWidget,
     );
     expect(
-      find.text(kCompanyDriversNowNoLiveData.of(AppLanguage.nl)),
+      find.textContaining(kCompanyDriversNowLiveLink.of(AppLanguage.nl)),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(kCompanyDriverSignalNever.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    // The roster is separate and was never configured for this driver.
+    expect(
+      find.textContaining(kCompanyDriverPlanningNone.of(AppLanguage.nl)),
       findsOneWidget,
     );
   });
@@ -376,6 +426,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyAgendaVehicleTypeSedanKey), findsOneWidget);
     expect(find.textContaining('2026-09'), findsNothing);
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -401,6 +452,7 @@ void main() {
     );
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -420,6 +472,7 @@ void main() {
     );
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
@@ -763,6 +816,7 @@ void main() {
     expect(find.byKey(kCompanyCrewComboSheetKey), findsNothing);
     expect(find.byKey(kCompanyAgendaPlanVehicleKey), findsNothing);
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
     await tester.pumpAndSettle();
@@ -802,6 +856,7 @@ void main() {
     await tester.tap(find.byKey(kCompanyAgendaUnassignedLaneKey));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(kCompanyAgendaToFieldKey), 'Brussel');
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));
     await tester.pumpAndSettle();
@@ -824,9 +879,12 @@ void main() {
           'is_active': true,
         },
       ],
+      // This case is about a driver with no vehicle linked at all.
+      vehiclesLoader: () async => const <Map<String, dynamic>>[],
     );
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
+    await _choosePlanCustomer(tester);
     await _fillPlanPickup(tester);
     await tester.ensureVisible(find.byKey(kCompanyAgendaPlanDriverKey));
     await tester.pumpAndSettle();
@@ -990,6 +1048,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(kCompanyAgendaPlanRideKey));
     await tester.pumpAndSettle();
+    expect(find.text('Brussel-Zuid'), findsWidgets);
+    // Picking the customer afterwards must not clear the typed destination.
+    await _choosePlanCustomer(tester);
     expect(find.text('Brussel-Zuid'), findsWidgets);
     await _fillPlanPickup(tester);
     await tester.tap(find.byKey(kCompanyAgendaSaveRideKey));

@@ -131,9 +131,10 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                 ),
               ],
             ),
-            child: Stack(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Positioned.fill(
+                Expanded(
                   child: Padding(
                     padding: kBrandSignatureGoldHeaderLogoPadding,
                     child:
@@ -144,10 +145,16 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                         ),
                   ),
                 ),
-                Positioned(
-                  top: kBrandSignatureGoldHeaderActionInset,
-                  right: kBrandSignatureGoldHeaderActionInset,
-                  child: trailing ?? actions,
+                Padding(
+                  padding: const EdgeInsets.only(
+                    top: kBrandSignatureGoldHeaderActionInset,
+                    right: kBrandSignatureGoldHeaderActionInset,
+                    bottom: kBrandSignatureGoldHeaderActionInset,
+                  ),
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: trailing ?? actions,
+                  ),
                 ),
               ],
             ),

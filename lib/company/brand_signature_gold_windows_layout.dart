@@ -414,3 +414,58 @@ class BrandSignatureGoldWindowsActionGrid extends StatelessWidget {
     );
   }
 }
+
+const Key kBrandSignatureGoldWindowsPinnedHomeKey = Key(
+  'brand_signature_gold_windows_pinned_home',
+);
+const Key kBrandSignatureGoldWindowsPinnedBackSlotKey = Key(
+  'brand_signature_gold_windows_pinned_back_slot',
+);
+
+/// Gold compact home: tiles may scroll, the start-page action stays pinned.
+///
+/// Never clip the back control under the tile grid. This only changes
+/// overflow handling; it does not restyle the dashboard.
+class BrandSignatureGoldWindowsPinnedHome extends StatelessWidget {
+  const BrandSignatureGoldWindowsPinnedHome({
+    super.key,
+    required this.children,
+    required this.backToStart,
+    required this.pinColor,
+    this.listPadding = EdgeInsets.zero,
+    this.backGap = 10,
+    this.listBottom = 12,
+  });
+
+  final List<Widget> children;
+  final Widget backToStart;
+  final Color pinColor;
+  final EdgeInsets listPadding;
+  final double backGap;
+  final double listBottom;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: kBrandSignatureGoldWindowsPinnedHomeKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ListView(
+            padding: listPadding.copyWith(bottom: 8),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            children: children,
+          ),
+        ),
+        ColoredBox(
+          key: kBrandSignatureGoldWindowsPinnedBackSlotKey,
+          color: pinColor,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(16, backGap, 16, listBottom),
+            child: backToStart,
+          ),
+        ),
+      ],
+    );
+  }
+}

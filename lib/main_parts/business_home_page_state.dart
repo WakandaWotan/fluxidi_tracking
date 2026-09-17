@@ -1670,7 +1670,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return Map<String, dynamic>.from(decoded);
   }
 
-  Future<void> _openCompanyPlanRide(BuildContext context) async {
+  Future<void> _openCompanyPlanRide(
+    BuildContext context, {
+    CompanyCustomer? customer,
+  }) async {
     final settingsName = businessSettingsNotifier.value.companyName.trim();
     final profileName = (companyProfileNotifier.value?.companyName ?? '')
         .trim();
@@ -1680,6 +1683,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         builder: (_) => CompanyOpsWorkspacePage(
           plannerOnly: true,
           issuerName: issuer.isEmpty ? null : issuer,
+          initialCustomer: customer,
           onOpenBooking: (bookingId) {
             openCompanyBookingDetail(
               context,
@@ -1708,6 +1712,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       MaterialPageRoute<void>(
         builder: (_) => CompanyCustomersPage(
           issuerName: issuer.isEmpty ? null : issuer,
+          onPlanRide: (customer) {
+            unawaited(
+              _openCompanyPlanRide(context, customer: customer),
+            );
+          },
           onOpenBooking: (bookingId) {
             openCompanyBookingDetail(
               context,
@@ -3231,6 +3240,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     BuildContext context,
     CompanyProfile? profile, {
     bool compact = false,
+    bool heroOverlay = false,
   }) {
     final palette = _businessThemePalette;
     final themeVariant = businessThemeNotifier.value;
@@ -3307,7 +3317,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       );
     }
 
-    return PopupMenuButton<String>(
+    return Align(
+      alignment: Alignment.center,
+      widthFactor: 1,
+      heightFactor: 1,
+      child: PopupMenuButton<String>(
       key: kBusinessAccountMenuButtonKey,
       tooltip: _t(
         nl: 'Account & bedrijf',
@@ -3637,6 +3651,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           ? _businessAccountMenuCompactTrigger(
               profile: profile,
               palette: palette,
+              companyName: companyName,
+              heroOverlay: heroOverlay,
             )
           : Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -3728,6 +3744,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 ],
               ),
             ),
+    ),
     );
   }
 
@@ -3739,42 +3756,63 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   Widget _businessAccountMenuCompactTrigger({
     required CompanyProfile? profile,
     required BusinessThemePalette palette,
+    required String companyName,
+    bool heroOverlay = false,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: palette.surfaceAlt.withOpacity(palette.isDark ? 0.92 : 1.0),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.accent.withOpacity(0.55)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: palette.surface,
-              border: Border.all(color: palette.accent.withOpacity(0.56)),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              _companyInitials(profile),
-              style: TextStyle(
-                color: palette.accent,
-                fontWeight: FontWeight.w800,
-                fontSize: 11,
+    final bg = heroOverlay
+        ? palette.surface.withOpacity(palette.isDark ? 0.82 : 0.92)
+        : palette.surfaceAlt.withOpacity(palette.isDark ? 0.92 : 1.0);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 196, minHeight: 40),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.accent.withOpacity(0.55)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: palette.surface,
+                border: Border.all(color: palette.accent.withOpacity(0.56)),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                _companyInitials(profile),
+                style: TextStyle(
+                  color: palette.accent,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 4),
-          Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: palette.accent.withOpacity(0.96),
-            size: 18,
-          ),
-        ],
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                companyName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: palette.accent.withOpacity(0.96),
+              size: 18,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4627,6 +4665,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) => BusinessThemeRootCanvas(
+        footer: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: businessThemeNotifier.value !=
+                  BusinessThemeVariant.executiveGold
+              ? _businessBackToStartButton()
+              : const FluxidiBackToStartButton(),
+        ),
         child: ValueListenableBuilder<CompanyProfile?>(
           valueListenable: companyProfileNotifier,
           builder: (context, profile, _) {
@@ -4899,7 +4944,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   accountMenu: _businessAccountMenuButton(
                                     context,
                                     profile,
-                                    compact: !goldDesktopHeader,
+                                    compact: true,
                                   ),
                                 );
                               },
@@ -4998,6 +5043,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                             _businessAccountMenuButton(
                                               context,
                                               profile,
+                                              compact: true,
+                                              heroOverlay: true,
                                             ),
                                       ),
                                       const SizedBox(width: 8),
@@ -5992,77 +6039,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           },
                         ),
                     ];
-                    final backToStartButton =
-                        businessThemeNotifier.value !=
-                            BusinessThemeVariant.executiveGold
-                        ? _businessBackToStartButton()
-                        : const FluxidiBackToStartButton();
-                    final view = View.of(context);
-                    final homeWidth = brandSignatureGoldWindowsAvailableWidth(
-                      constraintWidth: bodyConstraints.maxWidth,
-                      mediaWidth: MediaQuery.sizeOf(context).width,
-                      viewWidth: view.devicePixelRatio > 0
-                          ? view.physicalSize.width / view.devicePixelRatio
-                          : 0,
-                    );
-                    Widget homeBody;
-                    if (fillGold) {
-                      homeBody = Padding(
-                        padding: homePadding,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            ...homeChildren,
-                            SizedBox(height: goldBackGap),
-                            backToStartButton,
-                          ],
-                        ),
-                      );
-                    } else if (bodyConstraints.maxHeight.isFinite) {
-                      homeBody = Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: ListView(
-                              padding: homePadding.copyWith(bottom: 8),
-                              children: homeChildren,
-                            ),
-                          ),
-                          ColoredBox(
-                            color: _businessThemePalette.background,
-                            child: Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                16,
-                                goldBackGap,
-                                16,
-                                goldListBottom,
-                              ),
-                              child: backToStartButton,
-                            ),
-                          ),
-                        ],
-                      );
-                    } else {
-                      homeBody = ListView(
-                        padding: homePadding,
-                        children: [
-                          ...homeChildren,
-                          SizedBox(height: goldBackGap),
-                          backToStartButton,
-                        ],
-                      );
-                    }
-                    return ClipRect(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: SizedBox(
-                          width: homeWidth,
-                          height: bodyConstraints.maxHeight.isFinite
-                              ? bodyConstraints.maxHeight
-                              : null,
-                          child: homeBody,
-                        ),
-                      ),
+                    return ListView(
+                      padding: homePadding,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      children: homeChildren,
                     );
                   },
                 );
@@ -6074,38 +6055,58 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
+  /// Role choice only. Must not call [CompanySessionStore.clearLocalCompanyState]
+  /// or otherwise behave like **Ander bedrijf**.
+  void _openRoleEntryKeepCompanySession() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
+      (route) => false,
+    );
+  }
+
   Widget _businessBackToStartButton() {
     final palette = _businessThemePalette;
+    final label = _t(
+      nl: 'Terug naar startpagina',
+      en: 'Back to start page',
+      fr: 'Retour à l’accueil',
+      es: 'Volver a la pantalla inicial',
+    );
     return SizedBox(
       width: double.infinity,
-      child: OutlinedButton.icon(
-        key: const Key('fluxidi_back_to_start'),
-        onPressed: () {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const RoleEntryPage()),
-            (route) => false,
-          );
-        },
-        icon: const Icon(Icons.home_outlined),
-        label: Text(
-          _t(
-            nl: 'Terug naar startpagina',
-            en: 'Back to start page',
-            fr: 'Retour à l’accueil',
-            es: 'Volver a la pantalla inicial',
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: label,
+        child: Tooltip(
+          message: label,
+          child: OutlinedButton.icon(
+          key: const Key('fluxidi_back_to_start'),
+          onPressed: _openRoleEntryKeepCompanySession,
+          icon: const Icon(Icons.home_outlined),
+          label: Text(label),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: palette.accent,
+            backgroundColor: palette.background,
+            minimumSize: const Size(0, 48),
+            textStyle: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            side: BorderSide(color: palette.accent.withOpacity(0.72), width: 1.1),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+          ).copyWith(
+            overlayColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.focused) ||
+                  states.contains(WidgetState.hovered)) {
+                return palette.accent.withOpacity(0.16);
+              }
+              return null;
+            }),
           ),
         ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: palette.accent,
-          backgroundColor: palette.background,
-          textStyle: Theme.of(
-            context,
-          ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-          side: BorderSide(color: palette.accent.withOpacity(0.72), width: 1.1),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
         ),
       ),
     );

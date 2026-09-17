@@ -14,6 +14,17 @@ const String kFluxidiRuntimeBookingBaseUrlOverride = String.fromEnvironment(
   defaultValue: '',
 );
 
+/// Compile-time only. Never read from a query, deep link, or server flag.
+const bool kFluxidiLocalQaCustomerSessionDefine = bool.fromEnvironment(
+  'FLUXIDI_LOCAL_QA_CUSTOMER_SESSION',
+  defaultValue: false,
+);
+
+const String kFluxidiLocalQaAdminTokenDefine = String.fromEnvironment(
+  'FLUXIDI_LOCAL_QA_ADMIN_TOKEN',
+  defaultValue: '',
+);
+
 const String kFluxidiProductionWindowTitle = 'Fluxidi';
 const String kFluxidiLocalTestWindowTitle = 'Fluxidi — lokale test';
 

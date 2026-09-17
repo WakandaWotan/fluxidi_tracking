@@ -13,7 +13,8 @@ import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_seed_data.dart';
 import 'package:fluxidi_tracking/events/events_detail_page.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../discovery/discovery_geo.dart';
@@ -1392,25 +1393,26 @@ class HotelsPageState extends State<HotelsPage> {
       region: destination.region,
       country: destination.country,
     );
-    final nav = Navigator.of(context);
-    nav
-        .push(
-          MaterialPageRoute(
-            builder: (_) => CalculatorPage(
-              bookingBaseUrl: appConfig.bookingBaseUrl,
-              mapboxToken: kMapboxToken,
-              initialToAddress: destinationText,
-              initialToLat: destination.latitude,
-              initialToLng: destination.longitude,
-              initialDestinationLabel: destination.destinationName,
-              initialServiceId: 'passenger',
-            ),
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.stay,
+          destination: CustomerBookingPlace(
+            id: destination.providerId,
+            name: destination.destinationName,
+            address: destinationText,
+            latitude: destination.latitude,
+            longitude: destination.longitude,
+            attribution: destination.provider,
           ),
-        )
-        .catchError((_) {
-          if (!mounted) return;
-          _showThemedSnackBar(_taxiNavigationFallbackLabel);
-        });
+          sourceLabel: 'hotel_stay',
+        ),
+      ).catchError((_) {
+        if (!mounted) return;
+        _showThemedSnackBar(_taxiNavigationFallbackLabel);
+      }),
+    );
   }
 
   Future<void> _onNearbyEventTaxiTap(
@@ -1464,37 +1466,37 @@ class HotelsPageState extends State<HotelsPage> {
       region: destination.region,
       country: destination.country,
     );
-    final selectedPartner = await _selectTaxiPartnerForHotelsEvent();
-    if (selectedPartner == null || !mounted) return;
-    final partnerId = _partnerSelectionValue(selectedPartner, 'partner_id');
-    final partnerName = _partnerSelectionValue(selectedPartner, 'company_name');
     debugPrint(
       '[hotels.nearby_event_handoff] eventId=${event.id} title="${event.title}" city="${event.city}"',
     );
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => CalculatorPage(
-              bookingBaseUrl: appConfig.bookingBaseUrl,
-              mapboxToken: kMapboxToken,
-              initialFromAddress: originAddress,
-              initialFromLabel: origin.destinationName,
-              initialFromLat: origin.latitude,
-              initialFromLng: origin.longitude,
-              initialToAddress: formattedDestinationAddress,
-              initialToLat: destination.latitude,
-              initialToLng: destination.longitude,
-              initialDestinationLabel: destination.destinationName,
-              initialServiceId: 'event',
-              publicPartnerId: partnerId.isEmpty ? null : partnerId,
-              publicPartnerName: partnerName.isEmpty ? null : partnerName,
-            ),
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.event,
+          company: const CustomerBookingCompany(),
+          pickup: CustomerBookingPlace(
+            name: origin.destinationName,
+            address: originAddress,
+            latitude: origin.latitude,
+            longitude: origin.longitude,
           ),
-        )
-        .catchError((_) {
-          if (!mounted) return;
-          _showThemedSnackBar(_taxiNavigationFallbackLabel);
-        });
+          destination: CustomerBookingPlace(
+            id: destination.providerId,
+            name: destination.destinationName,
+            address: formattedDestinationAddress,
+            latitude: destination.latitude,
+            longitude: destination.longitude,
+            attribution: destination.provider,
+          ),
+          lockCompany: false,
+          sourceLabel: 'hotel_nearby_event',
+        ),
+      ).catchError((_) {
+        if (!mounted) return;
+        _showThemedSnackBar(_taxiNavigationFallbackLabel);
+      }),
+    );
   }
 
   void _openStayDetail(HotelStay stay) {
@@ -1534,21 +1536,19 @@ class HotelsPageState extends State<HotelsPage> {
       _showThemedSnackBar(_destinationQueryRequiredLabel);
       return;
     }
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => CalculatorPage(
-              bookingBaseUrl: appConfig.bookingBaseUrl,
-              mapboxToken: kMapboxToken,
-              initialToAddress: destinationQuery,
-              initialServiceId: 'hotel',
-            ),
-          ),
-        )
-        .catchError((_) {
-          if (!mounted) return;
-          _showThemedSnackBar(_taxiNavigationFallbackLabel);
-        });
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.stay,
+          destination: CustomerBookingPlace(address: destinationQuery),
+          sourceLabel: 'hotel_search_query',
+        ),
+      ).catchError((_) {
+        if (!mounted) return;
+        _showThemedSnackBar(_taxiNavigationFallbackLabel);
+      }),
+    );
   }
 
   Future<void> _onReturnFlowEnterAddressTap() async {
@@ -1557,26 +1557,20 @@ class HotelsPageState extends State<HotelsPage> {
       await callback();
       return;
     }
-    final selectedPartner = await _selectTaxiPartnerForHotelsEvent();
-    if (selectedPartner == null || !mounted) return;
-    final partnerId = _partnerSelectionValue(selectedPartner, 'partner_id');
-    final partnerName = _partnerSelectionValue(selectedPartner, 'company_name');
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => CalculatorPage(
-              bookingBaseUrl: appConfig.bookingBaseUrl,
-              mapboxToken: kMapboxToken,
-              initialServiceId: 'hotel',
-              publicPartnerId: partnerId.isEmpty ? null : partnerId,
-              publicPartnerName: partnerName.isEmpty ? null : partnerName,
-            ),
-          ),
-        )
-        .catchError((_) {
-          if (!mounted) return;
-          _showThemedSnackBar(_taxiNavigationFallbackLabel);
-        });
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: const CustomerBookingEntryContext(
+          kind: CustomerBookingKind.stay,
+          company: CustomerBookingCompany(),
+          lockCompany: false,
+          sourceLabel: 'hotel_return_flow',
+        ),
+      ).catchError((_) {
+        if (!mounted) return;
+        _showThemedSnackBar(_taxiNavigationFallbackLabel);
+      }),
+    );
   }
 
   Future<void> _onReturnFlowAirportTap() async {

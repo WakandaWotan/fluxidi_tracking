@@ -172,6 +172,101 @@ class CompanyPlanQuoteBreakdown {
       kind.contains('fixed');
 }
 
+bool companyPlanQuoteBreakdownHasLines(CompanyPlanQuoteBreakdown breakdown) {
+  return breakdown.startFeeEx != null ||
+      breakdown.distanceCostEx != null ||
+      breakdown.timeCostEx != null ||
+      breakdown.waitingEx != null ||
+      breakdown.bagsEx != null ||
+      breakdown.extraStopsEx != null ||
+      breakdown.surchargeAmountEx != null ||
+      breakdown.returnFeeEx != null ||
+      breakdown.fuelSurchargeEx != null ||
+      breakdown.totalEx != null ||
+      breakdown.totalIncl != null ||
+      breakdown.vatAmount != null;
+}
+
+CompanyPlanQuoteBreakdown? resolveCompanyBookingStoredBreakdown(
+  Map<String, dynamic> raw,
+) {
+  Map<String, dynamic> asMap(Object? value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  final record = raw['record'] is Map ? asMap(raw['record']) : raw;
+  final booking = asMap(record['booking']);
+  final quote = asMap(record['quote'] ?? raw['quote']);
+  final pricing = asMap(quote['pricing']);
+  final pricingMain = asMap(quote['pricing_main']);
+  for (final candidate in <Object?>[
+    quote['breakdown'],
+    quote['price_breakdown'],
+    pricing['breakdown'],
+    pricingMain['breakdown'],
+    booking['breakdown'],
+    record['breakdown'],
+    raw['breakdown'],
+  ]) {
+    final parsed = parseCompanyPlanQuoteBreakdown(candidate);
+    if (parsed != null && companyPlanQuoteBreakdownHasLines(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+List<String> formatCompanyPlanQuoteBreakdownLines(
+  CompanyPlanQuoteBreakdown breakdown, {
+  required AppLanguage language,
+  required String currency,
+}) {
+  String? line(LocalizedText label, num? value) {
+    if (value == null || value == 0) return null;
+    return '${label.of(language)}: ${formatCompanyPlanQuoteMoney(value, currency)}';
+  }
+
+  final total = breakdown.totalIncl ?? breakdown.totalEx;
+  return <String?>[
+    line(kCompanyAgendaStartFee, breakdown.startFeeEx),
+    if (breakdown.distanceCostEx != null && breakdown.distanceCostEx != 0)
+      language == AppLanguage.nl
+          ? 'Afstand: ${formatCompanyPlanQuoteMoney(breakdown.distanceCostEx!, currency)}'
+          : 'Distance: ${formatCompanyPlanQuoteMoney(breakdown.distanceCostEx!, currency)}',
+    if (breakdown.timeCostEx != null && breakdown.timeCostEx != 0)
+      language == AppLanguage.nl
+          ? 'Tijd: ${formatCompanyPlanQuoteMoney(breakdown.timeCostEx!, currency)}'
+          : 'Time: ${formatCompanyPlanQuoteMoney(breakdown.timeCostEx!, currency)}',
+    line(kCompanyAgendaWaitPrice, breakdown.waitingEx),
+    line(kCompanyAgendaBagsPrice, breakdown.bagsEx),
+    if (breakdown.extraStopsEx != null && breakdown.extraStopsEx != 0)
+      language == AppLanguage.nl
+          ? 'Extra stops: ${formatCompanyPlanQuoteMoney(breakdown.extraStopsEx!, currency)}'
+          : 'Extra stops: ${formatCompanyPlanQuoteMoney(breakdown.extraStopsEx!, currency)}',
+    if (breakdown.surchargeAmountEx != null && breakdown.surchargeAmountEx != 0)
+      language == AppLanguage.nl
+          ? 'Toeslag: ${formatCompanyPlanQuoteMoney(breakdown.surchargeAmountEx!, currency)}'
+          : 'Surcharge: ${formatCompanyPlanQuoteMoney(breakdown.surchargeAmountEx!, currency)}',
+    if (breakdown.returnFeeEx != null && breakdown.returnFeeEx != 0)
+      language == AppLanguage.nl
+          ? 'Retour: ${formatCompanyPlanQuoteMoney(breakdown.returnFeeEx!, currency)}'
+          : 'Return: ${formatCompanyPlanQuoteMoney(breakdown.returnFeeEx!, currency)}',
+    if (breakdown.fuelSurchargeEx != null && breakdown.fuelSurchargeEx != 0)
+      language == AppLanguage.nl
+          ? 'Brandstof: ${formatCompanyPlanQuoteMoney(breakdown.fuelSurchargeEx!, currency)}'
+          : 'Fuel: ${formatCompanyPlanQuoteMoney(breakdown.fuelSurchargeEx!, currency)}',
+    if (breakdown.vatAmount != null && breakdown.vatAmount != 0)
+      language == AppLanguage.nl
+          ? 'Btw: ${formatCompanyPlanQuoteMoney(breakdown.vatAmount!, currency)}'
+          : 'VAT: ${formatCompanyPlanQuoteMoney(breakdown.vatAmount!, currency)}',
+    if (total != null)
+      language == AppLanguage.nl
+          ? 'Totaal: ${formatCompanyPlanQuoteMoney(total, currency)}'
+          : 'Total: ${formatCompanyPlanQuoteMoney(total, currency)}',
+  ].whereType<String>().toList(growable: false);
+}
+
 CompanyPlanQuoteBreakdown? parseCompanyPlanQuoteBreakdown(Object? raw) {
   if (raw is! Map) return null;
   final map = Map<String, dynamic>.from(raw);
@@ -202,6 +297,18 @@ CompanyPlanQuoteBreakdown? parseCompanyPlanQuoteBreakdown(Object? raw) {
 num? _quoteMoney(Object? raw) => parseCompanyBookingMoney(raw);
 
 int? _quoteMinutes(Object? raw) => parseCompanyBookingDurationMin(raw);
+
+bool _quoteFlagIsTrue(Object? raw) {
+  if (raw == true || raw == 1) return true;
+  final text = raw?.toString().trim().toLowerCase() ?? '';
+  return text == 'true' || text == '1' || text == 'yes';
+}
+
+bool _quoteFlagIsFalse(Object? raw) {
+  if (raw == false || raw == 0) return true;
+  final text = raw?.toString().trim().toLowerCase() ?? '';
+  return text == 'false' || text == '0' || text == 'no';
+}
 
 num? _sumMoney(num? left, num? right) {
   if (left == null && right == null) return null;
@@ -284,9 +391,14 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
         ? raw['currency'].toString().trim()
         : 'EUR',
     pricingSource: raw['pricing_source']?.toString().trim() ?? '',
-    priceAvailable: raw['price_available'] == true,
-    requestQuoteRequired: raw['request_quote_required'] == true,
-    calculatorOff: raw['calculator_off'] == true,
+    priceAvailable: _quoteFlagIsTrue(raw['price_available']) ||
+        (!_quoteFlagIsFalse(raw['price_available']) &&
+            (totalPrice ?? outboundPrice) != null &&
+            (totalPrice ?? outboundPrice)! > 0 &&
+            raw['request_quote_required'] != true &&
+            raw['calculator_off'] != true),
+    requestQuoteRequired: _quoteFlagIsTrue(raw['request_quote_required']),
+    calculatorOff: _quoteFlagIsTrue(raw['calculator_off']),
     fixedPriceSnapshot: raw['fixed_price_snapshot'] is Map
         ? Map<String, dynamic>.from(raw['fixed_price_snapshot'] as Map)
         : null,
@@ -612,11 +724,23 @@ CompanyPlanRouteStatus companyPlanRouteStatus({
 String companyPlanQuoteErrorText(String? raw, AppLanguage language) {
   final code = raw?.trim() ?? '';
   if (code.isEmpty) return '';
+  final lower = code.toLowerCase();
   if (code == 'route_required') {
     return kCompanyAgendaRouteRetry.of(language);
   }
   if (code == 'pickup_iso_required' || code == 'invalid_pickup_iso') {
     return kCompanyAgendaPickupRequired.of(language);
+  }
+  if (code == 'quote_unavailable' ||
+      code == 'price_unavailable' ||
+      code == 'calculator_off') {
+    return kCompanyAgendaQuoteUnavailable.of(language);
+  }
+  if (lower.contains('price') ||
+      lower.contains('tariff') ||
+      lower.contains('calculator') ||
+      lower.contains('prijs')) {
+    return kCompanyAgendaPriceInvalid.of(language);
   }
   if (code.contains(' ') || code.contains('.') || code.length > 32) {
     return code;

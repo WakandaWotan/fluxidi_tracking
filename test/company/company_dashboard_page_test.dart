@@ -15,8 +15,11 @@ import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_tiles.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_unavailable_page.dart';
+import 'package:fluxidi_tracking/company/company_drivers_admin_page.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_customer_quote_page.dart';
 import 'package:fluxidi_tracking/company/company_settings_page.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 
@@ -237,10 +240,17 @@ void main() {
     await tester.tap(find.text('Brussel-Zuid → Antwerpen-Centraal'));
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingDetailPageKey), findsOneWidget);
+    // Approved split: a booking opened from Boekingen is not a quote
+    // dossier. There is no quote-return hint; system back must land on
+    // the bookings list, not Rit plannen and not an offerte page.
     expect(find.byKey(kCompanyAgendaBackToQuoteHintKey), findsNothing);
+    expect(find.textContaining('Terug gaat naar de offerte'), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyBookingsPageKey), findsOneWidget);
+    expect(find.textContaining('Ada Lovelace'), findsWidgets);
+    expect(find.byKey(kCompanyOpsWorkspacePageKey), findsNothing);
+    expect(find.byKey(kCompanyCustomerQuotePageKey), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
 
@@ -274,6 +284,57 @@ void main() {
     expect(find.text('Nocturne Limousines'), findsWidgets);
     expect(find.text('Fluxidi Demo Cars'), findsNothing);
   });
+
+  testWidgets(
+    'dashboard Chauffeurs opens that driver’s Uurrooster',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: CompanyDashboardPage(
+              language: AppLanguage.nl,
+              directory: () async => const <CompanyOpsDirectoryEntry>[
+                CompanyOpsDirectoryEntry(
+                  companyId: 'demo_company_p0',
+                  sessionToken: 'tok-a',
+                  companyName: 'Fluxidi Demo Cars',
+                  publicLogoUrl:
+                      'http://127.0.0.1:8788/local/media/demo_company_p0/logo.png',
+                ),
+              ],
+              identityLoader: () async => <String, dynamic>{
+                'companyName': 'Fluxidi Demo Cars',
+              },
+              driversLoader: () async => <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'driver_id': 'drv_karel',
+                  'display_name': 'Karel Peeters',
+                  'phone': '+32470000011',
+                  'is_active': true,
+                },
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('brand_signature_action_customers')),
+      );
+      await tester.tap(find.byKey(const Key('brand_signature_action_customers')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(kCompanyDriversAdminPageKey), findsOneWidget);
+      expect(find.textContaining('Karel Peeters'), findsWidgets);
+      await tester.tap(find.byKey(companyDriverScheduleActionKey('drv_karel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(kCompanyDriverSchedulePageKey), findsOneWidget);
+      expect(find.textContaining('Karel Peeters'), findsWidgets);
+      expect(find.byKey(kCompanyDriverScheduleSaveUnavailableKey), findsOneWidget);
+    },
+  );
 }
 
 class _FakeCustomersRepository extends CompanyCustomersRepository {

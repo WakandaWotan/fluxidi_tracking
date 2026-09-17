@@ -184,6 +184,9 @@ void main() {
           expect(palette.overlaps(logo), isFalse);
           // Palette control stays to the right of the account control.
           expect(palette.center.dx > account.center.dx, isTrue);
+          expect(account.height, lessThanOrEqualTo(52));
+          expect(palette.width, greaterThanOrEqualTo(40));
+          expect(palette.height, greaterThanOrEqualTo(40));
         },
       );
     },
@@ -325,7 +328,16 @@ void main() {
 
     test('Gold header reuses the same shared menu (compact), not a copy', () {
       expect(home.contains('accountMenu: _businessAccountMenuButton('), isTrue);
-      expect(home.contains('compact: !goldDesktopHeader'), isTrue);
+      expect(home.contains('compact: true'), isTrue);
+    });
+
+    test('tablet cover-photo header uses a compact account chip', () {
+      expect(home.contains('heroOverlay: true'), isTrue);
+      expect(
+        home.contains('_businessAccountMenuCompactTrigger('),
+        isTrue,
+      );
+      expect(home.contains('companyName: companyName'), isTrue);
     });
 
     test('primary company e-mail + identity come from the same state', () {

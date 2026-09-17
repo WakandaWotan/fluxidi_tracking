@@ -1060,10 +1060,31 @@ String _receiptText(String key) {
       );
     case 'pdfGenerationFailed':
       return _tr(
-        nl: 'PDF maken mislukt, we gebruiken de tekstversie.',
-        en: 'PDF generation failed, using text fallback.',
-        fr: 'Échec de génération PDF, utilisation de la version texte.',
-        es: 'Falló la generación del PDF, usando versión de texto.',
+        nl: 'De PDF kon niet worden gemaakt.',
+        en: 'The PDF could not be created.',
+        fr: 'Le PDF n’a pas pu être créé.',
+        es: 'No se pudo crear el PDF.',
+      );
+    case 'pdfDocumentMissing':
+      return _tr(
+        nl: 'Er is geen PDF-document beschikbaar voor deze rit.',
+        en: 'No PDF document is available for this ride.',
+        fr: 'Aucun document PDF n’est disponible pour cette course.',
+        es: 'No hay un documento PDF disponible para este viaje.',
+      );
+    case 'pdfDocumentUnreachable':
+      return _tr(
+        nl: 'Het PDF-document is nu niet bereikbaar. Probeer later opnieuw.',
+        en: 'The PDF document is unreachable right now. Try again later.',
+        fr: 'Le document PDF est inaccessible pour le moment. Réessayez plus tard.',
+        es: 'El documento PDF no está disponible ahora. Inténtalo más tarde.',
+      );
+    case 'registerDetailsFailed':
+      return _tr(
+        nl: 'Deze rit kon niet worden getoond. De originele ritgegevens zijn niet gewijzigd.',
+        en: 'This ride could not be shown. The original ride data was not changed.',
+        fr: 'Cette course n’a pas pu être affichée. Les données d’origine n’ont pas été modifiées.',
+        es: 'Este viaje no se pudo mostrar. Los datos originales no se modificaron.',
       );
     case 'paymentReceiptLabel':
       return _tr(

@@ -8,6 +8,9 @@ import 'package:fluxidi_tracking/customer_session_store.dart';
 class CustomerPhoneRecoveryPage extends StatefulWidget {
   const CustomerPhoneRecoveryPage({super.key});
 
+  static const String newCustomerResult = '__customer_new__';
+  static const Key newCustomerKey = Key('customer_phone_new_customer');
+
   @override
   State<CustomerPhoneRecoveryPage> createState() =>
       _CustomerPhoneRecoveryPageState();
@@ -211,21 +214,33 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         throw Exception('challenge_missing');
       }
       if (!mounted) return;
+      final autoVerify = _loopbackAuthHost && debugOtp.isNotEmpty;
       setState(() {
-        _busy = false;
+        _busy = autoVerify;
         _otpStep = true;
         _challengeId = challengeId;
         _verificationChannel = 'sms_otp';
         _maskedPhone = maskedPhone;
         _maskedEmail = '';
         _debugOtp = debugOtp;
+        if (debugOtp.isNotEmpty) {
+          _otpCtrl.text = debugOtp;
+        }
       });
       if (debugOtp.isNotEmpty) {
         debugPrint('[CUSTOMER_PHONE_LOGIN][DEBUG_OTP_VISIBLE] shown=true');
       }
+      if (autoVerify) {
+        await _verify(continueFromStart: true);
+        return;
+      }
     } catch (err) {
       if (!mounted) return;
-      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
+      final kind = classifyThrownAuthFailure(
+        err,
+        loopbackHost: _loopbackAuthHost,
+        customerAuth: true,
+      );
       debugPrint(
         '[CUSTOMER_PHONE_LOGIN][START_FAIL] kind=${authFailureCode(kind)} host=${describePublicAuthHost(appConfig.bookingBaseUrl)}',
       );
@@ -256,6 +271,26 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         ) ??
         (30 * 24 * 60 * 60);
     if (token.isEmpty || customerId.isEmpty) {
+      final nested = verified['data'];
+      if (nested is Map) {
+        final nestedMap = Map<String, dynamic>.from(nested);
+        final nestedToken =
+            (nestedMap['customer_session_token'] ??
+                    nestedMap['customerSessionToken'] ??
+                    '')
+                .toString()
+                .trim();
+        final nestedCustomerId =
+            (nestedMap['customer_id'] ?? nestedMap['customerId'] ?? '')
+                .toString()
+                .trim();
+        if (nestedToken.isNotEmpty && nestedCustomerId.isNotEmpty) {
+          return _persistSessionFromVerifiedResponse(
+            verified: nestedMap,
+            phone: phone,
+          );
+        }
+      }
       throw Exception('session_missing');
     }
     final now = DateTime.now().toUtc();
@@ -271,12 +306,14 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       updatedAt: now.toIso8601String(),
     );
     await CustomerSessionStore.instance.save(session);
-    await CustomerProfileStore.instance.mergeBackendProfileForSession(
-      const <String, dynamic>{},
-      sessionCustomerId: session.customerId,
-      sessionPhoneE164: session.phoneE164,
-    );
+    // Profile merge/fetch is best-effort. A used OTP is already consumed on
+    // the Worker; do not fail login after the session file is written.
     try {
+      await CustomerProfileStore.instance.mergeBackendProfileForSession(
+        const <String, dynamic>{},
+        sessionCustomerId: session.customerId,
+        sessionPhoneE164: session.phoneE164,
+      );
       final backendProfile = await fetchPublicCustomerProfile(
         customerSessionToken: session.customerSessionToken,
       );
@@ -296,7 +333,7 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       }
     } catch (_) {
       debugPrint(
-        '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=fetch_failed',
+        '[CUSTOMER_PROFILE_SYNC][AFTER_PHONE_LOGIN] ok=false reason=merge_or_fetch_failed',
       );
     }
     return session;
@@ -340,17 +377,29 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         throw Exception('challenge_missing');
       }
       if (!mounted) return;
+      final autoVerify = _loopbackAuthHost && debugOtp.isNotEmpty;
       setState(() {
-        _busy = false;
+        _busy = autoVerify;
         _otpStep = true;
         _challengeId = challengeId;
         _verificationChannel = 'email_otp';
         _maskedEmail = maskedEmail;
         _debugOtp = debugOtp;
+        if (debugOtp.isNotEmpty) {
+          _otpCtrl.text = debugOtp;
+        }
       });
+      if (autoVerify) {
+        await _verify(continueFromStart: true);
+        return;
+      }
     } catch (err) {
       if (!mounted) return;
-      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
+      final kind = classifyThrownAuthFailure(
+        err,
+        loopbackHost: _loopbackAuthHost,
+        customerAuth: true,
+      );
       debugPrint(
         '[CUSTOMER_EMAIL_LOGIN][START_FAIL] kind=${authFailureCode(kind)} host=${describePublicAuthHost(appConfig.bookingBaseUrl)}',
       );
@@ -361,8 +410,13 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
     }
   }
 
-  Future<void> _verify() async {
+  void _goNewCustomer() {
     if (_busy) return;
+    Navigator.of(context).pop<Object>(CustomerPhoneRecoveryPage.newCustomerResult);
+  }
+
+  Future<void> _verify({bool continueFromStart = false}) async {
+    if (_busy && !continueFromStart) return;
     final rawPhoneInput = _phoneCtrl.text;
     final phone = _normalizePhoneInput(rawPhoneInput);
     final changed = rawPhoneInput.trim() != phone;
@@ -370,6 +424,7 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
     final otp = _otpCtrl.text.trim();
     if (!_looksLikeE164(phone) || _challengeId.trim().isEmpty) {
       setState(() {
+        _busy = false;
         _error = _t(
           nl: 'Start eerst met een geldig gsm-nummer.',
           en: 'Start first with a valid phone number.',
@@ -381,6 +436,7 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
     }
     if (!RegExp(r'^\d{4,8}$').hasMatch(otp)) {
       setState(() {
+        _busy = false;
         _error = _t(
           nl: 'Vul een geldige code in.',
           en: 'Enter a valid code.',
@@ -390,10 +446,12 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
       });
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    if (!continueFromStart) {
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+    }
     try {
       final verified = _verificationChannel == 'email_otp'
           ? await verifyPublicCustomerEmailAuth(
@@ -419,16 +477,38 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
         '[CUSTOMER_PHONE_LOGIN][VERIFY_OK] customer=${customerId.length > 4 ? customerId.substring(customerId.length - 4) : customerId}',
       );
       if (!mounted) return;
-      Navigator.of(context).pop<CustomerSession>(session);
+      Navigator.of(context).pop<Object>(session);
     } catch (err) {
       if (!mounted) return;
-      final kind = classifyThrownAuthFailure(err, loopbackHost: _loopbackAuthHost);
+      final persistMissed = err.toString().toLowerCase().contains(
+        'session_missing',
+      );
+      final kind = persistMissed
+          ? AuthFailureKind.generic
+          : classifyThrownAuthFailure(
+              err,
+              loopbackHost: _loopbackAuthHost,
+              customerAuth: true,
+            );
       debugPrint(
-        '[CUSTOMER_PHONE_LOGIN][VERIFY_FAIL] phone=${_maskPhoneForLog(phone)} kind=${authFailureCode(kind)}',
+        '[CUSTOMER_PHONE_LOGIN][VERIFY_FAIL] phone=${_maskPhoneForLog(phone)} kind=${authFailureCode(kind)} persist_missed=$persistMissed',
       );
       setState(() {
         _busy = false;
-        _error = _customerAuthErrorText(kind, verify: true);
+        _error = persistMissed
+            ? _t(
+                nl: 'De code was geldig, maar de sessie kon niet worden opgeslagen. Kies Nieuwe klant of vraag een nieuwe code.',
+                en: 'The code was valid, but the session could not be saved. Choose New customer or request a new code.',
+                fr: 'Le code était valide, mais la session n’a pas pu être enregistrée. Choisissez Nouveau client ou demandez un nouveau code.',
+                es: 'El código era válido, pero no se pudo guardar la sesión. Elige Cliente nuevo o pide un código nuevo.',
+              )
+            : _customerAuthErrorText(kind, verify: true);
+        if (kind == AuthFailureKind.verificationFailed || persistMissed) {
+          _otpStep = false;
+          _challengeId = '';
+          _debugOtp = '';
+          _otpCtrl.clear();
+        }
       });
     }
   }
@@ -504,10 +584,10 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
                     Text(
                       _loopbackAuthHost
                           ? _t(
-                              nl: 'Lokale debug-Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Echte klantaccounts horen hier niet.',
-                              en: 'Local debug Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Real customer accounts do not belong here.',
-                              fr: 'Worker de debug local (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Les vrais comptes clients n’ont pas leur place ici.',
-                              es: 'Worker local de debug (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Las cuentas reales no pertenecen aquí.',
+                              nl: 'Lokale debug-Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). De testcode verschijnt hier op het scherm. Dit nummer blijft op deze Worker.',
+                              en: 'Local debug Worker (${describePublicAuthHost(appConfig.bookingBaseUrl)}). The test code appears on this screen. This number stays on this Worker.',
+                              fr: 'Worker de debug local (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Le code test s’affiche ici. Ce numéro reste sur ce Worker.',
+                              es: 'Worker local de debug (${describePublicAuthHost(appConfig.bookingBaseUrl)}). El código de prueba aparece aquí. Este número se queda en este Worker.',
                             )
                           : _t(
                               nl: 'Productie-aanmeldserver (${describePublicAuthHost(appConfig.bookingBaseUrl)}). Je ontvangt een echte sms- of e-mailcode.',
@@ -704,6 +784,25 @@ class _CustomerPhoneRecoveryPageState extends State<CustomerPhoneRecoveryPage> {
                           en: 'Receive code via e-mail',
                           fr: 'Recevoir le code par e-mail',
                           es: 'Recibir código por correo',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      key: CustomerPhoneRecoveryPage.newCustomerKey,
+                      onPressed: _busy ? null : _goNewCustomer,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: appConfig.primaryColor.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _t(
+                          nl: 'Nieuwe klant',
+                          en: 'New customer',
+                          fr: 'Nouveau client',
+                          es: 'Cliente nuevo',
                         ),
                       ),
                     ),

@@ -406,6 +406,84 @@ void main() {
     lookup.dispose();
   });
 
+  testWidgets('suggestions stay overlaid and do not explode an intrinsic row', (
+    tester,
+  ) async {
+    final lookup = LimousinePlaceLookup(
+      searchOverride: (query, language) async {
+        return LimousinePlaceLookupResult(
+          suggestions: List<LimousinePlaceSuggestion>.generate(
+            8,
+            (index) => LimousinePlaceSuggestion(
+              label: 'Voorstel $index $query',
+              lat: 51.0 + index / 100,
+              lon: 3.7,
+              placeId: 'address.$index',
+            ),
+          ),
+        );
+      },
+    );
+    final field = LimousineAddressFieldController(
+      lookup: lookup,
+      fieldId: 'home_dropoff',
+      debounce: Duration.zero,
+    );
+    const panelKey = Key('intrinsic_booking_panel');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 900,
+              child: IntrinsicHeight(
+                key: panelKey,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: LimousineAddressField(
+                        controller: field,
+                        label: 'Bestemming invoeren',
+                        tokens: LimousineUxTokens.fromSurface(
+                          background: const Color(0xFFFFFBF4),
+                        ),
+                        language: AppLanguage.nl,
+                      ),
+                    ),
+                    const Expanded(
+                      child: ColoredBox(color: Color(0xFFE8E4DC)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final before = tester.getSize(find.byKey(panelKey));
+    await tester.enterText(
+      find.byKey(limousineAddressInputKey('home_dropoff')),
+      'Gent',
+    );
+    await tester.pump();
+    await tester.pump(Duration.zero);
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(limousineAddressSuggestionsKey('home_dropoff')),
+      findsOneWidget,
+    );
+    final after = tester.getSize(find.byKey(panelKey));
+    expect(after.height, lessThan(360));
+    expect(after.height, lessThanOrEqualTo(before.height + 200));
+    await tester.tap(find.byKey(limousineAddressSuggestionKey('home_dropoff', 0)));
+    await tester.pump();
+    expect(field.isRouteReady, isTrue);
+    field.dispose();
+    lookup.dispose();
+  });
+
   testWidgets('manual fallback works only for a complete typed address', (
     tester,
   ) async {

@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
 import 'package:fluxidi_tracking/company/company_drivers_now.dart';
 
 CompanyAgendaRide _ride({
@@ -198,11 +200,136 @@ void main() {
       find.text(kCompanyDriversNowTitle.of(AppLanguage.nl)),
       findsOneWidget,
     );
+    // No signal was ever recorded, which is "unknown" — not a live link and
+    // not a dropped one.
     expect(
-      find.text(kCompanyDriversNowNoLiveLink.of(AppLanguage.nl)),
+      find.textContaining(kCompanyDriverConnectionUnknown.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(kCompanyDriversNowLiveLink.of(AppLanguage.nl)),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(kCompanyDriverSignalNever.of(AppLanguage.nl)),
       findsOneWidget,
     );
     expect(find.textContaining('online'), findsNothing);
+  });
+
+  testWidgets('recent last_seen shows a live connection without inventing duty', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompanyDriversNowStrip(
+            language: AppLanguage.nl,
+            rows: companyDriverNowRows(
+              nowUtc: now,
+              drivers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'driver_id': 'drv_karel',
+                  'display_name': 'Karel Peeters',
+                  'last_seen_at': '2026-09-11T11:58:00.000Z',
+                },
+              ],
+              rides: const <CompanyAgendaRide>[],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(
+      find.textContaining(kCompanyDriversNowLiveLink.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(kCompanyDriverConnectionLost.of(AppLanguage.nl)),
+      findsNothing,
+    );
+    // A live link says nothing about duty, so duty stays unknown here.
+    expect(
+      find.textContaining(kCompanyDriverDutyUnknown.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(
+      find.text(kCompanyDriverPresenceOfflineWork.of(AppLanguage.nl)),
+      findsNothing,
+    );
+  });
+
+  testWidgets('a roster shows working hours without claiming presence', (
+    tester,
+  ) async {
+    final schedule = CompanyDriverSchedule.fromJson(<String, dynamic>{
+      'driver_id': 'drv_karel',
+      'timezone': 'Europe/Brussels',
+      'weekdays': <String, dynamic>{
+        // now is 2026-09-11, a Friday.
+        '5': <Map<String, dynamic>>[
+          <String, dynamic>{'start': '18:00', 'end': '02:00'},
+        ],
+      },
+    })!;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompanyDriversNowStrip(
+            language: AppLanguage.nl,
+            rows: companyDriverNowRows(
+              nowUtc: now,
+              drivers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'driver_id': 'drv_karel',
+                  'display_name': 'Karel Peeters',
+                },
+              ],
+              rides: const <CompanyAgendaRide>[],
+              schedules: <String, CompanyDriverSchedule>{
+                'drv_karel': schedule,
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('18:00–02:00'), findsOneWidget);
+    // Planned hours must never be read as being live or on duty.
+    expect(
+      find.textContaining(kCompanyDriversNowLiveLink.of(AppLanguage.nl)),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(kCompanyDriverDutyUnknown.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a driver without a roster says so explicitly', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompanyDriversNowStrip(
+            language: AppLanguage.nl,
+            rows: companyDriverNowRows(
+              nowUtc: now,
+              drivers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'driver_id': 'drv_karel',
+                  'display_name': 'Karel Peeters',
+                },
+              ],
+              rides: const <CompanyAgendaRide>[],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(
+      find.textContaining(kCompanyDriverPlanningNone.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
   });
 
   testWidgets('next arrow reveals later chauffeur cards', (tester) async {
@@ -334,6 +461,39 @@ void main() {
     expect(find.textContaining('Karel Peeters'), findsWidgets);
     await tester.tap(find.byKey(kCompanyDriversNowAllKey));
     await tester.pump();
+    expect(selected, isNull);
+  });
+
+  testWidgets('agenda card Uurrooster stays separate from the card tap', (
+    tester,
+  ) async {
+    String? openedSchedule;
+    String? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompanyDriversNowStrip(
+            language: AppLanguage.nl,
+            onSelectDriver: (id) => selected = id,
+            onOpenSchedule: (id) => openedSchedule = id,
+            rows: companyDriverNowRows(
+              nowUtc: now,
+              drivers: const <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'driver_id': 'drv_karel',
+                  'display_name': 'Karel Peeters',
+                },
+              ],
+              rides: const <CompanyAgendaRide>[],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(companyDriverScheduleActionKey('drv_karel')));
+    await tester.pump();
+    expect(openedSchedule, 'drv_karel');
     expect(selected, isNull);
   });
 }

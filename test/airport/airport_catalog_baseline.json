@@ -3,7 +3,7 @@
   "countries": 7,
   "country_codes": ["BE", "FR", "DE", "LU", "NL", "ES", "GB"],
   "featured_belgian_iata": ["BRU", "CRL", "ANR", "OST", "LGG", "KJK"],
-  "search_fields": ["name", "city", "iata", "country", "address"],
+  "search_fields": ["name", "city", "iata", "icao", "country", "address"],
   "kjk": {
     "iata": "KJK",
     "icao": "EBKT",

@@ -193,9 +193,14 @@ class CustomerSessionStore {
       createdAt: session.createdAt.trim().isEmpty ? nowIso : session.createdAt,
       updatedAt: nowIso,
     );
+    _cache = normalized;
     final file = await _file();
     await file.writeAsString(jsonEncode(normalized.toJson()), flush: true);
-    _cache = normalized;
+  }
+
+  void rememberSession(CustomerSession session) {
+    if (session.customerSessionToken.trim().isEmpty) return;
+    _cache = session;
   }
 
   static final List<VoidCallback> _clearedListeners = <VoidCallback>[];

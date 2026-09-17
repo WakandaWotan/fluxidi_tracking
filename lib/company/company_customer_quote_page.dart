@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
+import 'package:fluxidi_tracking/company/company_customer_ground.dart';
 import 'package:fluxidi_tracking/company/company_customer_labels.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
@@ -204,8 +205,16 @@ class _CompanyCustomerQuotePageState extends State<CompanyCustomerQuotePage> {
     _phone = TextEditingController(
       text: existing?.passengerPhone.isNotEmpty == true
           ? existing!.passengerPhone
-          : widget.customer.phone,
+          : companyCustomerInternationalPhone(widget.customer),
     );
+    if (existing == null) {
+      companyApplyCustomerGroundAddress(
+        customer: widget.customer,
+        options: _rideOptions,
+        pickup: _pickup,
+        dropoff: _dropoff,
+      );
+    }
     _price = TextEditingController(text: _initialQuotePriceText(existing));
     final existingCurrency = existing?.currency.trim() ?? '';
     final settingsCurrency =

@@ -52,22 +52,36 @@ class CompanyPlanQuotePanel extends StatelessWidget {
     }
     final route = formatCompanyPlanQuoteRoute(quote, language);
     final price = formatCompanyPlanQuotePrice(quote, language);
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          route,
-          key: kCompanyPlanQuoteStatusKey,
-          style: theme.textTheme.titleMedium,
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              route,
+              key: kCompanyPlanQuoteStatusKey,
+              style: theme.textTheme.titleMedium,
+            ),
+            if (price.isNotEmpty) ...[
+              Text(' · ', style: theme.textTheme.titleMedium),
+              Text(
+                price,
+                key: kCompanyPlanQuotePriceKey,
+                style: theme.textTheme.titleMedium,
+              ),
+            ],
+          ],
         ),
-        if (price.isNotEmpty) ...[
-          Text(' · ', style: theme.textTheme.titleMedium),
-          Text(
-            price,
-            key: kCompanyPlanQuotePriceKey,
-            style: theme.textTheme.titleMedium,
+        if (!quote.priceAvailable)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              kCompanyAgendaQuoteUnavailable.of(language),
+              key: kCompanyPlanQuotePriceKey,
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
           ),
-        ],
       ],
     );
   }

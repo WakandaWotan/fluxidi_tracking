@@ -2,6 +2,13 @@ import 'package:flutter/foundation.dart';
 
 const Key kRoleEntryCustomerKey = Key('role_entry_customer');
 const Key kRoleEntryBusinessKey = Key('role_entry_business');
+const Key kRoleEntryDriverKey = Key('role_entry_driver');
+const Key kRoleEntryCarouselBackgroundKey = Key(
+  'role_entry_carousel_background',
+);
+
+Key roleEntryCarouselIndexKey(int index) =>
+    Key('role_entry_carousel_index_$index');
 const Key kCustomerEntryNewKey = Key('customer_entry_new');
 const Key kCustomerOnboardingLaterKey = Key('customer_onboarding_later');
 const Key kCustomerHomeTaxisNavKey = Key('customer_home_taxis_nav');

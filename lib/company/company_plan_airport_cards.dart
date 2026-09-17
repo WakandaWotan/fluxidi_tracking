@@ -101,12 +101,14 @@ class CompanyPlanAirportDestinationCards extends StatefulWidget {
     required this.selectedIata,
     required this.onSelectedIata,
     required this.onSelectedOther,
+    this.cardKeyOf,
   });
 
   final AppLanguage language;
   final String selectedIata;
   final ValueChanged<String> onSelectedIata;
   final VoidCallback onSelectedOther;
+  final Key Function(String id)? cardKeyOf;
 
   @override
   State<CompanyPlanAirportDestinationCards> createState() =>
@@ -294,7 +296,10 @@ class _CompanyPlanAirportDestinationCardsState
                                 SizedBox(
                                   width: cardWidth,
                                   child: _AirportCard(
-                                    cardKey: companyPlanAirportCardKey(ids[index]),
+                                    cardKey: (widget.cardKeyOf ??
+                                            companyPlanAirportCardKey)(
+                                          ids[index],
+                                        ),
                                     iata: ids[index] == kCompanyPlanAirportCardOtherId
                                         ? ''
                                         : ids[index],

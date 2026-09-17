@@ -455,31 +455,148 @@ CustomerThemePalette paletteForCustomerTheme(CustomerThemeVariant variant) {
   }
 }
 
+/// Dark ink on gold/yellow, so primary buttons stay readable.
+Color customerOnGold(CustomerThemePalette palette) {
+  return palette.isDark ? const Color(0xFF121212) : const Color(0xFF1A1408);
+}
+
+/// Gold-as-text fails on cream. Use a darker bronze on light palettes.
+Color customerLinkOnBackground(CustomerThemePalette palette) {
+  return palette.isDark ? palette.gold : const Color(0xFF6B4F16);
+}
+
 ThemeData themeForCustomerPalette(
   ThemeData base,
   CustomerThemePalette palette,
 ) {
   final brightness = palette.isDark ? Brightness.dark : Brightness.light;
+  final onGold = customerOnGold(palette);
+  final link = customerLinkOnBackground(palette);
+  final radius = BorderRadius.circular(12);
+  final scheme = ColorScheme(
+    brightness: brightness,
+    primary: palette.gold,
+    onPrimary: onGold,
+    secondary: palette.bronze,
+    onSecondary: onGold,
+    secondaryContainer: palette.gold,
+    onSecondaryContainer: onGold,
+    error: palette.danger,
+    onError: const Color(0xFFFFFFFF),
+    surface: palette.surface,
+    onSurface: palette.textPrimary,
+    onSurfaceVariant: palette.textMuted,
+    outline: palette.border,
+    outlineVariant: palette.border,
+    surfaceContainerHighest: palette.surfaceAlt,
+    primaryContainer: palette.surfaceAlt,
+    onPrimaryContainer: palette.textPrimary,
+  );
+  final textTheme = base.textTheme.apply(
+    bodyColor: palette.textPrimary,
+    displayColor: palette.textPrimary,
+  );
   return base.copyWith(
     brightness: brightness,
     scaffoldBackgroundColor: palette.background,
     canvasColor: palette.background,
     cardColor: palette.surface,
-    colorScheme: base.colorScheme.copyWith(
-      brightness: brightness,
-      surface: palette.surface,
-      onSurface: palette.textPrimary,
-      onSurfaceVariant: palette.textMuted,
+    colorScheme: scheme,
+    dividerColor: palette.border,
+    disabledColor: palette.textMuted.withOpacity(0.72),
+    iconTheme: IconThemeData(color: palette.textPrimary),
+    primaryIconTheme: IconThemeData(color: onGold),
+    appBarTheme: AppBarTheme(
+      backgroundColor: palette.surface,
+      foregroundColor: palette.textPrimary,
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      iconTheme: IconThemeData(color: palette.textPrimary),
+      titleTextStyle: TextStyle(
+        color: palette.textPrimary,
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+      ),
     ),
     cardTheme: base.cardTheme.copyWith(
       color: palette.surface,
       surfaceTintColor: Colors.transparent,
     ),
-    textTheme: base.textTheme.apply(
-      bodyColor: palette.textPrimary,
-      displayColor: palette.textPrimary,
+    textTheme: textTheme,
+    primaryTextTheme: textTheme,
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: palette.surface,
+      labelStyle: TextStyle(
+        color: palette.textMuted,
+        fontWeight: FontWeight.w600,
+      ),
+      floatingLabelStyle: TextStyle(
+        color: link,
+        fontWeight: FontWeight.w700,
+      ),
+      hintStyle: TextStyle(color: palette.textMuted),
+      prefixIconColor: palette.textMuted,
+      suffixIconColor: palette.textMuted,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: palette.border, width: 1.2),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: palette.gold, width: 1.6),
+      ),
+      border: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: palette.border),
+      ),
     ),
-    disabledColor: palette.textMuted.withOpacity(0.72),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: palette.gold,
+        foregroundColor: onGold,
+        disabledBackgroundColor: palette.border,
+        disabledForegroundColor: palette.textMuted,
+        textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: link,
+        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(foregroundColor: palette.textPrimary),
+    ),
+    chipTheme: base.chipTheme.copyWith(
+      selectedColor: palette.gold,
+      backgroundColor: palette.surfaceAlt,
+      disabledColor: palette.border,
+      labelStyle: TextStyle(
+        color: palette.textPrimary,
+        fontWeight: FontWeight.w600,
+      ),
+      secondaryLabelStyle: TextStyle(
+        color: onGold,
+        fontWeight: FontWeight.w700,
+      ),
+      side: BorderSide(color: palette.border),
+      checkmarkColor: onGold,
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return onGold;
+          return palette.textPrimary;
+        }),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return palette.gold;
+          return palette.surface;
+        }),
+        side: WidgetStatePropertyAll(BorderSide(color: palette.border)),
+      ),
+    ),
     checkboxTheme: base.checkboxTheme.copyWith(
       side: BorderSide(color: palette.textMuted),
     ),

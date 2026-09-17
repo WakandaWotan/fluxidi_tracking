@@ -165,6 +165,8 @@ void main() {
             <String, dynamic>{
               'driver_id': 'drv_karel',
               'display_name': 'Karel Peeters',
+              // Only an active driver is assignable.
+              'is_active': true,
             },
           ],
           vehiclesLoader: () async => const <Map<String, dynamic>>[],
@@ -174,13 +176,81 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('46,70 EUR'), findsOneWidget);
     expect(find.text('29 min'), findsOneWidget);
-    await tester.tap(find.byKey(kCompanyAgendaAssignDriverKey));
+    // The assign control is a search field; tapping its subtree key hits the
+    // wrapper, so drive the field the operator actually touches.
+    final assignField = find.descendant(
+      of: find.byKey(kCompanyAgendaAssignDriverKey),
+      matching: find.byType(TextField),
+    );
+    await tester.ensureVisible(assignField);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Karel Peeters').last);
+    await tester.tap(assignField);
+    await tester.pumpAndSettle();
+    // The option label carries the crew combo (driver plus vehicle/plate), so
+    // match on the driver name inside it.
+    final option = find.textContaining('Karel Peeters').last;
+    await tester.ensureVisible(option);
+    await tester.pumpAndSettle();
+    await tester.tap(option, warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(seenDuration, 29);
     expect(
       find.text(kCompanyAgendaAvailabilityUnknown.of(AppLanguage.nl)),
+      findsNothing,
+    );
+  });
+
+  testWidgets('stored quote breakdown is shown instead of an empty expander', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'PLN-2026-000418',
+          language: AppLanguage.nl,
+          loader: (id) async => <String, dynamic>{
+            'ok': true,
+            'record': <String, dynamic>{
+              'booking': <String, dynamic>{
+                'customer_name': 'Ada Lovelace',
+                'from': 'Maarkedal',
+                'to': 'Ronse',
+                'pickup_iso': '2026-09-15T08:00:00.000Z',
+                'duration_route_min': 86,
+                'price_incl_vat': 104.6,
+                'currency': 'EUR',
+              },
+              'quote': <String, dynamic>{
+                'pricing': <String, dynamic>{
+                  'price_incl_vat': 104.6,
+                  'currency': 'EUR',
+                  'breakdown': <String, dynamic>{
+                    'start_fee_ex': 12.5,
+                    'distance_cost_ex': 60,
+                    'time_cost_ex': 14,
+                    'total_incl': 104.6,
+                  },
+                },
+              },
+            },
+          },
+          driversLoader: () async => const <Map<String, dynamic>>[],
+          vehiclesLoader: () async => const <Map<String, dynamic>>[],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('104,60 EUR'), findsOneWidget);
+    expect(find.text('86 min'), findsOneWidget);
+    await tester.ensureVisible(
+      find.text(kCompanyAgendaPriceBreakdown.of(AppLanguage.nl)),
+    );
+    await tester.tap(find.text(kCompanyAgendaPriceBreakdown.of(AppLanguage.nl)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Starttarief'), findsOneWidget);
+    expect(find.textContaining('Totaal'), findsWidgets);
+    expect(
+      find.byKey(kCompanyBookingDetailPriceBreakdownMissingKey),
       findsNothing,
     );
   });

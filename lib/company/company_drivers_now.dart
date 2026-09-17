@@ -7,7 +7,11 @@ import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_color.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
+import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 import 'package:fluxidi_tracking/company/company_dispatch.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
+import 'package:fluxidi_tracking/company/company_driver_status_facets.dart';
 
 const Key kCompanyDriversNowPaneKey = Key('company_drivers_now_pane');
 const Key kCompanyDriversNowListKey = Key('company_drivers_now_list');
@@ -53,7 +57,16 @@ class CompanyDriverNowRow {
     this.nextRide,
     this.presenceLabel = '',
     this.liveConnected = false,
-  });
+    CompanyDriverSchedule? schedule,
+    CompanyDriverStatusFacets? facets,
+  }) : _schedule = schedule,
+       _facets = facets;
+
+  final CompanyDriverSchedule? _schedule;
+
+  /// Resolved once with the same clock the rest of the row used, so a widget
+  /// rebuild cannot silently re-age the driver's last signal.
+  final CompanyDriverStatusFacets? _facets;
 
   final String driverId;
   final String displayName;
@@ -66,6 +79,24 @@ class CompanyDriverNowRow {
   final CompanyDriverNowRideRef? nextRide;
   final String presenceLabel;
   final bool liveConnected;
+
+  /// Roster for this driver, or null when none is stored.
+  CompanyDriverSchedule? get schedule => _schedule;
+
+  /// The four independent facets behind the card.
+  CompanyDriverStatusFacets get facets =>
+      _facets ?? facetsAt(DateTime.now().toUtc());
+
+  CompanyDriverStatusFacets facetsAt(DateTime nowUtc) {
+    return companyDriverStatusFacets(
+      lastSignalUtc: updatedAtUtc,
+      nowUtc: nowUtc,
+      rawWorkStatus: workStatusRaw,
+      rawPresenceLabel: presenceLabel,
+      schedule: _schedule,
+      staleAfter: kCompanyDriverNowStaleAfter,
+    );
+  }
 
   bool get workStatusIsCurrent =>
       liveConnected ||
@@ -155,6 +186,8 @@ List<CompanyDriverNowRow> companyDriverNowRows({
   required List<CompanyAgendaRide> rides,
   required DateTime nowUtc,
   Duration staleAfter = kCompanyDriverNowStaleAfter,
+  Map<String, CompanyDriverSchedule> schedules =
+      const <String, CompanyDriverSchedule>{},
 }) {
   final now = nowUtc.toUtc();
   return [
@@ -165,6 +198,7 @@ List<CompanyDriverNowRow> companyDriverNowRows({
           rides: rides,
           nowUtc: now,
           staleAfter: staleAfter,
+          schedules: schedules,
         ),
   ];
 }
@@ -174,6 +208,8 @@ CompanyDriverNowRow _rowForDriver({
   required List<CompanyAgendaRide> rides,
   required DateTime nowUtc,
   required Duration staleAfter,
+  Map<String, CompanyDriverSchedule> schedules =
+      const <String, CompanyDriverSchedule>{},
 }) {
   final look = companyAgendaDriverLook(driver);
   final assigned = rides.where((ride) {
@@ -209,6 +245,15 @@ CompanyDriverNowRow _rowForDriver({
   final presenceLabel = (driver['presence_label'] ?? driver['presenceLabel'] ?? '')
       .toString()
       .trim();
+  final schedule = schedules[look.driverId];
+  final facets = companyDriverStatusFacets(
+    lastSignalUtc: lastSeen ?? updatedAt,
+    nowUtc: nowUtc,
+    rawWorkStatus: look.availabilityStatus.trim(),
+    rawPresenceLabel: presenceLabel,
+    schedule: schedule,
+    staleAfter: staleAfter,
+  );
   return CompanyDriverNowRow(
     driverId: look.driverId,
     displayName: look.displayName,
@@ -225,6 +270,8 @@ CompanyDriverNowRow _rowForDriver({
     nextRide: next == null ? null : _rideRef(next),
     presenceLabel: presenceLabel,
     liveConnected: live,
+    schedule: schedule,
+    facets: facets,
   );
 }
 
@@ -250,6 +297,7 @@ class CompanyDriversNowStrip extends StatefulWidget {
     this.onSelectDriver,
     this.onClearDriver,
     this.onOpenRide,
+    this.onOpenSchedule,
   });
 
   final List<CompanyDriverNowRow> rows;
@@ -260,6 +308,7 @@ class CompanyDriversNowStrip extends StatefulWidget {
   final ValueChanged<String>? onSelectDriver;
   final VoidCallback? onClearDriver;
   final ValueChanged<String>? onOpenRide;
+  final ValueChanged<String>? onOpenSchedule;
 
   @override
   State<CompanyDriversNowStrip> createState() => _CompanyDriversNowStripState();
@@ -489,6 +538,7 @@ class _CompanyDriversNowStripState extends State<CompanyDriversNowStrip> {
                                       rows[index].driverId,
                                   onSelectDriver: widget.onSelectDriver,
                                   onOpenRide: widget.onOpenRide,
+                                  onOpenSchedule: widget.onOpenSchedule,
                                 );
                               },
                             ),
@@ -571,6 +621,7 @@ class _CompanyDriverNowCard extends StatelessWidget {
     this.selected = false,
     this.onSelectDriver,
     this.onOpenRide,
+    this.onOpenSchedule,
   });
 
   final CompanyDriverNowRow row;
@@ -578,10 +629,12 @@ class _CompanyDriverNowCard extends StatelessWidget {
   final bool selected;
   final ValueChanged<String>? onSelectDriver;
   final ValueChanged<String>? onOpenRide;
+  final ValueChanged<String>? onOpenSchedule;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final facets = row.facets;
     final openId = (row.currentRide ?? row.nextRide)?.bookingId ?? '';
     return SizedBox(
       width: kCompanyDriversNowCardWidth,
@@ -653,45 +706,52 @@ class _CompanyDriverNowCard extends StatelessWidget {
                             size: 16,
                             color: theme.colorScheme.primary,
                           ),
+                        if (onOpenSchedule != null)
+                          Tooltip(
+                            message: kCompanyDriverScheduleTitle.of(language),
+                            child: InkWell(
+                              key: companyDriverScheduleActionKey(row.driverId),
+                              customBorder: const CircleBorder(),
+                              onTap: () => onOpenSchedule!(row.driverId),
+                              child: const Padding(
+                                padding: EdgeInsets.all(2),
+                                child: Icon(Icons.schedule_outlined, size: 16),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      kCompanyDriversNowNoLiveLink.of(language),
-                      style: _metaStyle(theme),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    _facetLine(
+                      theme,
+                      text: _connectionText(facets),
+                      color: _connectionColor(facets.connection),
                     ),
-                    Text(
-                      _workStatusText(),
-                      style: _metaStyle(theme),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    _facetLine(
+                      theme,
+                      text: '${kCompanyDriverDutyLabel.of(language)}: '
+                          '${_dutyText(facets)}',
+                      color: _dutyColor(facets.duty),
                     ),
-                    Text(
-                      _rideLine(
+                    _facetLine(
+                      theme,
+                      text: '${kCompanyDriverPlanningLabel.of(language)}: '
+                          '${_planningText(facets)}',
+                      color: _planningColor(facets.schedule),
+                    ),
+                    _facetLine(
+                      theme,
+                      text: _rideLine(
                         label: kCompanyDriversNowCurrentRide.of(language),
                         ride: row.currentRide,
                       ),
-                      style: _metaStyle(theme),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
-                    Text(
-                      _rideLine(
+                    _facetLine(
+                      theme,
+                      text: _rideLine(
                         label: kCompanyDriversNowNextRide.of(language),
                         ride: row.nextRide,
                       ),
-                      style: _metaStyle(theme),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      '${kCompanyDriversNowLastUpdated.of(language)}: '
-                      '${_updatedText()}',
-                      style: _metaStyle(theme),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -712,17 +772,117 @@ class _CompanyDriverNowCard extends StatelessWidget {
     );
   }
 
+  Widget _facetLine(ThemeData theme, {required String text, Color? color}) {
+    return Text(
+      text,
+      style: color == null
+          ? _metaStyle(theme)
+          : _metaStyle(theme).copyWith(color: color),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  /// Connection carries the driver's own last signal time, so a screen refresh
+  /// can never read as fresh evidence.
+  String _connectionText(CompanyDriverStatusFacets facets) {
+    final base = switch (facets.connection) {
+      CompanyDriverConnectionState.live =>
+        kCompanyDriversNowLiveLink.of(language),
+      CompanyDriverConnectionState.staleOrLost =>
+        kCompanyDriverConnectionLost.of(language),
+      CompanyDriverConnectionState.unknown =>
+        kCompanyDriverConnectionUnknown.of(language),
+    };
+    final signal = facets.lastDriverSignalUtc;
+    final stamp = signal == null
+        ? kCompanyDriverSignalNever.of(language)
+        : companyDriverNowTimeLabel(signal);
+    return '$base · ${kCompanyDriverSignalAt.of(language)} $stamp';
+  }
+
+  Color _connectionColor(CompanyDriverConnectionState state) {
+    return switch (state) {
+      CompanyDriverConnectionState.live => kCompanyPlanPresenceGreen,
+      CompanyDriverConnectionState.staleOrLost => kCompanyPlanPresenceOrange,
+      CompanyDriverConnectionState.unknown => kCompanyPlanPresenceGrey,
+    };
+  }
+
+  String _dutyText(CompanyDriverStatusFacets facets) {
+    return switch (facets.duty) {
+      CompanyDriverDutyState.working => kCompanyDriverDutyWorking.of(language),
+      CompanyDriverDutyState.onBreak =>
+        kCompanyDriverPresencePaused.of(language),
+      CompanyDriverDutyState.dutyEnded => kCompanyDriverDutyEnded.of(language),
+      CompanyDriverDutyState.unknown => kCompanyDriverDutyUnknown.of(language),
+    };
+  }
+
+  Color _dutyColor(CompanyDriverDutyState state) {
+    return switch (state) {
+      CompanyDriverDutyState.working => kCompanyPlanPresenceGreen,
+      CompanyDriverDutyState.onBreak => kCompanyPlanPresenceOrange,
+      CompanyDriverDutyState.dutyEnded => kCompanyPlanPresenceGrey,
+      CompanyDriverDutyState.unknown => kCompanyPlanPresenceGrey,
+    };
+  }
+
+  String _planningText(CompanyDriverStatusFacets facets) {
+    if (facets.schedule == CompanyDriverScheduleState.noSchedule) {
+      return kCompanyDriverPlanningNone.of(language);
+    }
+    final hours = facets.plannedWindowLabel;
+    if (facets.schedule == CompanyDriverScheduleState.unresolvableTimezone) {
+      return kCompanyDriverScheduleUndeterminable.of(language);
+    }
+    final state = switch (facets.schedule) {
+      CompanyDriverScheduleState.absent =>
+        kCompanyDriverPlanningAbsent.of(language),
+      CompanyDriverScheduleState.onPlannedBreak =>
+        kCompanyDriverPlanningBreak.of(language),
+      CompanyDriverScheduleState.offHours =>
+        kCompanyDriverPlanningOffHours.of(language),
+      _ => '',
+    };
+    if (hours.isEmpty) {
+      return state.isEmpty ? kCompanyDriverPlanningNone.of(language) : state;
+    }
+    return state.isEmpty ? hours : '$hours · $state';
+  }
+
+  Color _planningColor(CompanyDriverScheduleState state) {
+    return switch (state) {
+      CompanyDriverScheduleState.scheduled => kCompanyPlanPresenceGreen,
+      CompanyDriverScheduleState.onPlannedBreak => kCompanyPlanPresenceOrange,
+      CompanyDriverScheduleState.absent => kCompanyPlanPresenceRed,
+      CompanyDriverScheduleState.offHours => kCompanyPlanPresenceGrey,
+      CompanyDriverScheduleState.noSchedule => kCompanyPlanPresenceGrey,
+      CompanyDriverScheduleState.unresolvableTimezone =>
+        kCompanyPlanPresenceRed,
+    };
+  }
+
   String _workStatusText() {
     final labeled = companyDispatchPresenceLabelText(
       row.presenceLabel,
       language,
     );
     if (labeled.isNotEmpty) return labeled;
+    final status = row.workStatusRaw.trim().toLowerCase();
     if (row.freshness == CompanyDriverNowFreshness.missing) {
-      return kCompanyDriversNowNoLiveData.of(language);
+      if (status.isEmpty || status == 'available' || status == 'online') {
+        return kCompanyDriversNowNoLiveData.of(language);
+      }
     }
-    if (!row.workStatusIsCurrent) {
-      return kCompanyDriversNowStatusNotCurrent.of(language);
+    if (!row.liveConnected &&
+        (status.isEmpty || status == 'available' || status == 'online')) {
+      return kCompanyDriverPresenceScheduledNoLive.of(language);
+    }
+    if (!row.workStatusIsCurrent &&
+        status.isEmpty &&
+        row.presenceLabel.trim().isEmpty) {
+      return kCompanyDriversNowNoLiveData.of(language);
     }
     switch (row.workStatusRaw.trim().toLowerCase()) {
       case 'available':

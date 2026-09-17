@@ -492,9 +492,12 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                     ],
                   ),
                 ),
-                child: Center(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 900;
+                    return Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
+                    constraints: BoxConstraints(maxWidth: wide ? 1100 : 560),
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
                       child: Form(
@@ -530,51 +533,110 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                               ),
                               icon: Icons.badge_outlined,
                               children: [
-                                _field(
-                                  palette: palette,
-                                  label: _t(
-                                    nl: 'Naam',
-                                    en: 'Name',
-                                    fr: 'Nom',
-                                    es: 'Nombre',
+                                if (wide)
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        flex: 2,
+                                        child: _field(
+                                          palette: palette,
+                                          label: _t(
+                                            nl: 'Naam',
+                                            en: 'Name',
+                                            fr: 'Nom',
+                                            es: 'Nombre',
+                                          ),
+                                          controller: _nameCtrl,
+                                          validator: (v) {
+                                            final text = (v ?? '').trim();
+                                            if (text.isEmpty) {
+                                              return _t(
+                                                nl: 'Vul je naam in',
+                                                en: 'Enter your name',
+                                                fr: 'Saisissez votre nom',
+                                                es: 'Introduce tu nombre',
+                                              );
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: _field(
+                                          palette: palette,
+                                          label: _t(
+                                            nl: 'Postcode',
+                                            en: 'Postcode',
+                                            fr: 'Code postal',
+                                            es: 'Código postal',
+                                          ),
+                                          controller: _postcodeCtrl,
+                                          validator: (v) {
+                                            final text = (v ?? '').trim();
+                                            if (text.isEmpty) {
+                                              return _t(
+                                                nl: 'Vul je postcode in',
+                                                en: 'Enter your postcode',
+                                                fr: 'Saisissez votre code postal',
+                                                es: 'Introduce tu código postal',
+                                              );
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                else ...[
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'Naam',
+                                      en: 'Name',
+                                      fr: 'Nom',
+                                      es: 'Nombre',
+                                    ),
+                                    controller: _nameCtrl,
+                                    validator: (v) {
+                                      final text = (v ?? '').trim();
+                                      if (text.isEmpty) {
+                                        return _t(
+                                          nl: 'Vul je naam in',
+                                          en: 'Enter your name',
+                                          fr: 'Saisissez votre nom',
+                                          es: 'Introduce tu nombre',
+                                        );
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                  controller: _nameCtrl,
-                                  validator: (v) {
-                                    final text = (v ?? '').trim();
-                                    if (text.isEmpty) {
-                                      return _t(
-                                        nl: 'Vul je naam in',
-                                        en: 'Enter your name',
-                                        fr: 'Saisissez votre nom',
-                                        es: 'Introduce tu nombre',
-                                      );
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 10),
-                                _field(
-                                  palette: palette,
-                                  label: _t(
-                                    nl: 'Postcode',
-                                    en: 'Postcode',
-                                    fr: 'Code postal',
-                                    es: 'Código postal',
+                                  const SizedBox(height: 10),
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'Postcode',
+                                      en: 'Postcode',
+                                      fr: 'Code postal',
+                                      es: 'Código postal',
+                                    ),
+                                    controller: _postcodeCtrl,
+                                    validator: (v) {
+                                      final text = (v ?? '').trim();
+                                      if (text.isEmpty) {
+                                        return _t(
+                                          nl: 'Vul je postcode in',
+                                          en: 'Enter your postcode',
+                                          fr: 'Saisissez votre code postal',
+                                          es: 'Introduce tu código postal',
+                                        );
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                  controller: _postcodeCtrl,
-                                  validator: (v) {
-                                    final text = (v ?? '').trim();
-                                    if (text.isEmpty) {
-                                      return _t(
-                                        nl: 'Vul je postcode in',
-                                        en: 'Enter your postcode',
-                                        fr: 'Saisissez votre code postal',
-                                        es: 'Introduce tu código postal',
-                                      );
-                                    }
-                                    return null;
-                                  },
-                                ),
+                                ],
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -594,62 +656,132 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                               ),
                               icon: Icons.alternate_email_rounded,
                               children: [
-                                _field(
-                                  palette: palette,
-                                  label: _t(
-                                    nl: 'Telefoonnummer',
-                                    en: 'Phone number',
-                                    fr: 'Numéro de téléphone',
-                                    es: 'Número de teléfono',
+                                if (wide)
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: _field(
+                                          palette: palette,
+                                          label: _t(
+                                            nl: 'Telefoonnummer',
+                                            en: 'Phone number',
+                                            fr: 'Numéro de téléphone',
+                                            es: 'Número de teléfono',
+                                          ),
+                                          controller: _phoneCtrl,
+                                          keyboardType: TextInputType.phone,
+                                          validator: (v) {
+                                            final text = (v ?? '').trim();
+                                            if (text.isEmpty) {
+                                              return _t(
+                                                nl: 'Vul je telefoonnummer in',
+                                                en: 'Enter your phone number',
+                                                fr: 'Saisissez votre numéro de téléphone',
+                                                es: 'Introduce tu número de teléfono',
+                                              );
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: _field(
+                                          palette: palette,
+                                          label: _t(
+                                            nl: 'E-mailadres',
+                                            en: 'Email address',
+                                            fr: 'Adresse e-mail',
+                                            es: 'Correo electrónico',
+                                          ),
+                                          controller: _emailCtrl,
+                                          keyboardType:
+                                              TextInputType.emailAddress,
+                                          validator: (v) {
+                                            final text = (v ?? '').trim();
+                                            if (text.isEmpty) {
+                                              return _t(
+                                                nl: 'Vul je e-mail in',
+                                                en: 'Enter your email',
+                                                fr: 'Saisissez votre e-mail',
+                                                es: 'Introduce tu correo',
+                                              );
+                                            }
+                                            if (!text.contains('@') ||
+                                                !text.contains('.')) {
+                                              return _t(
+                                                nl: 'Vul een geldig e-mailadres in',
+                                                en: 'Enter a valid email address',
+                                                fr: 'Saisissez une adresse e-mail valide',
+                                                es: 'Introduce un correo electrónico válido',
+                                              );
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                else ...[
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'Telefoonnummer',
+                                      en: 'Phone number',
+                                      fr: 'Numéro de téléphone',
+                                      es: 'Número de teléfono',
+                                    ),
+                                    controller: _phoneCtrl,
+                                    keyboardType: TextInputType.phone,
+                                    validator: (v) {
+                                      final text = (v ?? '').trim();
+                                      if (text.isEmpty) {
+                                        return _t(
+                                          nl: 'Vul je telefoonnummer in',
+                                          en: 'Enter your phone number',
+                                          fr: 'Saisissez votre numéro de téléphone',
+                                          es: 'Introduce tu número de teléfono',
+                                        );
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                  controller: _phoneCtrl,
-                                  keyboardType: TextInputType.phone,
-                                  validator: (v) {
-                                    final text = (v ?? '').trim();
-                                    if (text.isEmpty) {
-                                      return _t(
-                                        nl: 'Vul je telefoonnummer in',
-                                        en: 'Enter your phone number',
-                                        fr: 'Saisissez votre numéro de téléphone',
-                                        es: 'Introduce tu número de teléfono',
-                                      );
-                                    }
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 10),
-                                _field(
-                                  palette: palette,
-                                  label: _t(
-                                    nl: 'E-mailadres',
-                                    en: 'Email address',
-                                    fr: 'Adresse e-mail',
-                                    es: 'Correo electrónico',
+                                  const SizedBox(height: 10),
+                                  _field(
+                                    palette: palette,
+                                    label: _t(
+                                      nl: 'E-mailadres',
+                                      en: 'Email address',
+                                      fr: 'Adresse e-mail',
+                                      es: 'Correo electrónico',
+                                    ),
+                                    controller: _emailCtrl,
+                                    keyboardType: TextInputType.emailAddress,
+                                    validator: (v) {
+                                      final text = (v ?? '').trim();
+                                      if (text.isEmpty) {
+                                        return _t(
+                                          nl: 'Vul je e-mail in',
+                                          en: 'Enter your email',
+                                          fr: 'Saisissez votre e-mail',
+                                          es: 'Introduce tu correo',
+                                        );
+                                      }
+                                      if (!text.contains('@') ||
+                                          !text.contains('.')) {
+                                        return _t(
+                                          nl: 'Vul een geldig e-mailadres in',
+                                          en: 'Enter a valid email address',
+                                          fr: 'Saisissez une adresse e-mail valide',
+                                          es: 'Introduce un correo electrónico válido',
+                                        );
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                  controller: _emailCtrl,
-                                  keyboardType: TextInputType.emailAddress,
-                                  validator: (v) {
-                                    final text = (v ?? '').trim();
-                                    if (text.isEmpty) {
-                                      return _t(
-                                        nl: 'Vul je e-mail in',
-                                        en: 'Enter your email',
-                                        fr: 'Saisissez votre e-mail',
-                                        es: 'Introduce tu correo',
-                                      );
-                                    }
-                                    if (!text.contains('@') ||
-                                        !text.contains('.')) {
-                                      return _t(
-                                        nl: 'Vul een geldig e-mailadres in',
-                                        en: 'Enter a valid email address',
-                                        fr: 'Saisissez une adresse e-mail valide',
-                                        es: 'Introduce un correo electrónico válido',
-                                      );
-                                    }
-                                    return null;
-                                  },
-                                ),
+                                ],
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -848,6 +980,8 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                       ),
                     ),
                   ),
+                    );
+                  },
                 ),
               ),
             ),

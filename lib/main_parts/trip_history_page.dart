@@ -438,10 +438,20 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     );
     final needsRouteAddressFetch =
         routeResolved.from == null || routeResolved.to == null;
+    // References alone are not a receipt. The local register always merges the
+    // full booking record, which is why the same ride shows its amount, status
+    // and pickup time there but not here.
+    final needsRideFactsFetch = receiptNeedsBookingRecordHydration(
+      totalEur: enriched.totalEur,
+      status: enriched.status,
+      startedAt: enriched.startedAt,
+      routeLabelsResolved: !needsRouteAddressFetch,
+    );
     if ((before.hasPlanning ||
             before.hasPublicBooking ||
             before.hasRealReceipt) &&
-        !needsRouteAddressFetch) {
+        !needsRouteAddressFetch &&
+        !needsRideFactsFetch) {
       debugPrint(
         '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(_canonicalBookingIdFromItem(enriched))} foundPlanning=${before.hasPlanning} foundPublic=${before.hasPublicBooking} foundReceipt=${before.hasRealReceipt} source=already_present',
       );
@@ -512,9 +522,47 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         mergedRawSource['booking_details'] = mergedBookingDetails;
         mergedRawSource['bookingDetails'] = mergedBookingDetails;
       }
-      enriched = enriched.copyWith(
-        rawSource: mergedRawSource,
-        bookingDetails: mergedBookingDetails,
+      // Same authoritative merge the local register applies, so amount,
+      // payment status, pickup time, route and company context come from the
+      // booking record instead of staying blank. The merge keeps a confirmed
+      // paid state and never invents values.
+      if (needsRideFactsFetch) {
+        final hydrated = mergeBookingRecordIntoTripHistoryJson(
+          tripHistoryJson: mergedRawSource,
+          decodedResponse: decoded,
+        );
+        // The chauffeur row owns the trip identity; the booking record only
+        // supplies the ride facts around it.
+        if (enriched.tripId.trim().isNotEmpty) {
+          hydrated['trip_id'] = enriched.tripId;
+        }
+        mergedRawSource
+          ..clear()
+          ..addAll(hydrated);
+        final hydratedDetails = hydrated['booking_details'];
+        if (hydratedDetails is Map) {
+          mergedBookingDetails
+            ..clear()
+            ..addAll(Map<String, dynamic>.from(hydratedDetails));
+        }
+      }
+      try {
+        enriched = _TripHistoryItem.fromJson(mergedRawSource);
+      } catch (err) {
+        debugPrint(
+          '[DRIVER_HISTORY][HYDRATE] booking=${_safeRefPreview(bookingId)} ok=false reason=parse_failed',
+        );
+        enriched = enriched.copyWith(
+          rawSource: mergedRawSource,
+          bookingDetails: mergedBookingDetails,
+        );
+      }
+      debugPrint(
+        '[DRIVER_HISTORY][HYDRATE] booking=${_safeRefPreview(bookingId)}'
+        ' hydrated=$needsRideFactsFetch'
+        ' amount=${enriched.totalEur != null}'
+        ' status=${receiptStatusIsKnown(enriched.status)}'
+        ' started=${(enriched.startedAt ?? '').trim().isNotEmpty}',
       );
       final after = _referencePresenceForItem(enriched);
       debugPrint(

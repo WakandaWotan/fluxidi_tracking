@@ -3928,7 +3928,9 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
 
   BookingPaymentCapability get _bookingPaymentCapability {
     final profile = localBackendBusinessProfileNotifier.value;
-    if (profile == null) return const BookingPaymentCapability.unknown();
+    // Without a loaded profile nothing confirms online payment is possible, so
+    // the picker must not fall back to the demo account.
+    if (profile == null) return const BookingPaymentCapability.unavailable();
     return BookingPaymentCapability(
       paymentOwnerMode: profile.paymentOwnerMode,
       paymentDemoMode: profile.paymentDemoMode,

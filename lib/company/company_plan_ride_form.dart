@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_customer_ground.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_plan_media.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_layout.dart';
@@ -76,6 +77,8 @@ class CompanyPlanRideForm extends StatelessWidget {
     this.onCategoryChanged,
     this.capacityWarning,
     this.unsuitableCategories = const <CompanyPlanVehicleCategory>{},
+    this.categoryPhotoUrls = const <CompanyPlanVehicleCategory, String>{},
+    this.categoryPassengerCaps = const <CompanyPlanVehicleCategory, int>{},
   });
 
   final AppLanguage language;
@@ -123,6 +126,8 @@ class CompanyPlanRideForm extends StatelessWidget {
   final ValueChanged<CompanyPlanVehicleCategory>? onCategoryChanged;
   final String? capacityWarning;
   final Set<CompanyPlanVehicleCategory> unsuitableCategories;
+  final Map<CompanyPlanVehicleCategory, String> categoryPhotoUrls;
+  final Map<CompanyPlanVehicleCategory, int> categoryPassengerCaps;
 
   @override
   Widget build(BuildContext context) {
@@ -131,7 +136,7 @@ class CompanyPlanRideForm extends StatelessWidget {
         final split =
             companyPlanRideLayoutFor(constraints) == CompanyPlanRideLayout.split;
         final mapHeight = companyPlanStackedMapHeight(constraints);
-        final fields = _fields(context);
+        final fields = _fields(context, stacked: !split);
         final actions = _actions();
         if (split) {
           return Column(
@@ -185,7 +190,7 @@ class CompanyPlanRideForm extends StatelessWidget {
     );
   }
 
-  Widget _fields(BuildContext context) {
+  Widget _fields(BuildContext context, {required bool stacked}) {
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -274,6 +279,10 @@ class CompanyPlanRideForm extends StatelessWidget {
           roundtripChoiceFields!,
         ],
         const SizedBox(height: 16),
+        if (stacked && flightFields != null) ...[
+          flightFields!,
+          const SizedBox(height: 16),
+        ],
         routeFields,
         if (waypointFields != null) ...[
           const SizedBox(height: 8),
@@ -286,7 +295,7 @@ class CompanyPlanRideForm extends StatelessWidget {
           const SizedBox(height: 16),
           roundtripFields!,
         ],
-        if (flightFields != null) ...[
+        if (!stacked && flightFields != null) ...[
           const SizedBox(height: 16),
           flightFields!,
         ],
@@ -307,6 +316,8 @@ class CompanyPlanRideForm extends StatelessWidget {
           selectedCategory: selectedCategory,
           onCategoryChanged: onCategoryChanged,
           unsuitableCategories: unsuitableCategories,
+          categoryPhotoUrls: categoryPhotoUrls,
+          categoryPassengerCaps: categoryPassengerCaps,
         ),
         if (capacityWarning != null && capacityWarning!.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
@@ -545,6 +556,8 @@ class _TypeCards extends StatelessWidget {
     this.selectedCategory,
     this.onCategoryChanged,
     this.unsuitableCategories = const <CompanyPlanVehicleCategory>{},
+    this.categoryPhotoUrls = const <CompanyPlanVehicleCategory, String>{},
+    this.categoryPassengerCaps = const <CompanyPlanVehicleCategory, int>{},
   });
 
   final AppLanguage language;
@@ -557,6 +570,8 @@ class _TypeCards extends StatelessWidget {
   final CompanyPlanVehicleCategory? selectedCategory;
   final ValueChanged<CompanyPlanVehicleCategory>? onCategoryChanged;
   final Set<CompanyPlanVehicleCategory> unsuitableCategories;
+  final Map<CompanyPlanVehicleCategory, String> categoryPhotoUrls;
+  final Map<CompanyPlanVehicleCategory, int> categoryPassengerCaps;
 
   Key _categoryKey(CompanyPlanVehicleCategory category) {
     return switch (category) {
@@ -595,14 +610,25 @@ class _TypeCards extends StatelessWidget {
                     language,
                   ),
                   contract: visuals,
+                  vehiclePhotoUrl: categoryPhotoUrls[category],
                   height: vehicleVisualHeight,
                 ),
                 title: companyPlanVehicleCategoryLabel(category, language),
                 subtitle: [
-                  companyPlanVehicleTypeCapacityLabel(
-                    companyPlanVehicleTypeForCategory(category),
-                    language,
-                  ),
+                  () {
+                    final cap = categoryPassengerCaps[category];
+                    if (cap == null || cap <= 0) {
+                      return companyPlanVehicleTypeCapacityLabel(
+                        companyPlanVehicleTypeForCategory(category),
+                        language,
+                      );
+                    }
+                    return language == AppLanguage.nl ||
+                            language == AppLanguage.fr ||
+                            language == AppLanguage.es
+                        ? '1–$cap pers.'
+                        : '1–$cap pax';
+                  }(),
                   for (final badge in badges[category] ?? const <CompanyPlanVehicleBadge>[])
                     companyPlanVehicleBadgeLabel(badge, language),
                   if ((unavailableReasons[category] ?? '').isNotEmpty)
@@ -740,11 +766,9 @@ class _CustomerField extends StatelessWidget {
       displayStringForOption: (item) => item.displayName,
       optionsBuilder: (value) {
         final needle = value.text.trim().toLowerCase();
-        if (needle.isEmpty) return customers.take(8);
+        if (needle.isEmpty) return customers.take(40);
         return customers.where(
-          (item) =>
-              !item.isArchived &&
-              item.displayName.toLowerCase().contains(needle),
+          (item) => companyCustomerListItemMatches(item, needle),
         );
       },
       onSelected: onSelected,

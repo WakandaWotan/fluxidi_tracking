@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/company/company_plan_assignment.dart';
+import 'package:fluxidi_tracking/company/company_plan_media.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_layout.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 import 'package:flutter/widgets.dart';
@@ -122,5 +123,30 @@ void main() {
       ),
       inInclusiveRange(360, 520),
     );
+  });
+
+  test('category cards reuse the company vehicle photo and real capacity', () {
+    const tesla = 'https://fluxidi.workers.dev/vehicles/tesla.jpg';
+    final vehicles = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'vehicle_id': 'vh_tesla',
+        'vehicle_type': 'sedan',
+        'passenger_capacity': 3,
+        'is_active': true,
+        'vehicle_photo_url': tesla,
+      },
+      <String, dynamic>{
+        'vehicle_id': 'vh_vito',
+        'vehicle_type': 'minivan',
+        'passenger_capacity': 7,
+        'is_active': true,
+      },
+    ];
+    final photos = companyPlanCategoryPhotoUrls(vehicles: vehicles);
+    final caps = companyPlanCategoryPassengerCaps(vehicles: vehicles);
+    expect(photos[CompanyPlanVehicleCategory.sedan], tesla);
+    expect(photos.containsKey(CompanyPlanVehicleCategory.minivan), isFalse);
+    expect(caps[CompanyPlanVehicleCategory.sedan], 3);
+    expect(caps[CompanyPlanVehicleCategory.minivan], 7);
   });
 }

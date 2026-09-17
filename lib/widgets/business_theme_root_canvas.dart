@@ -64,6 +64,7 @@ class BusinessThemeRootCanvas extends StatelessWidget {
   const BusinessThemeRootCanvas({
     super.key,
     required this.child,
+    this.footer,
     this.wrapSafeArea = true,
   });
 
@@ -75,6 +76,7 @@ class BusinessThemeRootCanvas extends StatelessWidget {
   );
 
   final Widget child;
+  final Widget? footer;
   final bool wrapSafeArea;
 
   @override
@@ -99,6 +101,15 @@ class BusinessThemeRootCanvas extends StatelessWidget {
                 key: scaffoldKey,
                 backgroundColor: businessThemeRootBackground(preset),
                 body: wrapSafeArea ? SafeArea(child: gradient) : gradient,
+                bottomNavigationBar: footer == null
+                    ? null
+                    : Material(
+                        color: palette.background,
+                        child: SafeArea(
+                          top: false,
+                          child: footer!,
+                        ),
+                      ),
               ),
             );
           },

@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/company/brand_signature_gold_windows_layout.dart';
@@ -362,4 +365,109 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'compact Windows Gold keeps Terug naar startpagina pinned and focused',
+    (tester) async {
+      const size = Size(1100, 700);
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var openedStart = 0;
+      var clearedCompany = 0;
+      final focusNode = FocusNode();
+      addTearDown(focusNode.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: size.width,
+              height: size.height,
+              child: BrandSignatureGoldWindowsPinnedHome(
+                pinColor: const Color(0xFF07080C),
+                children: [
+                  const SizedBox(height: 220, child: Text('header')),
+                  for (var i = 0; i < 10; i++)
+                    SizedBox(
+                      height: 140,
+                      child: Text('tile $i'),
+                    ),
+                ],
+                backToStart: Semantics(
+                  button: true,
+                  enabled: true,
+                  label: 'Terug naar startpagina',
+                  child: Tooltip(
+                    message: 'Terug naar startpagina',
+                    child: OutlinedButton.icon(
+                      key: const Key('fluxidi_back_to_start'),
+                      focusNode: focusNode,
+                      onPressed: () {
+                        openedStart += 1;
+                      },
+                      icon: const Icon(Icons.home_outlined),
+                      label: const Text('Terug naar startpagina'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final back = find.byKey(const Key('fluxidi_back_to_start'));
+      expect(back, findsOneWidget);
+      expect(find.byKey(kBrandSignatureGoldWindowsPinnedBackSlotKey), findsOneWidget);
+      final backRect = tester.getRect(back);
+      expect(backRect.top, greaterThanOrEqualTo(0));
+      expect(backRect.bottom, lessThanOrEqualTo(size.height + 0.5));
+      expect(backRect.height, greaterThanOrEqualTo(44));
+      expect(
+        tester.getSemantics(back),
+        matchesSemantics(
+          label: 'Terug naar startpagina',
+          isButton: true,
+          isEnabled: true,
+          isFocusable: true,
+          hasTapAction: true,
+          hasEnabledState: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      focusNode.requestFocus();
+      await tester.pump();
+      expect(focusNode.hasFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(openedStart, 1);
+      expect(clearedCompany, 0);
+
+      await tester.tap(back);
+      await tester.pump();
+      expect(openedStart, 2);
+      expect(clearedCompany, 0);
+    },
+  );
+
+  test('business home start navigation never clears the company session', () {
+    final source = File(
+      '${Directory.current.path}/lib/main_parts/business_home_page_state.dart',
+    ).readAsStringSync();
+    expect(source.contains('_openRoleEntryKeepCompanySession'), isTrue);
+    final backFn = source.split('void _openRoleEntryKeepCompanySession()')[1];
+    final body = backFn.split('Widget _businessBackToStartButton()')[0];
+    expect(body.contains('clearLocalCompanyState'), isFalse);
+    expect(body.contains('RoleEntryPage'), isTrue);
+    expect(
+      source.contains('onPressed: _openRoleEntryKeepCompanySession'),
+      isTrue,
+    );
+    expect(
+      source.contains("value == 'switch'") &&
+          source.contains('_switchCompany(context)'),
+      isTrue,
+    );
+  });
 }

@@ -32,9 +32,18 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:fluxidi_tracking/active_local_customer_store.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
+import 'package:fluxidi_tracking/customer/customer_home_desktop.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
+import 'package:fluxidi_tracking/customer/local_qa_customer_session.dart';
+import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
+import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
+import 'package:fluxidi_tracking/limousine/limousine_current_location.dart';
+import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
@@ -142,6 +151,7 @@ import 'package:fluxidi_tracking/company/company_driver_agenda_color_chips.dart'
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_ops_api.dart';
 import 'package:fluxidi_tracking/company/company_ops_workspace_page.dart';
+import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_customers_page.dart';
 import 'package:fluxidi_tracking/company/company_dashboard_layout.dart';
 import 'package:fluxidi_tracking/company/brand_signature_gold_windows_layout.dart';
@@ -155,6 +165,10 @@ import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:fluxidi_tracking/driver/trip_history_booking_detail_http.dart';
 import 'package:fluxidi_tracking/driver/trip_history_booking_detail_repository.dart';
 import 'package:fluxidi_tracking/payment/invoice_pdf_pending.dart';
+import 'package:fluxidi_tracking/receipt/register_receipt_compat.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule_page.dart';
+import 'package:fluxidi_tracking/company/company_timezone.dart';
 import 'package:fluxidi_tracking/company/booking_list_mutation_reload.dart';
 import 'package:fluxidi_tracking/widgets/booking_list_load_more_bar.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -184,7 +198,6 @@ import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 import 'package:fluxidi_tracking/fluxidi_host_form_factor.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_gate_page.dart';
-import 'airport/airport_page.dart';
 import 'driver_login_qr_scanner_page.dart';
 import 'events/events_page.dart';
 import 'hotels/hotels_page.dart';
@@ -301,6 +314,9 @@ import 'navigation/nav_engine/nav_field_diagnostics.dart';
 import 'navigation/presentation/driver_ride_meters_notifier.dart';
 import 'navigation/nav_diagnostics_recorder.dart';
 
+import 'nearby/stap3_flow_keys.dart';
+import 'role_entry/role_entry_carousel_host.dart';
+import 'role_entry/role_entry_role_card.dart';
 import 'widgets/cockpit_widget.dart';
 import 'widgets/direct_ride_destination_dialog.dart';
 import 'widgets/direct_ride_estimate_panel.dart';
@@ -2144,8 +2160,26 @@ void _registerComplianceRegisterReceiptBridge() {
       );
     }
     if (!context.mounted) return;
-    final item = _TripHistoryItem.fromJson(hydratedJson);
     final key = ComplianceLedgerReader.groupKeyFor(entry);
+    late final _TripHistoryItem item;
+    try {
+      item = _TripHistoryItem.fromJson(hydratedJson);
+    } catch (err) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][VIEW_DETAILS] key=$key status=compat_error reason=${_shortErrorForDiag(err)}',
+      );
+      if (!context.mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _RegisterReceiptOpenErrorPage(
+            reference: entry.bookingId.trim().isNotEmpty
+                ? entry.bookingId.trim()
+                : entry.tripId.trim(),
+          ),
+        ),
+      );
+      return;
+    }
     switch (action) {
       case ComplianceRegisterReceiptAction.viewDetails:
         await Navigator.of(context).push(
@@ -2791,6 +2825,28 @@ class DriverHomePage extends StatefulWidget {
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
+}
+
+class _RegisterReceiptOpenErrorPage extends StatelessWidget {
+  const _RegisterReceiptOpenErrorPage({required this.reference});
+
+  final String reference;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(_receiptText('receiptTitle'))),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Text(
+          [
+            _receiptText('registerDetailsFailed'),
+            if (reference.trim().isNotEmpty) reference.trim(),
+          ].join('\n'),
+        ),
+      ),
+    );
+  }
 }
 
 class _RideReceiptPage extends StatelessWidget {

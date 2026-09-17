@@ -294,6 +294,12 @@ CompanyPlanVehicleCategory? classifyCompanyPlanVehicleCategory(
   if (companyPlanVehicleLooksLikeMinivan(raw)) {
     return CompanyPlanVehicleCategory.minivan;
   }
+  if (_tokenHas(token, const ['model y', 'model_y'])) {
+    return CompanyPlanVehicleCategory.suv;
+  }
+  if (_tokenHas(token, const ['tesla', 'model 3', 'model_3', 'model s'])) {
+    return CompanyPlanVehicleCategory.sedan;
+  }
   if (companyPlanVehicleLooksLikeSedan(raw)) {
     return CompanyPlanVehicleCategory.sedan;
   }

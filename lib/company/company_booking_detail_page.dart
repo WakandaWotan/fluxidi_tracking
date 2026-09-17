@@ -36,6 +36,12 @@ const Key kCompanyAgendaRescheduleButtonKey = Key(
 );
 const Key kCompanyAgendaPhoneConfirmKey = Key('company_agenda_phone_confirm');
 const Key kCompanyAgendaAssignDriverKey = Key('company_agenda_assign_driver');
+const Key kCompanyAgendaAssignedStoredKey = Key(
+  'company_agenda_assigned_stored',
+);
+const Key kCompanyAgendaAssignmentPendingKey = Key(
+  'company_agenda_assignment_pending',
+);
 const Key kCompanyAgendaAssignVehicleKey = Key('company_agenda_assign_vehicle');
 const Key kCompanyAgendaAssignChoicesStatusKey = Key(
   'company_agenda_assign_choices_status',
@@ -44,6 +50,12 @@ const Key kCompanyAgendaOverlapPreviewKey = Key(
   'company_agenda_overlap_preview',
 );
 const Key kCompanyAgendaCancelButtonKey = Key('company_agenda_cancel_button');
+const Key kCompanyBookingDetailPriceBreakdownKey = Key(
+  'company_booking_detail_price_breakdown',
+);
+const Key kCompanyBookingDetailPriceBreakdownMissingKey = Key(
+  'company_booking_detail_price_breakdown_missing',
+);
 
 enum CompanyBookingOpenedFrom { quote, bookingsList }
 
@@ -196,10 +208,26 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
   }
 
   bool get _assigned {
-    return _legOrRecordText(const ['assigned_driver_id', 'assignedDriverId'])
-            .isNotEmpty ||
-        _legOrRecordText(const ['assigned_vehicle_id', 'assignedVehicleId'])
-            .isNotEmpty;
+    return _storedDriverId.isNotEmpty || _storedVehicleId.isNotEmpty;
+  }
+
+  /// The assignment the server actually holds.
+  ///
+  /// Kept apart from [_driverId] / [_vehicleId], which are only the operator's
+  /// current selection. Showing the selection as "Assigned" made a rejected
+  /// change look accepted.
+  String get _storedDriverId =>
+      _legOrRecordText(const ['assigned_driver_id', 'assignedDriverId']);
+
+  String get _storedVehicleId =>
+      _legOrRecordText(const ['assigned_vehicle_id', 'assignedVehicleId']);
+
+  /// A different crew is selected than the one on the server.
+  bool get _hasPendingAssignmentChange {
+    final driver = (_driverId ?? '').trim();
+    final vehicle = (_vehicleId ?? '').trim();
+    if (driver.isEmpty && vehicle.isEmpty) return false;
+    return driver != _storedDriverId || vehicle != _storedVehicleId;
   }
 
   Future<void> _load() async {
@@ -329,17 +357,25 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
       if (!mounted) return;
       setState(() => _saving = false);
     } on CompanyAgendaException catch (error) {
+      // A refusal is definite: the server kept the existing assignment, so
+      // only the message changes and the stored crew stays as it was.
       if (!mounted) return;
       setState(() {
         _saving = false;
         _assignError = _agendaExceptionText(error);
       });
     } catch (_) {
+      // An uncertain outcome (network, timeout) may or may not have applied.
+      // Read the server back rather than leaving a guess on screen.
       if (!mounted) return;
-      setState(() {
-        _saving = false;
-        _assignError = kCompanyAgendaSaveFailed.of(_lang);
-      });
+      setState(() => _assignError = kCompanyAgendaSaveFailed.of(_lang));
+      try {
+        await _load();
+      } catch (_) {
+        // Keep the refusal message; the next open re-reads anyway.
+      }
+      if (!mounted) return;
+      setState(() => _saving = false);
     }
   }
 
@@ -515,6 +551,7 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
       Map<String, dynamic>.from(_booking.isEmpty ? _record : _booking),
     ) ??
         companyFixedPriceSnapshotOf(_record);
+    final quoteBreakdown = resolveCompanyBookingStoredBreakdown(_row);
     final note = _text(const ['note']);
     final accepted = _flag(const ['assignment_accepted', 'driver_accepted']);
     final phoneAt = _text(const ['phone_confirmed_at', 'phoneConfirmedAt']);
@@ -699,6 +736,7 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                             '${distance.toStringAsFixed(1).replaceAll('.', ',')} km',
                           ),
                         ExpansionTile(
+                          key: kCompanyBookingDetailPriceBreakdownKey,
                           tilePadding: EdgeInsets.zero,
                           title: Text(kCompanyAgendaPriceBreakdown.of(_lang)),
                           children: [
@@ -706,6 +744,31 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                               CompanyFixedPriceBreakdown(
                                 language: _lang,
                                 snapshot: snapshot,
+                              )
+                            else if (quoteBreakdown != null)
+                              for (final line
+                                  in formatCompanyPlanQuoteBreakdownLines(
+                                    quoteBreakdown,
+                                    language: _lang,
+                                    currency: currency,
+                                  ))
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(line),
+                                )
+                            else
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  amount == null
+                                      ? kCompanyAgendaPriceAmountMissing.of(
+                                          _lang,
+                                        )
+                                      : kCompanyAgendaPriceBreakdownUnavailable
+                                          .of(_lang),
+                                  key:
+                                      kCompanyBookingDetailPriceBreakdownMissingKey,
+                                ),
                               ),
                           ],
                         ),
@@ -721,11 +784,22 @@ class _CompanyBookingDetailPageState extends State<CompanyBookingDetailPage> {
                         children: [
                           if (_assigned)
                             Text(
-                              '${kCompanyAgendaAssigned.of(_lang)}: ${_driverLabel(_driverId)} · ${_vehicleLabel(_vehicleId)}',
+                              '${kCompanyAgendaAssigned.of(_lang)}: '
+                              '${_driverLabel(_storedDriverId)} · '
+                              '${_vehicleLabel(_storedVehicleId)}',
+                              key: kCompanyAgendaAssignedStoredKey,
                             )
                           else
                             Text(
                               kCompanyCustomerQuoteAssignmentPending.of(_lang),
+                            ),
+                          // Only a server-accepted change moves the line above.
+                          if (_hasPendingAssignmentChange)
+                            Text(
+                              '${kCompanyAgendaAssignmentPendingChange.of(_lang)}: '
+                              '${_driverLabel(_driverId)} · '
+                              '${_vehicleLabel(_vehicleId)}',
+                              key: kCompanyAgendaAssignmentPendingKey,
                             ),
                           if (_assigned)
                             Text(

@@ -5,36 +5,52 @@ class FluxidiBackToStartButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final label = _tr(
+      nl: 'Terug naar startpagina',
+      en: 'Back to start page',
+      fr: 'Retour à l’accueil',
+      es: 'Volver a la pantalla inicial',
+    );
     return SizedBox(
       width: double.infinity,
-      child: OutlinedButton.icon(
-        key: const Key('fluxidi_back_to_start'),
-        onPressed: () {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const RoleEntryPage()),
-            (route) => false,
-          );
-        },
-        icon: const Icon(Icons.home_outlined),
-        label: Text(
-          _tr(
-            nl: 'Terug naar startpagina',
-            en: 'Back to start page',
-            fr: 'Retour à l’accueil',
-            es: 'Volver a la pantalla inicial',
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: label,
+        child: Tooltip(
+          message: label,
+          child: OutlinedButton.icon(
+          key: const Key('fluxidi_back_to_start'),
+          onPressed: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const RoleEntryPage()),
+              (route) => false,
+            );
+          },
+          icon: const Icon(Icons.home_outlined),
+          label: Text(label),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFE5B641),
+            backgroundColor: const Color(0xFF07080C),
+            minimumSize: const Size(0, 48),
+            side: BorderSide(
+              color: const Color(0xFFE5B641).withOpacity(0.7),
+              width: 1.1,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+          ).copyWith(
+            overlayColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.focused) ||
+                  states.contains(WidgetState.hovered)) {
+                return const Color(0xFFE5B641).withOpacity(0.16);
+              }
+              return null;
+            }),
           ),
         ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFFE5B641),
-          backgroundColor: const Color(0xFF07080C),
-          side: BorderSide(
-            color: const Color(0xFFE5B641).withOpacity(0.7),
-            width: 1.1,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
         ),
       ),
     );

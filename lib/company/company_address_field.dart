@@ -72,6 +72,19 @@ class CompanyPlanCanonicalAddress {
         );
 }
 
+String companyAddressNormalizedToken(String raw) {
+  return raw.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+}
+
+bool companyAddressSuggestionMatchesQuery(String query, String suggestion) {
+  final original = companyAddressNormalizedToken(query);
+  final label = companyAddressNormalizedToken(suggestion);
+  if (original.isEmpty || label.isEmpty) return false;
+  if (label.contains(original) || original.contains(label)) return true;
+  final street = original.split(RegExp(r'\d')).first.trim();
+  return street.length >= 4 && label.contains(street);
+}
+
 String companyPlanCanonicalAddressLine({
   String street = '',
   String houseNumber = '',
@@ -271,14 +284,9 @@ Future<void> companyAddressGeocodeIfNeeded(
   if (controller.textController.text.trim() != query) return;
   final best = limousinePreferStreetLevelSuggestion(query, result.suggestions);
   if (best == null || !best.hasCoordinates) return;
-  final kept = limousinePreferCanonicalLabel(
-    original: query,
-    suggestion: best.label,
-  );
+  if (!companyAddressSuggestionMatchesQuery(query, best.label)) return;
   controller.acceptCopy(
-    LimousineAddressValue(
-      displayText: kept,
-      canonicalLabel: kept,
+    value.copyWith(
       lat: best.lat,
       lon: best.lon,
       placeId: best.placeId,

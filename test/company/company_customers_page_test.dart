@@ -391,7 +391,7 @@ void main() {
     expect(find.text(kCompanyCustomersEmptySearch.of(AppLanguage.nl)), findsNothing);
   });
 
-  testWidgets('CRM dossier has no calendar and no Rit plannen', (tester) async {
+  testWidgets('CRM dossier has Rit plannen and no calendar', (tester) async {
     final repo = _FakeCustomersRepository(
       pages: <CompanyCustomerListPage>[
         CompanyCustomerListPage(
@@ -415,7 +415,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kCompanyCustomerDossierKey), findsOneWidget);
     expect(find.byKey(kCompanyCustomersEditButtonKey), findsOneWidget);
-    expect(find.text(kCompanyAgendaPlanRide.of(AppLanguage.nl)), findsNothing);
+    expect(find.byKey(kCompanyCustomersPlanButtonKey), findsOneWidget);
+    expect(find.text(kCompanyAgendaPlanRide.of(AppLanguage.nl)), findsOneWidget);
     expect(find.byKey(kCompanyAgendaPaneKey), findsNothing);
   });
 

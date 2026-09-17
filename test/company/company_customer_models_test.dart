@@ -154,7 +154,7 @@ void main() {
       expect(local.normalized, '0470123456');
       expect(local.e164, isEmpty);
       final withCode = normalizeCompanyCustomerPhone('0470123456', '32');
-      expect(withCode.e164, '+320470123456');
+      expect(withCode.e164, '+32470123456');
       final e164 = normalizeCompanyCustomerPhone('+442071838750', '');
       expect(e164.e164, '+442071838750');
     });

@@ -161,10 +161,38 @@ String companyAgendaVehicleLabel(Map<String, dynamic> raw) {
   return id;
 }
 
+int _companyAgendaCountField(Map<String, dynamic> raw, List<String> keys) {
+  for (final key in keys) {
+    final value = raw[key];
+    if (value is num && value.isFinite) return value.round();
+    final parsed = int.tryParse(value?.toString().trim() ?? '');
+    if (parsed != null && parsed >= 0) return parsed;
+  }
+  return 0;
+}
+
 int companyAgendaVehicleCapacity(Map<String, dynamic> raw) {
-  final value = raw['passenger_capacity'] ?? raw['passengerCapacity'] ?? raw['seats'];
-  if (value is num) return value.round();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
+  return _companyAgendaCountField(raw, const [
+    'passenger_capacity',
+    'passengerCapacity',
+    'max_passengers',
+    'maxPassengers',
+    'seats',
+    'capacity',
+    'pax',
+  ]);
+}
+
+int companyAgendaVehicleBagCapacity(Map<String, dynamic> raw) {
+  return _companyAgendaCountField(raw, const [
+    'luggage_capacity',
+    'luggageCapacity',
+    'bag_capacity',
+    'bagCapacity',
+    'bags',
+    'max_bags',
+    'maxBags',
+  ]);
 }
 
 String companyAgendaResolvedPhotoUrl(String raw) {
@@ -176,7 +204,17 @@ String companyAgendaResolvedPhotoUrl(String raw) {
 }
 
 String companyAgendaVehicleId(Map<String, dynamic> raw) {
-  return (raw['vehicle_id'] ?? raw['vehicleId'] ?? '').toString().trim();
+  for (final key in const [
+    'vehicle_id',
+    'vehicleId',
+    'public_vehicle_id',
+    'publicVehicleId',
+    'id',
+  ]) {
+    final id = (raw[key] ?? '').toString().trim();
+    if (id.isNotEmpty) return id;
+  }
+  return '';
 }
 
 bool companyAgendaFlagIsActive(Object? raw) {

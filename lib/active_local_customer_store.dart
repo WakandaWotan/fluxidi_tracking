@@ -16,6 +16,14 @@ class ActiveLocalCustomerStore {
 
   String? _cache;
 
+  String peekCachedCustomerId() => (_cache ?? '').trim();
+
+  void rememberActiveCustomerId(String customerId) {
+    final normalized = customerId.trim();
+    if (normalized.isEmpty) return;
+    _cache = normalized;
+  }
+
   String generateCustomerId() {
     final random = math.Random.secure();
     final partA = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
@@ -67,6 +75,7 @@ class ActiveLocalCustomerStore {
   Future<void> setActiveCustomerId(String customerId) async {
     final normalized = customerId.trim();
     if (normalized.isEmpty) return;
+    rememberActiveCustomerId(normalized);
     final file = await _file();
     await file.writeAsString(
       jsonEncode(<String, dynamic>{

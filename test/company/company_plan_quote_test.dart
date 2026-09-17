@@ -212,6 +212,37 @@ void main() {
     expect(find.text('Geen bruikbare wegroute tussen deze adressen.'), findsOneWidget);
   });
 
+  testWidgets('a calculated distance is not shown as a price', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: CompanyPlanQuotePanel(
+            language: AppLanguage.nl,
+            loading: false,
+            result: CompanyPlanQuoteResult(
+              fingerprint: 'route-only',
+              distanceKm: 34.2,
+              durationMin: 29,
+              currency: 'EUR',
+              pricingSource: 'calculator_off',
+              priceAvailable: false,
+              calculatorOff: true,
+            ),
+            error: null,
+            onRetry: _noop,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('29 min · 34,2 km'), findsOneWidget);
+    expect(find.textContaining('€'), findsNothing);
+    expect(
+      find.text(kCompanyAgendaQuoteUnavailable.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    expect(find.text(kCompanyAgendaRouteRetry.of(AppLanguage.nl)), findsNothing);
+  });
+
   test('drawn addresses without a quote are calculating, not route_required', () {
     final from = _selected('Gent');
     final to = _selected('Ronse', lat: 50.74, lon: 3.60);

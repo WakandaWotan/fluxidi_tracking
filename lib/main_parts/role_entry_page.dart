@@ -1,7 +1,19 @@
 part of '../main.dart';
 
 class RoleEntryPage extends StatelessWidget {
-  const RoleEntryPage({super.key});
+  const RoleEntryPage({
+    super.key,
+    this.autoAdvanceCarousel = true,
+    this.localQaCustomerSession,
+  });
+
+  /// Production default is true. Widget tests turn this off so a parent
+  /// rebuild cannot look like a carousel tap and `pumpAndSettle` can finish.
+  final bool autoAdvanceCarousel;
+
+  /// Compile-time local_test access. Tests inject a fake; production omits it.
+  final LocalQaCustomerSessionAccess? localQaCustomerSession;
+
   static const Duration _backgroundCarouselInterval = Duration(
     milliseconds: 3200,
   );
@@ -216,150 +228,22 @@ class RoleEntryPage extends StatelessWidget {
     // ~200 px width without affecting portrait or tablet layouts.
     bool compact = false,
   }) {
-    const double normalFillOpacity = 0.09;
-    const double activeFillOpacity = 0.14;
-    const double normalBorderOpacity = 0.56;
-    const double activeBorderOpacity = 0.76;
-    const double normalGlowOpacity = 0.08;
-    const double activeGlowOpacity = 0.15;
-    final fillOpacity = highlighted ? activeFillOpacity : normalFillOpacity;
-    final borderOpacity = highlighted
-        ? activeBorderOpacity
-        : normalBorderOpacity;
-    final glowOpacity = highlighted ? activeGlowOpacity : normalGlowOpacity;
-    final double iconCircleSize = compact ? 48.0 : 74.0;
-    final double iconGlyphSize = compact ? 26.0 : 40.0;
-    final double iconRowGap = compact ? 8.0 : 10.0;
-    final double horizontalPadding = compact ? 9.0 : 12.0;
-    final double verticalPadding = compact ? 6.0 : 8.0;
-    final double titleFontSize = compact ? 14.0 : 18.2;
-    final double subtitleFontSize = compact ? 9.6 : 10.8;
-    final double chevronSize = compact ? 16.0 : 21.0;
-    final double chevronGap = compact ? 2.0 : 4.0;
-
-    return SizedBox(
-      key: key,
-      height: height,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFFFFFFFF).withOpacity(fillOpacity),
-                  const Color(0xFFFFFFFF).withOpacity(fillOpacity * 0.52),
-                  const Color(0xFF111827).withOpacity(highlighted ? 0.1 : 0.08),
-                ],
-              ),
-              border: Border.all(
-                color: kFluxidiYellow.withOpacity(borderOpacity),
-                width: highlighted ? 1.1 : 1.0,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: kFluxidiYellow.withOpacity(glowOpacity),
-                  blurRadius: highlighted ? 12 : 9,
-                  spreadRadius: highlighted ? 0.26 : 0.12,
-                ),
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.18),
-                  blurRadius: 9,
-                  offset: const Offset(0, 6),
-                ),
-                BoxShadow(
-                  color: Colors.white.withOpacity(0.06),
-                  blurRadius: 2,
-                  offset: const Offset(0, -1),
-                ),
-              ],
-            ),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: horizontalPadding,
-                vertical: verticalPadding,
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: iconCircleSize,
-                    height: iconCircleSize,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF111827).withOpacity(0.08),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: kFluxidiYellow.withOpacity(0.64),
-                      ),
-                    ),
-                    child: Icon(
-                      icon,
-                      color: kFluxidiYellow,
-                      size: iconGlyphSize,
-                    ),
-                  ),
-                  SizedBox(width: iconRowGap),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: const Color(0xFFFDFDFD),
-                            fontSize: titleFontSize,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.15,
-                            shadows: const [
-                              Shadow(
-                                color: Color(0x8A000000),
-                                blurRadius: 6,
-                                offset: Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: subtitleFontSize,
-                            fontWeight: FontWeight.w600,
-                            height: 1.14,
-                            shadows: const [
-                              Shadow(
-                                color: Color(0x70000000),
-                                blurRadius: 4,
-                                offset: Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(width: chevronGap),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: kFluxidiYellow.withOpacity(0.98),
-                    size: chevronSize,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+    return FocusTraversalOrder(
+      order: NumericFocusOrder(switch (key) {
+        kRoleEntryCustomerKey => 1,
+        kRoleEntryBusinessKey => 2,
+        kRoleEntryDriverKey => 3,
+        _ => 9,
+      }),
+      child: RoleEntryRoleCard(
+        key: key,
+        title: title,
+        subtitle: subtitle,
+        onPressed: onTap,
+        icon: icon,
+        height: height,
+        highlighted: highlighted,
+        compact: compact,
       ),
     );
   }
@@ -417,72 +301,198 @@ class RoleEntryPage extends StatelessWidget {
     );
   }
 
+  Future<void> _openExistingCustomerHome(
+    NavigatorState navigator, {
+    required CustomerSession session,
+    required String reason,
+  }) async {
+    ActiveLocalCustomerStore.instance.rememberActiveCustomerId(
+      session.customerId,
+    );
+    unawaited(
+      ActiveLocalCustomerStore.instance.setActiveCustomerId(session.customerId),
+    );
+    _clearCachedCustomerProfile();
+    CustomerProfileStore.instance.invalidateCache();
+    CustomerBookingsStore.instance.invalidateCache();
+    if (!navigator.mounted) return;
+    navigator.pushReplacement(
+      MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+    );
+    unawaited(
+      _bootstrapCustomerSessionAndMergeBookings(reason: reason),
+    );
+    unawaited(
+      _syncCustomerProfileFromBackendBestEffort(reason: reason),
+    );
+  }
+
+  Future<void> _showLocalQaCustomerFailure(
+    NavigatorState navigator,
+    Object err,
+  ) async {
+    if (!navigator.mounted) return;
+    final raw = err.toString();
+    final safeReason =
+        raw.contains('cus_') || raw.toLowerCase().contains('token')
+        ? ''
+        : raw.replaceFirst('Bad state: ', '').trim();
+    final retry = await FluxidiResponsiveDialog.show<bool>(
+      context: navigator.context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          title: Text(
+            _t(
+              nl: 'Klantstart mislukt',
+              en: 'Customer start failed',
+              fr: 'Démarrage client échoué',
+              es: 'Inicio de cliente fallido',
+            ),
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            [
+              _t(
+                nl: 'De bestaande lokale klantsessie kon niet worden geopend. Geen sms, e-mail of productie-aanmelding.',
+                en: 'The existing local customer session could not be opened. No SMS, email, or production sign-in.',
+                fr: 'La session client locale existante n’a pas pu être ouverte.',
+                es: 'No se pudo abrir la sesión local existente.',
+              ),
+              if (safeReason.isNotEmpty) safeReason,
+            ].join('\n\n'),
+            style: TextStyle(color: Colors.white.withOpacity(0.86)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(
+                _t(
+                  nl: 'Annuleren',
+                  en: 'Cancel',
+                  fr: 'Annuler',
+                  es: 'Cancelar',
+                ),
+              ),
+            ),
+            FilledButton(
+              key: const Key('customer_local_qa_retry'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                _t(
+                  nl: 'Opnieuw proberen',
+                  en: 'Try again',
+                  fr: 'Réessayer',
+                  es: 'Reintentar',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (retry == true && navigator.mounted) {
+      await _goCustomer(navigator.context);
+    }
+  }
+
   Future<void> _goCustomer(BuildContext context) async {
     setAppRole(AppRole.customer);
+    // The role-card context is rebuilt whenever the carousel host paints a
+    // new frame. Capture the app Navigator before the first await so a
+    // decorative rebuild cannot cancel customer navigation.
+    final navigator = Navigator.of(context);
+    final qa = localQaCustomerSession ?? LocalQaCustomerSessionAccess.compiled();
+    if (qa.enabled) {
+      try {
+        final session = await qa.ensureExistingSession();
+        if (!navigator.mounted) return;
+        await _openExistingCustomerHome(
+          navigator,
+          session: session,
+          reason: 'customer_local_qa',
+        );
+      } catch (err) {
+        debugPrint('[CUSTOMER_SESSION][LOCAL_QA] ok=false reason=$err');
+        await _showLocalQaCustomerFailure(navigator, err);
+      }
+      return;
+    }
     final validSession = await CustomerSessionStore.instance.loadValidSession();
+    if (!navigator.mounted) return;
     if (validSession != null) {
-      await ActiveLocalCustomerStore.instance.setActiveCustomerId(
-        validSession.customerId,
-      );
-      _clearCachedCustomerProfile();
-      CustomerProfileStore.instance.invalidateCache();
-      CustomerBookingsStore.instance.invalidateCache();
-      await _bootstrapCustomerSessionAndMergeBookings(
+      await _openExistingCustomerHome(
+        navigator,
+        session: validSession,
         reason: 'customer_role_entry',
-      );
-      await _syncCustomerProfileFromBackendBestEffort(
-        reason: 'customer_role_entry',
-      );
-      if (!context.mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
       );
       return;
     }
-    await CustomerProfileStore.instance.ensureLegacyMigration();
-    final hasExistingLocalProfile = await CustomerProfileStore.instance
-        .hasResolvableLocalProfile();
-    if (!context.mounted) return;
+    var hasExistingLocalProfile = false;
+    try {
+      await CustomerProfileStore.instance.ensureLegacyMigration().timeout(
+        const Duration(seconds: 2),
+      );
+      hasExistingLocalProfile = await CustomerProfileStore.instance
+          .hasResolvableLocalProfile()
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    if (!navigator.mounted) return;
     final entryIntent = await _promptCustomerEntryIntent(
-      context,
+      navigator.context,
       hasExistingLocalProfile: hasExistingLocalProfile,
     );
-    if (!context.mounted || entryIntent == null) return;
-    if (entryIntent == _customerEntryPhoneLoginIntent) {
-      final sessionResult = await Navigator.of(context).push<CustomerSession?>(
+    if (!navigator.mounted || entryIntent == null) return;
+    var resolvedIntent = entryIntent;
+    if (resolvedIntent == _customerEntryPhoneLoginIntent) {
+      final sessionResult = await navigator.push<Object?>(
         MaterialPageRoute(builder: (_) => const CustomerPhoneRecoveryPage()),
       );
-      if (!context.mounted || sessionResult == null) return;
-      await ActiveLocalCustomerStore.instance.setActiveCustomerId(
-        sessionResult.customerId,
-      );
-      _clearCachedCustomerProfile();
-      CustomerProfileStore.instance.invalidateCache();
-      CustomerBookingsStore.instance.invalidateCache();
-      await _bootstrapCustomerSessionAndMergeBookings(
-        reason: 'customer_phone_login',
-      );
-      await _syncCustomerProfileFromBackendBestEffort(
-        reason: 'customer_phone_login',
-      );
-      if (!context.mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const CustomerHomePage()),
-      );
-      return;
+      if (!navigator.mounted || sessionResult == null) return;
+      if (sessionResult == CustomerPhoneRecoveryPage.newCustomerResult) {
+        resolvedIntent = _customerEntryNewIntent;
+      } else if (sessionResult is CustomerSession) {
+        await ActiveLocalCustomerStore.instance.setActiveCustomerId(
+          sessionResult.customerId,
+        );
+        _clearCachedCustomerProfile();
+        CustomerProfileStore.instance.invalidateCache();
+        CustomerBookingsStore.instance.invalidateCache();
+        if (!navigator.mounted) return;
+        navigator.pushReplacement(
+          MaterialPageRoute(builder: (_) => const CustomerHomePage()),
+        );
+        unawaited(
+          _bootstrapCustomerSessionAndMergeBookings(
+            reason: 'customer_phone_login',
+          ),
+        );
+        unawaited(
+          _syncCustomerProfileFromBackendBestEffort(
+            reason: 'customer_phone_login',
+          ),
+        );
+        return;
+      } else {
+        return;
+      }
     }
-    if (entryIntent == _customerEntryNewIntent) {
+    if (resolvedIntent == _customerEntryNewIntent) {
       await ActiveLocalCustomerStore.instance.createNewLocalCustomerId();
       _clearCachedCustomerProfile();
       CustomerProfileStore.instance.invalidateCache();
       CustomerBookingsStore.instance.invalidateCache();
-      if (!context.mounted) return;
-      Navigator.of(context).pushReplacement(
+      if (!navigator.mounted) return;
+      navigator.pushReplacement(
         MaterialPageRoute(builder: (_) => const CustomerOnboardingPage()),
       );
       return;
     }
-    if (!context.mounted) return;
     if (entryIntent == _customerEntryContinueIntent ||
         hasExistingLocalProfile) {
       final profile = await CustomerProfileStore.instance.load();
@@ -495,13 +505,14 @@ class RoleEntryPage extends StatelessWidget {
       CustomerProfileStore.instance.invalidateCache();
       CustomerBookingsStore.instance.invalidateCache();
       await _refreshCachedCustomerProfile();
-      if (!context.mounted) return;
-      Navigator.of(context).pushReplacement(
+      if (!navigator.mounted) return;
+      navigator.pushReplacement(
         MaterialPageRoute(builder: (_) => const CustomerHomePage()),
       );
       return;
     }
-    Navigator.of(context).pushReplacement(
+    if (!navigator.mounted) return;
+    navigator.pushReplacement(
       MaterialPageRoute(builder: (_) => const CustomerOnboardingPage()),
     );
   }
@@ -2555,7 +2566,10 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   Future<void> _goBusiness(BuildContext context) async {
+    final navigator = Navigator.of(context);
     await CompanySessionStore.instance.bootstrap();
+    if (!navigator.mounted) return;
+    context = navigator.context;
     if (CompanySessionStore.instance.hasValidCompanyContext) {
       final hasToken = await _hasUsableCompanyBootstrapToken(
         reason: 'role_entry',
@@ -2698,22 +2712,23 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   Future<void> _goDriver(BuildContext context) async {
+    final navigator = Navigator.of(context);
     DriverSessionStore.instance.prepareStandaloneDriverEntry();
     await DriverSessionStore.instance.bootstrap(driversNotifier.value);
     await DriverDocumentsStore.instance.load();
-    if (!context.mounted) return;
+    if (!navigator.mounted) return;
     final activeSession = activeDriverSessionNotifier.value;
     if (activeSession != null &&
         !_isCompanyAdminDriverViewSession(activeSession)) {
       setAppRole(AppRole.driver);
-      Navigator.of(context).pushReplacement(
+      navigator.pushReplacement(
         MaterialPageRoute(builder: (_) => const DriverHomePage()),
       );
     } else {
       if (_isCompanyAdminDriverViewSession(activeSession)) {
         debugPrint('[DRIVER_ADMIN_VIEW][IGNORE_FOR_NORMAL_LOGIN]');
       }
-      Navigator.of(context).pushReplacement(
+      navigator.pushReplacement(
         MaterialPageRoute(builder: (_) => const ChauffeurLoginPage()),
       );
     }
@@ -2729,25 +2744,16 @@ class RoleEntryPage extends StatelessWidget {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
       builder: (context, _, __) {
-        if (disableAnimations) {
-          return _buildScaffoldWithBackground(
-            context: context,
-            assets: carouselAssets,
-            activeBackgroundIndex: 0,
-          );
-        }
-        return StreamBuilder<int>(
-          initialData: 0,
-          stream: Stream<int>.periodic(
-            _backgroundCarouselInterval,
-            (tick) => (tick + 1) % carouselAssets.length,
-          ),
-          builder: (context, snapshot) {
-            final activeBackgroundIndex = snapshot.data ?? 0;
+        return RoleEntryCarouselHost(
+          assetCount: carouselAssets.length,
+          autoAdvance: autoAdvanceCarousel && !disableAnimations,
+          interval: _backgroundCarouselInterval,
+          builder: (context, activeBackgroundIndex, advanceBy) {
             return _buildScaffoldWithBackground(
               context: context,
               assets: carouselAssets,
               activeBackgroundIndex: activeBackgroundIndex,
+              onCarouselSwipe: advanceBy,
             );
           },
         );
@@ -2759,6 +2765,7 @@ class RoleEntryPage extends StatelessWidget {
     required BuildContext context,
     required List<String> assets,
     required int activeBackgroundIndex,
+    required void Function(int delta) onCarouselSwipe,
   }) {
     final viewportSize = MediaQuery.sizeOf(context);
     final isTabletPortrait = _isTabletPortrait(viewportSize);
@@ -2774,11 +2781,30 @@ class RoleEntryPage extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(
-              child: _buildBackgroundLayer(
-                assets: assets,
-                activeBackgroundIndex: activeBackgroundIndex,
-                isTabletPortrait: isTabletPortrait,
-                isPhoneLandscape: isScaffoldPhoneLandscape,
+              child: GestureDetector(
+                key: kRoleEntryCarouselBackgroundKey,
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragEnd: (details) {
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (velocity < -220) {
+                    onCarouselSwipe(1);
+                  } else if (velocity > 220) {
+                    onCarouselSwipe(-1);
+                  }
+                },
+                child: IgnorePointer(
+                  child: ExcludeSemantics(
+                    child: KeyedSubtree(
+                    key: roleEntryCarouselIndexKey(activeBackgroundIndex),
+                    child: _buildBackgroundLayer(
+                      assets: assets,
+                      activeBackgroundIndex: activeBackgroundIndex,
+                      isTabletPortrait: isTabletPortrait,
+                      isPhoneLandscape: isScaffoldPhoneLandscape,
+                    ),
+                    ),
+                  ),
+                ),
               ),
             ),
             Positioned.fill(
@@ -3011,13 +3037,22 @@ class RoleEntryPage extends StatelessWidget {
                                   top: resolvedLanguageTop,
                                   child: _languageSelectorPill(),
                                 ),
-                              Positioned.fill(
+                              Positioned(
                                 top: contentTop,
-                                child: SingleChildScrollView(
-                                  padding: EdgeInsets.only(
-                                    bottom: scrollBottomPadding,
+                                left: 0,
+                                right: 0,
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxHeight: math.max(
+                                      0.0,
+                                      constraints.maxHeight - contentTop,
+                                    ),
                                   ),
-                                  child: Column(
+                                  child: SingleChildScrollView(
+                                    padding: EdgeInsets.only(
+                                      bottom: scrollBottomPadding,
+                                    ),
+                                    child: Column(
                                     children: [
                                       Center(
                                         child: Column(
@@ -3120,15 +3155,15 @@ class RoleEntryPage extends StatelessWidget {
                                         // the gesture bar without
                                         // scrolling on common ~360 px tall
                                         // landscape phones.
-                                        Row(
+                                        FocusTraversalGroup(
+                                          policy: OrderedTraversalPolicy(),
+                                          child: Row(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.center,
                                           children: [
                                             Expanded(
                                               child: _roleCard(
-                                                key: const Key(
-                                                  'role_entry_customer',
-                                                ),
+                                                key: kRoleEntryCustomerKey,
                                                 title: _t(
                                                   nl: 'Klant',
                                                   en: 'Customer',
@@ -3154,9 +3189,7 @@ class RoleEntryPage extends StatelessWidget {
                                             SizedBox(width: cardGap),
                                             Expanded(
                                               child: _roleCard(
-                                                key: const Key(
-                                                  'role_entry_business',
-                                                ),
+                                                key: kRoleEntryBusinessKey,
                                                 title: _t(
                                                   nl: 'Bedrijf',
                                                   en: 'Business',
@@ -3183,6 +3216,7 @@ class RoleEntryPage extends StatelessWidget {
                                             SizedBox(width: cardGap),
                                             Expanded(
                                               child: _roleCard(
+                                                key: kRoleEntryDriverKey,
                                                 title: _t(
                                                   nl: 'Chauffeur',
                                                   en: 'Driver',
@@ -3204,15 +3238,18 @@ class RoleEntryPage extends StatelessWidget {
                                               ),
                                             ),
                                           ],
+                                        ),
                                         )
-                                      else ...[
+                                      else
+                                        FocusTraversalGroup(
+                                          policy: OrderedTraversalPolicy(),
+                                          child: Column(
+                                            children: [
                                         Center(
                                           child: SizedBox(
                                             width: roleCardWidth,
                                             child: _roleCard(
-                                              key: const Key(
-                                                'role_entry_customer',
-                                              ),
+                                              key: kRoleEntryCustomerKey,
                                               title: _t(
                                                 nl: 'Klant',
                                                 en: 'Customer',
@@ -3239,9 +3276,7 @@ class RoleEntryPage extends StatelessWidget {
                                           child: SizedBox(
                                             width: roleCardWidth,
                                             child: _roleCard(
-                                              key: const Key(
-                                                'role_entry_business',
-                                              ),
+                                              key: kRoleEntryBusinessKey,
                                               title: _t(
                                                 nl: 'Bedrijf',
                                                 en: 'Business',
@@ -3270,6 +3305,7 @@ class RoleEntryPage extends StatelessWidget {
                                           child: SizedBox(
                                             width: roleCardWidth,
                                             child: _roleCard(
+                                              key: kRoleEntryDriverKey,
                                               title: _t(
                                                 nl: 'Chauffeur',
                                                 en: 'Driver',
@@ -3291,6 +3327,8 @@ class RoleEntryPage extends StatelessWidget {
                                           ),
                                         ),
                                       ],
+                                          ),
+                                        ),
                                       SizedBox(height: sectionGap),
                                       Center(
                                         child: SizedBox(
@@ -3388,6 +3426,7 @@ class RoleEntryPage extends StatelessWidget {
                                     ],
                                   ),
                                 ),
+                              ),
                               ),
                             ],
                           ),

@@ -12,7 +12,7 @@ import 'package:fluxidi_tracking/company/company_dispatch.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 
 class _AssignAgendaRepository extends CompanyAgendaRepository {
-  _AssignAgendaRepository({this.assignError})
+  _AssignAgendaRepository({this.assignError, this.networkError = false})
     : super(
         scopeResolver: () => const <String, String>{
           'tenant_id': 'demo_company_p0',
@@ -25,25 +25,18 @@ class _AssignAgendaRepository extends CompanyAgendaRepository {
       );
 
   final CompanyAgendaException? assignError;
+  final bool networkError;
   int assignCalls = 0;
+  int unassignCalls = 0;
   String? lastDriverId;
   String? lastVehicleId;
   void Function(String driverId, String vehicleId)? onAssigned;
 
-  @override
-  Future<CompanyAgendaRide> assignRide({
+  CompanyAgendaRide _ride({
     required String bookingId,
     required String driverId,
-    String vehicleId = '',
-    int? revision,
-    String legId = '',
-    String legType = '',
-  }) async {
-    assignCalls += 1;
-    lastDriverId = driverId;
-    lastVehicleId = vehicleId;
-    onAssigned?.call(driverId, vehicleId);
-    if (assignError != null) throw assignError!;
+    required String vehicleId,
+  }) {
     return CompanyAgendaRide(
       bookingId: bookingId,
       customerId: 'cus_1',
@@ -57,6 +50,40 @@ class _AssignAgendaRepository extends CompanyAgendaRepository {
       durationUnknown: false,
       durationMin: 90,
     );
+  }
+
+  @override
+  Future<CompanyAgendaRide> assignRide({
+    required String bookingId,
+    required String driverId,
+    String vehicleId = '',
+    int? revision,
+    String legId = '',
+    String legType = '',
+  }) async {
+    assignCalls += 1;
+    lastDriverId = driverId;
+    lastVehicleId = vehicleId;
+    if (networkError) throw Exception('socket');
+    if (assignError != null) throw assignError!;
+    onAssigned?.call(driverId, vehicleId);
+    return _ride(
+      bookingId: bookingId,
+      driverId: driverId,
+      vehicleId: vehicleId,
+    );
+  }
+
+  @override
+  Future<CompanyAgendaRide> unassignRide({
+    required String bookingId,
+    int? revision,
+  }) async {
+    unassignCalls += 1;
+    lastDriverId = '';
+    lastVehicleId = '';
+    onAssigned?.call('', '');
+    return _ride(bookingId: bookingId, driverId: '', vehicleId: '');
   }
 }
 
@@ -77,6 +104,42 @@ Future<void> _pickAssignCombo(
   await tester.tap(choice);
   await tester.pumpAndSettle();
 }
+
+List<Map<String, dynamic>> _chrisWotanDrivers() => <Map<String, dynamic>>[
+  <String, dynamic>{
+    'driver_id': 'drv_christophe',
+    'display_name': 'Christophe',
+    'is_active': true,
+    'assigned_vehicle_id': 'vh_christophe',
+  },
+  <String, dynamic>{
+    'driver_id': 'drv_wotan',
+    'display_name': 'Wotan',
+    'is_active': true,
+    'assigned_vehicle_id': 'vh_wotan',
+  },
+];
+
+List<Map<String, dynamic>> _chrisWotanVehicles() => <Map<String, dynamic>>[
+  <String, dynamic>{
+    'vehicle_id': 'vh_christophe',
+    'vehicle_name': 'S-Klasse Christophe',
+    'license_plate': '1-FLX-001',
+    'passenger_capacity': 3,
+    'is_active': true,
+    'vehicle_type': 'sedan',
+    'assigned_driver_id': 'drv_christophe',
+  },
+  <String, dynamic>{
+    'vehicle_id': 'vh_wotan',
+    'vehicle_name': 'S-Klasse Wotan',
+    'license_plate': '1-FLX-002',
+    'passenger_capacity': 3,
+    'is_active': true,
+    'vehicle_type': 'sedan',
+    'assigned_driver_id': 'drv_wotan',
+  },
+];
 
 void main() {
   testWidgets('Toewijzen stays visible and overlap is shown', (tester) async {
@@ -427,5 +490,232 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Amira Hassan'), findsWidgets);
     expect(find.text(kCompanyAgendaNoOtherDriver.of(AppLanguage.nl)), findsNothing);
+  });
+
+  testWidgets('Christophe to Wotan keeps stored assignment distinct', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final stored = <String, String>{
+      'driver': 'drv_christophe',
+      'vehicle': 'vh_christophe',
+    };
+    var revision = 2;
+    var accepted = false;
+    final agenda = _AssignAgendaRepository();
+    Future<Map<String, dynamic>> loader(String id) async => <String, dynamic>{
+      'ok': true,
+      'status': 'PENDING',
+      'record': <String, dynamic>{
+        'booking_id': id,
+        'customer_name': 'Ada Lovelace',
+        'from': 'Gent',
+        'to': 'Ronse',
+        'pickup_iso': '2026-09-16T18:00:00.000Z',
+        'revision': revision,
+        'duration_min': 40,
+        'assigned_driver_id': stored['driver'],
+        'assigned_vehicle_id': stored['vehicle'],
+        'assignment_accepted': accepted,
+        'price_incl_vat': 87.9,
+        'currency': 'EUR',
+      },
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'agb_chris_wotan',
+          language: AppLanguage.nl,
+          agendaRepository: agenda,
+          loader: loader,
+          driversLoader: () async => _chrisWotanDrivers(),
+          vehiclesLoader: () async => _chrisWotanVehicles(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(kCompanyAgendaAssignedStoredKey), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Christophe'),
+    );
+    expect(find.textContaining('S-Klasse Christophe'), findsWidgets);
+    expect(find.text(kCompanyAgendaNotAccepted.of(AppLanguage.nl)), findsOneWidget);
+    expect(find.byKey(kCompanyAgendaAssignmentPendingKey), findsNothing);
+
+    await _pickAssignCombo(tester, 'drv_wotan|vh_wotan');
+    expect(find.byKey(kCompanyAgendaAssignmentPendingKey), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignmentPendingKey)).data,
+      contains('Wotan'),
+    );
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Christophe'),
+    );
+
+    agenda.onAssigned = (driverId, vehicleId) {
+      stored['driver'] = driverId;
+      stored['vehicle'] = vehicleId;
+      revision += 1;
+    };
+    await tester.tap(find.byKey(kCompanyAgendaAssignButtonKey));
+    await tester.pumpAndSettle();
+    expect(agenda.assignCalls, 1);
+    expect(stored['driver'], 'drv_wotan');
+    expect(find.byKey(kCompanyAgendaAssignmentPendingKey), findsNothing);
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Wotan'),
+    );
+    expect(find.text(kCompanyAgendaNotAccepted.of(AppLanguage.nl)), findsOneWidget);
+  });
+
+  testWidgets('a refused switch keeps Christophe assigned', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final agenda = _AssignAgendaRepository(
+      assignError: const CompanyAgendaException('assignment_overlap'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'agb_refuse',
+          language: AppLanguage.nl,
+          agendaRepository: agenda,
+          loader: (id) async => <String, dynamic>{
+            'ok': true,
+            'record': <String, dynamic>{
+              'booking_id': id,
+              'customer_name': 'Ada Lovelace',
+              'from': 'Gent',
+              'to': 'Ronse',
+              'pickup_iso': '2026-09-16T18:00:00.000Z',
+              'revision': 2,
+              'duration_min': 40,
+              'assigned_driver_id': 'drv_christophe',
+              'assigned_vehicle_id': 'vh_christophe',
+            },
+          },
+          driversLoader: () async => _chrisWotanDrivers(),
+          vehiclesLoader: () async => _chrisWotanVehicles(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _pickAssignCombo(tester, 'drv_wotan|vh_wotan');
+    await tester.tap(find.byKey(kCompanyAgendaAssignButtonKey));
+    await tester.pumpAndSettle();
+    expect(agenda.assignCalls, 1);
+    expect(find.text(kCompanyAgendaOverlap.of(AppLanguage.nl)), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Christophe'),
+    );
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      isNot(contains('Wotan')),
+    );
+  });
+
+  testWidgets('an uncertain assign rereads the stored crew', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final agenda = _AssignAgendaRepository(networkError: true);
+    var loads = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'agb_uncertain',
+          language: AppLanguage.nl,
+          agendaRepository: agenda,
+          loader: (id) async {
+            loads += 1;
+            return <String, dynamic>{
+              'ok': true,
+              'record': <String, dynamic>{
+                'booking_id': id,
+                'customer_name': 'Ada Lovelace',
+                'from': 'Gent',
+                'to': 'Ronse',
+                'assigned_driver_id': 'drv_christophe',
+                'assigned_vehicle_id': 'vh_christophe',
+              },
+            };
+          },
+          driversLoader: () async => _chrisWotanDrivers(),
+          vehiclesLoader: () async => _chrisWotanVehicles(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+    await _pickAssignCombo(tester, 'drv_wotan|vh_wotan');
+    await tester.tap(find.byKey(kCompanyAgendaAssignButtonKey));
+    await tester.pumpAndSettle();
+    expect(agenda.assignCalls, 1);
+    expect(loads, greaterThan(1));
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Christophe'),
+    );
+  });
+
+  testWidgets('unassign then assign Wotan writes an empty then stored crew', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final stored = <String, String>{
+      'driver': 'drv_christophe',
+      'vehicle': 'vh_christophe',
+    };
+    final agenda = _AssignAgendaRepository();
+    agenda.onAssigned = (driverId, vehicleId) {
+      stored['driver'] = driverId;
+      stored['vehicle'] = vehicleId;
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CompanyBookingDetailPage(
+          bookingId: 'agb_unassign',
+          language: AppLanguage.nl,
+          agendaRepository: agenda,
+          loader: (id) async => <String, dynamic>{
+            'ok': true,
+            'record': <String, dynamic>{
+              'booking_id': id,
+              'customer_name': 'Ada Lovelace',
+              'from': 'Gent',
+              'to': 'Ronse',
+              if (stored['driver']!.isNotEmpty)
+                'assigned_driver_id': stored['driver'],
+              if (stored['vehicle']!.isNotEmpty)
+                'assigned_vehicle_id': stored['vehicle'],
+            },
+          },
+          driversLoader: () async => _chrisWotanDrivers(),
+          vehiclesLoader: () async => _chrisWotanVehicles(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(kCompanyAgendaUnassignButtonKey));
+    await tester.pumpAndSettle();
+    expect(agenda.unassignCalls, 1);
+    expect(stored['driver'], isEmpty);
+    expect(
+      find.text(kCompanyCustomerQuoteAssignmentPending.of(AppLanguage.nl)),
+      findsOneWidget,
+    );
+    await _pickAssignCombo(tester, 'drv_wotan|vh_wotan');
+    await tester.tap(find.byKey(kCompanyAgendaAssignButtonKey));
+    await tester.pumpAndSettle();
+    expect(stored['driver'], 'drv_wotan');
+    expect(
+      tester.widget<Text>(find.byKey(kCompanyAgendaAssignedStoredKey)).data,
+      contains('Wotan'),
+    );
   });
 }

@@ -308,6 +308,41 @@ const LocalizedText kCompanyAgendaSelectCustomer = LocalizedText(
   es: 'Elige primero un cliente activo.',
 );
 
+const LocalizedText kCompanyAgendaNeedCustomerAddress = LocalizedText(
+  nl: 'Deze klant heeft nog geen opgeslagen adres. Vul het vertrekadres in of bewaar er een op de klantfiche.',
+  en: 'This customer has no saved address yet. Enter the pickup or save one on the customer record.',
+  fr: 'Ce client n’a pas encore d’adresse enregistrée. Saisissez le départ ou enregistrez-en une.',
+  es: 'Este cliente aún no tiene dirección guardada. Introduce la salida o guarda una en la ficha.',
+);
+
+const LocalizedText kCompanyAgendaChooseCustomerAddress = LocalizedText(
+  nl: 'Kies het klantadres voor deze rit',
+  en: 'Choose the customer address for this ride',
+  fr: 'Choisissez l’adresse du client pour cette course',
+  es: 'Elige la dirección del cliente para este viaje',
+);
+
+const LocalizedText kCompanyAgendaVehiclesLoading = LocalizedText(
+  nl: 'Voertuigen worden geladen…',
+  en: 'Loading vehicles…',
+  fr: 'Chargement des véhicules…',
+  es: 'Cargando vehículos…',
+);
+
+const LocalizedText kCompanyAgendaNoFleetVehicles = LocalizedText(
+  nl: 'Dit bedrijf heeft geen boekbare voertuigen voor deze rit.',
+  en: 'This company has no bookable vehicles for this ride.',
+  fr: 'Cette entreprise n’a pas de véhicules pour cette course.',
+  es: 'Esta empresa no tiene vehículos para este viaje.',
+);
+
+const LocalizedText kCompanyAgendaVehiclesLoadFailed = LocalizedText(
+  nl: 'Voertuigen konden niet worden geladen. Probeer opnieuw.',
+  en: 'Vehicles could not be loaded. Try again.',
+  fr: 'Les véhicules n’ont pas pu être chargés. Réessayez.',
+  es: 'No se pudieron cargar los vehículos. Inténtalo de nuevo.',
+);
+
 const LocalizedText kCompanyAgendaPickup = LocalizedText(
   nl: 'Vertrek',
   en: 'Pickup',
@@ -700,6 +735,13 @@ const LocalizedText kCompanyDriversNowNoLiveLink = LocalizedText(
   es: 'Sin conexión en vivo',
 );
 
+const LocalizedText kCompanyDriversNowLiveLink = LocalizedText(
+  nl: 'Live-verbinding',
+  en: 'Live connection',
+  fr: 'Connexion en direct',
+  es: 'Conexión en vivo',
+);
+
 const LocalizedText kCompanyDriversNowStatusNotCurrent = LocalizedText(
   nl: 'Onbekend',
   en: 'Unknown',
@@ -761,6 +803,260 @@ const LocalizedText kCompanyDriversNowLastUpdated = LocalizedText(
   en: 'Last updated',
   fr: 'Dernière mise à jour',
   es: 'Última actualización',
+);
+
+/// Makes explicit that the timestamp is the driver's own last signal, not the
+/// moment the screen was refreshed.
+const LocalizedText kCompanyDriverSignalAt = LocalizedText(
+  nl: 'Laatste signaal chauffeur',
+  en: 'Last driver signal',
+  fr: 'Dernier signal chauffeur',
+  es: 'Última señal del conductor',
+);
+
+const LocalizedText kCompanyDriverSignalNever = LocalizedText(
+  nl: 'nog geen signaal',
+  en: 'no signal yet',
+  fr: 'aucun signal',
+  es: 'sin señal',
+);
+
+const LocalizedText kCompanyDriverConnectionLost = LocalizedText(
+  nl: 'Verbinding verouderd',
+  en: 'Connection stale',
+  fr: 'Connexion obsolète',
+  es: 'Conexión obsoleta',
+);
+
+const LocalizedText kCompanyDriverConnectionUnknown = LocalizedText(
+  nl: 'Verbinding onbekend',
+  en: 'Connection unknown',
+  fr: 'Connexion inconnue',
+  es: 'Conexión desconocida',
+);
+
+const LocalizedText kCompanyDriverDutyLabel = LocalizedText(
+  nl: 'Dienst',
+  en: 'Duty',
+  fr: 'Service',
+  es: 'Servicio',
+);
+
+const LocalizedText kCompanyDriverDutyWorking = LocalizedText(
+  nl: 'Aan het werk',
+  en: 'Working',
+  fr: 'En service',
+  es: 'Trabajando',
+);
+
+const LocalizedText kCompanyDriverDutyEnded = LocalizedText(
+  nl: 'Dienst beëindigd',
+  en: 'Duty ended',
+  fr: 'Service terminé',
+  es: 'Servicio finalizado',
+);
+
+const LocalizedText kCompanyDriverDutyUnknown = LocalizedText(
+  nl: 'Dienst onbekend',
+  en: 'Duty unknown',
+  fr: 'Service inconnu',
+  es: 'Servicio desconocido',
+);
+
+const LocalizedText kCompanyDriverPlanningLabel = LocalizedText(
+  nl: 'Planning',
+  en: 'Schedule',
+  fr: 'Planning',
+  es: 'Horario',
+);
+
+const LocalizedText kCompanyDriverPlanningNone = LocalizedText(
+  nl: 'Geen rooster ingesteld',
+  en: 'No schedule set',
+  fr: 'Aucun horaire défini',
+  es: 'Sin horario definido',
+);
+
+const LocalizedText kCompanyDriverPlanningOffHours = LocalizedText(
+  nl: 'Buiten werkuren',
+  en: 'Outside working hours',
+  fr: 'Hors heures de travail',
+  es: 'Fuera del horario',
+);
+
+const LocalizedText kCompanyDriverPlanningAbsent = LocalizedText(
+  nl: 'Afwezig vandaag',
+  en: 'Absent today',
+  fr: 'Absent aujourd’hui',
+  es: 'Ausente hoy',
+);
+
+const LocalizedText kCompanyDriverPlanningBreak = LocalizedText(
+  nl: 'Geplande pauze',
+  en: 'Planned break',
+  fr: 'Pause planifiée',
+  es: 'Pausa planificada',
+);
+
+const LocalizedText kCompanyDriverScheduleTitle = LocalizedText(
+  nl: 'Uurrooster',
+  en: 'Working hours',
+  fr: 'Horaire',
+  es: 'Horario',
+);
+
+const LocalizedText kCompanyDriverScheduleTimezone = LocalizedText(
+  nl: 'Bedrijfstijdzone',
+  en: 'Company timezone',
+  fr: 'Fuseau horaire',
+  es: 'Zona horaria',
+);
+
+const LocalizedText kCompanyDriverScheduleTimezoneUnresolved = LocalizedText(
+  nl: 'Deze tijdzone wordt niet ondersteund. De werkuren worden niet gebruikt '
+      'voor beschikbaarheid of toewijzing.',
+  en: 'This timezone is not supported. The working hours are not used for '
+      'availability or assignment.',
+  fr: 'Ce fuseau horaire n’est pas pris en charge. Les heures ne servent pas '
+      'à la disponibilité ni à l’affectation.',
+  es: 'Esta zona horaria no es compatible. El horario no se usa para la '
+      'disponibilidad ni la asignación.',
+);
+
+const LocalizedText kCompanyDriverScheduleReadOnly = LocalizedText(
+  nl: 'Je bekijkt je eigen rooster. Alleen de bedrijfsbeheerder kan het '
+      'aanpassen.',
+  en: 'You are viewing your own schedule. Only the company administrator can '
+      'change it.',
+  fr: 'Vous consultez votre propre horaire. Seul l’administrateur peut le '
+      'modifier.',
+  es: 'Estás viendo tu propio horario. Solo el administrador puede cambiarlo.',
+);
+
+const LocalizedText kCompanyDriverScheduleSave = LocalizedText(
+  nl: 'Rooster bewaren',
+  en: 'Save schedule',
+  fr: 'Enregistrer l’horaire',
+  es: 'Guardar horario',
+);
+
+const LocalizedText kCompanyDriverScheduleSaveUnavailable = LocalizedText(
+  nl: 'Bewaren is nog niet beschikbaar. Het rooster kan hier al worden '
+      'opgesteld, maar wordt nog nergens opgeslagen.',
+  en: 'Saving is not available yet. The schedule can be composed here, but it '
+      'is not stored anywhere.',
+  fr: 'L’enregistrement n’est pas encore disponible. L’horaire peut être '
+      'composé ici, mais il n’est stocké nulle part.',
+  es: 'Guardar aún no está disponible. El horario puede componerse aquí, pero '
+      'no se almacena en ningún sitio.',
+);
+
+const LocalizedText kCompanyDriverScheduleAddBlock = LocalizedText(
+  nl: 'Werkblok',
+  en: 'Add block',
+  fr: 'Ajouter un bloc',
+  es: 'Añadir bloque',
+);
+
+const LocalizedText kCompanyDriverScheduleRemoveBlock = LocalizedText(
+  nl: 'Werkblok verwijderen',
+  en: 'Remove block',
+  fr: 'Supprimer le bloc',
+  es: 'Eliminar bloque',
+);
+
+const LocalizedText kCompanyDriverScheduleDayOff = LocalizedText(
+  nl: 'Geen werkuren',
+  en: 'No working hours',
+  fr: 'Pas d’heures de travail',
+  es: 'Sin horas de trabajo',
+);
+
+const LocalizedText kCompanyDriverScheduleOvernight = LocalizedText(
+  nl: 'nachtdienst',
+  en: 'overnight',
+  fr: 'de nuit',
+  es: 'nocturno',
+);
+
+const LocalizedText kCompanyDriverScheduleExceptions = LocalizedText(
+  nl: 'Uitzonderingen',
+  en: 'Exceptions',
+  fr: 'Exceptions',
+  es: 'Excepciones',
+);
+
+const LocalizedText kCompanyDriverScheduleStartTime = LocalizedText(
+  nl: 'Starttijd',
+  en: 'Start time',
+  fr: 'Heure de début',
+  es: 'Hora de inicio',
+);
+
+const LocalizedText kCompanyDriverScheduleEndTime = LocalizedText(
+  nl: 'Eindtijd',
+  en: 'End time',
+  fr: 'Heure de fin',
+  es: 'Hora de fin',
+);
+
+const LocalizedText kCompanyDriverScheduleMonday = LocalizedText(
+  nl: 'Maandag', en: 'Monday', fr: 'Lundi', es: 'Lunes');
+const LocalizedText kCompanyDriverScheduleTuesday = LocalizedText(
+  nl: 'Dinsdag', en: 'Tuesday', fr: 'Mardi', es: 'Martes');
+const LocalizedText kCompanyDriverScheduleWednesday = LocalizedText(
+  nl: 'Woensdag', en: 'Wednesday', fr: 'Mercredi', es: 'Miércoles');
+const LocalizedText kCompanyDriverScheduleThursday = LocalizedText(
+  nl: 'Donderdag', en: 'Thursday', fr: 'Jeudi', es: 'Jueves');
+const LocalizedText kCompanyDriverScheduleFriday = LocalizedText(
+  nl: 'Vrijdag', en: 'Friday', fr: 'Vendredi', es: 'Viernes');
+const LocalizedText kCompanyDriverScheduleSaturday = LocalizedText(
+  nl: 'Zaterdag', en: 'Saturday', fr: 'Samedi', es: 'Sábado');
+const LocalizedText kCompanyDriverScheduleSunday = LocalizedText(
+  nl: 'Zondag', en: 'Sunday', fr: 'Dimanche', es: 'Domingo');
+
+/// Shown beside the stored assignment while a different crew is selected but
+/// the server has not accepted the change yet.
+const LocalizedText kCompanyAgendaAssignmentPendingChange = LocalizedText(
+  nl: 'Nog te bevestigen keuze',
+  en: 'Selected, not confirmed yet',
+  fr: 'Choix à confirmer',
+  es: 'Selección sin confirmar',
+);
+
+const LocalizedText kCompanyDriverScheduleUndeterminable = LocalizedText(
+  nl: 'Roosterbeschikbaarheid niet vast te stellen',
+  en: 'Schedule availability cannot be determined',
+  fr: 'Disponibilité horaire indéterminable',
+  es: 'No se puede determinar la disponibilidad del horario',
+);
+
+const LocalizedText kCompanyDriverConflictOutsideHours = LocalizedText(
+  nl: 'Buiten werkuren',
+  en: 'Outside working hours',
+  fr: 'Hors heures de travail',
+  es: 'Fuera del horario',
+);
+
+const LocalizedText kCompanyDriverConflictBreak = LocalizedText(
+  nl: 'Overlapt met geplande pauze',
+  en: 'Overlaps a planned break',
+  fr: 'Chevauche une pause planifiée',
+  es: 'Se solapa con una pausa planificada',
+);
+
+const LocalizedText kCompanyDriverConflictAbsent = LocalizedText(
+  nl: 'Afwezig op die datum',
+  en: 'Absent on that date',
+  fr: 'Absent à cette date',
+  es: 'Ausente en esa fecha',
+);
+
+const LocalizedText kCompanyDriverConflictEndsAfterHours = LocalizedText(
+  nl: 'Rit eindigt na de werkuren',
+  en: 'Ride ends after working hours',
+  fr: 'La course finit après les heures',
+  es: 'El viaje termina fuera del horario',
 );
 
 const LocalizedText kCompanyDriversNowUpdatedUnknown = LocalizedText(
@@ -1505,6 +1801,20 @@ const LocalizedText kCompanyAgendaPriceBreakdown = LocalizedText(
   es: 'Ver desglose del precio',
 );
 
+const LocalizedText kCompanyAgendaPriceBreakdownUnavailable = LocalizedText(
+  nl: 'Geen prijsopbouw beschikbaar voor deze rit. Het overeengekomen bedrag blijft ongewijzigd.',
+  en: 'No price breakdown is available for this ride. The agreed amount is unchanged.',
+  fr: 'Aucun détail de prix n’est disponible pour cette course. Le montant convenu reste inchangé.',
+  es: 'No hay desglose de precio para este viaje. El importe acordado no cambia.',
+);
+
+const LocalizedText kCompanyAgendaPriceAmountMissing = LocalizedText(
+  nl: 'Geen opgeslagen prijs gevonden voor deze rit.',
+  en: 'No stored price was found for this ride.',
+  fr: 'Aucun prix enregistré n’a été trouvé pour cette course.',
+  es: 'No se encontró un precio guardado para este viaje.',
+);
+
 const LocalizedText kCompanyAgendaDriverFallback = LocalizedText(
   nl: 'Chauffeur',
   en: 'Driver',
@@ -1615,6 +1925,13 @@ const LocalizedText kCompanyAgendaPriceInvalid = LocalizedText(
   en: 'The price calculation is invalid. Booking is blocked until the quote is correct.',
   fr: 'Le calcul du prix est invalide. La réservation est bloquée tant que le devis n’est pas correct.',
   es: 'El cálculo del precio no es válido. La reserva queda bloqueada hasta que la cotización sea correcta.',
+);
+
+const LocalizedText kCompanyAgendaQuoteUnavailable = LocalizedText(
+  nl: 'De route is berekend, maar er is geen prijs beschikbaar. Een afstand is geen offerte.',
+  en: 'The route was calculated, but no price is available. A distance is not a quote.',
+  fr: 'L’itinéraire a été calculé, mais aucun prix n’est disponible. Une distance n’est pas un devis.',
+  es: 'La ruta se calculó, pero no hay precio disponible. Una distancia no es un presupuesto.',
 );
 
 const LocalizedText kCompanyAgendaSameCrewUnavailable = LocalizedText(

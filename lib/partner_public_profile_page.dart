@@ -7,8 +7,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'app_config.dart';
 import 'app_strings.dart';
-import 'airport/airport_page.dart';
-import 'calculator_page.dart';
+import 'airport/airport_catalog_repository.dart';
+import 'customer_booking/customer_booking_entry.dart';
+import 'customer_booking/customer_booking_open.dart';
 import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
@@ -332,21 +333,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
     final partnerId = widget.partnerId.trim();
     if (partnerId.isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CalculatorPage(
-          bookingBaseUrl: kBookingBaseUrl,
-          mapboxToken: kMapboxToken,
-          persistToCustomerBookings: true,
-          onGoToStartPage: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: widget.customerHomeBuilder),
-              (route) => false,
-            );
-          },
-          publicPartnerId: partnerId,
-          publicPartnerName: companyName,
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.companyPage,
+          company: CustomerBookingCompany(
+            partnerId: partnerId,
+            tenantId: partnerId,
+            companyId: partnerId,
+            companyCode: partnerId,
+            companyName: companyName,
+          ),
+          lockCompany: true,
+          sourceLabel: 'partner_public_profile',
         ),
+        onGoToStartPage: widget.customerHomeBuilder,
       ),
     );
   }
@@ -358,16 +360,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
     final partnerId = widget.partnerId.trim();
     if (partnerId.isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AirportPage(
-          bookingBaseUrl: kBookingBaseUrl,
-          selectedTenantId: partnerId,
-          selectedCompanyId: partnerId,
-          selectedCompanyCode: partnerId,
-          selectedCompanyName: companyName,
-          selectedPartnerId: partnerId,
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.airport,
+          company: CustomerBookingCompany(
+            partnerId: partnerId,
+            tenantId: partnerId,
+            companyId: partnerId,
+            companyCode: partnerId,
+            companyName: companyName,
+          ),
+          lockCompany: true,
+          sourceLabel: 'partner_public_profile_airport',
         ),
+        onGoToStartPage: widget.customerHomeBuilder,
       ),
     );
   }
@@ -400,45 +408,57 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
               ? entry.origin.airportIata
               : entry.destination.airportIata;
       final toAirport = entry.direction != 'from_airport';
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => AirportPage(
-            bookingBaseUrl: kBookingBaseUrl,
-            selectedTenantId: partnerId,
-            selectedCompanyId: partnerId,
-            selectedCompanyCode: partnerId,
-            selectedCompanyName: companyName,
-            selectedPartnerId: partnerId,
-            initialAirportIata: iata,
-            initialToAirport: toAirport,
-            initialDestinationAddress: toAirport
+      unawaited(
+        openCustomerBookingFlow(
+          context,
+          entry: CustomerBookingEntryContext(
+            kind: CustomerBookingKind.airport,
+            company: CustomerBookingCompany(
+              partnerId: partnerId,
+              tenantId: partnerId,
+              companyId: partnerId,
+              companyCode: partnerId,
+              companyName: companyName,
+            ),
+            destination: toAirport
                 ? null
-                : entry.destination.displayText,
+                : CustomerBookingPlace(
+                    address: entry.destination.displayText,
+                    latitude: _usableCoordinate(entry.destination.lat),
+                    longitude: _usableCoordinate(entry.destination.lng),
+                  ),
+            airport: airportByIata(iata),
+            toAirport: toAirport,
+            lockCompany: true,
+            sourceLabel: 'partner_fixed_price_airport',
           ),
+          onGoToStartPage: widget.customerHomeBuilder,
         ),
       );
       return;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CalculatorPage(
-          bookingBaseUrl: kBookingBaseUrl,
-          mapboxToken: kMapboxToken,
-          persistToCustomerBookings: true,
-          onGoToStartPage: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: widget.customerHomeBuilder),
-              (route) => false,
-            );
-          },
-          publicPartnerId: partnerId,
-          publicPartnerName: companyName,
-          initialServiceId: 'passenger',
-          initialToAddress: entry.destination.displayText,
-          initialDestinationLabel: entry.destination.displayText,
-          initialToLat: _usableCoordinate(entry.destination.lat),
-          initialToLng: _usableCoordinate(entry.destination.lng),
+    unawaited(
+      openCustomerBookingFlow(
+        context,
+        entry: CustomerBookingEntryContext(
+          kind: CustomerBookingKind.companyPage,
+          company: CustomerBookingCompany(
+            partnerId: partnerId,
+            tenantId: partnerId,
+            companyId: partnerId,
+            companyCode: partnerId,
+            companyName: companyName,
+          ),
+          destination: CustomerBookingPlace(
+            name: entry.destination.displayText,
+            address: entry.destination.displayText,
+            latitude: _usableCoordinate(entry.destination.lat),
+            longitude: _usableCoordinate(entry.destination.lng),
+          ),
+          lockCompany: true,
+          sourceLabel: 'partner_fixed_price',
         ),
+        onGoToStartPage: widget.customerHomeBuilder,
       ),
     );
   }

@@ -35,6 +35,13 @@ const LocalizedText kLimousineAddressRetry = LocalizedText(
   es: 'Buscar de nuevo',
 );
 
+const LocalizedText kLimousineAddressPlaceCenter = LocalizedText(
+  nl: 'Plaatscentrum — nog geen exact ophaaladres',
+  en: 'Place centre — not an exact pickup address',
+  fr: 'Centre-ville — pas encore une adresse exacte',
+  es: 'Centro del pueblo — aún no es una dirección exacta',
+);
+
 const LocalizedText kLimousineAddressManualFallback = LocalizedText(
   nl: 'Gebruik dit adres',
   en: 'Use this address',
@@ -216,11 +223,14 @@ class LimousineAddressFieldController extends ChangeNotifier {
 
   Future<void> _runSearch(String raw, int requestId) async {
     if (raw.trim().length < kLimousineAddressMinQueryLength) return;
+    if (_disposed) return;
     loading = true;
     searched = true;
     notifyListeners();
     final result = await lookup.search(raw, language: language);
-    if (requestId != _requestId || textController.text.trim() != raw.trim()) {
+    if (_disposed ||
+        requestId != _requestId ||
+        textController.text.trim() != raw.trim()) {
       return;
     }
     loading = false;
@@ -356,6 +366,8 @@ class LimousineAddressField extends StatelessWidget {
   final InputDecoration? decoration;
   final bool showCanonicalEcho;
 
+  static const double _suggestionsMaxHeight = 180;
+
   String _t(LocalizedText text) => text.of(language);
 
   @override
@@ -378,6 +390,7 @@ class LimousineAddressField extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 12),
           child: Column(
             key: limousineAddressFieldKey(controller.fieldId),
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextField(
@@ -394,14 +407,84 @@ class LimousineAddressField extends StatelessWidget {
                               labelText: label,
                               hintText: _t(kLimousineAddressHint),
                               hintStyle: TextStyle(color: tokens.muted),
+                              labelStyle: TextStyle(
+                                color: tokens.muted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              floatingLabelStyle: TextStyle(
+                                color: tokens.gold,
+                                fontWeight: FontWeight.w700,
+                              ),
                               filled: true,
                               fillColor: tokens.fieldFill,
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: tokens.border),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(
+                                  color: tokens.gold,
+                                  width: 1.6,
+                                ),
+                              ),
                             ))
                         .copyWith(
                           suffixIcon: _suffix(controller),
                           suffixIconConstraints: _suffixConstraints(controller),
                         ),
               ),
+              if (controller.suggestions.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: SizedBox(
+                    height: (controller.suggestions.length * 64.0).clamp(
+                      48.0,
+                      _suggestionsMaxHeight,
+                    ),
+                    child: DecoratedBox(
+                      key: limousineAddressSuggestionsKey(controller.fieldId),
+                      decoration: BoxDecoration(
+                        color: tokens.surface,
+                        border: Border.all(color: tokens.border),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListView.separated(
+                        primary: false,
+                        shrinkWrap: false,
+                        physics: const ClampingScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        itemCount: controller.suggestions.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: tokens.border),
+                        itemBuilder: (context, index) {
+                          final suggestion = controller.suggestions[index];
+                          return ListTile(
+                            key: limousineAddressSuggestionKey(
+                              controller.fieldId,
+                              index,
+                            ),
+                            dense: true,
+                            title: Text(
+                              suggestion.label,
+                              style: TextStyle(color: tokens.onSurface),
+                            ),
+                            subtitle: suggestion.isStreetLevel
+                                ? null
+                                : Text(
+                                    _t(kLimousineAddressPlaceCenter),
+                                    style: TextStyle(
+                                      color: tokens.muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                            onTap: () => controller.selectSuggestion(suggestion),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
               if (ready && showCanonicalEcho)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -487,39 +570,6 @@ class LimousineAddressField extends StatelessWidget {
                         style: TextStyle(color: tokens.muted, fontSize: 12),
                       ),
                     ],
-                  ),
-                ),
-              if (controller.suggestions.isNotEmpty)
-                Container(
-                  key: limousineAddressSuggestionsKey(controller.fieldId),
-                  margin: const EdgeInsets.only(top: 6),
-                  constraints: const BoxConstraints(maxHeight: 240),
-                  decoration: BoxDecoration(
-                    color: tokens.surface,
-                    border: Border.all(color: tokens.border),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    padding: EdgeInsets.zero,
-                    itemCount: controller.suggestions.length,
-                    separatorBuilder: (_, __) =>
-                        Divider(height: 1, color: tokens.border),
-                    itemBuilder: (context, index) {
-                      final suggestion = controller.suggestions[index];
-                      return ListTile(
-                        key: limousineAddressSuggestionKey(
-                          controller.fieldId,
-                          index,
-                        ),
-                        dense: true,
-                        title: Text(
-                          suggestion.label,
-                          style: TextStyle(color: tokens.onSurface),
-                        ),
-                        onTap: () => controller.selectSuggestion(suggestion),
-                      );
-                    },
                   ),
                 ),
               if (!controller.loading &&

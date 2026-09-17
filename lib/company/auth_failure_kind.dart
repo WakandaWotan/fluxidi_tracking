@@ -61,6 +61,7 @@ AuthFailureKind classifyRemoteAuthFailure({
   bool networkException = false,
   bool loopbackHost = false,
   bool companyResolvable = false,
+  bool customerAuth = false,
 }) {
   if (networkException) {
     return loopbackHost
@@ -89,8 +90,19 @@ AuthFailureKind classifyRemoteAuthFailure({
         ? AuthFailureKind.routeMissing
         : AuthFailureKind.companyNotFound;
   }
+  // Customer phone/email OTP: a 403 or generic verify/persist miss is a
+  // wrong or already-used code, not "this number does not belong here".
+  if (customerAuth &&
+      (err == 'verification_failed' ||
+          err == 'customer_phone_auth_verify_failed' ||
+          err == 'customer_email_auth_verify_failed' ||
+          err == 'session_missing' ||
+          statusCode == 403)) {
+    return AuthFailureKind.verificationFailed;
+  }
   if (loopbackHost &&
       !companyResolvable &&
+      !customerAuth &&
       (err == 'verification_failed' || err.isEmpty || statusCode == 403)) {
     return AuthFailureKind.wrongEnvironment;
   }
@@ -110,6 +122,7 @@ AuthFailureKind classifyRemoteAuthFailure({
 AuthFailureKind classifyThrownAuthFailure(
   Object error, {
   required bool loopbackHost,
+  bool customerAuth = false,
 }) {
   final text = error.toString().toLowerCase();
   final network =
@@ -131,6 +144,9 @@ AuthFailureKind classifyThrownAuthFailure(
     'invalid_phone',
     'email_not_linked',
     'company_not_found',
+    'customer_phone_auth_verify_failed',
+    'customer_email_auth_verify_failed',
+    'session_missing',
     'verification_failed',
     'invalid_company_code',
     'invalid_pairing_code',
@@ -144,6 +160,7 @@ AuthFailureKind classifyThrownAuthFailure(
     error: code,
     networkException: network,
     loopbackHost: loopbackHost,
+    customerAuth: customerAuth,
   );
 }
 

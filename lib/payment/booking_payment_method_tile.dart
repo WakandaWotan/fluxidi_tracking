@@ -87,6 +87,17 @@ String paymentMethodUnavailableMessage(PaymentCopyResolver t) {
   );
 }
 
+/// The API reported no payment capability, so nothing is known yet. This is
+/// never phrased as missing bank details.
+String paymentDetailsUnknownMessage(PaymentCopyResolver t) {
+  return t(
+    nl: 'De betaalgegevens van dit bedrijf zijn hier niet beschikbaar.',
+    en: 'This company’s payment details are not available here.',
+    fr: 'Les informations de paiement de cette société ne sont pas disponibles ici.',
+    es: 'Los datos de pago de esta empresa no están disponibles aquí.',
+  );
+}
+
 String qrPaymentSetupRequiredMessage(PaymentCopyResolver t) {
   return t(
     nl: 'Vul eerst de bankgegevens in bij de bedrijfsinstellingen.',
@@ -110,10 +121,13 @@ String displayOnlyPaymentMethodMessage(
   String methodId,
   PaymentCopyResolver t, {
   required String languageCode,
+  bool qrDetailsUnknown = false,
 }) {
   final id = normalizePaymentMethodId(methodId);
   if (id == PaymentMethodIds.qrCode) {
-    return qrPaymentSetupRequiredMessage(t);
+    return qrDetailsUnknown
+        ? paymentDetailsUnknownMessage(t)
+        : qrPaymentSetupRequiredMessage(t);
   }
   if (id == PaymentMethodIds.payconiqWero) {
     return payconiqWeroPendingMessage(t);
@@ -134,6 +148,7 @@ String paymentMethodShortDescription(
   String methodId,
   PaymentCopyResolver t, {
   required bool qrPaymentConfigured,
+  bool qrDetailsUnknown = false,
 }) {
   final id = normalizePaymentMethodId(methodId);
   if (id == PaymentMethodIds.inVehicleCard || id == PaymentMethodIds.cash) {
@@ -146,6 +161,9 @@ String paymentMethodShortDescription(
   }
   if (id == PaymentMethodIds.qrCode) {
     if (!qrPaymentConfigured) {
+      // Not knowing the company's payment settings is a different problem from
+      // knowing them and finding no bank details.
+      if (qrDetailsUnknown) return paymentDetailsUnknownMessage(t);
       return t(
         nl: 'Bankgegevens ontbreken in de bedrijfsinstellingen.',
         en: 'Bank details are missing in business settings.',

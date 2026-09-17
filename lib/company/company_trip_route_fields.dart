@@ -482,16 +482,18 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
           ),
           const SizedBox(height: 12),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: kCompanyTripRouteSwapKey,
-            onPressed: _swap,
-            icon: const Icon(Icons.swap_vert),
-            label: Text(kCompanyTripRouteSwap.of(language)),
+        if (showGroundAddresses) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: kCompanyTripRouteSwapKey,
+              onPressed: _swap,
+              icon: const Icon(Icons.swap_vert),
+              label: Text(kCompanyTripRouteSwap.of(language)),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
+          const SizedBox(height: 8),
+        ],
         if (showPickupField)
           _groundAddress(
             controller: pickup,

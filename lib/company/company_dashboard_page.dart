@@ -222,7 +222,10 @@ class CompanyDashboardPageState extends State<CompanyDashboardPage> {
       case 'customers':
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => CompanyDriversAdminPage(language: _lang),
+            builder: (_) => CompanyDriversAdminPage(
+              language: _lang,
+              driversLoader: widget.driversLoader,
+            ),
           ),
         );
         return;
@@ -492,15 +495,32 @@ class _CompanyDashboardHeader extends StatelessWidget {
                       ),
                     ),
                   ),
-                  TextButton(
-                    key: kCompanyDashboardSwitchKey,
-                    onPressed: onSwitch,
-                    child: Text(kCompanyDashboardSwitchCompany.of(language)),
-                  ),
-                  TextButton(
-                    key: kCompanyDashboardSignOutKey,
-                    onPressed: onSignOut,
-                    child: Text(kCompanyDashboardSignOut.of(language)),
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              key: kCompanyDashboardSwitchKey,
+                              onPressed: onSwitch,
+                              child: Text(
+                                kCompanyDashboardSwitchCompany.of(language),
+                              ),
+                            ),
+                            TextButton(
+                              key: kCompanyDashboardSignOutKey,
+                              onPressed: onSignOut,
+                              child: Text(
+                                kCompanyDashboardSignOut.of(language),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),

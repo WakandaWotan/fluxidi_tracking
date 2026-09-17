@@ -265,6 +265,7 @@ class BookingBillingIdentityForm extends StatefulWidget {
     this.onChanged,
     this.warning,
     this.showPeppolFields = true,
+    this.showToggle = true,
   });
 
   /// Whether the customer asked for a company invoice.
@@ -285,6 +286,10 @@ class BookingBillingIdentityForm extends StatefulWidget {
 
   final bool showPeppolFields;
 
+  /// When false the parent already chose business vs private, so the inner
+  /// "I need a company invoice" switch stays hidden.
+  final bool showToggle;
+
   @override
   State<BookingBillingIdentityForm> createState() =>
       _BookingBillingIdentityFormState();
@@ -302,27 +307,28 @@ class _BookingBillingIdentityFormState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        SwitchListTile.adaptive(
-          key: kBookingBillingToggleKey,
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          value: widget.enabled,
-          onChanged: widget.onEnabledChanged,
-          activeColor: style.accentColor,
-          title: Text(
-            t(
-              nl: 'Ik heb een bedrijfsfactuur nodig',
-              en: 'I need a company invoice',
-              fr: 'J’ai besoin d’une facture d’entreprise',
-              es: 'Necesito una factura de empresa',
-            ),
-            style: TextStyle(
-              color: style.labelColor,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
+        if (widget.showToggle)
+          SwitchListTile.adaptive(
+            key: kBookingBillingToggleKey,
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: widget.enabled,
+            onChanged: widget.onEnabledChanged,
+            activeColor: style.accentColor,
+            title: Text(
+              t(
+                nl: 'Ik heb een bedrijfsfactuur nodig',
+                en: 'I need a company invoice',
+                fr: 'J’ai besoin d’une facture d’entreprise',
+                es: 'Necesito una factura de empresa',
+              ),
+              style: TextStyle(
+                color: style.labelColor,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
             ),
           ),
-        ),
         if (widget.enabled) ...<Widget>[
           const SizedBox(height: 4),
           _field(BookingBillingFormField.legalName, Icons.business_outlined),

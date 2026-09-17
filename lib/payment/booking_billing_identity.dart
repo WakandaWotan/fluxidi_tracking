@@ -111,6 +111,24 @@ class BookingBillingIdentity {
   }
 }
 
+/// The Belgian enterprise (KBO/BCE) number carried inside a Belgian VAT
+/// number, or null when [vatNumber] is not a Belgian VAT number.
+///
+/// `BE0123456789` and `BE 0123.456.789` both yield `0123456789`. A nine-digit
+/// Belgian body is padded to the canonical ten digits. Any other country
+/// prefix returns null: only the Belgian format is defined to embed the
+/// enterprise number, so no foreign number is ever reinterpreted.
+String? belgianEnterpriseNumberFromVat(String vatNumber) {
+  final compact = vatNumber
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[\s.\-/]'), '');
+  if (!compact.startsWith('BE')) return null;
+  final digits = compact.substring(2);
+  if (!RegExp(r'^\d{9,10}$').hasMatch(digits)) return null;
+  return digits.length == 9 ? '0$digits' : digits;
+}
+
 /// The first required field that is still missing for a business invoice, or
 /// null when the identity is complete. Order matches the form field order so a
 /// surface can point the customer at the next thing to fix.

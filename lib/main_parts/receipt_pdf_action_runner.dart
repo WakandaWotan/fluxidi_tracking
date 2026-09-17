@@ -212,7 +212,7 @@ class _ReceiptPdfActionRunner {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
       if (!context.mounted) return;
-      await _fallbackCopyText(context: context, item: item);
+      await _showPdfUnavailable(context: context);
       return;
     }
     debugPrint('[PDF][ACTION][REGISTER_RECEIPT_VIEW] hasPdf=true');
@@ -317,13 +317,7 @@ class _ReceiptPdfActionRunner {
     final bundle = await _buildReceiptPdfBundle(context: context, item: item);
     if (bundle == null) {
       if (!context.mounted) return;
-      if (lastBackendPdfState == InvoicePdfFetchState.pending) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_localizedPdfPreparingMessage())),
-        );
-        return;
-      }
-      await _fallbackCopyText(context: context, item: item);
+      await _showPdfUnavailable(context: context);
       return;
     }
     debugPrint('[PDF][ACTION][CUSTOMER_DIRECT_VIEW] hasPdf=true');
@@ -567,6 +561,27 @@ class _ReceiptPdfActionRunner {
       return;
     }
     await Printing.layoutPdf(onLayout: (_) async => bundle.bytes);
+  }
+
+  static Future<void> _showPdfUnavailable({
+    required BuildContext context,
+  }) async {
+    final outcome = classifyRegisterPdfView(
+      backendState: lastBackendPdfState,
+      generatedLocalPdf: false,
+    );
+    final message = switch (outcome) {
+      RegisterPdfViewOutcome.pending => _localizedPdfPreparingMessage(),
+      RegisterPdfViewOutcome.unreachable => _receiptText('pdfDocumentUnreachable'),
+      RegisterPdfViewOutcome.missing ||
+      RegisterPdfViewOutcome.openExisting ||
+      RegisterPdfViewOutcome.generateLocal =>
+        _receiptText('pdfDocumentMissing'),
+    };
+    debugPrint(
+      '[PDF][ACTION][VIEW_UNAVAILABLE] outcome=$outcome state=$lastBackendPdfState',
+    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   static Future<void> _fallbackCopyText({
@@ -892,9 +907,6 @@ class _ReceiptPdfActionRunner {
         source: 'receipt_pdf_bundle_static_layout',
       );
       if (backendBundle != null) return backendBundle;
-      if (lastBackendPdfState == InvoicePdfFetchState.pending) {
-        return null;
-      }
     }
     try {
       final smartRef = _businessReferenceDisplayForItem(
@@ -1297,12 +1309,8 @@ class _ReceiptPdfActionRunner {
       );
       await file.writeAsBytes(bytes, flush: true);
       return _ReceiptPdfBundle(bytes: bytes, file: file);
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_receiptText('pdfGenerationFailed'))),
-        );
-      }
+    } catch (err) {
+      debugPrint('[PDF][STATIC_LAYOUT][ERROR] $err');
       return null;
     }
   }
@@ -2013,19 +2021,14 @@ class _ReceiptPdfActionRunner {
     final bookingId = (item.bookingId ?? '').trim();
     if (bookingId.toLowerCase().endsWith('-r')) return true;
 
-    // Signal 3: receipt-level total is strictly below the parent booking
-    // total. This catches roundtrip leg receipts where /trips/history kept
-    // the per-leg €200 but /bookings/:id carries a €400 parent total.
-    final receiptTotal = _receiptTotalAmount(item);
-    final bookingTotal = _detailDouble(item, 'booking_total_eur');
-    if (receiptTotal != null &&
-        receiptTotal > 0 &&
-        bookingTotal != null &&
-        bookingTotal > receiptTotal + 0.01) {
-      return true;
-    }
-
-    return false;
+    // Signal 3: item.totalEur (never `_receiptTotalAmount`) is strictly
+    // below the parent booking total. Calling `_receiptTotalAmount` here
+    // recurses because that helper asks `_isLegReceiptItem` again and
+    // greys View Details / kills View PDF on historical planned rows.
+    return receiptTotalLooksLikeLegSlice(
+      itemTotalEur: item.totalEur,
+      parentBookingTotalEur: _detailDouble(item, 'booking_total_eur'),
+    );
   }
 
   // Returns 'outbound' or 'return'. Defaults to 'outbound' when leg-first

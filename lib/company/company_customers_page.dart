@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_agenda_http.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_dossier.dart';
 import 'package:fluxidi_tracking/company/company_customer_form_page.dart';
@@ -40,6 +41,7 @@ const Key kCompanyCustomersArchivedFilterKey = Key(
 );
 const Key kCompanyCustomersEditButtonKey = Key('company_customers_edit');
 const Key kCompanyCustomersQuoteButtonKey = Key('company_customers_quote');
+const Key kCompanyCustomersPlanButtonKey = Key('company_customers_plan');
 
 const double kCompanyCustomersSplitBreakpoint = 720;
 
@@ -53,6 +55,7 @@ class CompanyCustomersPage extends StatefulWidget {
     this.importPicker,
     this.initialImportFile,
     this.onOpenBooking,
+    this.onPlanRide,
   });
 
   final CompanyCustomersRepository? repository;
@@ -62,6 +65,7 @@ class CompanyCustomersPage extends StatefulWidget {
   final CompanyCustomerImportPicker? importPicker;
   final CompanyCustomerImportPickedFile? initialImportFile;
   final void Function(String bookingId)? onOpenBooking;
+  final ValueChanged<CompanyCustomer>? onPlanRide;
 
   @override
   State<CompanyCustomersPage> createState() => CompanyCustomersPageState();
@@ -222,6 +226,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
           repository: _repository,
           issuerName: widget.issuerName,
           onOpenBooking: widget.onOpenBooking,
+          onPlanRide: widget.onPlanRide,
           onEdit: () => _editCurrent(),
           onArchive: () => _archiveCurrent(),
           onRestore: () => _restoreCurrent(),
@@ -590,6 +595,7 @@ class CompanyCustomersPageState extends State<CompanyCustomersPage> {
               repository: _repository,
               issuerName: widget.issuerName,
               onOpenBooking: widget.onOpenBooking,
+              onPlanRide: widget.onPlanRide,
               onEdit: _editCurrent,
               onArchive: _archiveCurrent,
               onRestore: _restoreCurrent,
@@ -693,6 +699,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
     required this.repository,
     this.issuerName,
     this.onOpenBooking,
+    this.onPlanRide,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -704,6 +711,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
   final CompanyCustomersRepository repository;
   final String? issuerName;
   final void Function(String bookingId)? onOpenBooking;
+  final ValueChanged<CompanyCustomer>? onPlanRide;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -722,6 +730,7 @@ class _CompanyCustomerDetailScaffold extends StatelessWidget {
               repository: repository,
               issuerName: issuerName,
               onOpenBooking: onOpenBooking,
+              onPlanRide: onPlanRide,
               onEdit: onEdit,
               onArchive: onArchive,
               onRestore: onRestore,
@@ -739,6 +748,7 @@ class _CompanyCustomerDetailBody extends StatefulWidget {
     required this.repository,
     this.issuerName,
     this.onOpenBooking,
+    this.onPlanRide,
     required this.onEdit,
     required this.onArchive,
     required this.onRestore,
@@ -750,6 +760,7 @@ class _CompanyCustomerDetailBody extends StatefulWidget {
   final CompanyCustomersRepository repository;
   final String? issuerName;
   final void Function(String bookingId)? onOpenBooking;
+  final ValueChanged<CompanyCustomer>? onPlanRide;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
   final VoidCallback onRestore;
@@ -827,6 +838,13 @@ class _CompanyCustomerDetailBodyState extends State<_CompanyCustomerDetailBody> 
           key: kCompanyCustomersEditButtonKey,
           onPressed: widget.acting ? null : widget.onEdit,
           child: Text(kCompanyCustomersEdit.of(widget.language)),
+        ),
+        OutlinedButton(
+          key: kCompanyCustomersPlanButtonKey,
+          onPressed: widget.acting
+              ? null
+              : () => widget.onPlanRide?.call(widget.customer),
+          child: Text(kCompanyAgendaPlanRide.of(widget.language)),
         ),
         OutlinedButton(
           key: kCompanyCustomersQuoteButtonKey,

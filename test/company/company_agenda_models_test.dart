@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/company/company_address_field.dart'
+    show companyCustomerAddressChoiceLabel;
 import 'package:fluxidi_tracking/company/company_agenda_models.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 
@@ -86,6 +88,19 @@ void main() {
       line1: 'Korenmarkt 1',
       city: 'Gent',
     );
-    expect(companyCustomerAddressLine(address), 'Thuis · Korenmarkt 1 · Gent');
+    // The line itself is the address; the label is only a fallback when there
+    // is no street or city to show.
+    expect(companyCustomerAddressLine(address), 'Korenmarkt 1, Gent');
+    expect(
+      companyCustomerAddressLine(
+        const CompanyCustomerAddress(label: 'Thuis'),
+      ),
+      'Thuis',
+    );
+    // Picking a saved address shows the label in front of that line.
+    expect(
+      companyCustomerAddressChoiceLabel(address),
+      'Thuis · Korenmarkt 1, Gent',
+    );
   });
 }
