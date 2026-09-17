@@ -599,6 +599,56 @@ test("identical /book replay does not create a second ride", async () => {
   }
 });
 
+test("form-shaped /book keeps the confirmed 48A pin and Cadillac", async () => {
+  const kv = memoryKV();
+  seedFleet(kv);
+  await seedPublicPartner(kv);
+  const env = envWith(kv);
+  const original = globalThis.fetch;
+  globalThis.fetch = mapboxFetch();
+  try {
+    const body = {
+      public_partner_id: PUBLIC_PARTNER,
+      tenant_id: TENANT,
+      company_id: COMPANY,
+      from: "Koekamerstraat 48A, 9688 Schorisse, BE",
+      to: "Gent, Oost-Vlaanderen, België",
+      from_lat: 50.77205,
+      from_lng: 3.66942,
+      to_lat: 51.0543,
+      to_lng: 3.7174,
+      pickup_lat: 50.77205,
+      pickup_lon: 3.66942,
+      dropoff_lat: 51.0543,
+      dropoff_lon: 3.7174,
+      pickup_iso: "2026-09-18T16:00:00.000Z",
+      name: "Christophe",
+      phone: "+32469788891",
+      pax: 1,
+      preferred_vehicle_id: CADILLAC,
+      vehicle_id: CADILLAC,
+      assigned_driver_id: WOTAN,
+      payment_method: "cash",
+      payment_mode: "in_vehicle",
+      idempotency_key: "form-taxi-48a-cadillac",
+    };
+    const res = await postBook(env, body);
+    const json = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(json));
+    const stored = [...kv.store.keys()].filter((key) => key.startsWith("booking:"));
+    const record = JSON.parse(kv.store.get(stored[0]));
+    assert.match(String(record.from || record.pickup_address || body.from), /48A/);
+    assert.doesNotMatch(String(record.from || ""), /Ronse/);
+    assert.equal(record.customer_requested_vehicle_id, CADILLAC);
+    assert.equal(record.assigned_vehicle_id || record.vehicle_id, CADILLAC);
+    if (record.assigned_driver_id || record.driver_id) {
+      assert.equal(record.assigned_driver_id || record.driver_id, WOTAN);
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("book without coordinates returns a concrete geocode status, not a silent persist", async () => {
   const kv = memoryKV();
   seedFleet(kv);
