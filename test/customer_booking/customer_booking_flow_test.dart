@@ -12,6 +12,7 @@ import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_flow.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
 import 'package:fluxidi_tracking/payment/booking_billing_identity_form.dart';
@@ -186,12 +187,28 @@ Future<void> _pumpFlow(
   }
 
 Future<void> _expandSheetIfPresent(WidgetTester tester) async {
-  final toggle = find.byKey(kCustomerBookingSheetToggleKey);
-  if (toggle.evaluate().isEmpty) return;
-  if (find.text('Details openen').evaluate().isEmpty) return;
-  await tester.tap(toggle);
+  final handle = find.byKey(kCustomerBookingSheetHandleKey);
+  if (handle.evaluate().isEmpty) return;
+  if (find.byKey(kCustomerBookingSheetKey).evaluate().isEmpty) return;
+  final viewH =
+      tester.view.physicalSize.height / tester.view.devicePixelRatio;
+  for (var i = 0; i < 6; i++) {
+    final sheet = find.byKey(kCustomerBookingSheetKey);
+    if (sheet.evaluate().isEmpty) return;
+    final rect = tester.getRect(sheet);
+    if (rect.height >= viewH * 0.78) return;
+    await tester.drag(handle, Offset(0, -(viewH * 0.28)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+  }
+}
+
+Future<void> _dragSheet(WidgetTester tester, double dy) async {
+  final handle = find.byKey(kCustomerBookingSheetHandleKey);
+  expect(handle, findsOneWidget);
+  await tester.drag(handle, Offset(0, dy));
   await tester.pump();
-  await tester.pump(const Duration(milliseconds: 280));
+  await tester.pump(const Duration(milliseconds: 40));
 }
 
 Finder _treeKey(Key key) => find.byKey(key, skipOffstage: false);
@@ -268,7 +285,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 80));
     expect(find.byKey(kCustomerBookingGpsFallbackKey), findsNothing);
-    expect(find.text('GPS Straat 12, Brussel'), findsWidgets);
+    expect(_treeText('GPS Straat 12, Brussel'), findsWidgets);
   });
 
   testWidgets('airport entry opens airport mode with airplane and cards', (
@@ -369,7 +386,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Anspachlaan 1, Brussel'), findsWidgets);
+    expect(_treeText('Anspachlaan 1, Brussel'), findsWidgets);
     expect(find.byKey(kCustomerBookingAirplaneVisualKey), findsNothing);
   });
 
@@ -387,7 +404,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Rogierplein 2, Brussel'), findsWidgets);
+    expect(_treeText('Rogierplein 2, Brussel'), findsWidgets);
     expect(find.byKey(kCustomerBookingAirplaneVisualKey), findsNothing);
   });
 
@@ -406,9 +423,9 @@ void main() {
         lockCompany: true,
       ),
     );
-    expect(_treeKey(kCustomerBookingStreetModeKey), findsOneWidget);
-    expect(_treeKey(kCustomerBookingAirportModeKey), findsOneWidget);
-    expect(_treeKey(kCustomerBookingCompanyLockKey), findsOneWidget);
+    expect(_treeKey(kCustomerBookingStreetModeKey), findsWidgets);
+    expect(_treeKey(kCustomerBookingAirportModeKey), findsWidgets);
+    expect(_treeKey(kCustomerBookingCompanyLockKey), findsWidgets);
     expect(find.byKey(kCustomerBookingAirplaneVisualKey), findsNothing);
     await _scrollFormTo(tester, _treeKey(kCustomerBookingAirportModeKey));
     await tester.tap(find.byKey(kCustomerBookingAirportModeKey));
@@ -601,6 +618,8 @@ void main() {
       ),
     );
     await _expandSheetIfPresent(tester);
+    await tester.tap(find.byKey(kCustomerBookingPaxSummaryKey));
+    await tester.pump();
     await _scrollFormTo(tester, _treeKey(kCustomerBookingPaxIncKey));
     final increment = find.byKey(kCustomerBookingPaxIncKey);
     expect(increment, findsOneWidget);
@@ -630,7 +649,9 @@ void main() {
         expect(find.byKey(kCustomerBookingWideSplitKey), findsNothing);
         expect(find.byKey(kCustomerBookingSheetKey), findsOneWidget);
         expect(find.byKey(kCustomerBookingSheetHandleKey), findsOneWidget);
-        expect(find.byKey(kCustomerBookingSheetToggleKey), findsOneWidget);
+        expect(find.byKey(kCustomerBookingSheetToggleKey), findsNothing);
+        expect(find.text('Waar ophalen?'), findsOneWidget);
+        expect(find.text('Waar wil je naartoe?'), findsOneWidget);
         final map = tester.getRect(find.byKey(kCustomerBookingMapKey));
         final sheet = tester.getRect(find.byKey(kCustomerBookingSheetKey));
         final confirm = tester.getRect(find.byKey(kCustomerBookingConfirmKey));
@@ -843,9 +864,11 @@ void main() {
         },
       ),
     );
-    await tester.tap(find.byKey(kCustomerBookingConfirmKey));
-    await tester.pump();
-    expect(find.byKey(kCustomerBookingSubmitErrorKey), findsOneWidget);
+    await tester.ensureVisible(find.byKey(kCustomerBookingConfirmKey));
+    final confirm = tester.widget<FilledButton>(
+      find.byKey(kCustomerBookingConfirmKey),
+    );
+    expect(confirm.onPressed, isNull);
     expect(find.byKey(kCustomerBookingSuccessKey), findsNothing);
     expect(books, 0);
   });
@@ -901,8 +924,15 @@ void main() {
         updatedAt: '2026-01-01',
       ),
     );
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 700));
     await _expandSheetIfPresent(tester);
+    final vehicle = find.byKey(customerBookingVehicleKey('vh_premium'));
+    if (vehicle.evaluate().isNotEmpty) {
+      await tester.ensureVisible(vehicle);
+      await tester.tap(vehicle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+    }
     expect(_treeKey(kCustomerBookingContactSummaryKey), findsOneWidget);
     await tester.ensureVisible(find.byKey(kCustomerBookingConfirmKey));
     await tester.tap(find.byKey(kCustomerBookingConfirmKey));
@@ -997,7 +1027,7 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 80));
-    expect(find.text('Handmatig vertrek 9, Ronse'), findsWidgets);
+    expect(_treeText('Handmatig vertrek 9, Ronse'), findsWidgets);
     expect(find.textContaining('GPS Straat'), findsNothing);
     await _scrollFormTo(tester, _treeKey(kCustomerBookingMyAddressKey));
     expect(_treeKey(kCustomerBookingMyAddressKey), findsOneWidget);
@@ -1202,7 +1232,10 @@ void main() {
       expect(_treeText('Zakelijke rit'), findsWidgets);
       expect(_treeText('Naar de luchthaven'), findsWidgets);
       expect(_treeText('Alle luchthavens bekijken'), findsWidgets);
-      expect(_treeText('Boeking bevestigen'), findsWidgets);
+      expect(
+        find.byKey(kCustomerBookingConfirmKey, skipOffstage: false),
+        findsOneWidget,
+      );
     }
   });
 
@@ -1247,7 +1280,7 @@ void main() {
     expect(find.text('A driver will be assigned soon'), findsNothing);
   });
 
-  testWidgets('Nu and Later sit under Particulier/Zakelijk and expose Datum/Tijd', (
+  testWidgets('clock row sits under Particulier/Zakelijk and exposes Datum/Tijd', (
     tester,
   ) async {
     await _pumpFlow(
@@ -1275,13 +1308,11 @@ void main() {
       ),
     );
     await _expandSheetIfPresent(tester);
+    expect(find.byKey(kCustomerBookingNowKey), findsNothing);
+    expect(find.byKey(kCustomerBookingLaterKey), findsNothing);
     final private = tester.getTopLeft(_treeKey(kCustomerBookingPrivateRideKey));
-    final later = tester.getTopLeft(_treeKey(kCustomerBookingLaterKey));
-    expect(later.dy, greaterThan(private.dy));
-    expect(find.byKey(kCustomerBookingDateKey), findsNothing);
-    await tester.tap(find.byKey(kCustomerBookingLaterKey));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    final clock = tester.getTopLeft(_treeKey(kCustomerBookingClockRowKey));
+    expect(clock.dy, greaterThan(private.dy));
     expect(_treeKey(kCustomerBookingDateKey), findsOneWidget);
     expect(_treeKey(kCustomerBookingTimeKey), findsOneWidget);
     expect(find.text('Datum', skipOffstage: false), findsWidgets);
@@ -1357,6 +1388,7 @@ void main() {
         return http.Response('partner_profile_skipped', 404);
       },
     );
+    await _expandSheetIfPresent(tester);
     await tester.tap(find.byKey(kCustomerBookingLaterKey));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(kCustomerBookingReturnNoWaitKey));
@@ -1375,7 +1407,7 @@ void main() {
     expect(find.byKey(customerBookingVehicleKey('vh_cadillac')), findsWidgets);
   });
 
-  testWidgets('phone compact keeps addresses and hides extras until opened', (
+  testWidgets('phone compact keeps company and vehicle, addresses after expand', (
     tester,
   ) async {
     await _pumpFlow(
@@ -1394,17 +1426,53 @@ void main() {
         ),
       ),
     );
-    expect(_treeText('Waar ophalen?'), findsOneWidget);
-    expect(_treeText('Waar wil je naartoe?'), findsOneWidget);
-    expect(_treeKey(kCustomerBookingCompanyChooseKey), findsOneWidget);
-    expect(_treeText('Kies een taxibedrijf'), findsOneWidget);
+    expect(_treeKey(kCustomerBookingCompactSummaryKey), findsOneWidget);
+    expect(_treeKey(kCustomerBookingCompanyChooseKey), findsWidgets);
+    expect(_treeText('Kies een taxibedrijf'), findsWidgets);
     expect(find.text('Prijs opnieuw berekenen'), findsNothing);
     expect(find.byKey(kCustomerBookingPaxIncKey), findsNothing);
     expect(find.byKey(kCustomerBookingMapPickupChipKey), findsOneWidget);
     expect(find.byKey(kCustomerBookingMapDropoffChipKey), findsOneWidget);
+    expect(find.text('Waar ophalen?'), findsOneWidget);
+    expect(find.text('Waar wil je naartoe?'), findsOneWidget);
+    expect(find.byKey(kCustomerBookingSheetToggleKey), findsNothing);
+    expect(find.byKey(kCustomerBookingAddReturnKey), findsWidgets);
     await _expandSheetIfPresent(tester);
+    await tester.ensureVisible(find.byKey(kCustomerBookingPaxSummaryKey));
+    await tester.tap(find.byKey(kCustomerBookingPaxSummaryKey));
+    await tester.pump();
     expect(_treeKey(kCustomerBookingPaxIncKey), findsOneWidget);
-    expect(_treeText('Details sluiten'), findsOneWidget);
+  });
+
+  testWidgets('phone sheet grows from compact to full under the header', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      size: const Size(390, 844),
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'B Straat 2, Gent',
+          latitude: 51.05,
+          longitude: 3.72,
+        ),
+      ),
+    );
+    final compact = tester.getRect(find.byKey(kCustomerBookingSheetKey));
+    await _dragSheet(tester, -280);
+    final expanded = tester.getRect(find.byKey(kCustomerBookingSheetKey));
+    expect(expanded.height, greaterThan(compact.height + 80));
+    expect(expanded.top, lessThan(compact.top - 80));
+    expect(find.byKey(kCustomerBookingSheetToggleKey), findsNothing);
+    await _dragSheet(tester, 280);
+    final lowered = tester.getRect(find.byKey(kCustomerBookingSheetKey));
+    expect(lowered.height, lessThan(expanded.height - 40));
   });
 
   testWidgets('airport photo card collapses to a changeable selected card', (
@@ -1432,5 +1500,203 @@ void main() {
     expect(find.byKey(kCustomerBookingAirportSelectedKey), findsOneWidget);
     expect(find.text('Wijzigen'), findsWidgets);
     expect(find.byKey(customerBookingAirportCardKey('CRL')), findsNothing);
+  });
+
+  testWidgets('sheet drag does not start a new quote', (tester) async {
+    var quotes = 0;
+    await _pumpFlow(
+      tester,
+      quotes: _quotes(onPost: (path) {
+        if (path.contains('quote')) quotes += 1;
+      }),
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'All-in Taxi',
+        ),
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'B Straat 2, Gent',
+          latitude: 51.05,
+          longitude: 3.72,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    final before = quotes;
+    final mapBefore = tester.getRect(find.byKey(kCustomerBookingMapKey));
+    final insetsBefore = customerBookingMapFitInsets(
+      wide: false,
+      height: 844,
+      sheetExtent: tester.getRect(find.byKey(kCustomerBookingSheetKey)).height /
+          844,
+    );
+    await _dragSheet(tester, 160);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(quotes, before);
+    final lowered = tester.getRect(find.byKey(kCustomerBookingSheetKey));
+    expect(lowered.height, lessThan(500));
+    final insetsAfter = customerBookingMapFitInsets(
+      wide: false,
+      height: 844,
+      sheetExtent: lowered.height / 844,
+    );
+    expect(insetsAfter.bottom, lessThan(insetsBefore.bottom));
+    expect(mapBefore.height, greaterThan(80));
+  });
+
+  testWidgets('header has title without Fluxidi logo and missing logo is neutral', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'Demo Taxi',
+        ),
+      ),
+    );
+    expect(find.byKey(kCustomerBookingTitleKey), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(AppBar), matching: find.byType(Image)),
+      findsNothing,
+    );
+    expect(find.byKey(kCustomerBookingCompanyChangeKey), findsNothing);
+    expect(find.byKey(kCustomerBookingCompanyLogoFallbackKey), findsOneWidget);
+  });
+
+  testWidgets('phone airport has no arrival margin and one ready-at row', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.airport,
+        toAirport: true,
+        airport: AirportCatalogAirport(
+          countryCode: 'BE',
+          countryName: 'België',
+          city: 'Brussel',
+          name: 'Brussels Airport',
+          iata: 'BRU',
+          latitude: 50.9014,
+          longitude: 4.4844,
+        ),
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+      ),
+    );
+    expect(find.byKey(kCustomerBookingArrivalMarginKey), findsNothing);
+    expect(find.text('Arrival margin before the flight'), findsNothing);
+    expect(find.byKey(kCustomerBookingTaxiReadyAtKey), findsOneWidget);
+    expect(find.text('Taxi staat klaar op'), findsOneWidget);
+    expect(find.byKey(kCustomerBookingDateKey), findsOneWidget);
+    expect(find.byKey(kCustomerBookingTimeKey), findsOneWidget);
+    expect(find.byKey(kCustomerBookingFlightDateKey), findsNothing);
+    expect(find.text('Vul een bestemming in'), findsNothing);
+    expect(find.byKey(kCustomerBookingDropoffKey), findsNothing);
+    expect(find.byKey(kCustomerBookingAirportSelectedKey), findsOneWidget);
+  });
+
+  testWidgets('incomplete ride hides vehicle and disables confirm', (tester) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'All-in Taxi',
+          vehicles: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'vehicle_id': 'vh_old',
+              'name': 'Minivan',
+              'vehicle_type': 'minivan',
+            },
+          ],
+        ),
+      ),
+    );
+    expect(find.byKey(customerBookingVehicleKey('vh_old')), findsNothing);
+    expect(find.text('Minivan'), findsNothing);
+    expect(find.byKey(kCustomerBookingPriceKey), findsNothing);
+    final confirm = tester.widget<FilledButton>(
+      find.byKey(kCustomerBookingConfirmKey),
+    );
+    expect(confirm.onPressed, isNull);
+  });
+
+  testWidgets('changing destination clears the previous vehicle and price', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'All-in Taxi',
+          vehicles: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'vehicle_id': 'vh_tesla',
+              'name': 'Tesla',
+              'vehicle_type': 'sedan',
+              'passenger_capacity': 3,
+            },
+          ],
+        ),
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'B Straat 2, Gent',
+          latitude: 51.05,
+          longitude: 3.72,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.enterText(find.byKey(kCustomerBookingDropoffKey), 'C Straat 9, Antwerpen');
+    await tester.pump();
+    expect(find.byKey(customerBookingVehicleKey('vh_tesla')), findsNothing);
+    expect(find.byKey(kCustomerBookingPriceKey), findsNothing);
+  });
+
+  testWidgets('saved profile address fills pickup for a returning customer', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      autoResolveGps: true,
+      gps: _gpsGranted(),
+      profile: CustomerProfile(
+        customerId: 'cus_1',
+        name: 'Christophe',
+        phone: '+32469788891',
+        email: 'c@example.com',
+        preferredPostcode: '9688',
+        companyName: '',
+        vatNumber: '',
+        billingStreet: 'Koekamerstraat 488A',
+        billingPostalCode: '9688',
+        billingCity: 'Maarkedal',
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      ),
+      entry: const CustomerBookingEntryContext(kind: CustomerBookingKind.taxi),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.textContaining('Koekamerstraat 488A', skipOffstage: false), findsWidgets);
   });
 }

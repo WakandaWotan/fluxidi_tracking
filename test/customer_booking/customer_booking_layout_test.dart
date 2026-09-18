@@ -21,31 +21,56 @@ void main() {
     );
   });
 
-  test('phone sheet leaves map visible and never uses 0.9 max', () {
+  test('phone sheet has min third, half initial and full-under-app-bar', () {
     final phone = customerBookingSheetSizes(height: 844, keyboardOpen: false);
-    expect(phone.max, lessThanOrEqualTo(0.75));
-    expect(phone.max, greaterThanOrEqualTo(0.55));
-    expect(phone.min, lessThan(phone.max));
-    expect(phone.initial, phone.min);
-    expect(phone.min, greaterThanOrEqualTo(0.36));
-    expect(customerBookingSheetShowsDetails(phone.min, phone), isFalse);
-    expect(customerBookingSheetShowsDetails(phone.max, phone), isTrue);
+    expect(phone.max, greaterThanOrEqualTo(0.90));
+    expect(phone.min, closeTo(0.34, 0.05));
+    expect(phone.half, closeTo(0.50, 0.04));
+    expect(phone.half, greaterThan(phone.min));
+    expect(phone.snaps, hasLength(3));
+    expect(phone.initial, phone.half);
+    expect(
+      customerBookingSheetLevel(phone.min, phone),
+      CustomerBookingSheetLevel.compact,
+    );
+    expect(
+      customerBookingSheetLevel(phone.half, phone),
+      CustomerBookingSheetLevel.half,
+    );
+    expect(
+      customerBookingSheetLevel(phone.max, phone),
+      CustomerBookingSheetLevel.expanded,
+    );
+    expect(customerBookingSheetShowsDetails(phone.min, phone), isTrue);
+    expect(customerBookingSheetAllowsScroll(phone.min, phone), isFalse);
+    expect(customerBookingSheetAllowsScroll(phone.max, phone), isTrue);
+    final landscape = customerBookingSheetSizes(
+      height: 334,
+      keyboardOpen: false,
+    );
+    expect(landscape.max, lessThan(0.80));
+    expect(landscape.min, lessThan(landscape.max));
+    expect(landscape.max, greaterThan(landscape.min));
     final insets = customerBookingMapFitInsets(
       wide: false,
       height: 844,
-      sheetExtent: phone.max,
+      sheetExtent: phone.min,
     );
     expect(insets.bottom, greaterThan(200));
+    expect(insets.bottom, lessThan(500));
+    final keyboard = customerBookingSheetSizes(height: 844, keyboardOpen: true);
+    expect(keyboard.min, closeTo(phone.min, 0.001));
+    expect(keyboard.max, closeTo(phone.max, 0.001));
   });
 
-  test('confirm bar unpins for keyboard and large text', () {
+  test('confirm bar stays pinned with keyboard so price remains reachable', () {
     expect(
       customerBookingPinConfirmBar(height: 844, keyboardOpen: false),
       isTrue,
     );
     expect(
-      customerBookingPinConfirmBar(height: 844, keyboardOpen: true),
-      isFalse,
+      customerBookingPinConfirmBar(height: 500, keyboardOpen: true),
+      isTrue,
     );
     expect(
       customerBookingPinConfirmBar(
@@ -53,7 +78,7 @@ void main() {
         keyboardOpen: false,
         textScale: 1.4,
       ),
-      isFalse,
+      isTrue,
     );
   });
 }

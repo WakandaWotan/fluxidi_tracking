@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_geometry.dart';
@@ -39,6 +39,7 @@ class CustomerBookingRouteMap extends StatefulWidget {
     this.fitInsets = EdgeInsets.zero,
     this.onEditPickup,
     this.onEditDropoff,
+    this.framed = true,
   });
 
   final AppLanguage language;
@@ -60,6 +61,7 @@ class CustomerBookingRouteMap extends StatefulWidget {
   final EdgeInsets fitInsets;
   final VoidCallback? onEditPickup;
   final VoidCallback? onEditDropoff;
+  final bool framed;
 
   @override
   State<CustomerBookingRouteMap> createState() =>
@@ -82,6 +84,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
   int _requestEpoch = 0;
   double _scaleStartZoom = 8;
   Size _viewport = Size.zero;
+  EdgeInsets _appliedFitInsets = EdgeInsets.zero;
   final Stopwatch _visibleWatch = Stopwatch();
 
   @override
@@ -109,6 +112,18 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     }
     if (_routeFingerprint() != _requestFingerprint) {
       unawaited(_syncGeometry());
+    }
+    _commitFitInsets(widget.fitInsets);
+  }
+
+  void _commitFitInsets(EdgeInsets next) {
+    const slop = 28.0;
+    if (_appliedFitInsets == EdgeInsets.zero ||
+        (next.bottom - _appliedFitInsets.bottom).abs() > slop ||
+        (next.top - _appliedFitInsets.top).abs() > slop ||
+        (next.left - _appliedFitInsets.left).abs() > slop ||
+        (next.right - _appliedFitInsets.right).abs() > slop) {
+      _appliedFitInsets = next;
     }
   }
 
@@ -172,7 +187,11 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     return customerBookingFitCamera(
       points: _framePoints,
       size: size,
-      contentInsets: widget.fitInsets,
+      origin: _pickupPoint,
+      destination: _dropoffPoint,
+      contentInsets: _appliedFitInsets == EdgeInsets.zero
+          ? widget.fitInsets
+          : _appliedFitInsets,
     );
   }
 
@@ -292,19 +311,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     final km = quote?.distanceKm ?? geometry?.distanceKm;
     if (minutes == null || km == null) return '';
     final kmText = km.toStringAsFixed(1).replaceAll('.', ',');
-    final eta = formatCompanyPlanQuoteEta(
-      result: CompanyPlanQuoteResult(
-        fingerprint: quote?.fingerprint ?? geometry?.fingerprint ?? '',
-        durationMin: minutes,
-        distanceKm: km,
-      ),
-      pickupLocal: widget.pickupLocal,
-    );
-    return [
-      '$minutes min · $kmText km',
-      if (eta.isNotEmpty)
-        '${kCustomerBookingArrivalDestination.of(widget.language)} $eta',
-    ].join(' · ');
+    return '$minutes min · $kmText km';
   }
 
   @override
@@ -313,15 +320,8 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     final status = _statusText;
     final loading = widget.quoteLoading || _geometryLoading;
     final showError = !loading && status.isNotEmpty;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: widget.palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: widget.palette.border),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: LayoutBuilder(
+    _commitFitInsets(widget.fitInsets);
+    final mapBody = LayoutBuilder(
           builder: (context, constraints) {
             final size = Size(constraints.maxWidth, constraints.maxHeight);
             _viewport = size;
@@ -329,7 +329,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
             return Stack(
               fit: StackFit.expand,
               children: [
-                const ColoredBox(color: Color(0xFFE7EEF2)),
+                const ColoredBox(color: Color(0xFFDCE6DC)),
                 Listener(
                   onPointerSignal: (event) {
                     if (event is! PointerScrollEvent) return;
@@ -371,10 +371,13 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        _MapboxTileLayer(
-                          camera: camera,
-                          size: size,
-                          token: _geometryClient.token,
+                        Transform.rotate(
+                          angle: -camera.bearingDeg * math.pi / 180,
+                          child: _MapboxTileLayer(
+                            camera: camera.copyWith(bearingDeg: 0),
+                            size: size,
+                            token: _geometryClient.token,
+                          ),
                         ),
                         AnimatedBuilder(
                           animation: _draw,
@@ -399,46 +402,24 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 12,
-                  right: 56,
-                  top: 12,
-                  child: _EndpointChip(
-                    key: kCustomerBookingMapPickupChipKey,
-                    icon: Icons.trip_origin,
-                    text: widget.pickup.displayText.trim().isEmpty
-                        ? kCustomerBookingPickup.of(widget.language)
-                        : widget.pickup.displayText.trim(),
-                    palette: widget.palette,
-                    onTap: widget.onEditPickup,
-                  ),
-                ),
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  bottom: widget.fitInsets.bottom > 24
-                      ? widget.fitInsets.bottom + 8
-                      : (_metricsText.isEmpty ? 12 : 56),
-                  child: Align(
-                    alignment: Alignment.bottomRight,
-                    child: _EndpointChip(
-                      key: kCustomerBookingMapDropoffChipKey,
-                      icon: Icons.flag_outlined,
-                      text: widget.dropoff.displayText.trim().isEmpty
-                          ? kCustomerBookingDropoff.of(widget.language)
-                          : widget.dropoff.displayText.trim(),
-                      palette: widget.palette,
-                      onTap: widget.onEditDropoff,
-                    ),
-                  ),
-                ),
+                ..._endpointLabels(size, camera),
                 if (_metricsText.isNotEmpty)
                   Positioned(
-                    left: 12,
-                    right: 56,
-                    bottom: widget.fitInsets.bottom > 24
-                        ? widget.fitInsets.bottom + 52
-                        : 12,
+                    left: _visibleHole(size).left + 8,
+                    top: () {
+                      final hole = _visibleHole(size);
+                      const chipH = 32.0;
+                      const gap = 6.0;
+                      final destBottom = hole.top + 8 + chipH;
+                      final pickupTop = hole.bottom - 8 - chipH;
+                      var top = hole.center.dy - chipH / 2;
+                      if (top < destBottom + gap) top = destBottom + gap;
+                      if (top + chipH > pickupTop - gap) {
+                        top = pickupTop - gap - chipH;
+                      }
+                      if (top < hole.top + 8) top = hole.top + 8;
+                      return top;
+                    }(),
                     child: _EndpointChip(
                       icon: Icons.schedule,
                       text: _metricsText,
@@ -446,17 +427,20 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                     ),
                   ),
                 Positioned(
-                  top: 8,
-                  right: 8,
+                  top: _visibleHole(size).top + 4,
+                  right: size.width - _visibleHole(size).right + 4,
                   child: IconButton.filledTonal(
                     key: kCustomerBookingFitRouteKey,
                     tooltip: kCustomerBookingFitRoute.of(widget.language),
                     onPressed: () {
                       setState(() {
                         _userMovedCamera = false;
+                        _appliedFitInsets = widget.fitInsets;
                         _movedCamera = customerBookingFitCamera(
                           points: _framePoints,
                           size: _viewport == Size.zero ? size : _viewport,
+                          origin: _pickupPoint,
+                          destination: _dropoffPoint,
                           contentInsets: widget.fitInsets,
                         );
                       });
@@ -526,9 +510,96 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
               ],
             );
           },
-        ),
+        );
+    if (!widget.framed) {
+      return ClipRect(child: mapBody);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: widget.palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: widget.palette.border),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: mapBody,
       ),
     );
+  }
+
+  EdgeInsets get _labelInsets =>
+      _appliedFitInsets == EdgeInsets.zero ? widget.fitInsets : _appliedFitInsets;
+
+  Rect _visibleHole(Size size) =>
+      customerBookingVisibleMapHole(size, _labelInsets);
+
+  List<Widget> _endpointLabels(Size size, CustomerBookingMapCamera camera) {
+    const labelSize = Size(168, 32);
+    final hole = _visibleHole(size);
+    Widget? chip({
+      required Key key,
+      required FluxidiMapLonLat? point,
+      required String raw,
+      required String emptyLabel,
+      required IconData icon,
+      required Offset nudge,
+      required bool pickup,
+      VoidCallback? onTap,
+    }) {
+      final text = customerBookingCompactAddressLabel(raw).isEmpty
+          ? emptyLabel
+          : customerBookingCompactAddressLabel(raw);
+      Offset pos;
+      if (point == null) {
+        pos = Offset(
+          hole.left + 8,
+          pickup ? hole.bottom - labelSize.height - 8 : hole.top + 8,
+        );
+      } else {
+        final anchor = customerBookingProject(point, camera, size);
+        pos = customerBookingClampMapLabel(
+          anchor: anchor,
+          size: size,
+          visibleInsets: _labelInsets,
+          labelSize: labelSize,
+          nudge: nudge,
+        );
+      }
+      return Positioned(
+        left: pos.dx,
+        top: pos.dy,
+        child: _EndpointChip(
+          key: key,
+          icon: icon,
+          text: text,
+          palette: widget.palette,
+          onTap: onTap,
+        ),
+      );
+    }
+
+    return [
+      ?chip(
+        key: kCustomerBookingMapPickupChipKey,
+        point: _pickupPoint,
+        raw: widget.pickup.displayText,
+        emptyLabel: kCustomerBookingPickup.of(widget.language),
+        icon: Icons.trip_origin,
+        nudge: const Offset(12, -36),
+        pickup: true,
+        onTap: widget.onEditPickup,
+      ),
+      ?chip(
+        key: kCustomerBookingMapDropoffChipKey,
+        point: _dropoffPoint,
+        raw: widget.dropoff.displayText,
+        emptyLabel: kCustomerBookingDropoff.of(widget.language),
+        icon: Icons.flag_outlined,
+        nudge: const Offset(-120, 14),
+        pickup: false,
+        onTap: widget.onEditDropoff,
+      ),
+    ];
   }
 }
 
@@ -571,7 +642,7 @@ class _EndpointChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 280),
+      constraints: const BoxConstraints(maxWidth: 168),
       child: Material(
         color: palette.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(999),
@@ -592,8 +663,8 @@ class _EndpointChip extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: palette.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
                     ),
                   ),
                 ),
@@ -650,12 +721,12 @@ class _MapboxTileLayer extends StatelessWidget {
             width: tileSize,
             height: tileSize,
             child: Image.network(
-              'https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/256/$z/$wrappedX/$y@2x?access_token=$token',
+              'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/$z/$wrappedX/$y@2x?access_token=$token',
               fit: BoxFit.cover,
               filterQuality: FilterQuality.medium,
               gaplessPlayback: true,
               errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: Color(0xFFE7EEF2)),
+              const ColoredBox(color: Color(0xFFDCE6DC)),
             ),
           ),
         );
@@ -700,7 +771,7 @@ class _CustomerBookingRoutePainter extends CustomPainter {
         Paint()
           ..color = const Color(0xFF1A1C16)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
+          ..strokeWidth = 9
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round,
       );
@@ -709,7 +780,7 @@ class _CustomerBookingRoutePainter extends CustomPainter {
         Paint()
           ..color = gold
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 5
+          ..strokeWidth = 5.5
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round,
       );

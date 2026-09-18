@@ -63,6 +63,13 @@ const Key kCustomerBookingNarrowStackKey = Key('customer_booking_narrow_stack');
 const Key kCustomerBookingSheetKey = Key('customer_booking_sheet');
 const Key kCustomerBookingSheetHandleKey = Key('customer_booking_sheet_handle');
 const Key kCustomerBookingSheetToggleKey = Key('customer_booking_sheet_toggle');
+const Key kCustomerBookingClockRowKey = Key('customer_booking_clock_row');
+const Key kCustomerBookingTaxiReadyAtKey = Key('customer_booking_taxi_ready_at');
+const Key kCustomerBookingCompanyLogoFallbackKey = Key(
+  'customer_booking_company_logo_fallback',
+);
+const Key kCustomerBookingPaxSummaryKey = Key('customer_booking_pax_summary');
+const Key kCustomerBookingAddReturnKey = Key('customer_booking_add_return');
 const Key kCustomerBookingCompactSummaryKey = Key(
   'customer_booking_compact_summary',
 );
@@ -82,6 +89,18 @@ const Key kCustomerBookingFlightNumberKey = Key(
   'customer_booking_flight_number',
 );
 const Key kCustomerBookingFlightWhenKey = Key('customer_booking_flight_when');
+const Key kCustomerBookingFlightDateKey = Key('customer_booking_flight_date');
+const Key kCustomerBookingFlightTimeKey = Key('customer_booking_flight_time');
+const Key kCustomerBookingTaxiPickupKey = Key('customer_booking_taxi_pickup');
+const Key kCustomerBookingPickupAfterMinKey = Key(
+  'customer_booking_pickup_after_min',
+);
+const Key kCustomerBookingArrivalMarginKey = Key(
+  'customer_booking_arrival_margin',
+);
+const Key kCustomerBookingApplySuggestedPickupKey = Key(
+  'customer_booking_apply_suggested_pickup',
+);
 const Key kCustomerBookingLandingHintKey = Key(
   'customer_booking_landing_hint',
 );

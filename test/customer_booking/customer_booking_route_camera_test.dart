@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 import 'package:fluxidi_tracking/maps/fluxidi_static_route_preview.dart';
 
@@ -22,6 +23,22 @@ void main() {
     expect((a - b).distance, greaterThan(80));
   });
 
+  test('map labels stay inside the visible hole', () {
+    const size = Size(390, 844);
+    const insets = EdgeInsets.fromLTRB(20, 64, 20, 360);
+    final pos = customerBookingClampMapLabel(
+      anchor: const Offset(200, 700),
+      size: size,
+      visibleInsets: insets,
+      labelSize: const Size(160, 32),
+    );
+    final hole = customerBookingVisibleMapHole(size, insets);
+    expect(pos.dx, greaterThanOrEqualTo(hole.left));
+    expect(pos.dy, lessThanOrEqualTo(hole.bottom - 8));
+    expect(customerBookingCompactAddressLabel('Koekamerstraat 48A, Schorisse'),
+        'Koekamerstraat 48A');
+  });
+
   test('fit insets keep both endpoints in the visible map hole', () {
     const pickup = FluxidiMapLonLat(3.63, 50.80);
     const dropoff = FluxidiMapLonLat(4.48, 50.90);
@@ -38,6 +55,24 @@ void main() {
     expect(b.dx, inInclusiveRange(insets.left, size.width - insets.right));
     expect(a.dy, inInclusiveRange(insets.top, size.height - insets.bottom));
     expect(b.dy, inInclusiveRange(insets.top, size.height - insets.bottom));
+  });
+
+  test('fit camera puts pickup below destination', () {
+    const pickup = FluxidiMapLonLat(3.63, 50.90);
+    const dropoff = FluxidiMapLonLat(3.63, 50.80);
+    const size = Size(390, 844);
+    const insets = EdgeInsets.fromLTRB(20, 64, 20, 360);
+    final camera = customerBookingFitCamera(
+      points: const [pickup, dropoff],
+      size: size,
+      contentInsets: insets,
+      origin: pickup,
+      destination: dropoff,
+    );
+    final a = customerBookingProject(pickup, camera, size);
+    final b = customerBookingProject(dropoff, camera, size);
+    expect(a.dy, greaterThan(b.dy));
+    expect(camera.bearingDeg.abs(), greaterThan(90));
   });
 
   test('route prefix walks along the line once', () {

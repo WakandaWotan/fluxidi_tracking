@@ -1,10 +1,10 @@
 import 'package:fluxidi_tracking/app_strings.dart';
 
 const LocalizedText kCustomerBookingTaxiTitle = LocalizedText(
-  nl: 'Taxi boeken',
-  en: 'Book a taxi',
-  fr: 'Réserver un taxi',
-  es: 'Reservar un taxi',
+  nl: 'Boek je rit',
+  en: 'Book your ride',
+  fr: 'Réservez votre trajet',
+  es: 'Reserva tu viaje',
 );
 
 const LocalizedText kCustomerBookingAirportTitle = LocalizedText(
@@ -119,18 +119,39 @@ const LocalizedText kCustomerBookingDropoffAsk = LocalizedText(
   es: '¿Adónde quieres ir?',
 );
 
-const LocalizedText kCustomerBookingShowDetails = LocalizedText(
-  nl: 'Details openen',
-  en: 'Show details',
-  fr: 'Ouvrir les détails',
-  es: 'Abrir detalles',
+const LocalizedText kCustomerBookingChooseDateTime = LocalizedText(
+  nl: 'Kies datum en tijd',
+  en: 'Choose date and time',
+  fr: 'Choisir la date et l’heure',
+  es: 'Elige fecha y hora',
 );
 
-const LocalizedText kCustomerBookingHideDetails = LocalizedText(
-  nl: 'Details sluiten',
-  en: 'Hide details',
-  fr: 'Fermer les détails',
-  es: 'Cerrar detalles',
+const LocalizedText kCustomerBookingTaxiReadyAt = LocalizedText(
+  nl: 'Taxi staat klaar op',
+  en: 'Taxi ready at',
+  fr: 'Taxi prêt à',
+  es: 'Taxi listo a las',
+);
+
+const LocalizedText kCustomerBookingAddReturn = LocalizedText(
+  nl: 'Terugrit toevoegen',
+  en: 'Add return ride',
+  fr: 'Ajouter le retour',
+  es: 'Añadir vuelta',
+);
+
+const LocalizedText kCustomerBookingRemoveReturn = LocalizedText(
+  nl: 'Terugrit verwijderen',
+  en: 'Remove return ride',
+  fr: 'Retirer le retour',
+  es: 'Quitar vuelta',
+);
+
+const LocalizedText kCustomerBookingWaitOption = LocalizedText(
+  nl: 'Wachten tijdens de terugrit',
+  en: 'Wait during the return',
+  fr: 'Attendre pendant le retour',
+  es: 'Esperar durante la vuelta',
 );
 
 const LocalizedText kCustomerBookingAddStop = LocalizedText(
@@ -141,10 +162,10 @@ const LocalizedText kCustomerBookingAddStop = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingNow = LocalizedText(
-  nl: 'Nu',
-  en: 'Now',
-  fr: 'Maintenant',
-  es: 'Ahora',
+  nl: 'Zo snel mogelijk',
+  en: 'As soon as possible',
+  fr: 'Dès que possible',
+  es: 'Lo antes posible',
 );
 
 const LocalizedText kCustomerBookingLater = LocalizedText(
@@ -294,6 +315,13 @@ const LocalizedText kCustomerBookingNeedCompany = LocalizedText(
   es: 'Elige una empresa de taxi antes de confirmar.',
 );
 
+const LocalizedText kCustomerBookingConfirmShort = LocalizedText(
+  nl: 'Bevestigen',
+  en: 'Confirm',
+  fr: 'Confirmer',
+  es: 'Confirmar',
+);
+
 const LocalizedText kCustomerBookingConfirm = LocalizedText(
   nl: 'Boeking bevestigen',
   en: 'Confirm booking',
@@ -379,10 +407,66 @@ const LocalizedText kCustomerBookingFlightDepart = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingFlightArrive = LocalizedText(
-  nl: 'Geplande landing',
-  en: 'Scheduled landing',
-  fr: 'Atterrissage prévu',
-  es: 'Aterrizaje previsto',
+  nl: 'Aankomst van de vlucht',
+  en: 'Flight arrival',
+  fr: 'Arrivée du vol',
+  es: 'Llegada del vuelo',
+);
+
+const LocalizedText kCustomerBookingFlightDate = LocalizedText(
+  nl: 'Datum van de vlucht',
+  en: 'Flight date',
+  fr: 'Date du vol',
+  es: 'Fecha del vuelo',
+);
+
+const LocalizedText kCustomerBookingFlightTime = LocalizedText(
+  nl: 'Tijd van de vlucht',
+  en: 'Flight time',
+  fr: 'Heure du vol',
+  es: 'Hora del vuelo',
+);
+
+const LocalizedText kCustomerBookingTaxiPickup = LocalizedText(
+  nl: 'Taxi-ophaling',
+  en: 'Taxi pickup',
+  fr: 'Prise en charge taxi',
+  es: 'Recogida en taxi',
+);
+
+const LocalizedText kCustomerBookingTaxiPickupDate = LocalizedText(
+  nl: 'Datum taxi-ophaling',
+  en: 'Taxi pickup date',
+  fr: 'Date de prise en charge',
+  es: 'Fecha de recogida',
+);
+
+const LocalizedText kCustomerBookingTaxiPickupTime = LocalizedText(
+  nl: 'Tijd taxi-ophaling',
+  en: 'Taxi pickup time',
+  fr: 'Heure de prise en charge',
+  es: 'Hora de recogida',
+);
+
+const LocalizedText kCustomerBookingDeboardMinutes = LocalizedText(
+  nl: 'Uitstap- en bagagetijd (min)',
+  en: 'Deboard and baggage time (min)',
+  fr: 'Temps de descente et bagages (min)',
+  es: 'Tiempo de bajada y equipaje (min)',
+);
+
+const LocalizedText kCustomerBookingArrivalMargin = LocalizedText(
+  nl: 'Aankomstmarge voor de vlucht (min)',
+  en: 'Arrival margin before the flight (min)',
+  fr: 'Marge d’arrivée avant le vol (min)',
+  es: 'Margen de llegada antes del vuelo (min)',
+);
+
+const LocalizedText kCustomerBookingApplySuggestedPickup = LocalizedText(
+  nl: 'Ophaaltijd overnemen',
+  en: 'Use suggested pickup',
+  fr: 'Utiliser l’heure suggérée',
+  es: 'Usar la recogida sugerida',
 );
 
 const LocalizedText kCustomerBookingSuccess = LocalizedText(

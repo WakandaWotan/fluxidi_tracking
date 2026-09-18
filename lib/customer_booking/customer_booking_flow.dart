@@ -7,10 +7,10 @@ import 'package:fluxidi_tracking/airport/airport_selector.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_airport_cards.dart';
+import 'package:fluxidi_tracking/company/company_plan_media.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
 import 'package:fluxidi_tracking/company/company_plan_ride_mode.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote_wire.dart';
-import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_geometry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_map.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
@@ -24,6 +24,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehic
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_cards.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_offers.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
+import 'package:fluxidi_tracking/company/company_form_date_time.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_home_notice.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
@@ -96,6 +97,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   late final LimousineAddressFieldController _returnPickup;
   late final LimousineAddressFieldController _returnDropoff;
   late final TextEditingController _flightCtrl;
+  late final TextEditingController _arrivalMarginCtrl;
+  late final TextEditingController _pickupAfterCtrl;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _emailCtrl;
@@ -142,6 +145,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   DateTime? _pickupAt;
   DateTime? _returnAt;
   DateTime? _flightAt;
+  int _pickupAfterMin = 0;
+  int _arrivalMarginMin = kCompanyPlanDefaultAirportArrivalMarginMin;
+  bool _taxiPickupManual = false;
   String? _selectedVehicleId;
   String? _selectedReturnVehicleId;
   CustomerBookingAssignedDriver _assignedDriver =
@@ -156,6 +162,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   bool _availabilityLoading = false;
   bool _returnAvailabilityLoading = false;
   bool _editingContact = false;
+  bool _compactCountsOpen = false;
+  String _companyLogoUrl = '';
   int _quoteSeq = 0;
   CompanyPlanQuoteResult? _quote;
   CompanyPlanQuoteRequest? _quoteRequest;
@@ -168,10 +176,12 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   final ScrollController _formScroll = ScrollController();
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
+  final ValueNotifier<double> _sheetExtentNotifier = ValueNotifier<double>(0.50);
   final FocusNode _pickupFocus = FocusNode();
   final FocusNode _dropoffFocus = FocusNode();
   ScrollController? _sheetScroll;
-  double _sheetExtent = 0.34;
+  double _sheetExtent = 0.50;
+  bool _sheetAnimating = false;
   bool _airportPickerOpen = false;
 
   AppLanguage get _language => widget.language ?? appConfig.currentLanguage;
@@ -209,6 +219,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       airportIata: _airport?.iata ?? '',
       airportCountry: _airport?.countryCode ?? '',
       flightAt: _flightAt?.toIso8601String() ?? '',
+      pickupAfterMin: _pickupAfterMin,
+      arrivalMarginMin: _arrivalMarginMin,
+      pickupArrangement: !_toAirport && _pickupAfterMin > 0
+          ? 'after_landing'
+          : (_airportMode && !_toAirport ? 'scheduled' : ''),
       vehicleType: _vehicleCategory == null
           ? companyPlanVehicleTypeWire(_vehicle)
           : companyPlanVehicleCategoryWire(_vehicleCategory!),
@@ -230,6 +245,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _idempotencyKey =
         'cust-${DateTime.now().microsecondsSinceEpoch}-${_entry.kind.name}';
     _flightCtrl = TextEditingController();
+    _arrivalMarginCtrl = TextEditingController(
+      text: '$kCompanyPlanDefaultAirportArrivalMarginMin',
+    );
+    _pickupAfterCtrl = TextEditingController();
     _nameCtrl = TextEditingController();
     _phoneCtrl = TextEditingController();
     _emailCtrl = TextEditingController();
@@ -272,6 +291,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _dropoff.addListener(_onDraftChanged);
     _returnPickup.addListener(_onDraftChanged);
     _returnDropoff.addListener(_onDraftChanged);
+    _sheetController.addListener(_onSheetControllerTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_refreshQuote());
     });
@@ -349,6 +369,12 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           _entry = _entry.copyWith(
             company: _entry.company.copyWith(companyName: snapshot.companyName),
           );
+        }
+        try {
+          _companyLogoUrl =
+              resolveCompanyPlanBrand(profile: snapshot.profile).logoUrl;
+        } catch (_) {
+          _companyLogoUrl = '';
         }
         _paymentCapability = snapshot.payment;
         _paymentCapabilityLoadFailed =
@@ -574,12 +600,48 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _quoteError = null;
   }
 
-  void _onDraftChanged() {
+  void _invalidateStaleRide() {
+    _quoteSeq += 1;
+    _clearCurrentQuote();
+    _quoteLoading = false;
+    _selectedVehicleId = null;
+    _selectedReturnVehicleId = null;
+    _assignedDriver = const CustomerBookingAssignedDriver();
+    _assignedReturnDriver = const CustomerBookingAssignedDriver();
+    _availability = const CustomerBookingAvailabilitySnapshot();
+    _returnAvailability = const CustomerBookingAvailabilitySnapshot();
+    _availabilityLoading = false;
+    _returnAvailabilityLoading = false;
+  }
+
+  void _onSheetControllerTick() {
+    if (!_sheetController.isAttached) return;
+    final next = _sheetController.size;
+    if ((next - _sheetExtentNotifier.value).abs() < 0.002) return;
+    _sheetExtent = next;
+    _sheetExtentNotifier.value = next;
+  }
+
+  void _dragSheetBy(double deltaDy, double parentHeight, CustomerBookingSheetSizes sizes) {
+    if (!_sheetController.isAttached || parentHeight <= 0) return;
+    final next = (_sheetController.size - deltaDy / parentHeight).clamp(
+      sizes.min,
+      sizes.max,
+    );
+    _sheetController.jumpTo(next);
+    _sheetExtent = next;
+    _sheetExtentNotifier.value = next;
+  }
+
+  void _onDraftChanged({bool resetOffer = true}) {
     _quoteDebounce?.cancel();
-    final hadQuote = _quote != null || _quoteRequest != null;
-    if (hadQuote) {
-      _clearCurrentQuote();
-      if (mounted) setState(() {});
+    if (resetOffer) {
+      final hadOffer = _quote != null ||
+          _quoteRequest != null ||
+          _selectedVehicleId != null ||
+          _selectedReturnVehicleId != null;
+      _invalidateStaleRide();
+      if (hadOffer && mounted) setState(() {});
     }
     _quoteDebounce = Timer(kCompanyPlanQuoteDebounce, () {
       unawaited(_refreshQuote());
@@ -807,6 +869,51 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
+  LimousineAddressValue get _effectivePickupAddress {
+    if (_airportMode && !_toAirport && _airport != null) {
+      final filled = _quoteAddress(_pickup);
+      if (customerBookingAddressReady(filled)) return filled;
+      return customerBookingAddressFromAirport(_airport!);
+    }
+    return _quoteAddress(_pickup);
+  }
+
+  LimousineAddressValue get _effectiveDropoffAddress {
+    if (_airportMode && _toAirport && _airport != null) {
+      final filled = _quoteAddress(_dropoff);
+      if (customerBookingAddressReady(filled)) return filled;
+      return customerBookingAddressFromAirport(_airport!);
+    }
+    return _quoteAddress(_dropoff);
+  }
+
+  bool get _rideIsBookable {
+    if (_submitting || _successId != null) return false;
+    if (_pickupNeedsConfirm) return false;
+    final issues = customerBookingSubmitIssues(
+      hasCompany: _hasChosenCompany,
+      pickup: _effectivePickupAddress,
+      dropoff: _effectiveDropoffAddress,
+      whenNow: _whenNow,
+      pickupLocal: _pickupAt,
+      name: _nameCtrl.text,
+      phone: _phoneCtrl.text,
+      quoteLoading: _quoteLoading,
+      quote: _quote,
+      quoteError: _quoteError,
+      successId: _successId,
+    );
+    if (issues.isNotEmpty) return false;
+    if (!_hasBookableVehicle(_outboundVehicleOffers, _selectedVehicleId)) {
+      return false;
+    }
+    if (_splitReturn &&
+        !_hasBookableVehicle(_returnVehicleOffers, _selectedReturnVehicleId)) {
+      return false;
+    }
+    return true;
+  }
+
   String _quotedRequestLabel(String key) {
     final raw = _quoteRequest?.body[key];
     return raw == null ? '' : raw.toString().trim();
@@ -866,8 +973,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     }
     final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
     final request = companyPlanQuoteRequestFromAddresses(
-      from: _quoteAddress(_pickup),
-      to: _quoteAddress(_dropoff),
+      from: _effectivePickupAddress,
+      to: _effectiveDropoffAddress,
       pickupLocal: pickupAt,
       options: _options,
       passengers: _passengers,
@@ -895,8 +1002,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       setState(() {
         _clearCurrentQuote();
         _quoteError = customerBookingIncompleteQuoteIssue(
-          from: _quoteAddress(_pickup),
-          to: _quoteAddress(_dropoff),
+          from: _effectivePickupAddress,
+          to: _effectiveDropoffAddress,
           whenNow: _whenNow,
           pickupLocal: pickupAt,
         );
@@ -957,6 +1064,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         _quoteRequest = request;
         _quoteLoading = false;
         _quoteError = null;
+        _applySuggestedPickup();
       });
       unawaited(_refreshAvailability());
     } catch (error) {
@@ -1098,6 +1206,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         time.hour,
         time.minute,
       );
+      _applySuggestedPickup();
     });
     _onDraftChanged();
   }
@@ -1111,10 +1220,28 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   DateTime? get _suggestedPickup {
-    if (!_airportMode || !_toAirport || _flightAt == null) return null;
-    final duration = _quote?.durationMin;
-    if (duration == null) return null;
-    return _flightAt!.subtract(Duration(minutes: duration + 15));
+    if (!_airportMode || _flightAt == null) return null;
+    final iso = _flightAt!.toIso8601String();
+    if (_toAirport) {
+      return companyPlanSuggestedToAirportPickup(
+        flightAt: iso,
+        durationMin: _quote?.durationMin,
+        arrivalMarginMin: _arrivalMarginMin,
+      );
+    }
+    return companyPlanSuggestedFromAirportPickup(
+      flightAt: iso,
+      pickupAfterMin: _pickupAfterMin,
+    );
+  }
+
+  void _applySuggestedPickup({bool force = false}) {
+    final suggested = _suggestedPickup;
+    if (suggested == null) return;
+    if (!force && _taxiPickupManual) return;
+    _whenNow = false;
+    _pickupAt = suggested;
+    if (force) _taxiPickupManual = false;
   }
 
   Future<void> _changeCompany() async {
@@ -1179,8 +1306,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     if (_successId != null) return;
     final issues = customerBookingSubmitIssues(
       hasCompany: _hasChosenCompany,
-      pickup: _quoteAddress(_pickup),
-      dropoff: _quoteAddress(_dropoff),
+      pickup: _effectivePickupAddress,
+      dropoff: _effectiveDropoffAddress,
       whenNow: _whenNow,
       pickupLocal: _pickupAt,
       name: _nameCtrl.text,
@@ -1257,19 +1384,40 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() => _submitError = null);
     try {
       _syncReturnDefaults();
-      if (!_quoteAddress(_pickup).hasCoordinates) {
+      if (!_effectivePickupAddress.hasCoordinates) {
         await _geocodePickupIfNeeded();
       }
       final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
+      LimousineAddressValue bookEnd({
+        required LimousineAddressFieldController field,
+        required LimousineAddressValue effective,
+        double? fallbackLat,
+        double? fallbackLon,
+        required String quotedLabel,
+      }) {
+        final booked = _bookAddress(
+          field,
+          fallbackLat: fallbackLat,
+          fallbackLon: fallbackLon,
+          quotedLabel: quotedLabel,
+        );
+        if (customerBookingAddressReady(booked) && booked.hasCoordinates) {
+          return booked;
+        }
+        return effective;
+      }
+
       final request = companyPlanQuoteRequestFromAddresses(
-        from: _bookAddress(
-          _pickup,
+        from: bookEnd(
+          field: _pickup,
+          effective: _effectivePickupAddress,
           fallbackLat: _quote?.pickupLat,
           fallbackLon: _quote?.pickupLon,
           quotedLabel: _quotedRequestLabel('from'),
         ),
-        to: _bookAddress(
-          _dropoff,
+        to: bookEnd(
+          field: _dropoff,
+          effective: _effectiveDropoffAddress,
           fallbackLat: _quote?.dropoffLat,
           fallbackLon: _quote?.dropoffLon,
           quotedLabel: _quotedRequestLabel('to'),
@@ -1493,6 +1641,29 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           ? _sheetScroll!
           : _formScroll;
 
+  Future<void> _animateSheetTo(double size) async {
+    if (!_sheetController.isAttached) {
+      if (mounted) setState(() => _sheetExtent = size);
+      return;
+    }
+    _sheetAnimating = true;
+    try {
+      await _sheetController.animateTo(
+        size,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    } catch (_) {
+      if (_sheetController.isAttached) {
+        _sheetController.jumpTo(size);
+      }
+    }
+    _sheetAnimating = false;
+    if (!mounted) return;
+    final next = _sheetController.isAttached ? _sheetController.size : size;
+    setState(() => _sheetExtent = next);
+  }
+
   void _revealSubmitIssue(CustomerBookingSubmitIssue issue) {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -1502,11 +1673,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           keyboardOpen: MediaQuery.viewInsetsOf(context).bottom > 80,
           textScale: MediaQuery.textScalerOf(context).scale(1),
         );
-        await _sheetController.animateTo(
-          sizes.max,
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOut,
-        );
+        await _animateSheetTo(sizes.max);
       }
       if (!mounted || !_activeFormScroll.hasClients) return;
       final jumpDown = issue.focusKey == 'name' ||
@@ -1527,7 +1694,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   @override
   void dispose() {
     _quoteDebounce?.cancel();
+    _sheetController.removeListener(_onSheetControllerTick);
     _sheetController.dispose();
+    _sheetExtentNotifier.dispose();
     _pickupFocus.dispose();
     _dropoffFocus.dispose();
     _formScroll.dispose();
@@ -1542,6 +1711,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       stop.dispose();
     }
     _flightCtrl.dispose();
+    _arrivalMarginCtrl.dispose();
+    _pickupAfterCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
@@ -1601,16 +1772,23 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                     keyboardOpen: keyboardOpen,
                     textScale: textScale,
                   );
-                  final sheetExtent = wide
-                      ? 0.0
-                      : (_sheetExtent < sheet.min ? sheet.initial : _sheetExtent);
-                  final map = _bookingMap(
-                    wide: wide,
-                    height: constraints.maxHeight,
-                    sheetExtent: sheetExtent,
+                  final map = ValueListenableBuilder<double>(
+                    valueListenable: _sheetExtentNotifier,
+                    builder: (context, extent, _) {
+                      return _bookingMap(
+                        wide: wide,
+                        height: constraints.maxHeight,
+                        sheetExtent: wide
+                            ? 0.0
+                            : extent.clamp(sheet.min, sheet.max),
+                      );
+                    },
                   );
                   final confirm = (!wide || pinConfirm)
-                      ? _confirmBar(compact: short || keyboardOpen || !wide)
+                      ? _confirmBar(
+                          compact: !wide,
+                          inlinePrice: !wide,
+                        )
                       : const SizedBox.shrink();
                   final audience = Padding(
                     padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
@@ -1706,35 +1884,23 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                       Positioned.fill(
                         child: NotificationListener<DraggableScrollableNotification>(
                         onNotification: (notification) {
-                          final next = notification.extent;
-                          final detailsChanged =
-                              customerBookingSheetShowsDetails(next, sheet) !=
-                              customerBookingSheetShowsDetails(
-                                _sheetExtent,
-                                sheet,
-                              );
-                          if (!detailsChanged &&
-                              (next - _sheetExtent).abs() < 0.06) {
-                            return false;
-                          }
-                          setState(() => _sheetExtent = next);
+                          _sheetExtent = notification.extent;
+                          _sheetExtentNotifier.value = notification.extent;
                           return false;
                         },
                         child: DraggableScrollableSheet(
+                          key: const ValueKey('customer_booking_phone_sheet'),
                           controller: _sheetController,
                           minChildSize: sheet.min,
                           maxChildSize: sheet.max,
-                          initialChildSize: sheet.initial,
-                          snap: true,
-                          snapSizes: sheet.snaps,
+                          initialChildSize: sheet.initial.clamp(
+                            sheet.min,
+                            sheet.max,
+                          ),
+                          snap: false,
                           shouldCloseOnMinExtent: false,
                           builder: (context, scrollController) {
                             _sheetScroll = scrollController;
-                            final showDetails =
-                                customerBookingSheetShowsDetails(
-                              _sheetExtent,
-                              sheet,
-                            );
                             return Material(
                               key: kCustomerBookingSheetKey,
                               color: _palette.background,
@@ -1745,9 +1911,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                               clipBehavior: Clip.antiAlias,
                               child: Column(
                                 children: [
-                                  _sheetHandle(),
-                                  _sheetToggle(
-                                    showDetails: showDetails,
+                                  _sheetHandle(
+                                    parentHeight: constraints.maxHeight,
                                     sizes: sheet,
                                   ),
                                   Expanded(
@@ -1764,20 +1929,12 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                                         16,
                                         16,
                                       ),
-                                      children: [
-                                        if (_airportMode) airplane,
-                                        audience,
-                                        if (_airportMode) airportChrome,
-                                        ..._bookingFormFields(
-                                          theme,
-                                          includeWhen: true,
-                                          confirmReserve: 8,
-                                          includeConfirm: false,
-                                          includeExtras: showDetails,
-                                        ),
-                                        if (!showDetails)
-                                          _compactMoreHint(theme),
-                                      ],
+                                      children: _phoneBookingFields(
+                                        theme,
+                                        airplane: airplane,
+                                        audience: audience,
+                                        airportChrome: airportChrome,
+                                      ),
                                     ),
                                   ),
                                   confirm,
@@ -1797,6 +1954,140 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         );
       },
     );
+  }
+
+  List<Widget> _phoneBookingFields(
+    ThemeData theme, {
+    required Widget airplane,
+    required Widget audience,
+    required Widget airportChrome,
+  }) {
+    final showDropoff = !_airportMode || !_toAirport || _airport == null;
+    return [
+      Column(
+        key: kCustomerBookingCompactSummaryKey,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_airportMode) airplane,
+          if (_airportMode) airportChrome,
+          if (!_hasChosenCompany)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: FilledButton(
+                key: kCustomerBookingCompanyChooseKey,
+                onPressed: _changeCompany,
+                child: Text(_t(kCustomerBookingChooseCompany)),
+              ),
+            )
+          else
+            _companyBanner(),
+          audience,
+          if (_entry.showBusinessModeChoice) _modeToggle(),
+          if (_gpsFallback)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _t(kCustomerBookingGpsFallback),
+                key: kCustomerBookingGpsFallbackKey,
+              ),
+            ),
+          if (_gpsBusy)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: LinearProgressIndicator(),
+            ),
+          LimousineAddressField(
+            controller: _pickup,
+            label: _t(kCustomerBookingPickupAsk),
+            tokens: _tokens,
+            language: _language,
+            showCanonicalEcho: false,
+            showCurrentLocation: false,
+            isPickupField: true,
+            inputKey: kCustomerBookingPickupKey,
+            focusNode: _pickupFocus,
+          ),
+          if (_pickupNeedsConfirm)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(kCustomerBookingCheckPickup),
+                    key: kCustomerBookingConfirmPickupBannerKey,
+                    style: TextStyle(
+                      color: _palette.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  OverflowBar(
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        key: kCustomerBookingInspectPickupKey,
+                        onPressed: _inspectPickupOnMap,
+                        child: Text(_t(kCustomerBookingInspectPickup)),
+                      ),
+                      TextButton(
+                        key: kCustomerBookingAddressConfirmKey,
+                        onPressed: _confirmPickupOnMap,
+                        child: Text(_t(kCustomerBookingAddressConfirmMap)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          if (!_airportMode || _toAirport) _pickupActions(),
+          ..._stopFields(inbound: false),
+          if (showDropoff)
+            LimousineAddressField(
+              controller: _dropoff,
+              label: _t(kCustomerBookingDropoffAsk),
+              tokens: _tokens,
+              language: _language,
+              showCanonicalEcho: false,
+              inputKey: kCustomerBookingDropoffKey,
+              focusNode: _dropoffFocus,
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              key: kCustomerBookingAddStopKey,
+              onPressed: () => _addStop(inbound: false),
+              child: Text(_t(kCustomerBookingAddStop)),
+            ),
+          ),
+          _laterWhenFields(),
+          _vehicleRow(),
+          _paxCompactRow(),
+          if (!companyPlanVehicleTypeFitsCapacity(
+            type: _vehicle,
+            passengers: _passengers,
+            bags: _bags,
+          ))
+            Text(_t(kCustomerBookingSuggestLarger)),
+          _phoneReturnSection(),
+          ..._contactFields(),
+          if (_successId != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                [
+                  _t(kCustomerBookingSuccess),
+                  if (customerBookingCompanyVisibleName(_entry.company)
+                      .isNotEmpty)
+                    customerBookingCompanyVisibleName(_entry.company),
+                  _successId!,
+                ].where((part) => part.trim().isNotEmpty).join(' · '),
+                key: kCustomerBookingSuccessKey,
+              ),
+            ),
+        ],
+      ),
+    ];
   }
 
   String get _tripSummaryLine {
@@ -1842,72 +2133,196 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         height: height,
         sheetExtent: sheetExtent,
       ),
+      framed: wide,
       onEditPickup: () => _editAddressFromMap(pickup: true),
       onEditDropoff: () => _editAddressFromMap(pickup: false),
     );
   }
 
-  Widget _sheetHandle() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: Center(
-        child: Container(
-          key: kCustomerBookingSheetHandleKey,
-          width: 40,
-          height: 4,
-          decoration: BoxDecoration(
-            color: _palette.border,
-            borderRadius: BorderRadius.circular(999),
+  Widget _sheetHandle({
+    required double parentHeight,
+    required CustomerBookingSheetSizes sizes,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: (details) {
+        _dragSheetBy(details.delta.dy, parentHeight, sizes);
+      },
+      child: SizedBox(
+        height: 28,
+        child: Center(
+          child: Container(
+            key: kCustomerBookingSheetHandleKey,
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: _palette.border,
+              borderRadius: BorderRadius.circular(999),
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _sheetToggle({
-    required bool showDetails,
-    required CustomerBookingSheetSizes sizes,
-  }) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: TextButton.icon(
-        key: kCustomerBookingSheetToggleKey,
-        onPressed: () {
-          final next = showDetails ? sizes.min : sizes.max;
-          setState(() => _sheetExtent = next);
-          if (!_sheetController.isAttached) return;
-          unawaited(
-            _sheetController.animateTo(
-              next,
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
+  Widget _paxCompactRow() {
+    return Column(
+      children: [
+        Material(
+          key: kCustomerBookingPaxSummaryKey,
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => setState(() => _compactCountsOpen = !_compactCountsOpen),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.person_outline, color: _palette.textMuted, size: 20),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$_passengers',
+                    style: TextStyle(
+                      color: _palette.textPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Icon(Icons.luggage_outlined, color: _palette.textMuted, size: 20),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$_bags',
+                    style: TextStyle(
+                      color: _palette.textPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          );
-        },
-        icon: Icon(
-          showDetails
-              ? Icons.keyboard_arrow_down
-              : Icons.keyboard_arrow_up,
+          ),
         ),
-        label: Text(
-          _t(showDetails
-              ? kCustomerBookingHideDetails
-              : kCustomerBookingShowDetails),
-        ),
-      ),
+        if (_compactCountsOpen) ...[
+          _countRow(
+            label: _t(kCustomerBookingPassengers),
+            value: _passengers,
+            incrementKey: kCustomerBookingPaxIncKey,
+            onChanged: (value) {
+              setState(() => _passengers = _clampPassengers(value));
+              _suggestVehicleIfNeeded();
+              _onDraftChanged(resetOffer: false);
+            },
+          ),
+          _countRow(
+            label: _t(kCustomerBookingBags),
+            value: _bags,
+            incrementKey: kCustomerBookingBagsIncKey,
+            onChanged: (value) {
+              setState(() => _bags = value);
+              _suggestVehicleIfNeeded();
+              _onDraftChanged(resetOffer: false);
+            },
+          ),
+        ],
+      ],
     );
   }
 
-  Widget _compactMoreHint(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Text(
-        _t(kCustomerBookingShowDetails),
-        key: kCustomerBookingCompactSummaryKey,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: _palette.textMuted,
+  Widget _phoneReturnSection({bool compact = false}) {
+    if (_returnKind == CustomerBookingReturnKind.oneWay) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          key: kCustomerBookingAddReturnKey,
+          onPressed: () {
+            setState(() {
+              _returnKind = CustomerBookingReturnKind.noWait;
+              _selectedReturnVehicleId = null;
+              _assignedReturnDriver = const CustomerBookingAssignedDriver();
+              _returnAvailability = const CustomerBookingAvailabilitySnapshot();
+              _returnAt ??= (_pickupAt ?? DateTime.now()).add(
+                const Duration(days: 1),
+              );
+            });
+            _syncReturnDefaults();
+            _onDraftChanged();
+          },
+          icon: Icon(Icons.add, color: _palette.textPrimary),
+          label: Text(
+            _t(kCustomerBookingAddReturn),
+            style: TextStyle(
+              color: _palette.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
-      ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _t(kCustomerBookingReturnNoWait),
+                style: TextStyle(
+                  color: _palette.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            TextButton(
+              key: kCustomerBookingOneWayKey,
+              onPressed: () {
+                setState(() {
+                  _returnKind = CustomerBookingReturnKind.oneWay;
+                  _selectedReturnVehicleId = null;
+                  _assignedReturnDriver = const CustomerBookingAssignedDriver();
+                  _returnAvailability = const CustomerBookingAvailabilitySnapshot();
+                });
+                _onDraftChanged();
+              },
+              child: Text(_t(kCustomerBookingRemoveReturn)),
+            ),
+          ],
+        ),
+        FilterChip(
+          key: kCustomerBookingReturnWaitKey,
+          label: Text(_t(kCustomerBookingWaitOption)),
+          selected: _returnKind == CustomerBookingReturnKind.wait,
+          onSelected: (selected) {
+            setState(() {
+              _returnKind = selected
+                  ? CustomerBookingReturnKind.wait
+                  : CustomerBookingReturnKind.noWait;
+            });
+            _syncReturnDefaults();
+            _onDraftChanged();
+          },
+        ),
+        if (!compact) ...[
+          if (_returnKind != CustomerBookingReturnKind.oneWay) ...[
+            LimousineAddressField(
+              controller: _returnPickup,
+              label: _t(kCustomerBookingReturnPickup),
+              tokens: _tokens,
+              language: _language,
+              showCanonicalEcho: false,
+            ),
+            LimousineAddressField(
+              controller: _returnDropoff,
+              label: _t(kCustomerBookingReturnDropoff),
+              tokens: _tokens,
+              language: _language,
+              showCanonicalEcho: false,
+            ),
+          ],
+          if (_returnKind == CustomerBookingReturnKind.noWait)
+            _returnWhenFields(),
+          if (_returnKind == CustomerBookingReturnKind.wait) _waitChips(),
+        ],
+      ],
     );
   }
 
@@ -1921,18 +2336,71 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         keyboardOpen: MediaQuery.viewInsetsOf(context).bottom > 80,
         textScale: MediaQuery.textScalerOf(context).scale(1),
       );
-      await _sheetController.animateTo(
-        sizes.max,
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOut,
-      );
+      await _animateSheetTo(sizes.max);
     }
     if (!mounted) return;
     if (!pickup && _airportMode && _toAirport) return;
     (pickup ? _pickupFocus : _dropoffFocus).requestFocus();
   }
 
-  Widget _confirmBar({bool compact = false}) {
+  Widget _confirmBar({bool compact = false, bool inlinePrice = false}) {
+    final incl = _quote == null ? null : customerBookingQuoteInclVat(_quote!);
+    final excl = _quote == null ? null : customerBookingQuoteExVat(_quote!);
+    final price = incl == null
+        ? null
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                formatCompanyPlanQuoteMoney(incl, _quote!.currency),
+                key: kCustomerBookingPriceKey,
+                style: TextStyle(
+                  color: _palette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: compact ? 22 : 20,
+                ),
+              ),
+              Text(
+                _t(kCustomerBookingTotalInclVat),
+                style: TextStyle(
+                  color: _palette.textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (excl != null)
+                Text(
+                  '${formatCompanyPlanQuoteMoney(excl, _quote!.currency)} ${_t(kCustomerBookingTotalExVat)}',
+                  style: TextStyle(
+                    color: _palette.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          );
+    final button = SizedBox(
+      height: compact ? 44 : 48,
+      child: FilledButton(
+        key: kCustomerBookingConfirmKey,
+        onPressed: _submitting || _successId != null || !_rideIsBookable
+            ? null
+            : _confirm,
+        child: _submitting
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Text(
+                _t(
+                  compact
+                      ? kCustomerBookingConfirmShort
+                      : kCustomerBookingConfirm,
+                ),
+              ),
+      ),
+    );
     return Material(
       color: _palette.background,
       child: Padding(
@@ -1961,21 +2429,22 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                   key: kCustomerBookingSubmittingKey,
                 ),
               ),
-            SizedBox(
-              width: double.infinity,
-              height: compact ? 44 : 48,
-              child: FilledButton(
-                key: kCustomerBookingConfirmKey,
-                onPressed: _submitting || _successId != null ? null : _confirm,
-                child: _submitting
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(_t(kCustomerBookingConfirm)),
-              ),
-            ),
+            if (inlinePrice && compact && price != null)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: price),
+                  const SizedBox(width: 12),
+                  button,
+                ],
+              )
+            else ...[
+              if (inlinePrice && price != null) ...[
+                price,
+                const SizedBox(height: 8),
+              ],
+              SizedBox(width: double.infinity, child: button),
+            ],
           ],
         ),
       ),
@@ -1989,73 +2458,79 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       key: kCustomerBookingCompanyBannerKey,
       color: _palette.surface,
       borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: _changeCompany,
-        borderRadius: BorderRadius.circular(12),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                Icon(Icons.apartment_outlined, color: _palette.textMuted),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: chosen
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name,
-                              key: kCustomerBookingCompanyLockKey,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: _palette.textPrimary,
-                                fontWeight: FontWeight.w800,
-                              ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 40),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            children: [
+              _companyLogoMark(size: 28),
+              const SizedBox(width: 8),
+              Expanded(
+                child: chosen
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            key: kCustomerBookingCompanyLockKey,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _palette.textPrimary,
+                              fontWeight: FontWeight.w800,
                             ),
-                            if (_presentation.hasBadge || _presentation.hasNotice)
-                              PublicCompanyPresentationBanner(
-                                presentation: _presentation,
-                                compact: true,
-                                onInfo: _presentation.hasNotice
-                                    ? () => _showExampleNotice()
-                                    : null,
-                              ),
-                          ],
-                        )
-                      : Text(
-                          _t(kCustomerBookingChooseCompany),
-                          key: kCustomerBookingCompanyChooseKey,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _palette.textPrimary,
-                            fontWeight: FontWeight.w700,
                           ),
+                          if (_presentation.hasBadge || _presentation.hasNotice)
+                            PublicCompanyPresentationBanner(
+                              presentation: _presentation,
+                              compact: true,
+                              onInfo: _presentation.hasNotice
+                                  ? () => _showExampleNotice()
+                                  : null,
+                            ),
+                        ],
+                      )
+                    : Text(
+                        _t(kCustomerBookingChooseCompany),
+                        key: kCustomerBookingCompanyChooseKey,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _palette.textPrimary,
+                          fontWeight: FontWeight.w700,
                         ),
-                ),
-                TextButton(
-                  key: chosen ? kCustomerBookingCompanyChangeKey : null,
-                  onPressed: _changeCompany,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 36),
-                  ),
-                  child: Text(
-                    chosen
-                        ? _t(kCustomerBookingChangeCompany)
-                        : _t(kCustomerBookingNeedCompanyShortPick),
-                  ),
-                ),
-              ],
-            ),
+                      ),
+              ),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _companyLogoMark({required double size}) {
+    if (_companyLogoUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          _companyLogoUrl,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _neutralCompanyIcon(size),
+        ),
+      );
+    }
+    return _neutralCompanyIcon(size);
+  }
+
+  Widget _neutralCompanyIcon(double size) {
+    return Icon(
+      Icons.apartment_outlined,
+      key: kCustomerBookingCompanyLogoFallbackKey,
+      size: size,
+      color: _palette.textMuted,
     );
   }
 
@@ -2116,20 +2591,18 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       return [
         ListTile(
           key: kCustomerBookingContactSummaryKey,
+          dense: true,
+          visualDensity: VisualDensity.compact,
           contentPadding: EdgeInsets.zero,
           title: Text(
             [
               _nameCtrl.text.trim(),
               _phoneCtrl.text.trim(),
-            ].join(' · '),
+              _emailCtrl.text.trim(),
+            ].where((part) => part.isNotEmpty).join(' · '),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          subtitle: Text(
-            _emailCtrl.text.trim(),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
           trailing: TextButton(
             onPressed: () => setState(() => _editingContact = true),
@@ -2175,14 +2648,20 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   List<Widget> _airportChromeFields(ThemeData theme) {
-    final showPicker = _airport == null || _airportPickerOpen || _browseCatalog;
+    final size = MediaQuery.sizeOf(context);
+    final wide = customerBookingUseWideSplit(
+      width: size.width,
+      height: size.height,
+    );
+    final showPicker =
+        _airport == null || _airportPickerOpen || _browseCatalog;
     return [
       _directionToggle(),
       const SizedBox(height: 12),
       if (!showPicker && _airport != null)
-        _selectedAirportCard(theme, _airport!)
+        _selectedAirportCard(theme, _airport!, compact: !wide)
       else ...[
-        if (_airport != null)
+        if (_airport != null && wide)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
@@ -2190,10 +2669,19 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
               key: kCustomerBookingAirportSummaryKey,
               style: theme.textTheme.titleMedium,
             ),
+          )
+        else if (_airport != null)
+          Offstage(
+            offstage: true,
+            child: Text(
+              customerBookingAirportSummary(_airport!),
+              key: kCustomerBookingAirportSummaryKey,
+            ),
           ),
         CompanyPlanAirportDestinationCards(
           language: _language,
           selectedIata: _airport?.iata ?? '',
+          compact: !wide,
           cardKeyOf: customerBookingAirportCardKey,
           onSelectedIata: (iata) {
             final record = companyPlanAirportCatalogRecord(iata);
@@ -2206,6 +2694,17 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
               _browseCatalog = true;
               _airportPickerOpen = true;
             });
+            if (!wide) {
+              unawaited(
+                _animateSheetTo(
+                  customerBookingSheetSizes(
+                    height: size.height,
+                    keyboardOpen: MediaQuery.viewInsetsOf(context).bottom > 80,
+                    textScale: MediaQuery.textScalerOf(context).scale(1),
+                  ).max,
+                ),
+              );
+            }
           },
         ),
         Align(
@@ -2217,66 +2716,125 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                 _browseCatalog = true;
                 _airportPickerOpen = true;
               });
+              if (!wide) {
+                unawaited(
+                  _animateSheetTo(
+                    customerBookingSheetSizes(
+                      height: size.height,
+                      keyboardOpen:
+                          MediaQuery.viewInsetsOf(context).bottom > 80,
+                      textScale: MediaQuery.textScalerOf(context).scale(1),
+                    ).max,
+                  ),
+                );
+              }
             },
             child: Text(_t(kCustomerBookingBrowseAllAirports)),
           ),
         ),
       ],
       if (_browseCatalog) _catalogPicker(),
-      _flightFields(),
+      _flightFields(phone: !wide),
     ];
   }
 
-  Widget _selectedAirportCard(ThemeData theme, AirportCatalogAirport airport) {
+  Widget _selectedAirportCard(
+    ThemeData theme,
+    AirportCatalogAirport airport, {
+    bool compact = false,
+  }) {
     final asset = companyPlanAirportCardAsset(airport.iata);
+    final photo = asset.isEmpty
+        ? ColoredBox(color: _palette.surfaceAlt)
+        : Image.asset(
+            asset,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                ColoredBox(color: _palette.surfaceAlt),
+          );
+    final summary = Text(
+      compact
+          ? customerBookingAirportCompactSummary(airport)
+          : customerBookingAirportSummary(airport),
+      key: kCustomerBookingAirportSummaryKey,
+      maxLines: compact ? 1 : 2,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w800,
+      ),
+    );
+    final change = TextButton(
+      onPressed: () {
+        setState(() {
+          _airportPickerOpen = true;
+          _browseCatalog = false;
+        });
+      },
+      child: Text(_t(kCustomerBookingChangeCompany)),
+    );
     return Material(
       key: kCustomerBookingAirportSelectedKey,
       color: _palette.surface,
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          AspectRatio(
-            aspectRatio: 16 / 7,
-            child: asset.isEmpty
-                ? ColoredBox(color: _palette.surfaceAlt)
-                : Image.asset(
-                    asset,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        ColoredBox(color: _palette.surfaceAlt),
+      child: compact
+          ? SizedBox(
+              height: 68,
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(width: 56, height: 56, child: photo),
                   ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    customerBookingAirportSummary(airport),
-                    key: kCustomerBookingAirportSummaryKey,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _t(
+                              _toAirport
+                                  ? kCustomerBookingToAirport
+                                  : kCustomerBookingFromAirport,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: _palette.textMuted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          summary,
+                          Offstage(
+                            offstage: true,
+                            child: Text(customerBookingAirportSummary(airport)),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _airportPickerOpen = true;
-                      _browseCatalog = false;
-                    });
-                  },
-                  child: Text(_t(kCustomerBookingChangeCompany)),
+                  change,
+                ],
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AspectRatio(aspectRatio: 16 / 7, child: photo),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                  child: Row(
+                    children: [
+                      Expanded(child: summary),
+                      change,
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -2309,6 +2867,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   List<Widget> _bookingFormFields(
     ThemeData theme, {
     bool includeWhen = true,
+    bool includeCompany = true,
+    bool phoneLayout = false,
     double confirmReserve = 16,
     bool includeConfirm = false,
     bool includeExtras = true,
@@ -2318,7 +2878,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         _whenToggle(),
         if (!_whenNow) _laterWhenFields(),
       ],
-      if (!_hasChosenCompany)
+      if (includeCompany && !_hasChosenCompany)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: FilledButton(
@@ -2327,9 +2887,9 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
             child: Text(_t(kCustomerBookingChooseCompany)),
           ),
         )
-      else
+      else if (includeCompany)
         _companyBanner(),
-      const SizedBox(height: 8),
+      if (includeCompany) const SizedBox(height: 8),
       if (_entry.showBusinessModeChoice) _modeToggle(),
       if (_gpsFallback)
         Padding(
@@ -2407,8 +2967,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           onPressed: () => _addStop(inbound: false),
           child: Text(_t(kCustomerBookingAddStop)),
         ),
-      _returnToggle(),
-      if (_returnKind != CustomerBookingReturnKind.oneWay) ...[
+      if (phoneLayout && includeExtras)
+        _phoneReturnSection()
+      else if (!phoneLayout)
+        _returnToggle(),
+      if (!phoneLayout && _returnKind != CustomerBookingReturnKind.oneWay) ...[
         LimousineAddressField(
           controller: _returnPickup,
           label: _t(kCustomerBookingReturnPickup),
@@ -2429,11 +2992,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           child: Text(_t(kCustomerBookingAddStop)),
         ),
       ],
-      if (_returnKind == CustomerBookingReturnKind.noWait)
+      if (!phoneLayout && _returnKind == CustomerBookingReturnKind.noWait)
         _returnWhenFields(),
-      if (_returnKind == CustomerBookingReturnKind.wait) _waitChips(),
+      if (!phoneLayout && _returnKind == CustomerBookingReturnKind.wait)
+        _waitChips(),
       const SizedBox(height: 8),
-      Text(_t(kCustomerBookingVehicle), style: theme.textTheme.titleSmall),
+      if (!phoneLayout)
+        Text(_t(kCustomerBookingVehicle), style: theme.textTheme.titleSmall),
       _vehicleRow(),
       const SizedBox(height: 8),
       if (includeExtras) ...[
@@ -2465,7 +3030,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           Text(_t(kCustomerBookingSuggestLarger)),
       ],
       const SizedBox(height: 12),
-      _quotePanel(),
+      _quotePanel(hideTotals: phoneLayout),
       if (includeExtras) ..._contactFields(),
       const SizedBox(height: 12),
       if (includeConfirm) _confirmBar(compact: true),
@@ -2732,8 +3297,11 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         onSelectionChanged: (value) {
           setState(() {
             _whenNow = value.first;
-            if (!_whenNow && _pickupAt == null) {
+            if (_whenNow) {
+              _taxiPickupManual = true;
+            } else if (_pickupAt == null) {
               _pickupAt = DateTime.now().add(const Duration(hours: 1));
+              _taxiPickupManual = true;
             }
           });
           _onDraftChanged();
@@ -2766,21 +3334,32 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         customerProfileDefaultAddressLine(profile).isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Wrap(
-        spacing: 8,
+      child: Row(
         children: [
           if (hasProfile)
-            TextButton.icon(
-              key: kCustomerBookingMyAddressKey,
-              onPressed: _useMyAddress,
-              icon: const Icon(Icons.home_outlined),
-              label: Text(_t(kCustomerBookingMyAddress)),
+            Expanded(
+              child: TextButton.icon(
+                key: kCustomerBookingMyAddressKey,
+                onPressed: _useMyAddress,
+                icon: const Icon(Icons.home_outlined, size: 18),
+                label: Text(_t(kCustomerBookingMyAddress)),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
             ),
-          TextButton.icon(
-            key: kCustomerBookingUseLocationKey,
-            onPressed: () => unawaited(_resolveGps(userRequested: true)),
-            icon: const Icon(Icons.my_location_outlined),
-            label: Text(_t(kCustomerBookingCurrentLocation)),
+          Expanded(
+            child: TextButton.icon(
+              key: kCustomerBookingUseLocationKey,
+              onPressed: () => unawaited(_resolveGps(userRequested: true)),
+              icon: const Icon(Icons.my_location_outlined, size: 18),
+              label: Text(_t(kCustomerBookingCurrentLocation)),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
           ),
         ],
       ),
@@ -2931,7 +3510,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       }
       _submitError = null;
     });
-    _onDraftChanged();
+    _onDraftChanged(resetOffer: false);
   }
 
   Widget _vehicleSection({
@@ -3183,43 +3762,118 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     );
   }
 
-  Widget _flightFields() {
+  Widget _flightFields({bool phone = false}) {
     return Column(
+      key: kCustomerBookingFlightWhenKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(_t(kCustomerBookingFlightSection)),
         TextField(
           key: kCustomerBookingFlightNumberKey,
           controller: _flightCtrl,
-          decoration: InputDecoration(labelText: _t(kCustomerBookingFlightNumber)),
+          decoration: InputDecoration(
+            labelText: _t(kCustomerBookingFlightNumber),
+            isDense: true,
+          ),
           textCapitalization: TextCapitalization.characters,
           onChanged: (_) => _onDraftChanged(),
         ),
-        ListTile(
-          key: kCustomerBookingFlightWhenKey,
-          title: Text(
+        if (!phone) ...[
+          const SizedBox(height: 12),
+          Text(
             _t(
               _toAirport
                   ? kCustomerBookingFlightDepart
                   : kCustomerBookingFlightArrive,
             ),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          subtitle: Text(_formatWhen(_flightAt)),
-          onTap: _pickFlightWhen,
-        ),
-        if (!_toAirport)
-          Text(
-            _t(kCustomerBookingLandingNotPickup),
-            key: kCustomerBookingLandingHintKey,
+          const SizedBox(height: 8),
+          CompanyDateTimeFields(
+            fieldId: 'customer_flight',
+            language: _language,
+            value: _flightAt,
+            dateLabel: _t(kCustomerBookingFlightDate),
+            timeLabel: _t(kCustomerBookingFlightTime),
+            onChanged: (next) {
+              setState(() {
+                _flightAt = next;
+                _applySuggestedPickup();
+              });
+              _onDraftChanged();
+            },
           ),
-        if (_toAirport && _suggestedPickup != null)
-          Text('${_t(kCustomerBookingPickupAdvice)}: ${_formatWhen(_suggestedPickup)}'),
-        if (_flightTooLate) Text(_t(kCustomerBookingTooLateForFlight)),
+          if (_toAirport)
+            TextField(
+              key: kCustomerBookingArrivalMarginKey,
+              keyboardType: TextInputType.number,
+              controller: _arrivalMarginCtrl,
+              decoration: InputDecoration(
+                labelText: _t(kCustomerBookingArrivalMargin),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _arrivalMarginMin = (int.tryParse(value.trim()) ??
+                          kCompanyPlanDefaultAirportArrivalMarginMin)
+                      .clamp(0, 180);
+                  _applySuggestedPickup();
+                });
+                _onDraftChanged();
+              },
+            )
+          else ...[
+            Text(
+              _t(kCustomerBookingLandingNotPickup),
+              key: kCustomerBookingLandingHintKey,
+            ),
+            TextField(
+              key: kCustomerBookingPickupAfterMinKey,
+              keyboardType: TextInputType.number,
+              controller: _pickupAfterCtrl,
+              decoration: InputDecoration(
+                labelText: _t(kCustomerBookingDeboardMinutes),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _pickupAfterMin =
+                      (int.tryParse(value.trim()) ?? 0).clamp(0, 240);
+                  _applySuggestedPickup();
+                });
+                _onDraftChanged();
+              },
+            ),
+          ],
+          if (_suggestedPickup != null) ...[
+            Text(
+              '${_t(kCustomerBookingPickupAdvice)}: ${_formatWhen(_suggestedPickup)}',
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: kCustomerBookingApplySuggestedPickupKey,
+                onPressed: () {
+                  setState(() => _applySuggestedPickup(force: true));
+                  _onDraftChanged();
+                },
+                child: Text(_t(kCustomerBookingApplySuggestedPickup)),
+              ),
+            ),
+          ],
+          if (_flightTooLate) Text(_t(kCustomerBookingTooLateForFlight)),
+        ] else if (!_toAirport)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              _t(kCustomerBookingLandingNotPickup),
+              key: kCustomerBookingLandingHintKey,
+            ),
+          ),
       ],
     );
   }
 
-  Widget _quotePanel() {
+  Widget _quotePanel({bool hideTotals = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: CustomerBookingPriceBlock(
@@ -3228,8 +3882,29 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         quote: _pickupNeedsConfirm ? null : _quote,
         error: _pickupNeedsConfirm || !_hasChosenCompany ? null : _quoteError,
         onRetry: () => unawaited(_refreshQuote()),
+        hideTotals: hideTotals,
       ),
     );
+  }
+
+  String _formatShortDate(DateTime? value) {
+    if (value == null) return '—';
+    final local = value.toLocal();
+    const months = <String>[
+      'jan',
+      'feb',
+      'mrt',
+      'apr',
+      'mei',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'okt',
+      'nov',
+      'dec',
+    ];
+    return '${local.day} ${months[local.month - 1]}';
   }
 
   String _formatWhen(DateTime? value) {
@@ -3278,6 +3953,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         time.hour,
         time.minute,
       );
+      _whenNow = false;
+      _taxiPickupManual = true;
     });
     _onDraftChanged();
   }
@@ -3307,6 +3984,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         time.hour,
         time.minute,
       );
+      _whenNow = false;
+      _taxiPickupManual = true;
     });
     _onDraftChanged();
   }
@@ -3399,30 +4078,54 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
+        key: kCustomerBookingClockRowKey,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Text(
+            _t(kCustomerBookingTaxiReadyAt),
+            key: kCustomerBookingTaxiReadyAtKey,
+            style: TextStyle(
+              color: _palette.textPrimary,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
             children: [
-              ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 140, maxWidth: 220),
+              Expanded(
                 child: _compactWhenField(
                   key: kCustomerBookingDateKey,
                   label: _t(kCustomerBookingDate),
                   value: _formatDate(_pickupAt),
                   icon: Icons.calendar_today_outlined,
-                  onTap: _pickLaterDate,
+                  onTap: () async {
+                    setState(() {
+                      _whenNow = false;
+                      _pickupAt ??= DateTime.now().add(const Duration(hours: 1));
+                      _taxiPickupManual = true;
+                    });
+                    _onDraftChanged();
+                    await _pickLaterDate();
+                  },
                 ),
               ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 110, maxWidth: 160),
+              const SizedBox(width: 8),
+              Expanded(
                 child: _compactWhenField(
                   key: kCustomerBookingTimeKey,
                   label: _t(kCustomerBookingTime),
                   value: _formatClock(_pickupAt),
                   icon: Icons.schedule_outlined,
-                  onTap: _pickLaterTime,
+                  onTap: () async {
+                    setState(() {
+                      _whenNow = false;
+                      _pickupAt ??= DateTime.now().add(const Duration(hours: 1));
+                      _taxiPickupManual = true;
+                    });
+                    _onDraftChanged();
+                    await _pickLaterTime();
+                  },
                 ),
               ),
             ],
@@ -3458,18 +4161,37 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-        child: InputDecorator(
-          decoration: InputDecoration(
-            labelText: label,
-            suffixIcon: Icon(icon, size: 18),
-            isDense: true,
-            contentPadding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-          ),
-          child: Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: _palette.textMuted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _palette.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

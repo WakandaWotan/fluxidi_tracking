@@ -58,6 +58,17 @@ String companyPlanAirportCardAsset(String? iata) {
       kCompanyPlanAirportModeAsset;
 }
 
+String companyPlanAirportCardCompactTitle(String iata) {
+  final catalog = airportByIata(iata);
+  if (catalog != null) {
+    final city = catalog.city.trim();
+    final code = catalog.iata.trim().toUpperCase();
+    if (city.isNotEmpty && code.isNotEmpty) return '$city · $code';
+    if (code.isNotEmpty) return code;
+  }
+  return companyPlanAirportCardTitle(iata);
+}
+
 String companyPlanAirportCardTitle(String iata) {
   final catalog = airportByIata(iata);
   if (catalog != null && catalog.name.trim().isNotEmpty) {
@@ -102,6 +113,7 @@ class CompanyPlanAirportDestinationCards extends StatefulWidget {
     required this.onSelectedIata,
     required this.onSelectedOther,
     this.cardKeyOf,
+    this.compact = false,
   });
 
   final AppLanguage language;
@@ -109,6 +121,7 @@ class CompanyPlanAirportDestinationCards extends StatefulWidget {
   final ValueChanged<String> onSelectedIata;
   final VoidCallback onSelectedOther;
   final Key Function(String id)? cardKeyOf;
+  final bool compact;
 
   @override
   State<CompanyPlanAirportDestinationCards> createState() =>
@@ -232,6 +245,9 @@ class _CompanyPlanAirportDestinationCardsState
   }
 
   double _cardWidth(double maxWidth) {
+    if (widget.compact) {
+      return 148;
+    }
     final finite = maxWidth.isFinite ? maxWidth : 390.0;
     final usable = (finite - 72).clamp(200.0, finite);
     if (usable < 520) return (usable * 0.86).clamp(200.0, 280.0);
@@ -253,19 +269,19 @@ class _CompanyPlanAirportDestinationCardsState
           ...kCompanyPlanFeaturedAirportIata,
           kCompanyPlanAirportCardOtherId,
         ];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              height: cardWidth / kCompanyPlanAirportCardAspect + 4,
+        final list = SizedBox(
+              height: widget.compact
+                  ? 92
+                  : cardWidth / kCompanyPlanAirportCardAspect + 4,
               child: Row(
                 children: [
-                  _ArrowButton(
-                    key: kCompanyPlanAirportPrevKey,
-                    icon: Icons.chevron_left,
-                    enabled: _canBack,
-                    onPressed: () => _step(-1),
-                  ),
+                  if (!widget.compact)
+                    _ArrowButton(
+                      key: kCompanyPlanAirportPrevKey,
+                      icon: Icons.chevron_left,
+                      enabled: _canBack,
+                      onPressed: () => _step(-1),
+                    ),
                   Expanded(
                     child: Listener(
                       onPointerSignal: (event) {
@@ -307,7 +323,11 @@ class _CompanyPlanAirportDestinationCardsState
                                         ? kCompanyAgendaOtherAirport.of(
                                             widget.language,
                                           )
-                                        : companyPlanAirportCardTitle(ids[index]),
+                                        : widget.compact
+                                            ? companyPlanAirportCardCompactTitle(
+                                                ids[index],
+                                              )
+                                            : companyPlanAirportCardTitle(ids[index]),
                                     assetPath: ids[index] ==
                                             kCompanyPlanAirportCardOtherId
                                         ? kCompanyPlanAirportModeAsset
@@ -316,6 +336,7 @@ class _CompanyPlanAirportDestinationCardsState
                                             kCompanyPlanAirportCardOtherId
                                         ? otherSelected
                                         : selected == ids[index],
+                                    compact: widget.compact,
                                     onTap: ids[index] ==
                                             kCompanyPlanAirportCardOtherId
                                         ? widget.onSelectedOther
@@ -329,17 +350,17 @@ class _CompanyPlanAirportDestinationCardsState
                       ),
                     ),
                   ),
-                  _ArrowButton(
-                    key: kCompanyPlanAirportNextKey,
-                    icon: Icons.chevron_right,
-                    enabled: _canForward,
-                    onPressed: () => _step(1),
-                  ),
+                  if (!widget.compact)
+                    _ArrowButton(
+                      key: kCompanyPlanAirportNextKey,
+                      icon: Icons.chevron_right,
+                      enabled: _canForward,
+                      onPressed: () => _step(1),
+                    ),
                 ],
               ),
-            ),
-          ],
-        );
+            );
+        return list;
       },
     );
   }
@@ -375,6 +396,7 @@ class _AirportCard extends StatelessWidget {
     required this.assetPath,
     required this.selected,
     required this.onTap,
+    this.compact = false,
   });
 
   final Key cardKey;
@@ -383,6 +405,7 @@ class _AirportCard extends StatelessWidget {
   final String assetPath;
   final bool selected;
   final VoidCallback onTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -459,15 +482,18 @@ class _AirportCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        maxLines: 2,
-                        softWrap: true,
+                        maxLines: compact ? 1 : 2,
+                        softWrap: !compact,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
+                        style: (compact
+                                ? theme.textTheme.labelLarge
+                                : theme.textTheme.titleSmall)
+                            ?.copyWith(
                           color: Colors.white,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (iata.isNotEmpty)
+                      if (!compact && iata.isNotEmpty)
                         Text(
                           iata,
                           style: theme.textTheme.labelLarge?.copyWith(

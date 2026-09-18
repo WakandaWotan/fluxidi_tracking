@@ -103,6 +103,16 @@ String customerBookingAirportSummary(AirportCatalogAirport airport) {
   return '✈ $name ($iata)';
 }
 
+String customerBookingAirportCompactSummary(AirportCatalogAirport airport) {
+  final iata = airport.iata.trim().toUpperCase();
+  final city = airport.city.trim();
+  final name = airport.name.trim();
+  final heading = city.isNotEmpty ? city : name;
+  if (iata.isEmpty) return heading;
+  if (heading.isEmpty) return iata;
+  return '$heading · $iata';
+}
+
 Future<CustomerBookingOwnedAddressResolution> customerBookingGeocodeIfNeeded(
   LimousineAddressFieldController controller,
 ) async {

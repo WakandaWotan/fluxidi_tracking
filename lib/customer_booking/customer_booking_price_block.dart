@@ -66,8 +66,9 @@ class CustomerBookingPriceBlock extends StatelessWidget {
     required this.loading,
     required this.quote,
     required this.error,
-    required this.onRetry,
+    required     this.onRetry,
     this.arrivalText = '',
+    this.hideTotals = false,
   });
 
   final AppLanguage language;
@@ -76,6 +77,7 @@ class CustomerBookingPriceBlock extends StatelessWidget {
   final String? error;
   final VoidCallback onRetry;
   final String arrivalText;
+  final bool hideTotals;
 
   @override
   Widget build(BuildContext context) {
@@ -161,31 +163,33 @@ class CustomerBookingPriceBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          kCustomerBookingTotalInclVat.of(language),
-          style: theme.textTheme.labelLarge,
-        ),
-        Text(
-          formatCompanyPlanQuoteMoney(incl, result.currency),
-          key: kCustomerBookingPriceKey,
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        if (excl != null) ...[
-          const SizedBox(height: 4),
+        if (!hideTotals) ...[
           Text(
-            kCustomerBookingTotalExVat.of(language),
-            style: theme.textTheme.labelMedium,
+            kCustomerBookingTotalInclVat.of(language),
+            style: theme.textTheme.labelLarge,
           ),
           Text(
-            formatCompanyPlanQuoteMoney(excl, result.currency),
-            style: theme.textTheme.titleMedium,
+            formatCompanyPlanQuoteMoney(incl, result.currency),
+            key: kCustomerBookingPriceKey,
+            style: theme.textTheme.headlineMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
           ),
-        ],
-        if (arrivalText.trim().isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(arrivalText, style: theme.textTheme.bodyMedium),
+          if (excl != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              kCustomerBookingTotalExVat.of(language),
+              style: theme.textTheme.labelMedium,
+            ),
+            Text(
+              formatCompanyPlanQuoteMoney(excl, result.currency),
+              style: theme.textTheme.titleMedium,
+            ),
+          ],
+          if (arrivalText.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(arrivalText, style: theme.textTheme.bodyMedium),
+          ],
         ],
         if (details.isNotEmpty)
           Theme(

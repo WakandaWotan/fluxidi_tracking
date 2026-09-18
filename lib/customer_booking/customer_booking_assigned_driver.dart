@@ -95,6 +95,28 @@ CustomerBookingAssignedDriver customerBookingProposedDriverFromRecord(
   );
 }
 
+CustomerBookingAssignedDriver customerBookingVisibleDriver({
+  CustomerBookingAssignedDriver? proposed,
+  Map<String, dynamic>? driver,
+  Map<String, dynamic>? vehicle,
+}) {
+  if (proposed != null &&
+      (proposed.driverId.isNotEmpty || proposed.firstName.trim().isNotEmpty)) {
+    return proposed;
+  }
+  final fromRecord = customerBookingProposedDriverFromRecord(driver);
+  if (fromRecord.driverId.isNotEmpty || fromRecord.firstName.isNotEmpty) {
+    return fromRecord;
+  }
+  final embedded = vehicle?['assigned_driver'] ?? vehicle?['assignedDriver'];
+  if (embedded is Map) {
+    return customerBookingProposedDriverFromRecord(
+      Map<String, dynamic>.from(embedded),
+    );
+  }
+  return fromRecord;
+}
+
 ({double? average, int count}) _personalRating(Map<String, dynamic> raw) {
   // Company aggregates stay on the company. Only personal driver fields.
   final avgRaw = raw['driver_rating_avg'] ??
@@ -122,7 +144,8 @@ class CustomerBookingProposedDriverLine extends StatelessWidget {
     required this.language,
     required this.titleColor,
     required this.mutedColor,
-    required this.surfaceAlt,
+    required     this.surfaceAlt,
+    this.photoSize = 28,
   });
 
   final CustomerBookingAssignedDriver driver;
@@ -130,6 +153,7 @@ class CustomerBookingProposedDriverLine extends StatelessWidget {
   final Color titleColor;
   final Color mutedColor;
   final Color surfaceAlt;
+  final double photoSize;
 
   @override
   Widget build(BuildContext context) {
@@ -154,8 +178,8 @@ class CustomerBookingProposedDriverLine extends StatelessWidget {
           ClipOval(
             child: Image.network(
               photo,
-              width: 28,
-              height: 28,
+              width: photoSize,
+              height: photoSize,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => _dot(),
             ),
@@ -181,9 +205,9 @@ class CustomerBookingProposedDriverLine extends StatelessWidget {
 
   Widget _dot() {
     return CircleAvatar(
-      radius: 14,
+      radius: photoSize / 2,
       backgroundColor: surfaceAlt,
-      child: Icon(Icons.person_outline, size: 16, color: titleColor),
+      child: Icon(Icons.person_outline, size: photoSize * 0.55, color: titleColor),
     );
   }
 }

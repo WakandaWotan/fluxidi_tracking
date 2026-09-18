@@ -213,9 +213,12 @@ bool _driverUsesVehicle(
 String customerBookingVehicleOfferTitle({
   required CustomerBookingVehicleOffer offer,
   required AppLanguage language,
+  bool customerFacing = false,
 }) {
-  final name = companyAgendaVehicleName(offer.vehicle);
-  if (name.isNotEmpty && !companyPlanLooksLikeInternalId(name)) return name;
+  if (!customerFacing) {
+    final name = companyAgendaVehicleName(offer.vehicle);
+    if (name.isNotEmpty && !companyPlanLooksLikeInternalId(name)) return name;
+  }
   final category = classifyCompanyPlanVehicleCategory(offer.vehicle);
   if (category == null) {
     return language == AppLanguage.en ? 'Vehicle' : 'Voertuig';

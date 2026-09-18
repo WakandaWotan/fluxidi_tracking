@@ -12,18 +12,24 @@ class CustomerBookingMapCamera {
   const CustomerBookingMapCamera({
     required this.center,
     required this.zoom,
+    this.bearingDeg = 0,
   });
 
   final FluxidiMapLonLat center;
   final double zoom;
 
+  /// Clockwise degrees from north. Destination sits above pickup when fitted.
+  final double bearingDeg;
+
   CustomerBookingMapCamera copyWith({
     FluxidiMapLonLat? center,
     double? zoom,
+    double? bearingDeg,
   }) {
     return CustomerBookingMapCamera(
       center: center ?? this.center,
       zoom: zoom ?? this.zoom,
+      bearingDeg: bearingDeg ?? this.bearingDeg,
     );
   }
 }
@@ -45,21 +51,50 @@ double customerBookingLatFromY(double y) {
 
 double customerBookingWorldSize(double zoom) => 256.0 * math.pow(2.0, zoom);
 
+Offset customerBookingRotateOffset(Offset offset, double bearingDeg) {
+  if (bearingDeg.abs() < 0.01) return offset;
+  final rad = -bearingDeg * math.pi / 180.0;
+  final cosA = math.cos(rad);
+  final sinA = math.sin(rad);
+  return Offset(
+    offset.dx * cosA - offset.dy * sinA,
+    offset.dx * sinA + offset.dy * cosA,
+  );
+}
+
+double customerBookingRouteUpBearing(
+  FluxidiMapLonLat origin,
+  FluxidiMapLonLat destination,
+) {
+  final dx = customerBookingMercatorX(destination.lon) -
+      customerBookingMercatorX(origin.lon);
+  final dy = customerBookingMercatorY(destination.lat) -
+      customerBookingMercatorY(origin.lat);
+  if (dx.abs() < 1e-12 && dy.abs() < 1e-12) return 0;
+  return math.atan2(dx, -dy) * 180.0 / math.pi;
+}
+
 Offset customerBookingProject(
   FluxidiMapLonLat point,
   CustomerBookingMapCamera camera,
   Size size,
 ) {
   final scale = customerBookingWorldSize(camera.zoom);
-  final dx =
+  final rotated = customerBookingRotateOffset(
+    Offset(
       (customerBookingMercatorX(point.lon) -
-          customerBookingMercatorX(camera.center.lon)) *
-      scale;
-  final dy =
+              customerBookingMercatorX(camera.center.lon)) *
+          scale,
       (customerBookingMercatorY(point.lat) -
-          customerBookingMercatorY(camera.center.lat)) *
-      scale;
-  return Offset(size.width / 2 + dx, size.height / 2 + dy);
+              customerBookingMercatorY(camera.center.lat)) *
+          scale,
+    ),
+    camera.bearingDeg,
+  );
+  return Offset(
+    size.width / 2 + rotated.dx,
+    size.height / 2 + rotated.dy,
+  );
 }
 
 FluxidiMapLonLat customerBookingUnproject(
@@ -68,12 +103,12 @@ FluxidiMapLonLat customerBookingUnproject(
   Size size,
 ) {
   final scale = customerBookingWorldSize(camera.zoom);
-  final x =
-      customerBookingMercatorX(camera.center.lon) +
-      (pixel.dx - size.width / 2) / scale;
-  final y =
-      customerBookingMercatorY(camera.center.lat) +
-      (pixel.dy - size.height / 2) / scale;
+  final rotated = customerBookingRotateOffset(
+    Offset(pixel.dx - size.width / 2, pixel.dy - size.height / 2),
+    -camera.bearingDeg,
+  );
+  final x = customerBookingMercatorX(camera.center.lon) + rotated.dx / scale;
+  final y = customerBookingMercatorY(camera.center.lat) + rotated.dy / scale;
   return FluxidiMapLonLat(customerBookingLonFromX(x), customerBookingLatFromY(y));
 }
 
@@ -82,8 +117,9 @@ CustomerBookingMapCamera customerBookingPanCamera(
   Offset delta,
 ) {
   final scale = customerBookingWorldSize(camera.zoom);
-  final x = customerBookingMercatorX(camera.center.lon) - delta.dx / scale;
-  final y = customerBookingMercatorY(camera.center.lat) - delta.dy / scale;
+  final mercatorDelta = customerBookingRotateOffset(delta, -camera.bearingDeg);
+  final x = customerBookingMercatorX(camera.center.lon) - mercatorDelta.dx / scale;
+  final y = customerBookingMercatorY(camera.center.lat) - mercatorDelta.dy / scale;
   return camera.copyWith(
     center: FluxidiMapLonLat(
       customerBookingLonFromX(x),
@@ -119,8 +155,10 @@ double _zoomForSpan(double span01, double pixels, double padding) {
 CustomerBookingMapCamera customerBookingFitCamera({
   required List<FluxidiMapLonLat> points,
   required Size size,
-  double padding = 64,
+  double padding = 56,
   EdgeInsets contentInsets = EdgeInsets.zero,
+  FluxidiMapLonLat? origin,
+  FluxidiMapLonLat? destination,
 }) {
   final usable = Size(
     math.max(80.0, size.width - contentInsets.horizontal),
@@ -132,6 +170,9 @@ CustomerBookingMapCamera customerBookingFitCamera({
       zoom: 8,
     );
   }
+  final pickup = origin ?? points.first;
+  final dropoff = destination ?? points.last;
+  final bearing = customerBookingRouteUpBearing(pickup, dropoff);
   var minX = 1.0;
   var maxX = 0.0;
   var minY = 1.0;
@@ -144,23 +185,55 @@ CustomerBookingMapCamera customerBookingFitCamera({
     minY = math.min(minY, y);
     maxY = math.max(maxY, y);
   }
+  final geoCenter = FluxidiMapLonLat(
+    customerBookingLonFromX((minX + maxX) / 2),
+    customerBookingLatFromY((minY + maxY) / 2),
+  );
+  var rotMinX = 0.0;
+  var rotMaxX = 0.0;
+  var rotMinY = 0.0;
+  var rotMaxY = 0.0;
+  var first = true;
+  final cx = customerBookingMercatorX(geoCenter.lon);
+  final cy = customerBookingMercatorY(geoCenter.lat);
+  for (final point in points) {
+    final rotated = customerBookingRotateOffset(
+      Offset(
+        customerBookingMercatorX(point.lon) - cx,
+        customerBookingMercatorY(point.lat) - cy,
+      ),
+      bearing,
+    );
+    if (first) {
+      rotMinX = rotMaxX = rotated.dx;
+      rotMinY = rotMaxY = rotated.dy;
+      first = false;
+    } else {
+      rotMinX = math.min(rotMinX, rotated.dx);
+      rotMaxX = math.max(rotMaxX, rotated.dx);
+      rotMinY = math.min(rotMinY, rotated.dy);
+      rotMaxY = math.max(rotMaxY, rotated.dy);
+    }
+  }
   final zoom = math.min(
-    _zoomForSpan(maxX - minX, usable.width, padding),
-    _zoomForSpan(maxY - minY, usable.height, padding),
+    _zoomForSpan(rotMaxX - rotMinX, usable.width, padding),
+    _zoomForSpan(rotMaxY - rotMinY, usable.height, padding),
   );
   final fitted = CustomerBookingMapCamera(
-    center: FluxidiMapLonLat(
-      customerBookingLonFromX((minX + maxX) / 2),
-      customerBookingLatFromY((minY + maxY) / 2),
-    ),
+    center: geoCenter,
     zoom: zoom,
+    bearingDeg: bearing,
   );
-  final contentCenter = Offset(
+  var sum = Offset.zero;
+  for (final point in points) {
+    sum += customerBookingProject(point, fitted, size);
+  }
+  final routeCenter = sum / points.length.toDouble();
+  final holeCenter = Offset(
     contentInsets.left + usable.width / 2,
     contentInsets.top + usable.height / 2,
   );
-  final mapCenter = Offset(size.width / 2, size.height / 2);
-  return customerBookingPanCamera(fitted, contentCenter - mapCenter);
+  return customerBookingPanCamera(fitted, holeCenter - routeCenter);
 }
 
 List<Offset> customerBookingRoutePrefix(List<Offset> points, double t) {
@@ -213,4 +286,73 @@ FluxidiMapLonLat? customerBookingLonLat(double? lat, double? lon) {
   }
   if (lat.abs() > 90 || lon.abs() > 180) return null;
   return FluxidiMapLonLat(lon, lat);
+}
+
+Rect customerBookingVisibleMapHole(Size size, EdgeInsets insets) {
+  final left = insets.left.clamp(0.0, size.width);
+  final top = insets.top.clamp(0.0, size.height);
+  final right = (size.width - insets.right).clamp(left + 48.0, size.width);
+  final bottom = (size.height - insets.bottom).clamp(top + 48.0, size.height);
+  return Rect.fromLTRB(left, top, right, bottom);
+}
+
+bool customerBookingPointInVisibleHole(
+  Offset point,
+  Size size,
+  EdgeInsets insets, {
+  double pad = 4,
+}) {
+  final hole = customerBookingVisibleMapHole(size, insets).deflate(pad);
+  return hole.contains(point);
+}
+
+/// Keeps a compact label near [anchor] inside the visible map hole, away from
+/// the route marker itself.
+Offset customerBookingClampMapLabel({
+  required Offset anchor,
+  required Size size,
+  required EdgeInsets visibleInsets,
+  required Size labelSize,
+  Offset nudge = const Offset(10, -38),
+}) {
+  final hole = customerBookingVisibleMapHole(size, visibleInsets).deflate(6);
+  final maxLeft = math.max(hole.left, hole.right - labelSize.width);
+  final maxTop = math.max(hole.top, hole.bottom - labelSize.height);
+
+  Offset clampPos(Offset raw) {
+    return Offset(
+      raw.dx.clamp(hole.left, maxLeft),
+      raw.dy.clamp(hole.top, maxTop),
+    );
+  }
+
+  bool overlapsMarker(Offset pos) {
+    return Rect.fromLTWH(
+      pos.dx,
+      pos.dy,
+      labelSize.width,
+      labelSize.height,
+    ).inflate(4).contains(anchor);
+  }
+
+  final candidates = <Offset>[
+    nudge,
+    Offset(-labelSize.width - 8, -36),
+    const Offset(12, 14),
+    Offset(-labelSize.width - 8, 14),
+    Offset(-labelSize.width / 2, -40),
+  ];
+  Offset best = clampPos(anchor + nudge);
+  var bestScore = -1e9;
+  for (final candidate in candidates) {
+    final pos = clampPos(anchor + candidate);
+    final overlap = overlapsMarker(pos);
+    final clampedAway = (pos - (anchor + candidate)).distance;
+    final score = (overlap ? -400.0 : 200.0) - clampedAway;
+    if (score > bestScore) {
+      bestScore = score;
+      best = pos;
+    }
+  }
+  return best;
 }
