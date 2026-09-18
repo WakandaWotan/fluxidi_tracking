@@ -235,6 +235,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   bool _planVehicleUserPicked = false;
   CustomerBookingAvailabilitySnapshot _planAvailability =
       const CustomerBookingAvailabilitySnapshot();
+  CustomerBookingAvailabilitySnapshot _planReturnAvailability =
+      const CustomerBookingAvailabilitySnapshot();
   int _planAvailabilitySeq = 0;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
@@ -373,9 +375,21 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final duration = _planDurationMin;
     final companyId = (_boundCompanyId ?? '').trim();
     if (pickup == null || duration == null || duration <= 0 || companyId.isEmpty) {
+      if (_planAvailability.fetched || _planReturnAvailability.fetched) {
+        setState(() {
+          _planAvailability = const CustomerBookingAvailabilitySnapshot();
+          _planReturnAvailability = const CustomerBookingAvailabilitySnapshot();
+        });
+      }
       return;
     }
     final seq = ++_planAvailabilitySeq;
+    final waiting = _roundtripChoice == CompanyRoundtripChoice.continuousWait;
+    final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
+    setState(() {
+      _planAvailability = const CustomerBookingAvailabilitySnapshot();
+      _planReturnAvailability = const CustomerBookingAvailabilitySnapshot();
+    });
     try {
       final snapshot = await fetchCustomerBookingAvailability(
         bookingBaseUrl: kBookingBaseUrl,
@@ -383,21 +397,75 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         pickupUtc: companyPlanPickupUtc(pickup),
         passengers: _passengers,
         durationMin: duration,
-        waitMin: _rideOptions.waitMin,
-        returnDurationMin: _roundtripChoice == CompanyRoundtripChoice.single
-            ? 0
-            : (_planQuoteResult?.returnDurationMin ?? duration),
+        waitMin: waiting ? _rideOptions.waitMin : 0,
+        returnDurationMin: waiting
+            ? (_planQuoteResult?.returnDurationMin ?? duration)
+            : 0,
       );
+      CustomerBookingAvailabilitySnapshot inbound =
+          const CustomerBookingAvailabilitySnapshot();
+      if (split) {
+        final returnLocal = _returnPickupLocal;
+        final returnDuration = _planReturnDurationMin ?? duration;
+        if (returnLocal != null && returnDuration > 0) {
+          inbound = await fetchCustomerBookingAvailability(
+            bookingBaseUrl: kBookingBaseUrl,
+            partnerId: 'company:$companyId:$companyId',
+            pickupUtc: companyPlanPickupUtc(returnLocal),
+            passengers: _passengers,
+            durationMin: returnDuration,
+          );
+        }
+      }
       if (!mounted || seq != _planAvailabilitySeq) return;
-      setState(() => _planAvailability = snapshot);
+      setState(() {
+        _planAvailability = snapshot;
+        _planReturnAvailability = split
+            ? inbound
+            : const CustomerBookingAvailabilitySnapshot();
+        _dropStalePlanAssignments(
+          outbound: snapshot,
+          inbound: inbound,
+          split: split,
+        );
+      });
+      _syncPlanAssignmentProposal();
     } catch (_) {
       if (!mounted || seq != _planAvailabilitySeq) return;
-      setState(
-        () => _planAvailability = const CustomerBookingAvailabilitySnapshot(
+      setState(() {
+        _planAvailability = const CustomerBookingAvailabilitySnapshot(
           loadFailed: true,
           fetched: true,
-        ),
-      );
+        );
+        if (split) {
+          _planReturnAvailability = const CustomerBookingAvailabilitySnapshot(
+            loadFailed: true,
+            fetched: true,
+          );
+        }
+      });
+    }
+  }
+
+  void _dropStalePlanAssignments({
+    required CustomerBookingAvailabilitySnapshot outbound,
+    required CustomerBookingAvailabilitySnapshot inbound,
+    required bool split,
+  }) {
+    if (outbound.resolved &&
+        _planVehicleId.isNotEmpty &&
+        !outbound.availableIds.contains(_planVehicleId)) {
+      _planVehicleId = '';
+      _planDriverId = '';
+      _planVehicleUserPicked = false;
+      _planDriverUserPicked = false;
+    }
+    if (split &&
+        inbound.resolved &&
+        _planReturnVehicleId.isNotEmpty &&
+        !inbound.availableIds.contains(_planReturnVehicleId)) {
+      _planReturnVehicleId = '';
+      _planReturnDriverId = '';
     }
   }
 
@@ -1064,6 +1132,15 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     );
   }
 
+  int? get _planReturnDurationMin {
+    return companyPlanReturnDurationMin(
+      choice: _roundtripChoice,
+      outboundDurationMin: _planDurationMin,
+      quotedReturnDurationMin: _planQuoteResult?.returnDurationMin,
+      returnDurationText: _returnDurationCtrl.text,
+    );
+  }
+
   bool get _planDurationUnknown => _planDurationMin == null;
 
   bool get _assignmentBlocked {
@@ -1073,6 +1150,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       vehicleId: _planVehicleId,
     );
     if (outbound != null && !outbound.suitable) return true;
+    if (_roundtripChoice == CompanyRoundtripChoice.splitNoWait) {
+      final inbound = companyPlanFindCrewCombo(
+        combos: _planReturnCrewCombos,
+        driverId: _planReturnDriverId,
+        vehicleId: _planReturnVehicleId,
+      );
+      if (inbound != null && !inbound.suitable) return true;
+    }
     final preview = (_planOverlapPreview ?? '').trim();
     if (preview.isEmpty) return false;
     if (preview == kCompanyAgendaAvailabilityUnknown.of(_lang)) {
@@ -1101,6 +1186,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   List<CompanyCrewCombo> get _planCrewCombos {
     return _crewCombosForWindow(
       whenNow: _planWhenNow,
+      pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+      durationMin: _planDurationMin,
       driverId: _planDriverId,
       vehicleId: _planVehicleId,
     );
@@ -1112,6 +1199,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     }
     return _crewCombosForWindow(
       whenNow: false,
+      pickupLocal: _returnPickupLocal,
+      durationMin: _planReturnDurationMin ?? _planDurationMin,
       driverId: _planReturnDriverId,
       vehicleId: _planReturnVehicleId,
     );
@@ -1119,17 +1208,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   List<CompanyCrewCombo> _crewCombosForWindow({
     required bool whenNow,
+    required DateTime? pickupLocal,
+    required int? durationMin,
     required String driverId,
     required String vehicleId,
   }) {
-    final pickup = whenNow
-        ? companyPlanNowLocal().toUtc()
-        : (_planPickupLocal ?? _draft?.pickupLocal) == null
+    final pickup = pickupLocal == null
         ? null
-        : companyPlanPickupUtc(
-            (_planPickupLocal ?? _draft!.pickupLocal),
-          );
-    final durationMin = _planDurationMin;
+        : (whenNow ? pickupLocal.toUtc() : companyPlanPickupUtc(pickupLocal));
     final raw = companyPlanCrewCombos(
       drivers: _drivers,
       vehicles: _vehicles,
@@ -1321,57 +1407,111 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Widget? _planVehicleOfferCards() {
-    final duration = _planDurationMin;
+    final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
+    final outbound = _planVehicleOfferGrid(
+      pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+      durationMin: _planDurationMin,
+      snapshot: _planAvailability,
+      selectedVehicleId: _planVehicleId,
+      inbound: false,
+    );
+    if (!split) return outbound;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          kCompanyRoundtripOutbound.of(_lang),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        if (outbound != null) outbound else const SizedBox.shrink(),
+        const SizedBox(height: 12),
+        Text(
+          kCompanyRoundtripReturn.of(_lang),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        _planVehicleOfferGrid(
+              pickupLocal: _returnPickupLocal,
+              durationMin: _planReturnDurationMin ?? _planDurationMin,
+              snapshot: _planReturnAvailability,
+              selectedVehicleId: _planReturnVehicleId,
+              inbound: true,
+            ) ??
+            const SizedBox.shrink(),
+      ],
+    );
+  }
+
+  Widget? _planVehicleOfferGrid({
+    required DateTime? pickupLocal,
+    required int? durationMin,
+    required CustomerBookingAvailabilitySnapshot snapshot,
+    required String selectedVehicleId,
+    required bool inbound,
+  }) {
     final offers = customerBookingVehicleOffers(
       vehicles: _planOfferVehicles,
       drivers: _drivers,
       passengers: _passengers,
-      pickupUtc: (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal) == null
+      pickupUtc: pickupLocal == null
           ? null
-          : companyPlanPickupUtc(
-              (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal)!,
-            ),
-      durationMin: duration ?? 30,
-      durationKnown: duration != null && duration > 0,
+          : companyPlanPickupUtc(pickupLocal),
+      durationMin: durationMin ?? 30,
+      durationKnown: durationMin != null && durationMin > 0,
       rideReady: companyPlanAddressIsQuoteReady(_fromAddress.value) &&
           companyPlanAddressIsQuoteReady(_toAddress.value),
-      availableVehicleIds: _planAvailability.availableIds,
-      unavailableVehicleIds: _planAvailability.unavailableIds,
-      unavailableReasons: _planAvailability.reasons,
-      proposedDriverIds: _planAvailability.driverIds,
-      availabilityResolved: _planAvailability.resolved,
-      availabilityFailed: _planAvailability.loadFailed,
+      availableVehicleIds: snapshot.availableIds,
+      unavailableVehicleIds: snapshot.unavailableIds,
+      unavailableReasons: snapshot.reasons,
+      proposedDriverIds: snapshot.driverIds,
+      availabilityResolved: snapshot.resolved,
+      availabilityFailed: snapshot.loadFailed,
     );
     if (offers.isEmpty) return null;
     return CustomerBookingVehiclePhotoCardGrid(
       offers: offers,
       language: _lang,
-      selectedVehicleId: _planVehicleId,
-      cardKeyFor: companyAgendaVehicleOfferKey,
-      onSelected: (offer) {
-        final category = classifyCompanyPlanVehicleCategory(offer.vehicle);
-        final seats = offer.passengerSeats;
-        setState(() {
-          _planVehicleId = offer.vehicleId;
-          _planVehicleUserPicked = true;
-          if (offer.driverId.isNotEmpty) {
-            _planDriverId = offer.driverId;
-            _planDriverUserPicked = true;
-          }
-          if (category != null) {
-            _planVehicleCategory = category;
-            _rideOptions = _rideOptions.copyWith(
-              vehicleType: companyPlanVehicleCategoryWire(category),
-            );
-          }
-          if (seats != null && seats > 0 && _passengers > seats) {
-            _passengers = seats;
-          }
-        });
-        _syncPlanAssignmentProposal();
-        _schedulePlanQuote();
-      },
+      selectedVehicleId: selectedVehicleId,
+      cardKeyFor: inbound
+          ? (id) => Key('company_agenda_return_vehicle_$id')
+          : companyAgendaVehicleOfferKey,
+      onSelected: (offer) => _selectPlanVehicleOffer(offer, inbound: inbound),
     );
+  }
+
+  void _selectPlanVehicleOffer(
+    CustomerBookingVehicleOffer offer, {
+    required bool inbound,
+  }) {
+    final category = classifyCompanyPlanVehicleCategory(offer.vehicle);
+    final seats = offer.passengerSeats;
+    setState(() {
+      if (inbound) {
+        _planReturnVehicleId = offer.vehicleId;
+        if (offer.driverId.isNotEmpty) {
+          _planReturnDriverId = offer.driverId;
+        }
+        _preferSameCrew = offer.vehicleId == _planVehicleId &&
+            offer.driverId == _planDriverId;
+      } else {
+        _planVehicleId = offer.vehicleId;
+        _planVehicleUserPicked = true;
+        if (offer.driverId.isNotEmpty) {
+          _planDriverId = offer.driverId;
+          _planDriverUserPicked = true;
+        }
+        if (category != null) {
+          _planVehicleCategory = category;
+          _rideOptions = _rideOptions.copyWith(
+            vehicleType: companyPlanVehicleCategoryWire(category),
+          );
+        }
+      }
+      if (seats != null && seats > 0 && _passengers > seats) {
+        _passengers = seats;
+      }
+    });
+    _syncPlanAssignmentProposal();
+    _schedulePlanQuote();
   }
 
   void _setPlanVehicleType(CompanyPlanVehicleType type) {
@@ -1655,7 +1795,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         priceText: _manualPriceLocked
             ? _priceCtrl.text
             : (_planQuoteResult?.priceAvailable == true
-                  ? (_planQuoteResult!.priceInclVat?.toString() ??
+                  ? (_planQuoteResult!.displayTotalPrice?.toString() ??
                         _priceCtrl.text)
                   : _priceCtrl.text),
         durationText: '${_planDurationMin ?? ''}',
@@ -2979,17 +3119,17 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   Widget _planAssignmentFields() {
     final combos = _planCrewCombos;
+    final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
     final outbound = companyPlanFindCrewCombo(
       combos: combos,
       driverId: _planDriverId,
       vehicleId: _planVehicleId,
     );
     final inbound = companyPlanFindCrewCombo(
-      combos: combos,
+      combos: split ? _planReturnCrewCombos : combos,
       driverId: _planReturnDriverId,
       vehicleId: _planReturnVehicleId,
     );
-    final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
     final waiting = _roundtripChoice == CompanyRoundtripChoice.continuousWait;
     final fromText = _fromAddress.value.displayText;
     final toText = _toAddress.value.displayText;
@@ -3277,7 +3417,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 onChoiceChanged: _onRoundtripChoiceChanged,
                 returnPickup: _returnPickupLocal,
                 onReturnPickupChanged: (next) {
-                  setState(() => _returnPickupLocal = next);
+                  setState(() {
+                    _returnPickupLocal = next;
+                    _planReturnDriverId = '';
+                    _planReturnVehicleId = '';
+                  });
                   unawaited(_previewPlanOverlap());
                   _schedulePlanQuote();
                 },
@@ -3305,7 +3449,11 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 value: _returnPickupLocal,
                 leadingLabel: kCompanyRoundtripReturn.of(_lang),
                 onChanged: (next) {
-                  setState(() => _returnPickupLocal = next);
+                  setState(() {
+                    _returnPickupLocal = next;
+                    _planReturnDriverId = '';
+                    _planReturnVehicleId = '';
+                  });
                   unawaited(_previewPlanOverlap());
                   _schedulePlanQuote();
                 },
@@ -3377,6 +3525,10 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
             setState(() {
               _planPickupLocal = next;
               _planLaterConceptLocal = next;
+              _planDriverId = '';
+              _planVehicleId = '';
+              _planDriverUserPicked = false;
+              _planVehicleUserPicked = false;
               if (next != null) {
                 _agendaMoment = next;
                 _draft = draft.copyWith(whenNow: false, pickupLocal: next);

@@ -87,6 +87,7 @@ class CustomerBookingPriceBlock extends StatelessWidget {
       );
     }
     if (error != null && error!.trim().isNotEmpty) {
+      final needCompany = error == kCustomerBookingIssueNeedCompany;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -95,11 +96,13 @@ class CustomerBookingPriceBlock extends StatelessWidget {
             key: kCustomerBookingQuoteStatusKey,
             style: TextStyle(color: theme.colorScheme.error),
           ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: onRetry,
-            child: Text(kCustomerBookingPriceRetry.of(language)),
-          ),
+          if (!needCompany) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: onRetry,
+              child: Text(kCustomerBookingPriceRetry.of(language)),
+            ),
+          ],
         ],
       );
     }
@@ -136,13 +139,25 @@ class CustomerBookingPriceBlock extends StatelessWidget {
     final incl = customerBookingQuoteInclVat(result);
     final excl = customerBookingQuoteExVat(result);
     if (incl == null) return const SizedBox.shrink();
-    final details = result.breakdown == null
-        ? const <String>[]
-        : formatCompanyPlanQuoteBreakdownLines(
-            result.breakdown!,
-            language: language,
-            currency: result.currency,
-          );
+    final details = <String>[
+      if (result.outboundPriceInclVat != null &&
+          result.returnPriceInclVat != null) ...[
+        '${kCustomerBookingPriceOutbound.of(language)} · ${formatCompanyPlanQuoteMoney(result.outboundPriceInclVat!, result.currency)}',
+        '${kCustomerBookingPriceReturn.of(language)} · ${formatCompanyPlanQuoteMoney(result.returnPriceInclVat!, result.currency)}',
+      ],
+      if (result.breakdown != null)
+        ...formatCompanyPlanQuoteBreakdownLines(
+          result.breakdown!,
+          language: language,
+          currency: result.currency,
+        ),
+      if (result.returnBreakdown != null)
+        ...formatCompanyPlanQuoteBreakdownLines(
+          result.returnBreakdown!,
+          language: language,
+          currency: result.currency,
+        ),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

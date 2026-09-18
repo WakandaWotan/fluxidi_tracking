@@ -21,6 +21,23 @@ void main() {
     );
   });
 
+  test('phone sheet leaves map visible and never uses 0.9 max', () {
+    final phone = customerBookingSheetSizes(height: 844, keyboardOpen: false);
+    expect(phone.max, lessThanOrEqualTo(0.75));
+    expect(phone.max, greaterThanOrEqualTo(0.55));
+    expect(phone.min, lessThan(phone.max));
+    expect(phone.initial, phone.min);
+    expect(phone.min, greaterThanOrEqualTo(0.36));
+    expect(customerBookingSheetShowsDetails(phone.min, phone), isFalse);
+    expect(customerBookingSheetShowsDetails(phone.max, phone), isTrue);
+    final insets = customerBookingMapFitInsets(
+      wide: false,
+      height: 844,
+      sheetExtent: phone.max,
+    );
+    expect(insets.bottom, greaterThan(200));
+  });
+
   test('confirm bar unpins for keyboard and large text', () {
     expect(
       customerBookingPinConfirmBar(height: 844, keyboardOpen: false),

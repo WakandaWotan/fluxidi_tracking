@@ -36,6 +36,9 @@ class CustomerBookingRouteMap extends StatefulWidget {
     this.confirmLon,
     this.onConfirmPickup,
     this.pickupInspectSeq = 0,
+    this.fitInsets = EdgeInsets.zero,
+    this.onEditPickup,
+    this.onEditDropoff,
   });
 
   final AppLanguage language;
@@ -54,6 +57,9 @@ class CustomerBookingRouteMap extends StatefulWidget {
   final double? confirmLon;
   final VoidCallback? onConfirmPickup;
   final int pickupInspectSeq;
+  final EdgeInsets fitInsets;
+  final VoidCallback? onEditPickup;
+  final VoidCallback? onEditDropoff;
 
   @override
   State<CustomerBookingRouteMap> createState() =>
@@ -163,7 +169,11 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
 
   CustomerBookingMapCamera _cameraFor(Size size) {
     if (_userMovedCamera) return _movedCamera;
-    return customerBookingFitCamera(points: _framePoints, size: size);
+    return customerBookingFitCamera(
+      points: _framePoints,
+      size: size,
+      contentInsets: widget.fitInsets,
+    );
   }
 
   Future<void> _syncGeometry() async {
@@ -394,25 +404,31 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                   right: 56,
                   top: 12,
                   child: _EndpointChip(
+                    key: kCustomerBookingMapPickupChipKey,
                     icon: Icons.trip_origin,
                     text: widget.pickup.displayText.trim().isEmpty
                         ? kCustomerBookingPickup.of(widget.language)
                         : widget.pickup.displayText.trim(),
                     palette: widget.palette,
+                    onTap: widget.onEditPickup,
                   ),
                 ),
                 Positioned(
                   left: 12,
                   right: 12,
-                  bottom: _metricsText.isEmpty ? 12 : 56,
+                  bottom: widget.fitInsets.bottom > 24
+                      ? widget.fitInsets.bottom + 8
+                      : (_metricsText.isEmpty ? 12 : 56),
                   child: Align(
                     alignment: Alignment.bottomRight,
                     child: _EndpointChip(
+                      key: kCustomerBookingMapDropoffChipKey,
                       icon: Icons.flag_outlined,
                       text: widget.dropoff.displayText.trim().isEmpty
                           ? kCustomerBookingDropoff.of(widget.language)
                           : widget.dropoff.displayText.trim(),
                       palette: widget.palette,
+                      onTap: widget.onEditDropoff,
                     ),
                   ),
                 ),
@@ -420,7 +436,9 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                   Positioned(
                     left: 12,
                     right: 56,
-                    bottom: 12,
+                    bottom: widget.fitInsets.bottom > 24
+                        ? widget.fitInsets.bottom + 52
+                        : 12,
                     child: _EndpointChip(
                       icon: Icons.schedule,
                       text: _metricsText,
@@ -439,6 +457,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                         _movedCamera = customerBookingFitCamera(
                           points: _framePoints,
                           size: _viewport == Size.zero ? size : _viewport,
+                          contentInsets: widget.fitInsets,
                         );
                       });
                     },
@@ -537,45 +556,53 @@ class _StatusCard extends StatelessWidget {
 
 class _EndpointChip extends StatelessWidget {
   const _EndpointChip({
+    super.key,
     required this.icon,
     required this.text,
     required this.palette,
+    this.onTap,
   });
 
   final IconData icon;
   final String text;
   final CustomerThemePalette palette;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 280),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.surface.withValues(alpha: 0.94),
+      child: Material(
+        color: palette.surface.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: palette.border),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: palette.textPrimary),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: palette.textPrimary),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
-              ),
-            ],
+                if (onTap != null) ...[
+                  const SizedBox(width: 4),
+                  Icon(Icons.edit_outlined, size: 14, color: palette.textMuted),
+                ],
+              ],
+            ),
           ),
         ),
       ),

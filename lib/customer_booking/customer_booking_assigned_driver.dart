@@ -59,7 +59,9 @@ CustomerBookingAssignedDriver customerBookingAssignedDriverFromMaps({
     driverId: id.isEmpty ? companyAgendaDriverId(record) : id,
     firstName: companyAgendaDriverFirstName(record),
     photoUrl: companyAgendaResolvedPhotoUrl(
-      (record['driver_photo_url'] ??
+      (record['public_photo_url'] ??
+              record['publicPhotoUrl'] ??
+              record['driver_photo_url'] ??
               record['driverPhotoUrl'] ??
               record['photo_url'] ??
               record['portrait_url'] ??

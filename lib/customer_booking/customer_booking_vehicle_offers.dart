@@ -268,8 +268,25 @@ CustomerBookingVehicleOfferState customerBookingVehicleOfferState({
     return CustomerBookingVehicleOfferState.checking;
   }
   if (loadFailed) return CustomerBookingVehicleOfferState.loadFailed;
+  if (offers.any((offer) => offer.available)) {
+    return CustomerBookingVehicleOfferState.ready;
+  }
   if (offers.isEmpty) return CustomerBookingVehicleOfferState.noneSuitable;
-  return CustomerBookingVehicleOfferState.ready;
+  if (offers.every(
+    (offer) => customerBookingVehicleReasonIsPending(offer.reason),
+  )) {
+    return CustomerBookingVehicleOfferState.checking;
+  }
+  return CustomerBookingVehicleOfferState.noneSuitable;
+}
+
+List<CustomerBookingVehicleOffer> customerBookingBookableOffers(
+  List<CustomerBookingVehicleOffer> offers,
+) {
+  return [
+    for (final offer in offers)
+      if (offer.available) offer,
+  ];
 }
 
 bool customerBookingVehicleReasonIsPending(String reason) {

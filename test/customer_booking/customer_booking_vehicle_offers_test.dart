@@ -319,6 +319,61 @@ void main() {
     );
   });
 
+  test('all unavailable offers are noneSuitable, not ready', () {
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[tesla, cadillac],
+      drivers: <Map<String, dynamic>>[chris, wotan],
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 17, 21, 0),
+      availableVehicleIds: const <String>{},
+      unavailableVehicleIds: const <String>{'vh_tesla', 'vh_cadillac'},
+      availabilityResolved: true,
+    );
+    expect(offers.every((offer) => !offer.available), isTrue);
+    expect(
+      customerBookingVehicleOfferState(
+        hasCompany: true,
+        rideReady: true,
+        loading: false,
+        loadFailed: false,
+        offers: offers,
+      ),
+      CustomerBookingVehicleOfferState.noneSuitable,
+    );
+    expect(customerBookingBookableOffers(offers), isEmpty);
+  });
+
+  test('snapshot photo wins over a stripped company driver record', () {
+    final company = customerBookingPublishedDriverCard(<String, dynamic>{
+      'driver_id': 'drv_chris',
+      'first_name': 'Christophe',
+      'driver_photo_url': 'https://cdn.example/internal-chris.jpg',
+    });
+    expect(company['photo_url'], isNull);
+    final snapshot = parseCustomerBookingAvailability(<String, dynamic>{
+      'ok': true,
+      'vehicles': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'vehicle_id': 'vh_tesla',
+          'available': true,
+          'driver_id': 'drv_chris',
+          'driver': <String, dynamic>{
+            'driver_id': 'drv_chris',
+            'first_name': 'Christophe',
+            'public_photo_url': 'https://cdn.example/public-chris.jpg',
+          },
+        },
+      ],
+    });
+    final merged = customerBookingMergePublishedDrivers(
+      companyDrivers: <Map<String, dynamic>>[company],
+      snapshotDrivers: snapshot.drivers,
+    );
+    final proposed = customerBookingProposedDriverFromRecord(merged.single);
+    expect(proposed.firstName, 'Christophe');
+    expect(proposed.photoUrl, 'https://cdn.example/public-chris.jpg');
+  });
+
   test('personal driver score is used, company aggregate is ignored', () {
     final assigned = customerBookingAssignedDriverFromMaps(
       booking: <String, dynamic>{
@@ -343,5 +398,62 @@ void main() {
       ).assigned,
       isFalse,
     );
+  });
+
+  test('unavailable offers become noneSuitable and drop out of bookable list', () {
+    final offers = customerBookingVehicleOffers(
+      vehicles: <Map<String, dynamic>>[tesla, cadillac],
+      drivers: <Map<String, dynamic>>[chris, wotan],
+      passengers: 1,
+      pickupUtc: DateTime.utc(2026, 9, 27, 21, 0),
+      durationKnown: true,
+      rideReady: true,
+      availabilityResolved: true,
+      availableVehicleIds: const <String>{},
+      unavailableVehicleIds: const <String>{'vh_tesla', 'vh_cadillac'},
+      unavailableReasons: const <String, String>{
+        'vh_tesla': 'assignment_driver_outside_hours',
+        'vh_cadillac': 'assignment_overlap',
+      },
+    );
+    expect(offers.every((offer) => !offer.available), isTrue);
+    expect(customerBookingBookableOffers(offers), isEmpty);
+    expect(
+      customerBookingVehicleOfferState(
+        hasCompany: true,
+        rideReady: true,
+        loading: false,
+        loadFailed: false,
+        offers: offers,
+      ),
+      CustomerBookingVehicleOfferState.noneSuitable,
+    );
+  });
+
+  test('availability photo wins over a stripped company driver card', () {
+    final company = customerBookingPublishedDriverCard(
+      <String, dynamic>{
+        'driver_id': 'drv_chris',
+        'first_name': 'Christophe',
+        'driver_photo_url': 'https://example.com/internal-chris.jpg',
+      },
+    );
+    final snapshot = customerBookingPublishedDriverCard(
+      <String, dynamic>{
+        'driver_id': 'drv_chris',
+        'first_name': 'Christophe',
+        'public_photo_url': 'https://example.com/public-chris.jpg',
+      },
+    );
+    final merged = customerBookingMergePublishedDrivers(
+      companyDrivers: <Map<String, dynamic>>[company],
+      snapshotDrivers: <Map<String, dynamic>>[snapshot],
+    );
+    expect(merged, hasLength(1));
+    expect(merged.single['photo_url'], 'https://example.com/public-chris.jpg');
+    final proposed = customerBookingProposedDriverFromRecord(merged.single);
+    expect(proposed.firstName, 'Christophe');
+    expect(proposed.photoUrl, 'https://example.com/public-chris.jpg');
+    expect(proposed.assigned, isFalse);
   });
 }

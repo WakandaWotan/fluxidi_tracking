@@ -52,6 +52,18 @@ Map<String, dynamic> _outboundLeg(Map<String, dynamic> raw) {
   return legs.isEmpty ? const <String, dynamic>{} : legs.first;
 }
 
+Map<String, dynamic> _returnLeg(Map<String, dynamic> raw) {
+  final legs = _legsOf(raw);
+  for (final leg in legs) {
+    final type = (leg['leg_type'] ?? leg['legType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (type == 'return' || type == 'inbound') return leg;
+  }
+  return const <String, dynamic>{};
+}
+
 int? resolveCompanyBookingDurationMin(Map<String, dynamic> raw) {
   final record = raw['record'] is Map ? _asMap(raw['record']) : raw;
   final booking = _asMap(record['booking']);
@@ -89,12 +101,69 @@ num? resolveCompanyBookingPriceInclVat(Map<String, dynamic> raw) {
   final pricing = _asMap(quote['pricing']);
   final pricingMain = _asMap(quote['pricing_main']);
   final outbound = _outboundLeg(raw);
+  const totalKeys = <String>[
+    'total_price_incl_vat',
+    'totalPriceInclVat',
+    'total_price',
+    'totalPrice',
+  ];
+  for (final source in <Map<String, dynamic>>[
+    raw,
+    record,
+    booking,
+    quote,
+    pricing,
+  ]) {
+    final parsed = parseCompanyBookingMoney(_firstRaw(source, totalKeys));
+    if (parsed != null) return parsed;
+  }
+  final outboundPrice = parseCompanyBookingMoney(
+    _firstRaw(outbound, const [
+      'price_incl_vat',
+      'priceInclVat',
+    ]) ??
+        _firstRaw(pricingMain, const [
+          'price_incl_vat',
+          'priceInclVat',
+          'price_incl_vat_main',
+        ]) ??
+        _firstRaw(raw, const [
+          'outbound_price_incl_vat',
+          'price_incl_vat',
+          'priceInclVat',
+        ]),
+  );
+  final inbound = _returnLeg(raw);
+  final returnPrice = parseCompanyBookingMoney(
+    _firstRaw(raw, const [
+      'return_price_incl_vat',
+      'price_incl_vat_return',
+    ]) ??
+        _firstRaw(record, const [
+          'return_price_incl_vat',
+          'price_incl_vat_return',
+        ]) ??
+        _firstRaw(booking, const [
+          'return_price_incl_vat',
+          'price_incl_vat_return',
+        ]) ??
+        _firstRaw(quote, const [
+          'return_price_incl_vat',
+          'price_incl_vat_return',
+        ]) ??
+        _firstRaw(inbound, const [
+          'price_incl_vat',
+          'priceInclVat',
+        ]),
+  );
+  if (outboundPrice != null && returnPrice != null) {
+    return outboundPrice + returnPrice;
+  }
   const keys = <String>[
     'price_incl_vat',
     'priceInclVat',
     'amount_incl_vat',
     'price',
-    'total_price',
   ];
   for (final source in <Map<String, dynamic>>[
     raw,
@@ -108,7 +177,7 @@ num? resolveCompanyBookingPriceInclVat(Map<String, dynamic> raw) {
     final parsed = parseCompanyBookingMoney(_firstRaw(source, keys));
     if (parsed != null) return parsed;
   }
-  return null;
+  return outboundPrice ?? returnPrice;
 }
 
 String resolveCompanyBookingCurrency(Map<String, dynamic> raw) {

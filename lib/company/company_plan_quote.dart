@@ -327,8 +327,8 @@ CompanyPlanQuoteResult companyPlanMergeLegQuotes({
     distanceKm: outbound.distanceKm,
     durationMin: outbound.durationMin,
     priceInclVat: total ?? outbound.priceInclVat,
-    priceExVat: outbound.priceExVat,
-    priceVat: outbound.priceVat,
+    priceExVat: _sumMoney(outbound.priceExVat, inbound.priceExVat),
+    priceVat: _sumMoney(outbound.priceVat, inbound.priceVat),
     currency: outbound.currency,
     pricingSource: outbound.pricingSource,
     priceAvailable: total != null,
@@ -354,6 +354,17 @@ CompanyPlanQuoteResult companyPlanMergeLegQuotes({
   );
 }
 
+bool companyPlanQuoteNeedsInboundLeg(CompanyPlanQuoteResult result) {
+  if (result.returnPriceInclVat != null) return false;
+  if (result.hasReturnRoute &&
+      result.totalPriceInclVat != null &&
+      result.outboundPriceInclVat != null &&
+      result.totalPriceInclVat != result.outboundPriceInclVat) {
+    return false;
+  }
+  return true;
+}
+
 CompanyPlanQuoteResult parseCompanyPlanQuote(
   Map<String, dynamic> raw, {
   required String fingerprint,
@@ -369,17 +380,20 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
       ? Map<String, dynamic>.from(raw['return'] as Map)
       : const <String, dynamic>{};
   final outboundPrice = _quoteMoney(
-    raw['price_incl_vat_main'] ?? raw['price_incl_vat'],
+    raw['price_incl_vat_main'] ??
+        raw['outbound_price_incl_vat'] ??
+        (returnRaw.isEmpty ? raw['price_incl_vat'] : null),
   );
   final returnPrice = _quoteMoney(
     raw['return_price_incl_vat'] ??
         raw['price_incl_vat_return'] ??
         returnRaw['price_incl_vat'],
   );
-  final totalPrice = _quoteMoney(
-        raw['total_price_incl_vat'] ?? raw['price_incl_vat'],
-      ) ??
-      _sumMoney(outboundPrice, returnPrice);
+  final listedTotal = _quoteMoney(raw['total_price_incl_vat']);
+  final totalPrice = listedTotal ??
+      (returnPrice != null
+          ? _sumMoney(outboundPrice, returnPrice)
+          : (outboundPrice ?? _quoteMoney(raw['price_incl_vat'])));
   return CompanyPlanQuoteResult(
     fingerprint: fingerprint,
     distanceKm: _quoteMoney(raw['distance_km']),

@@ -324,18 +324,100 @@ Map<String, dynamic> customerBookingPublishedDriverCard(
           '')
       .toString()
       .trim();
+  final allowedPhoto = publicPhoto.isNotEmpty
+      ? publicPhoto
+      : (photoOn
+          ? (driver['driver_photo_url'] ??
+                  driver['driverPhotoUrl'] ??
+                  driver['photo_url'] ??
+                  driver['portrait_url'] ??
+                  '')
+              .toString()
+              .trim()
+          : '');
+  final firstName = (driver['first_name'] ??
+          driver['firstName'] ??
+          driver['given_name'] ??
+          '')
+      .toString()
+      .trim();
   final id = companyAgendaDriverId(driver);
   return <String, dynamic>{
     if (id.isNotEmpty) 'driver_id': id,
+    if (firstName.isNotEmpty && !companyPlanLooksLikeInternalId(firstName))
+      'first_name': firstName,
     if (profileOn && publicName.isNotEmpty) ...<String, dynamic>{
       'public_display_name': publicName,
       'display_name': publicName,
     },
-    if (photoOn && publicPhoto.isNotEmpty) ...<String, dynamic>{
-      'public_photo_url': publicPhoto,
-      'photo_url': publicPhoto,
+    if (allowedPhoto.isNotEmpty) ...<String, dynamic>{
+      'public_photo_url': allowedPhoto,
+      'photo_url': allowedPhoto,
     },
   };
+}
+
+String customerBookingAllowedDriverPhotoUrl(Map<String, dynamic> driver) {
+  for (final key in const <String>[
+    'public_photo_url',
+    'publicPhotoUrl',
+    'driver_photo_url',
+    'driverPhotoUrl',
+    'photo_url',
+    'photoUrl',
+    'portrait_url',
+    'portraitUrl',
+  ]) {
+    final url = (driver[key] ?? '').toString().trim();
+    if (url.isEmpty) continue;
+    if (key.startsWith('public') ||
+        driver['public_photo_enabled'] == true ||
+        driver['publicPhotoEnabled'] == true ||
+        url.startsWith('http://') ||
+        url.startsWith('https://') ||
+        url.startsWith('/')) {
+      return url;
+    }
+  }
+  return '';
+}
+
+List<Map<String, dynamic>> customerBookingMergePublishedDrivers({
+  required List<Map<String, dynamic>> companyDrivers,
+  required List<Map<String, dynamic>> snapshotDrivers,
+}) {
+  final byId = <String, Map<String, dynamic>>{};
+  void add(Map<String, dynamic> driver) {
+    final id = companyAgendaDriverId(driver);
+    if (id.isEmpty) return;
+    final current = byId[id];
+    if (current == null) {
+      byId[id] = Map<String, dynamic>.from(driver);
+      return;
+    }
+    final merged = Map<String, dynamic>.from(current);
+    driver.forEach((key, value) {
+      if (value == null) return;
+      final text = value.toString().trim();
+      if (text.isEmpty) return;
+      final existing = (merged[key] ?? '').toString().trim();
+      if (existing.isEmpty) merged[key] = value;
+    });
+    final incomingPhoto = customerBookingAllowedDriverPhotoUrl(driver);
+    if (incomingPhoto.isNotEmpty) {
+      merged['public_photo_url'] = incomingPhoto;
+      merged['photo_url'] = incomingPhoto;
+    }
+    byId[id] = merged;
+  }
+
+  for (final driver in companyDrivers) {
+    add(driver);
+  }
+  for (final driver in snapshotDrivers) {
+    add(driver);
+  }
+  return byId.values.toList(growable: false);
 }
 
 CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(

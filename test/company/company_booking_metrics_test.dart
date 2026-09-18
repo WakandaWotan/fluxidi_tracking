@@ -95,6 +95,76 @@ void main() {
     }
   });
 
+  test('stored total and two 200 euro legs keep 400', () {
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'record': <String, dynamic>{
+          'booking': <String, dynamic>{
+            'price_incl_vat': 200,
+            'total_price_incl_vat': 400,
+            'return_price_incl_vat': 200,
+          },
+        },
+      }),
+      400,
+    );
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'record': <String, dynamic>{
+          'operational_legs': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'leg_type': 'outbound',
+              'price_incl_vat': 200,
+            },
+            <String, dynamic>{
+              'leg_type': 'return',
+              'price_incl_vat': 200,
+            },
+          ],
+        },
+      }),
+      400,
+    );
+  });
+
+  test('stored outbound plus return prices become the full total', () {
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'price_incl_vat': 200,
+        'return_price_incl_vat': 200,
+      }),
+      400,
+    );
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'record': <String, dynamic>{
+          'quote': <String, dynamic>{
+            'total_price_incl_vat': 400,
+            'price_incl_vat': 200,
+          },
+        },
+      }),
+      400,
+    );
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'record': <String, dynamic>{
+          'operational_legs': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'leg_type': 'outbound',
+              'price_incl_vat': 200,
+            },
+            <String, dynamic>{
+              'leg_type': 'return',
+              'price_incl_vat': 200,
+            },
+          ],
+        },
+      }),
+      400,
+    );
+  });
+
   test('legacy booking without duration stays readable', () {
     final ride = CompanyAgendaRide.fromMap(<String, dynamic>{
       'booking_id': 'legacy',

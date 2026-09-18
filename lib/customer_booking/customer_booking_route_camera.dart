@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:fluxidi_tracking/maps/fluxidi_static_route_preview.dart';
 
 const double kCustomerBookingMapMinZoom = 4;
@@ -119,8 +120,13 @@ CustomerBookingMapCamera customerBookingFitCamera({
   required List<FluxidiMapLonLat> points,
   required Size size,
   double padding = 64,
+  EdgeInsets contentInsets = EdgeInsets.zero,
 }) {
-  if (points.isEmpty || size.width <= 0 || size.height <= 0) {
+  final usable = Size(
+    math.max(80.0, size.width - contentInsets.horizontal),
+    math.max(80.0, size.height - contentInsets.vertical),
+  );
+  if (points.isEmpty || usable.width <= 0 || usable.height <= 0) {
     return const CustomerBookingMapCamera(
       center: FluxidiMapLonLat(4.35, 50.85),
       zoom: 8,
@@ -139,16 +145,22 @@ CustomerBookingMapCamera customerBookingFitCamera({
     maxY = math.max(maxY, y);
   }
   final zoom = math.min(
-    _zoomForSpan(maxX - minX, size.width, padding),
-    _zoomForSpan(maxY - minY, size.height, padding),
+    _zoomForSpan(maxX - minX, usable.width, padding),
+    _zoomForSpan(maxY - minY, usable.height, padding),
   );
-  return CustomerBookingMapCamera(
+  final fitted = CustomerBookingMapCamera(
     center: FluxidiMapLonLat(
       customerBookingLonFromX((minX + maxX) / 2),
       customerBookingLatFromY((minY + maxY) / 2),
     ),
     zoom: zoom,
   );
+  final contentCenter = Offset(
+    contentInsets.left + usable.width / 2,
+    contentInsets.top + usable.height / 2,
+  );
+  final mapCenter = Offset(size.width / 2, size.height / 2);
+  return customerBookingPanCamera(fitted, contentCenter - mapCenter);
 }
 
 List<Offset> customerBookingRoutePrefix(List<Offset> points, double t) {

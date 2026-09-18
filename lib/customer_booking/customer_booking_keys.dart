@@ -60,6 +60,21 @@ const Key kCustomerBookingMapKey = Key('customer_booking_map');
 const Key kCustomerBookingFormKey = Key('customer_booking_form');
 const Key kCustomerBookingWideSplitKey = Key('customer_booking_wide_split');
 const Key kCustomerBookingNarrowStackKey = Key('customer_booking_narrow_stack');
+const Key kCustomerBookingSheetKey = Key('customer_booking_sheet');
+const Key kCustomerBookingSheetHandleKey = Key('customer_booking_sheet_handle');
+const Key kCustomerBookingSheetToggleKey = Key('customer_booking_sheet_toggle');
+const Key kCustomerBookingCompactSummaryKey = Key(
+  'customer_booking_compact_summary',
+);
+const Key kCustomerBookingMapPickupChipKey = Key(
+  'customer_booking_map_pickup_chip',
+);
+const Key kCustomerBookingMapDropoffChipKey = Key(
+  'customer_booking_map_dropoff_chip',
+);
+const Key kCustomerBookingAirportSelectedKey = Key(
+  'customer_booking_airport_selected',
+);
 const Key kCustomerBookingFitRouteKey = Key('customer_booking_fit_route');
 const Key kCustomerBookingRouteCanvasKey = Key('customer_booking_route_canvas');
 const Key kCustomerBookingTripSummaryKey = Key('customer_booking_trip_summary');
@@ -161,6 +176,38 @@ const Key kCustomerBookingConfirmPickupBannerKey = Key(
 );
 const Key kCustomerBookingProposedDriverKey = Key(
   'customer_booking_proposed_driver',
+);
+const Key kCustomerBookingReturnDateKey = Key('customer_booking_return_date');
+const Key kCustomerBookingReturnTimeKey = Key('customer_booking_return_time');
+const Key kCustomerBookingOutboundVehiclesKey = Key(
+  'customer_booking_outbound_vehicles',
+);
+const Key kCustomerBookingReturnVehiclesKey = Key(
+  'customer_booking_return_vehicles',
+);
+const Key kCustomerBookingNoVehicleAtTimeKey = Key(
+  'customer_booking_no_vehicle_at_time',
+);
+const Key kCustomerBookingChooseOtherTimeKey = Key(
+  'customer_booking_choose_other_time',
+);
+const Key kCustomerBookingReturnNoVehicleAtTimeKey = Key(
+  'customer_booking_return_no_vehicle_at_time',
+);
+const Key kCustomerBookingReturnChooseOtherTimeKey = Key(
+  'customer_booking_return_choose_other_time',
+);
+const Key kCustomerBookingReturnAvailabilityRetryKey = Key(
+  'customer_booking_return_availability_retry',
+);
+const Key kCustomerBookingReturnVehiclesLoadingKey = Key(
+  'customer_booking_return_vehicles_loading',
+);
+const Key kCustomerBookingReturnAvailabilityCheckingKey = Key(
+  'customer_booking_return_availability_checking',
+);
+const Key kCustomerBookingReturnVehiclesFailedKey = Key(
+  'customer_booking_return_vehicles_failed',
 );
 
 Key customerBookingPaymentMethodKey(String methodId) {

@@ -462,6 +462,7 @@ class LimousineAddressField extends StatelessWidget {
     this.decoration,
     this.showCanonicalEcho = false,
     this.isPickupField = false,
+    this.focusNode,
   });
 
   final LimousineAddressFieldController controller;
@@ -473,6 +474,7 @@ class LimousineAddressField extends StatelessWidget {
   final InputDecoration? decoration;
   final bool showCanonicalEcho;
   final bool isPickupField;
+  final FocusNode? focusNode;
 
   static const double _suggestionsMaxHeight = 180;
 
@@ -504,6 +506,7 @@ class LimousineAddressField extends StatelessWidget {
               TextField(
                 key: inputKey ?? limousineAddressInputKey(controller.fieldId),
                 controller: controller.textController,
+                focusNode: focusNode,
                 style: TextStyle(color: tokens.onSurface),
                 scrollPadding: const EdgeInsets.only(bottom: 220),
                 keyboardType: TextInputType.streetAddress,

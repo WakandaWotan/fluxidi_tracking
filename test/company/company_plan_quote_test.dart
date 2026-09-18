@@ -39,6 +39,60 @@ void main() {
     expect(request.body['pickup_iso'], isNot('2026-09-17T20:00:00.000Z'));
   });
 
+  test('one-way 200 plus inbound 200 becomes a 400 return total', () {
+    const outbound = CompanyPlanQuoteResult(
+      fingerprint: 'out',
+      distanceKm: 40,
+      durationMin: 45,
+      priceInclVat: 200,
+      priceExVat: 165.29,
+      priceVat: 34.71,
+      priceAvailable: true,
+    );
+    const inbound = CompanyPlanQuoteResult(
+      fingerprint: 'in',
+      distanceKm: 40,
+      durationMin: 48,
+      priceInclVat: 200,
+      priceExVat: 165.29,
+      priceVat: 34.71,
+      priceAvailable: true,
+    );
+    final merged = companyPlanMergeLegQuotes(
+      outbound: outbound,
+      inbound: inbound,
+    );
+    expect(merged.displayTotalPrice, 400);
+    expect(merged.outboundPriceInclVat, 200);
+    expect(merged.returnPriceInclVat, 200);
+    expect(merged.priceExVat, 330.58);
+    expect(companyPlanQuoteNeedsInboundLeg(outbound), isTrue);
+    expect(companyPlanQuoteNeedsInboundLeg(merged), isFalse);
+  });
+
+  test('parsed return quote keeps the contract total instead of outbound only', () {
+    final parsed = parseCompanyPlanQuote(
+      <String, dynamic>{
+        'ok': true,
+        'price_incl_vat': 200,
+        'outbound_price_incl_vat': 200,
+        'return_price_incl_vat': 200,
+        'total_price_incl_vat': 400,
+        'distance_km': 40,
+        'duration_min': 45,
+        'return_distance_km': 40,
+        'return_duration_min': 48,
+        'currency': 'EUR',
+        'price_available': true,
+      },
+      fingerprint: 'ret',
+    );
+    expect(parsed.displayTotalPrice, 400);
+    expect(parsed.outboundPriceInclVat, 200);
+    expect(parsed.returnPriceInclVat, 200);
+    expect(companyPlanQuoteNeedsInboundLeg(parsed), isFalse);
+  });
+
   test('incomplete typing does not build a quote request', () {
     final request = companyPlanQuoteRequestFromAddresses(
       from: const LimousineAddressValue(

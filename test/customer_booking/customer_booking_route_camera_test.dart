@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 import 'package:fluxidi_tracking/maps/fluxidi_static_route_preview.dart';
@@ -19,6 +20,24 @@ void main() {
     expect(b.dx, inInclusiveRange(40, 760));
     expect(b.dy, inInclusiveRange(40, 560));
     expect((a - b).distance, greaterThan(80));
+  });
+
+  test('fit insets keep both endpoints in the visible map hole', () {
+    const pickup = FluxidiMapLonLat(3.63, 50.80);
+    const dropoff = FluxidiMapLonLat(4.48, 50.90);
+    const size = Size(390, 844);
+    const insets = EdgeInsets.fromLTRB(36, 88, 36, 320);
+    final camera = customerBookingFitCamera(
+      points: const [pickup, dropoff],
+      size: size,
+      contentInsets: insets,
+    );
+    final a = customerBookingProject(pickup, camera, size);
+    final b = customerBookingProject(dropoff, camera, size);
+    expect(a.dx, inInclusiveRange(insets.left, size.width - insets.right));
+    expect(b.dx, inInclusiveRange(insets.left, size.width - insets.right));
+    expect(a.dy, inInclusiveRange(insets.top, size.height - insets.bottom));
+    expect(b.dy, inInclusiveRange(insets.top, size.height - insets.bottom));
   });
 
   test('route prefix walks along the line once', () {

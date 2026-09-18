@@ -22,6 +22,19 @@ void main() {
     expect(body['to'], 'Brussels Airport');
   });
 
+  test('return_pickup_iso becomes return_date and return_time', () {
+    final body = <String, dynamic>{
+      'from': 'A',
+      'to': 'B',
+      'pickup_iso': DateTime(2026, 9, 27, 12).toUtc().toIso8601String(),
+      'return_enabled': true,
+      'return_pickup_iso': DateTime(2026, 9, 30, 23).toUtc().toIso8601String(),
+    };
+    customerBookingEnsurePublicScheduleFields(body);
+    expect(body['return_date'], customerBookingFormatDateYmd(DateTime(2026, 9, 30, 23)));
+    expect(body['return_time'], customerBookingFormatTimeHm(DateTime(2026, 9, 30, 23)));
+  });
+
   test('later pickup_iso becomes local date and time', () {
     final local = DateTime(2026, 9, 16, 14, 5);
     final body = <String, dynamic>{
@@ -112,6 +125,19 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('return_pickup_iso becomes return_date and return_time', () {
+    final local = DateTime(2026, 9, 30, 23, 0);
+    final body = <String, dynamic>{
+      'from': 'A',
+      'to': 'B',
+      'return_enabled': true,
+      'return_pickup_iso': local.toUtc().toIso8601String(),
+    };
+    customerBookingEnsurePublicScheduleFields(body);
+    expect(body['return_date'], customerBookingFormatDateYmd(local));
+    expect(body['return_time'], customerBookingFormatTimeHm(local));
   });
 
   test('customer quote client decorates when_now onto public date and time', () {

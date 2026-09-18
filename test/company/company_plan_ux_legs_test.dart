@@ -3,8 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_address_field.dart';
 import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
 import 'package:fluxidi_tracking/company/company_booking_route_coords.dart';
 import 'package:fluxidi_tracking/company/company_crew_combo.dart';
+import 'package:fluxidi_tracking/company/company_driver_schedule.dart';
 import 'package:fluxidi_tracking/company/company_plan_presence.dart';
 import 'package:fluxidi_tracking/company/company_customer_models.dart';
 import 'package:fluxidi_tracking/company/company_plan_quote.dart';
@@ -338,6 +340,146 @@ void main() {
     );
     expect(other.driverId, 'drv_amira');
     expect(other.vehicleId, 'vh_s2');
+  });
+
+  test('night return window does not inherit the daytime outbound crew', () {
+    final tesla = <String, dynamic>{
+      'vehicle_id': 'vh_tesla',
+      'vehicle_name': 'Tesla',
+      'vehicle_type': 'sedan',
+      'passenger_capacity': 3,
+      'is_active': true,
+    };
+    final cadillac = <String, dynamic>{
+      'vehicle_id': 'vh_cadillac',
+      'vehicle_name': 'Cadillac',
+      'vehicle_type': 'sedan',
+      'passenger_capacity': 4,
+      'is_active': true,
+    };
+    final chris = <String, dynamic>{
+      'driver_id': 'drv_chris',
+      'first_name': 'Christophe',
+      'is_active': true,
+      'linked_vehicle_ids': <String>['vh_tesla'],
+      'weekly_roster': <String, dynamic>{
+        'explicitly_set': true,
+        'days': <String, dynamic>{
+          'sun': <Map<String, dynamic>>[
+            <String, dynamic>{'start': '08:00', 'end': '16:00'},
+          ],
+        },
+      },
+    };
+    final wotan = <String, dynamic>{
+      'driver_id': 'drv_wotan',
+      'first_name': 'Wotan',
+      'is_active': true,
+      'linked_vehicle_ids': <String>['vh_cadillac'],
+      'weekly_roster': <String, dynamic>{
+        'explicitly_set': true,
+        'days': <String, dynamic>{
+          'wed': <Map<String, dynamic>>[
+            <String, dynamic>{'start': '22:00', 'end': '06:00'},
+          ],
+        },
+      },
+    };
+    final day = DateTime.utc(2026, 9, 27, 10, 0);
+    final night = DateTime.utc(2026, 9, 30, 21, 0);
+    final outbound = companyPlanCrewCombos(
+      drivers: <Map<String, dynamic>>[chris, wotan],
+      vehicles: <Map<String, dynamic>>[tesla, cadillac],
+      type: CompanyPlanVehicleType.sedan,
+      passengers: 1,
+      whenNow: false,
+      rideStartUtc: day,
+      rideEndUtc: day.add(const Duration(minutes: 45)),
+      schedules: companyDriverSchedulesFromRecords(
+        <Map<String, dynamic>>[chris, wotan],
+      ),
+    );
+    final inbound = companyPlanCrewCombos(
+      drivers: <Map<String, dynamic>>[chris, wotan],
+      vehicles: <Map<String, dynamic>>[tesla, cadillac],
+      type: CompanyPlanVehicleType.sedan,
+      passengers: 1,
+      whenNow: false,
+      rideStartUtc: night,
+      rideEndUtc: night.add(const Duration(minutes: 45)),
+      schedules: companyDriverSchedulesFromRecords(
+        <Map<String, dynamic>>[chris, wotan],
+      ),
+    );
+    final dayTesla = outbound.firstWhere((combo) => combo.vehicleId == 'vh_tesla');
+    final nightTesla = inbound.firstWhere((combo) => combo.vehicleId == 'vh_tesla');
+    final nightCadillac = inbound.firstWhere(
+      (combo) => combo.vehicleId == 'vh_cadillac',
+    );
+    expect(dayTesla.suitable, isTrue);
+    expect(nightTesla.suitable, isFalse);
+    expect(nightCadillac.suitable, isTrue);
+    final proposed = proposeCompanyPlanReturnCrew(
+      combos: inbound,
+      outboundDriverId: 'drv_chris',
+      outboundVehicleId: 'vh_tesla',
+      preferSame: true,
+      outboundAvailableForReturn: false,
+    );
+    expect(proposed.driverId, 'drv_wotan');
+    expect(proposed.vehicleId, 'vh_cadillac');
+  });
+
+  test('reopen keeps stored coords, polyline and total price', () {
+    final resolved = resolveCompanyBookingRouteEndpoints(
+      row: <String, dynamic>{
+        'from': 'Koekamerstraat 48A, 9688 Schorisse',
+        'to': 'Gent',
+        'record': <String, dynamic>{
+          'booking': <String, dynamic>{
+            'from': 'Koekamerstraat 48A, 9688 Schorisse',
+            'to': 'Gent',
+            'total_price_incl_vat': 400,
+          },
+          'operational_legs': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'leg_type': 'outbound',
+              'pickup_lat': 50.772,
+              'pickup_lon': 3.669,
+              'dropoff_lat': 51.05,
+              'dropoff_lon': 3.72,
+              'price_incl_vat': 200,
+            },
+          ],
+        },
+      },
+    );
+    expect(resolved.hasCoordinates, isTrue);
+    expect(resolved.pickup.acceptance, LimousineAddressAcceptance.selected);
+    expect(resolved.canDrawRoute, isTrue);
+    expect(resolved.missingReason, isEmpty);
+    expect(
+      companyPlanRouteStatus(
+        from: resolved.pickup,
+        to: resolved.dropoff,
+        loading: false,
+        quote: const CompanyPlanQuoteResult(
+          fingerprint: 'stored',
+          distanceKm: 40,
+          durationMin: 45,
+          priceInclVat: 400,
+        ),
+      ),
+      CompanyPlanRouteStatus.ready,
+    );
+    expect(
+      resolveCompanyBookingPriceInclVat(<String, dynamic>{
+        'record': <String, dynamic>{
+          'booking': <String, dynamic>{'total_price_incl_vat': 400},
+        },
+      }),
+      400,
+    );
   });
 
   test('15 booking detail resolver prefers quote coords over empty booking', () {

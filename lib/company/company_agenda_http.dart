@@ -229,7 +229,10 @@ Future<CompanyAgendaRide> createCompanyAgendaRide({
     if (draft.toLon != null && draft.toLon!.isFinite) 'dropoff_lon': draft.toLon,
     if (draft.toPlaceId.trim().isNotEmpty) 'dropoff_place_id': draft.toPlaceId.trim(),
     'passengers': draft.passengers,
-    if (price != null) 'price_incl_vat': price,
+    if (price != null) ...<String, dynamic>{
+      'price_incl_vat': price,
+      'total_price_incl_vat': price,
+    },
     if ((duration != null && duration > 0) ||
         (draft.durationRouteMin != null && draft.durationRouteMin! > 0))
       'duration_min': duration != null && duration > 0

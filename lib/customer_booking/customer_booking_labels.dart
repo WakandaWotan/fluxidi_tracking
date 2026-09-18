@@ -105,6 +105,34 @@ const LocalizedText kCustomerBookingDropoff = LocalizedText(
   es: 'Destino',
 );
 
+const LocalizedText kCustomerBookingPickupAsk = LocalizedText(
+  nl: 'Waar ophalen?',
+  en: 'Where should we pick you up?',
+  fr: 'Où vous prendre ?',
+  es: '¿Dónde te recogemos?',
+);
+
+const LocalizedText kCustomerBookingDropoffAsk = LocalizedText(
+  nl: 'Waar wil je naartoe?',
+  en: 'Where do you want to go?',
+  fr: 'Où voulez-vous aller ?',
+  es: '¿Adónde quieres ir?',
+);
+
+const LocalizedText kCustomerBookingShowDetails = LocalizedText(
+  nl: 'Details openen',
+  en: 'Show details',
+  fr: 'Ouvrir les détails',
+  es: 'Abrir detalles',
+);
+
+const LocalizedText kCustomerBookingHideDetails = LocalizedText(
+  nl: 'Details sluiten',
+  en: 'Hide details',
+  fr: 'Fermer les détails',
+  es: 'Cerrar detalles',
+);
+
 const LocalizedText kCustomerBookingAddStop = LocalizedText(
   nl: 'Tussenstop toevoegen',
   en: 'Add a stop',
@@ -407,6 +435,48 @@ const LocalizedText kCustomerBookingOutboundWhen = LocalizedText(
 );
 
 const LocalizedText kCustomerBookingReturnWhen = LocalizedText(
+  nl: 'Terugrit',
+  en: 'Return',
+  fr: 'Retour',
+  es: 'Vuelta',
+);
+
+const LocalizedText kCustomerBookingReturnDate = LocalizedText(
+  nl: 'Datum terugrit',
+  en: 'Return date',
+  fr: 'Date du retour',
+  es: 'Fecha de vuelta',
+);
+
+const LocalizedText kCustomerBookingReturnTime = LocalizedText(
+  nl: 'Tijd terugrit',
+  en: 'Return time',
+  fr: 'Heure du retour',
+  es: 'Hora de vuelta',
+);
+
+const LocalizedText kCustomerBookingNoVehicleAtTime = LocalizedText(
+  nl: 'Geen voertuig beschikbaar op dit tijdstip',
+  en: 'No vehicle available at this time',
+  fr: 'Aucun véhicule disponible à cette heure',
+  es: 'Ningún vehículo disponible a esta hora',
+);
+
+const LocalizedText kCustomerBookingChooseOtherTime = LocalizedText(
+  nl: 'Kies een ander tijdstip',
+  en: 'Choose another time',
+  fr: 'Choisir une autre heure',
+  es: 'Elige otra hora',
+);
+
+const LocalizedText kCustomerBookingPriceOutbound = LocalizedText(
+  nl: 'Heenrit',
+  en: 'Outbound',
+  fr: 'Aller',
+  es: 'Ida',
+);
+
+const LocalizedText kCustomerBookingPriceReturn = LocalizedText(
   nl: 'Terugrit',
   en: 'Return',
   fr: 'Retour',

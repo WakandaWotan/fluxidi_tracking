@@ -65,6 +65,19 @@ Map<String, dynamic> companyBookingFlatten(Map<String, dynamic> row) {
   merge(row['booking']);
   merge(row['quote']);
   merge(row['inputs']);
+  final record = row['record'] is Map
+      ? Map<String, dynamic>.from(row['record'] as Map)
+      : out;
+  merge(record['booking']);
+  merge(record['quote']);
+  merge(record['inputs']);
+  final legs = record['operational_legs'] ??
+      record['operationalLegs'] ??
+      out['operational_legs'] ??
+      out['operationalLegs'];
+  if (legs is List && legs.isNotEmpty && legs.first is Map) {
+    merge(legs.first);
+  }
   return out;
 }
 
@@ -118,12 +131,32 @@ CompanyBookingRouteEndpoints resolveCompanyBookingRouteEndpoints({
     return fallback.trim();
   }
 
+  double? nestedCoord(List<String> objectKeys, List<String> coordKeys) {
+    for (final objectKey in objectKeys) {
+      final nested = leg[objectKey] ?? flat[objectKey] ?? row[objectKey];
+      if (nested is! Map) continue;
+      final map = Map<String, dynamic>.from(nested);
+      for (final key in coordKeys) {
+        final value = companyBookingCoord(map[key]);
+        if (value != null) return value;
+      }
+    }
+    return null;
+  }
+
   final pickupLat = quote?.pickupLat ??
       firstCoord(const [
         'pickup_lat',
         'from_lat',
         'pickupLat',
         'fromLat',
+        'origin_lat',
+        'pickup_latitude',
+      ]) ??
+      nestedCoord(const ['pickup', 'from', 'origin'], const [
+        'lat',
+        'latitude',
+        'pickup_lat',
       ]);
   final pickupLon = quote?.pickupLon ??
       firstCoord(const [
@@ -134,6 +167,15 @@ CompanyBookingRouteEndpoints resolveCompanyBookingRouteEndpoints({
         'pickupLon',
         'pickupLng',
         'fromLng',
+        'origin_lon',
+        'origin_lng',
+        'pickup_longitude',
+      ]) ??
+      nestedCoord(const ['pickup', 'from', 'origin'], const [
+        'lon',
+        'lng',
+        'longitude',
+        'pickup_lon',
       ]);
   final dropoffLat = quote?.dropoffLat ??
       firstCoord(const [
@@ -141,6 +183,13 @@ CompanyBookingRouteEndpoints resolveCompanyBookingRouteEndpoints({
         'to_lat',
         'dropoffLat',
         'toLat',
+        'destination_lat',
+        'dropoff_latitude',
+      ]) ??
+      nestedCoord(const ['dropoff', 'to', 'destination'], const [
+        'lat',
+        'latitude',
+        'dropoff_lat',
       ]);
   final dropoffLon = quote?.dropoffLon ??
       firstCoord(const [
@@ -151,6 +200,15 @@ CompanyBookingRouteEndpoints resolveCompanyBookingRouteEndpoints({
         'dropoffLon',
         'dropoffLng',
         'toLng',
+        'destination_lon',
+        'destination_lng',
+        'dropoff_longitude',
+      ]) ??
+      nestedCoord(const ['dropoff', 'to', 'destination'], const [
+        'lon',
+        'lng',
+        'longitude',
+        'dropoff_lon',
       ]);
   final polyline = firstText(const [
     'route_polyline',

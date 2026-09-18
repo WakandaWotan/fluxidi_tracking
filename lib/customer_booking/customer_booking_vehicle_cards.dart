@@ -208,6 +208,7 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
     required this.onSelected,
     this.palette,
     this.cardKeyFor,
+    this.bookableOnly = false,
   });
 
   final List<CustomerBookingVehicleOffer> offers;
@@ -216,6 +217,7 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
   final ValueChanged<CustomerBookingVehicleOffer> onSelected;
   final CustomerThemePalette? palette;
   final Key Function(String vehicleId)? cardKeyFor;
+  final bool bookableOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -232,11 +234,14 @@ class CustomerBookingVehiclePhotoCardGrid extends StatelessWidget {
         final cardWidth = columns == 1
             ? width
             : (width - gap * (columns - 1)) / columns;
+        final visible = bookableOnly
+            ? customerBookingBookableOffers(offers)
+            : offers;
         return Wrap(
           spacing: gap,
           runSpacing: gap,
           children: [
-            for (final offer in offers)
+            for (final offer in visible)
               SizedBox(
                 width: cardWidth,
                 child: palette == null

@@ -343,6 +343,8 @@ CompanyPlanDriverMedia resolveCompanyPlanDriverMedia({
 }) {
   final look = companyAgendaDriverLook(driver);
   final raw = _firstText(driver, const [
+    'public_photo_url',
+    'publicPhotoUrl',
     'driver_photo_url',
     'driverPhotoUrl',
     'public_portrait_url',

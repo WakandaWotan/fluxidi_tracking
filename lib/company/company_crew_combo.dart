@@ -1081,11 +1081,9 @@ class _CompanyCrewComboLook extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        CircleAvatar(
+        CompanyPlanDriverAvatar(
+          media: resolveCompanyPlanDriverMedia(driver: combo.driver),
           radius: 12,
-          child: Text(
-            companyAgendaInitials(companyAgendaDriverName(combo.driver)),
-          ),
         ),
       ],
     );
