@@ -2238,10 +2238,18 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                       if (flightAt.isNotEmpty)
                         _summaryRow(
                           _t(
-                            nl: 'Vlucht datum en tijd',
-                            en: 'Flight date and time',
-                            fr: 'Date et heure du vol',
-                            es: 'Fecha y hora del vuelo',
+                            nl: directionRaw == 'from_airport'
+                                ? 'Aankomst van de vlucht'
+                                : 'Vertrek van de vlucht',
+                            en: directionRaw == 'from_airport'
+                                ? 'Flight arrival'
+                                : 'Flight departure',
+                            fr: directionRaw == 'from_airport'
+                                ? 'Arrivée du vol'
+                                : 'Départ du vol',
+                            es: directionRaw == 'from_airport'
+                                ? 'Llegada del vuelo'
+                                : 'Salida del vuelo',
                           ),
                           flightAt,
                         ),

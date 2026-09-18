@@ -17,7 +17,18 @@ void main() {
       expect(source.contains('CalculatorPage('), isFalse, reason: path);
       expect(source.contains('AirportPage('), isFalse, reason: path);
     }
-    expect(kCustomerBookingTaxiCtaInventory, isNotEmpty);
+    expect(kCustomerBookingTaxiCtaInventory, contains('customer_home.taxis_nav'));
+    final home = File('lib/main_parts/customer_home_page.dart').readAsStringSync();
+    expect(home.contains('_openTaxiFlow(context)'), isTrue);
+    expect(
+      home.contains("kind: CustomerBookingKind.taxi"),
+      isTrue,
+    );
+    final navBlock = home.substring(home.indexOf('if (i == 1)'));
+    final navEnd = navBlock.indexOf('if (i == 2)');
+    expect(navEnd, greaterThan(0));
+    expect(navBlock.substring(0, navEnd), contains('_openTaxiFlow'));
+    expect(navBlock.substring(0, navEnd), isNot(contains('NearbyPartnersPage')));
     expect(
       File('lib/main_parts/driver_home_page_state.dart').readAsStringSync(),
       contains('CalculatorPage('),

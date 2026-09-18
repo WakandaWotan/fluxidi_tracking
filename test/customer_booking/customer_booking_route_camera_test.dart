@@ -57,7 +57,7 @@ void main() {
     expect(b.dy, inInclusiveRange(insets.top, size.height - insets.bottom));
   });
 
-  test('fit camera puts pickup below destination', () {
+  test('fit camera stays north-up with pickup south of destination', () {
     const pickup = FluxidiMapLonLat(3.63, 50.90);
     const dropoff = FluxidiMapLonLat(3.63, 50.80);
     const size = Size(390, 844);
@@ -71,8 +71,8 @@ void main() {
     );
     final a = customerBookingProject(pickup, camera, size);
     final b = customerBookingProject(dropoff, camera, size);
-    expect(a.dy, greaterThan(b.dy));
-    expect(camera.bearingDeg.abs(), greaterThan(90));
+    expect(a.dy, lessThan(b.dy));
+    expect(camera.bearingDeg, 0);
   });
 
   test('route prefix walks along the line once', () {

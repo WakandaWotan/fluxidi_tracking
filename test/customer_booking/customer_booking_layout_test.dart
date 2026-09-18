@@ -1,5 +1,7 @@
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 
 void main() {
   test('wide split needs leftover width after text scale', () {
@@ -63,6 +65,45 @@ void main() {
     expect(keyboard.max, closeTo(phone.max, 0.001));
   });
 
+  test('metrics badge sits bottom-left of the live map hole above the sheet', () {
+    const size = Size(390, 844);
+    final phone = customerBookingSheetSizes(height: 844, keyboardOpen: false);
+    final insets = customerBookingMapFitInsets(
+      wide: false,
+      height: 844,
+      sheetExtent: phone.half,
+    );
+    final placement = customerBookingMetricsBadgePlacement(
+      size: size,
+      visibleInsets: insets,
+      badgeSize: const Size(148, 32),
+    );
+    expect(placement.visible, isTrue);
+    final hole = customerBookingVisibleMapHole(size, insets);
+    expect(placement.offset.dx, closeTo(hole.left + 8, 0.1));
+    expect(placement.offset.dy, lessThan(hole.bottom));
+    expect(placement.offset.dy + 32, lessThanOrEqualTo(hole.bottom - 8));
+    expect(placement.offset.dy, greaterThan(hole.top));
+    final raised = customerBookingMapFitInsets(
+      wide: false,
+      height: 844,
+      sheetExtent: phone.min,
+    );
+    final lower = customerBookingMetricsBadgePlacement(
+      size: size,
+      visibleInsets: raised,
+      badgeSize: const Size(148, 32),
+    );
+    expect(lower.visible, isTrue);
+    expect(lower.offset.dy, greaterThan(placement.offset.dy));
+    final covered = customerBookingMetricsBadgePlacement(
+      size: size,
+      visibleInsets: const EdgeInsets.fromLTRB(20, 64, 20, 800),
+      badgeSize: const Size(148, 32),
+    );
+    expect(covered.visible, isFalse);
+  });
+
   test('confirm bar stays pinned with keyboard so price remains reachable', () {
     expect(
       customerBookingPinConfirmBar(height: 844, keyboardOpen: false),
@@ -80,5 +121,24 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('sheet snaps only at compact, half and expanded extents', () {
+    final phone = customerBookingSheetSizes(height: 844, keyboardOpen: false);
+    expect(customerBookingSheetIsSnapped(phone.min, phone), isTrue);
+    expect(customerBookingSheetIsSnapped(phone.half, phone), isTrue);
+    expect(customerBookingSheetIsSnapped(phone.max, phone), isTrue);
+    expect(
+      customerBookingSheetIsSnapped((phone.min + phone.half) / 2, phone),
+      isFalse,
+    );
+    for (final width in <double>[360, 390, 430]) {
+      final insets = customerBookingMapFitInsets(
+        wide: false,
+        height: 844,
+        sheetExtent: phone.min,
+      );
+      expect(insets.bottom, greaterThan(width * 0.4));
+    }
   });
 }

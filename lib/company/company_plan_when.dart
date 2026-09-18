@@ -148,25 +148,134 @@ void companyPlanApplyCreateWhenFields(
   body['pickup_iso'] = companyPlanPickupIso(draft.pickupLocal);
 }
 
+/// Flight timestamp as a Europe/Brussels wall clock, never the device zone.
+DateTime? companyPlanFlightLocal(String flightAt) {
+  final text = flightAt.trim();
+  if (text.isEmpty) return null;
+  final parsed = DateTime.tryParse(text);
+  if (parsed == null) return null;
+  if (parsed.isUtc ||
+      text.endsWith('Z') ||
+      RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(text)) {
+    final local = companyTimezoneUtcToLocal(
+      parsed.toUtc(),
+      kCompanyDefaultTimezone,
+    );
+    return DateTime(
+      local.year,
+      local.month,
+      local.day,
+      local.hour,
+      local.minute,
+    );
+  }
+  return DateTime(
+    parsed.year,
+    parsed.month,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+  );
+}
+
 bool companyPlanFlightDepartsBeforePickup({
   required String flightAt,
   required DateTime? pickupLocal,
   required bool whenNow,
 }) {
-  final flight = DateTime.tryParse(flightAt.trim());
+  final flight = companyPlanFlightLocal(flightAt);
   if (flight == null) return false;
   final pickup = whenNow ? companyPlanNowLocal() : pickupLocal;
   if (pickup == null || companyPlanPickupIsEpoch(pickup)) return false;
-  return !pickup.toUtc().isBefore(flight.toUtc());
+  return !companyPlanWallClock(pickup).isBefore(flight);
 }
+
+const int kCompanyPlanDefaultAirportArrivalMarginMin = 15;
 
 DateTime? companyPlanSuggestedToAirportPickup({
   required String flightAt,
   int? durationMin,
+  int arrivalMarginMin = kCompanyPlanDefaultAirportArrivalMarginMin,
 }) {
-  final flight = DateTime.tryParse(flightAt.trim());
+  final flight = companyPlanFlightLocal(flightAt);
   if (flight == null || durationMin == null || durationMin <= 0) return null;
-  return flight.toLocal().subtract(Duration(minutes: durationMin));
+  final margin = arrivalMarginMin.clamp(0, 180);
+  return flight.subtract(Duration(minutes: durationMin + margin));
+}
+
+DateTime? companyPlanSuggestedFromAirportPickup({
+  required String flightAt,
+  int pickupAfterMin = 0,
+}) {
+  final flight = companyPlanFlightLocal(flightAt);
+  if (flight == null) return null;
+  return flight.add(Duration(minutes: pickupAfterMin.clamp(0, 240)));
+}
+
+/// Pickup the roster and assignment must use. A later airport flight is never
+/// judged against the phone clock.
+DateTime? companyPlanAssignmentPickupLocal({
+  required bool whenNow,
+  DateTime? pickupLocal,
+  DateTime? airportPickup,
+  bool futureAirportFlight = false,
+}) {
+  if (airportPickup != null) return airportPickup;
+  if (futureAirportFlight) return pickupLocal;
+  if (whenNow) return companyPlanNowLocal();
+  return pickupLocal;
+}
+
+bool companyPlanAssignmentWhenNow({
+  required bool whenNow,
+  DateTime? airportPickup,
+  bool futureAirportFlight = false,
+}) {
+  if (airportPickup != null || futureAirportFlight) return false;
+  return whenNow;
+}
+
+bool companyPlanPickupWallEquals(DateTime? left, DateTime? right) {
+  if (left == null || right == null) return false;
+  return companyPlanWallClock(left) == companyPlanWallClock(right);
+}
+
+DateTime? companyPlanAirportSuggestedPickup({
+  required String airportDirection,
+  required String flightAt,
+  int? durationMin,
+  int arrivalMarginMin = kCompanyPlanDefaultAirportArrivalMarginMin,
+  int pickupAfterMin = 0,
+  bool isAirportService = false,
+}) {
+  final direction = airportDirection.trim();
+  final toAirport =
+      direction == 'to_airport' || (direction.isEmpty && isAirportService);
+  if (toAirport) {
+    return companyPlanSuggestedToAirportPickup(
+      flightAt: flightAt,
+      durationMin: durationMin,
+      arrivalMarginMin: arrivalMarginMin,
+    );
+  }
+  if (direction == 'from_airport') {
+    return companyPlanSuggestedFromAirportPickup(
+      flightAt: flightAt,
+      pickupAfterMin: pickupAfterMin,
+    );
+  }
+  return null;
+}
+
+bool companyPlanFlightIsInFuture(String flightAt, {DateTime? now}) {
+  final flight = companyPlanFlightLocal(flightAt);
+  if (flight == null) return false;
+  final clock = companyPlanWallClock(
+    now != null
+        ? companyTimezoneUtcToLocal(now.toUtc(), kCompanyDefaultTimezone)
+        : companyPlanCompanyNow(),
+  );
+  return flight.isAfter(clock);
 }
 
 String companyPlanFormatClock(DateTime value) {
@@ -179,10 +288,14 @@ String companyPlanFormatClock(DateTime value) {
 int? companyPlanCanonicalDurationMin({
   int? quoteDurationMin,
   int? durationRouteMin,
+  int? geometryDurationMin,
   String durationText = '',
 }) {
   if (quoteDurationMin != null && quoteDurationMin > 0) return quoteDurationMin;
   if (durationRouteMin != null && durationRouteMin > 0) return durationRouteMin;
+  if (geometryDurationMin != null && geometryDurationMin > 0) {
+    return geometryDurationMin;
+  }
   final typed = int.tryParse(durationText.trim());
   if (typed != null && typed > 0) return typed;
   return null;

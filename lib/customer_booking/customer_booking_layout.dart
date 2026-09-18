@@ -1,4 +1,5 @@
 import 'package:flutter/painting.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 
 /// Layout rules for the customer booking sheet.
 ///
@@ -157,6 +158,67 @@ EdgeInsets customerBookingMapFitInsets({
   }
   final bottom = (height * sheetExtent).clamp(72.0, height - 96.0);
   return EdgeInsets.fromLTRB(20, 64, 20, bottom + 12);
+}
+
+bool customerBookingSheetIsSnapped(
+  double extent,
+  CustomerBookingSheetSizes sizes, {
+  double epsilon = 0.012,
+}) {
+  for (final snap in sizes.snaps) {
+    if ((extent - snap).abs() <= epsilon) return true;
+  }
+  return false;
+}
+
+const double kCustomerBookingCompanyLogoWidth = 112;
+const double kCustomerBookingCompanyLogoHeight = 44;
+const double kCustomerBookingMetricsBadgeMargin = 8.0;
+const double kCustomerBookingMetricsBadgeAttributionReserve = 16.0;
+const double kCustomerBookingMetricsBadgeMinHole = 56.0;
+
+class CustomerBookingMetricsBadgePlacement {
+  const CustomerBookingMetricsBadgePlacement({
+    required this.visible,
+    required this.offset,
+  });
+
+  final bool visible;
+  final Offset offset;
+}
+
+/// Pins the duration/distance chip to the bottom-left of the live map hole,
+/// just above the sheet (or the framed map edge on tablet).
+CustomerBookingMetricsBadgePlacement customerBookingMetricsBadgePlacement({
+  required Size size,
+  required EdgeInsets visibleInsets,
+  required Size badgeSize,
+  double margin = kCustomerBookingMetricsBadgeMargin,
+  double attributionReserve = kCustomerBookingMetricsBadgeAttributionReserve,
+}) {
+  final hole = customerBookingVisibleMapHole(size, visibleInsets);
+  final neededHeight = badgeSize.height + margin + attributionReserve;
+  final neededWidth = badgeSize.width + margin * 2;
+  if (hole.height < kCustomerBookingMetricsBadgeMinHole ||
+      hole.height < neededHeight ||
+      hole.width < neededWidth) {
+    return const CustomerBookingMetricsBadgePlacement(
+      visible: false,
+      offset: Offset.zero,
+    );
+  }
+  final left = hole.left + margin;
+  final top = hole.bottom - attributionReserve - margin - badgeSize.height;
+  if (top < hole.top + margin) {
+    return const CustomerBookingMetricsBadgePlacement(
+      visible: false,
+      offset: Offset.zero,
+    );
+  }
+  return CustomerBookingMetricsBadgePlacement(
+    visible: true,
+    offset: Offset(left, top),
+  );
 }
 
 String customerBookingCompactAddressLabel(String text) {

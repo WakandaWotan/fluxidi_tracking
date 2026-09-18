@@ -865,6 +865,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           company: CustomerBookingCompany(
             partnerId: partnerId,
             companyName: companyName,
+            logoUrl: _mapTextAny(p, const ['logo_url', 'logoUrl']),
           ),
           lockCompany: true,
           sourceLabel: 'nearby_partners',
@@ -897,6 +898,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       'company_id': scopedCompany.isNotEmpty ? scopedCompany : partnerId,
       'company_name': companyName,
       'company_code': companyCode.isNotEmpty ? companyCode : partnerId,
+      'logo_url': _mapTextAny(p, const ['logo_url', 'logoUrl']),
     };
   }
 

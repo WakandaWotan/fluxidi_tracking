@@ -137,9 +137,26 @@ String _profileCompanyName(Map<String, dynamic> profile) {
 }
 
 String _profileLogoUrl(Map<String, dynamic> profile) {
-  for (final key in <String>['publicLogoUrl', 'public_logo_url']) {
-    final value = profile[key]?.toString().trim() ?? '';
-    if (value.isNotEmpty) return value;
+  Map<String, dynamic> nested(String key) {
+    final raw = profile[key];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return const <String, dynamic>{};
+  }
+
+  final media = nested('media');
+  final branding = nested('branding');
+  for (final value in <Object?>[
+    profile['publicLogoUrl'],
+    profile['public_logo_url'],
+    profile['logo_url'],
+    profile['logoUrl'],
+    media['logo_url'],
+    media['logoUrl'],
+    branding['logo_url'],
+    branding['logoUrl'],
+  ]) {
+    final url = value?.toString().trim() ?? '';
+    if (url.isNotEmpty) return url;
   }
   return '';
 }

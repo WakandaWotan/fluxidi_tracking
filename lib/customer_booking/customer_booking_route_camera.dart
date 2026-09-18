@@ -18,7 +18,7 @@ class CustomerBookingMapCamera {
   final FluxidiMapLonLat center;
   final double zoom;
 
-  /// Clockwise degrees from north. Destination sits above pickup when fitted.
+/// Clockwise degrees from north. Customer booking maps stay north-up.
   final double bearingDeg;
 
   CustomerBookingMapCamera copyWith({
@@ -170,9 +170,7 @@ CustomerBookingMapCamera customerBookingFitCamera({
       zoom: 8,
     );
   }
-  final pickup = origin ?? points.first;
-  final dropoff = destination ?? points.last;
-  final bearing = customerBookingRouteUpBearing(pickup, dropoff);
+  const bearing = 0.0;
   var minX = 1.0;
   var maxX = 0.0;
   var minY = 1.0;
@@ -314,6 +312,7 @@ Offset customerBookingClampMapLabel({
   required EdgeInsets visibleInsets,
   required Size labelSize,
   Offset nudge = const Offset(10, -38),
+  Rect? avoid,
 }) {
   final hole = customerBookingVisibleMapHole(size, visibleInsets).deflate(6);
   final maxLeft = math.max(hole.left, hole.right - labelSize.width);
@@ -335,20 +334,33 @@ Offset customerBookingClampMapLabel({
     ).inflate(4).contains(anchor);
   }
 
+  bool overlapsAvoid(Offset pos) {
+    if (avoid == null || avoid.isEmpty) return false;
+    return Rect.fromLTWH(
+      pos.dx,
+      pos.dy,
+      labelSize.width,
+      labelSize.height,
+    ).inflate(6).overlaps(avoid);
+  }
+
   final candidates = <Offset>[
     nudge,
     Offset(-labelSize.width - 8, -36),
     const Offset(12, 14),
     Offset(-labelSize.width - 8, 14),
     Offset(-labelSize.width / 2, -40),
+    Offset(12, -labelSize.height - 12),
   ];
   Offset best = clampPos(anchor + nudge);
   var bestScore = -1e9;
   for (final candidate in candidates) {
     final pos = clampPos(anchor + candidate);
     final overlap = overlapsMarker(pos);
+    final blocked = overlapsAvoid(pos);
     final clampedAway = (pos - (anchor + candidate)).distance;
-    final score = (overlap ? -400.0 : 200.0) - clampedAway;
+    final score =
+        (overlap ? -400.0 : 200.0) + (blocked ? -500.0 : 80.0) - clampedAway;
     if (score > bestScore) {
       bestScore = score;
       best = pos;

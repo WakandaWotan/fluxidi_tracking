@@ -5,6 +5,7 @@ import 'package:fluxidi_tracking/company/company_plan_ride_mode.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_fallback.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_visual.dart';
+import 'package:fluxidi_tracking/company/company_plan_media.dart';
 
 void main() {
   test('manifest aliases map to the eight category assets', () {
@@ -145,6 +146,19 @@ void main() {
       kCompanyPlanAirportModeAsset,
     );
     expect(find.byIcon(kCompanyPlanAirportModeIcon), findsNothing);
+  });
+
+  test('missing company photo uses the bundled category webp', () {
+    final media = resolveCompanyPlanVehicleMedia(
+      vehicle: <String, dynamic>{
+        'vehicle_id': 'vh_1',
+        'vehicle_type': 'sedan',
+        'photo_url': 'public-media/t/c/vehicles/vh_1/gallery/a.jpg',
+      },
+    );
+    expect(media.kind, CompanyPlanVehicleVisualKind.genericCutout);
+    expect(media.assetPath, kCompanyPlanFallbackSedan);
+    expect(media.photoUrl, isEmpty);
   });
 
   testWidgets('compact airport control stays a vector icon', (tester) async {

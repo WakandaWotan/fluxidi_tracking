@@ -38,4 +38,23 @@ void main() {
       isEmpty,
     );
   });
+
+  test('inbound leg inverts airport direction and drops wait', () {
+    const outbound = CompanyRideOptions(
+      service: 'airport',
+      waitMin: 20,
+      airportDirection: 'to_airport',
+      pickupAfterMin: 15,
+      pickupArrangement: '',
+    );
+    final inbound = outbound.forInboundLeg();
+    expect(inbound.airportDirection, 'from_airport');
+    expect(inbound.waitMin, 0);
+    expect(inbound.pickupAfterMin, 0);
+    expect(inbound.pickupArrangement, 'scheduled');
+    expect(
+      inbound.forInboundLeg().airportDirection,
+      'to_airport',
+    );
+  });
 }

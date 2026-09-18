@@ -48,7 +48,8 @@ String companyPlanPresenceLabel(
 }) {
   switch (presence.code) {
     case 'available':
-      if (!durationKnown) {
+    case 'assignment_availability_unknown':
+      if (!durationKnown || presence.code == 'assignment_availability_unknown') {
         return kCompanyAgendaAvailabilityUnknown.of(language);
       }
       return kCompanyDriverPresenceAvailable.of(language);
@@ -120,6 +121,7 @@ CompanyPlanPresence resolveCompanyPlanPresence({
   DateTime? rideStartUtc,
   DateTime? rideEndUtc,
   Duration approach = Duration.zero,
+  bool durationKnown = true,
 }) {
   if (!companyAgendaDriverIsActive(driver)) {
     return const CompanyPlanPresence(
@@ -159,6 +161,7 @@ CompanyPlanPresence resolveCompanyPlanPresence({
     rideStartUtc: rideStartUtc,
     rideEndUtc: rideEndUtc,
     approach: approach,
+    durationKnown: durationKnown,
   );
   if (scheduleBlock != null) return scheduleBlock;
 
@@ -271,6 +274,7 @@ CompanyPlanPresence? _schedulePresenceBlock({
   required DateTime? rideStartUtc,
   required DateTime? rideEndUtc,
   required Duration approach,
+  required bool durationKnown,
 }) {
   if (schedule == null || !schedule.isConfigured) return null;
   if (schedule.isEmpty) {
@@ -280,7 +284,13 @@ CompanyPlanPresence? _schedulePresenceBlock({
       icon: Icons.event_busy_outlined,
     );
   }
-  if (rideStartUtc == null) return null;
+  if (!durationKnown || rideStartUtc == null) {
+    return const CompanyPlanPresence(
+      tone: CompanyPlanPresenceTone.unknown,
+      code: 'assignment_availability_unknown',
+      icon: Icons.help_outline,
+    );
+  }
   final conflict = companyDriverScheduleConflictFor(
     schedule: schedule,
     rideStartUtc: rideStartUtc,

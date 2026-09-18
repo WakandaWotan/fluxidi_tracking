@@ -361,17 +361,31 @@ const LocalizedText kCompanyCustomerQuoteToAirport = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomerQuoteFlightAtOutbound = LocalizedText(
-  nl: 'Vertrekdatum en -tijd van de vlucht',
-  en: 'Flight departure date and time',
-  fr: 'Date et heure de départ du vol',
-  es: 'Fecha y hora de salida del vuelo',
+  nl: 'Vertrek van de vlucht — datum',
+  en: 'Flight departure — date',
+  fr: 'Départ du vol — date',
+  es: 'Salida del vuelo — fecha',
+);
+
+const LocalizedText kCompanyCustomerQuoteFlightTimeOutbound = LocalizedText(
+  nl: 'Vertrek van de vlucht — tijd',
+  en: 'Flight departure — time',
+  fr: 'Départ du vol — heure',
+  es: 'Salida del vuelo — hora',
 );
 
 const LocalizedText kCompanyCustomerQuoteFlightAtInbound = LocalizedText(
-  nl: 'Aankomstdatum en -tijd van de vlucht',
-  en: 'Flight arrival date and time',
-  fr: 'Date et heure d’arrivée du vol',
-  es: 'Fecha y hora de llegada del vuelo',
+  nl: 'Aankomst van de vlucht — datum',
+  en: 'Flight arrival — date',
+  fr: 'Arrivée du vol — date',
+  es: 'Llegada del vuelo — fecha',
+);
+
+const LocalizedText kCompanyCustomerQuoteFlightTimeInbound = LocalizedText(
+  nl: 'Aankomst van de vlucht — tijd',
+  en: 'Flight arrival — time',
+  fr: 'Arrivée du vol — heure',
+  es: 'Llegada del vuelo — hora',
 );
 
 const LocalizedText kCompanyCustomerQuotePickupArrangement = LocalizedText(
@@ -389,10 +403,24 @@ const LocalizedText kCompanyCustomerQuotePickupScheduled = LocalizedText(
 );
 
 const LocalizedText kCompanyCustomerQuotePickupAfterLanding = LocalizedText(
-  nl: 'Ophalen na landing (minuten)',
-  en: 'Pickup after landing (minutes)',
-  fr: 'Prise en charge après l’atterrissage (minutes)',
-  es: 'Recogida tras el aterrizaje (minutos)',
+  nl: 'Uitstap- en bagagetijd (minuten)',
+  en: 'Deboard and baggage time (minutes)',
+  fr: 'Temps de descente et bagages (minutes)',
+  es: 'Tiempo de bajada y equipaje (minutos)',
+);
+
+const LocalizedText kCompanyCustomerQuoteArrivalMargin = LocalizedText(
+  nl: 'Aankomstmarge voor de vlucht (minuten)',
+  en: 'Arrival margin before the flight (minutes)',
+  fr: 'Marge d’arrivée avant le vol (minutes)',
+  es: 'Margen de llegada antes del vuelo (minutos)',
+);
+
+const LocalizedText kCompanyCustomerQuoteApplySuggestedPickup = LocalizedText(
+  nl: 'Ophaaltijd overnemen',
+  en: 'Use suggested pickup',
+  fr: 'Utiliser l’heure suggérée',
+  es: 'Usar la recogida sugerida',
 );
 
 const LocalizedText kCompanyCustomerQuoteReturnAirport = LocalizedText(

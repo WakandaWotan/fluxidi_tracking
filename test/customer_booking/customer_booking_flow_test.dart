@@ -499,6 +499,32 @@ void main() {
     expect(find.byKey(kCustomerBookingConfirmKey), findsOneWidget);
   });
 
+  testWidgets('airport flow hides wait chips that taxi still shows', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      size: const Size(800, 1280),
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.airport,
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'Brussels Airport',
+          latitude: 50.901,
+          longitude: 4.484,
+        ),
+      ),
+    );
+    expect(find.text('Heen en terug met wachten'), findsNothing);
+    expect(find.byKey(kCustomerBookingReturnWaitKey), findsNothing);
+    expect(find.byKey(customerBookingWaitChipKey(30)), findsNothing);
+    expect(find.byKey(customerBookingWaitChipKey(90)), findsNothing);
+  });
+
   test('book posts once through the shared customer quote client', () async {
     var books = 0;
     final client = _quotes(
@@ -1396,6 +1422,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(kCustomerBookingReturnDateKey), findsOneWidget);
     expect(find.byKey(kCustomerBookingReturnTimeKey), findsOneWidget);
+    expect(find.byKey(kCustomerBookingReturnClockRowKey), findsOneWidget);
+    final dateRect = tester.getRect(find.byKey(kCustomerBookingReturnDateKey));
+    final timeRect = tester.getRect(find.byKey(kCustomerBookingReturnTimeKey));
+    expect((dateRect.width - timeRect.width).abs(), lessThan(12));
+    expect((dateRect.top - timeRect.top).abs(), lessThan(4));
     expect(find.text('Datum terugrit'), findsOneWidget);
     expect(find.text('Tijd terugrit'), findsOneWidget);
     expect(find.text('Heenrit'), findsWidgets);
@@ -1570,6 +1601,94 @@ void main() {
     );
     expect(find.byKey(kCustomerBookingCompanyChangeKey), findsNothing);
     expect(find.byKey(kCustomerBookingCompanyLogoFallbackKey), findsOneWidget);
+  });
+
+  testWidgets('company banner uses published media.logo_url with contain', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'Demo Taxi',
+        ),
+      ),
+      profileGet: (uri) async {
+        if (uri.path.contains('availability')) {
+          return _defaultProfileGet()(uri);
+        }
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'ok': true,
+            'company_name': 'Demo Taxi',
+            'media': <String, dynamic>{
+              'logo_url': 'https://cdn.example/demo-logo.png',
+            },
+            'vehicles': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'vehicle_id': 'vh_1',
+                'name': 'Sedan',
+                'vehicle_type': 'sedan',
+                'passenger_capacity': 3,
+                'is_active': true,
+              },
+            ],
+          }),
+          200,
+        );
+      },
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(find.byKey(kCustomerBookingCompanyLogoImageKey), findsOneWidget);
+    final image = tester.widget<Image>(
+      find.byKey(kCustomerBookingCompanyLogoImageKey),
+    );
+    expect(image.fit, BoxFit.contain);
+    expect(image.width, kCustomerBookingCompanyLogoWidth);
+    expect(image.height, kCustomerBookingCompanyLogoHeight);
+    expect(
+      kCustomerBookingCompanyLogoWidth,
+      inInclusiveRange(100, 120),
+    );
+    expect(
+      kCustomerBookingCompanyLogoHeight,
+      inInclusiveRange(40, 48),
+    );
+  });
+
+  testWidgets('map metrics badge sits above the sheet with full duration text', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'Demo Taxi',
+        ),
+        pickup: CustomerBookingPlace(
+          address: 'A Straat 1, Brussel',
+          latitude: 50.85,
+          longitude: 4.35,
+        ),
+        destination: CustomerBookingPlace(
+          address: 'B Straat 2, Gent',
+          latitude: 51.05,
+          longitude: 3.72,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(kCustomerBookingMetricsBadgeKey), findsOneWidget);
+    expect(find.text('22 min · 14,2 km'), findsOneWidget);
+    final badge = tester.getRect(find.byKey(kCustomerBookingMetricsBadgeKey));
+    final sheet = tester.getRect(find.byKey(kCustomerBookingSheetKey));
+    expect(badge.bottom, lessThanOrEqualTo(sheet.top + 4));
+    expect(badge.left, lessThan(80));
   });
 
   testWidgets('phone airport has no arrival margin and one ready-at row', (

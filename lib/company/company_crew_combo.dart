@@ -87,6 +87,7 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
   DateTime? rideStartUtc,
   DateTime? rideEndUtc,
   Map<String, CompanyDriverSchedule>? schedules,
+  bool durationKnown = true,
 }) {
   final typed = companyPlanVehiclesForType(
     vehicles: vehicles,
@@ -109,6 +110,7 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
         schedule: schedules?[driverId],
         rideStartUtc: rideStartUtc,
         rideEndUtc: rideEndUtc,
+        durationKnown: durationKnown,
       );
       combos.add(
         CompanyCrewCombo(
@@ -134,6 +136,7 @@ List<CompanyCrewCombo> companyPlanCrewCombos({
         schedule: schedules?[driverId],
         rideStartUtc: rideStartUtc,
         rideEndUtc: rideEndUtc,
+        durationKnown: durationKnown,
       );
       combos.add(
         CompanyCrewCombo(
@@ -596,6 +599,7 @@ class _CompanyCrewComboPickerState extends State<CompanyCrewComboPicker> {
               combos: widget.combos,
               selectedId: widget.selectedId,
               plannedLocal: widget.plannedLocal,
+              durationKnown: widget.durationKnown,
               includePlate: widget.includePlate,
               unassignedLabel: widget.unassignedLabel,
               unsuitableChoices: widget.unsuitableChoices,
@@ -626,6 +630,7 @@ class _CompanyCrewComboPickerState extends State<CompanyCrewComboPicker> {
               combos: widget.combos,
               selectedId: widget.selectedId,
               plannedLocal: widget.plannedLocal,
+              durationKnown: widget.durationKnown,
               includePlate: widget.includePlate,
               unassignedLabel: widget.unassignedLabel,
               unsuitableChoices: widget.unsuitableChoices,
@@ -739,6 +744,7 @@ class _CompanyCrewComboChooser extends StatefulWidget {
     required this.selectedId,
     required this.onSelected,
     required this.plannedLocal,
+    required this.durationKnown,
     required this.includePlate,
     required this.unassignedLabel,
     required this.unsuitableChoices,
@@ -750,6 +756,7 @@ class _CompanyCrewComboChooser extends StatefulWidget {
   final String selectedId;
   final ValueChanged<String> onSelected;
   final DateTime? plannedLocal;
+  final bool durationKnown;
   final bool includePlate;
   final String? unassignedLabel;
   final List<CompanyAssignmentChoice> unsuitableChoices;
@@ -869,6 +876,7 @@ class _CompanyCrewComboChooserState extends State<_CompanyCrewComboChooser> {
                         language: widget.language,
                         selectedId: widget.selectedId,
                         plannedLocal: widget.plannedLocal,
+                        durationKnown: widget.durationKnown,
                         includePlate: widget.includePlate,
                         onSelected: widget.onSelected,
                       );
@@ -878,6 +886,7 @@ class _CompanyCrewComboChooserState extends State<_CompanyCrewComboChooser> {
                       blocked: blocked,
                       extras: extras,
                       plannedLocal: widget.plannedLocal,
+                      durationKnown: widget.durationKnown,
                     );
                   },
                 ),
@@ -896,6 +905,7 @@ class _CompanyCrewComboGroupTile extends StatelessWidget {
     required this.language,
     required this.selectedId,
     required this.plannedLocal,
+    required this.durationKnown,
     required this.includePlate,
     required this.onSelected,
   });
@@ -904,6 +914,7 @@ class _CompanyCrewComboGroupTile extends StatelessWidget {
   final AppLanguage language;
   final String selectedId;
   final DateTime? plannedLocal;
+  final bool durationKnown;
   final bool includePlate;
   final ValueChanged<String> onSelected;
 
@@ -916,6 +927,7 @@ class _CompanyCrewComboGroupTile extends StatelessWidget {
         language: language,
         selected: group.combos.first.id == selectedId,
         plannedLocal: plannedLocal,
+        durationKnown: durationKnown,
         includePlate: includePlate,
         onSelected: onSelected,
       );
@@ -940,6 +952,7 @@ class _CompanyCrewComboGroupTile extends StatelessWidget {
               language: language,
               selected: combo.id == selectedId,
               plannedLocal: plannedLocal,
+              durationKnown: durationKnown,
               includePlate: includePlate,
               onSelected: onSelected,
               compactVehicle: true,
@@ -956,6 +969,7 @@ class _CompanyCrewComboOptionTile extends StatelessWidget {
     required this.language,
     required this.selected,
     required this.plannedLocal,
+    required this.durationKnown,
     required this.includePlate,
     required this.onSelected,
     this.compactVehicle = false,
@@ -965,6 +979,7 @@ class _CompanyCrewComboOptionTile extends StatelessWidget {
   final AppLanguage language;
   final bool selected;
   final DateTime? plannedLocal;
+  final bool durationKnown;
   final bool includePlate;
   final ValueChanged<String> onSelected;
   final bool compactVehicle;
@@ -986,7 +1001,7 @@ class _CompanyCrewComboOptionTile extends StatelessWidget {
       combo.presence,
       language,
       plannedLocal: plannedLocal,
-      durationKnown: true,
+      durationKnown: durationKnown,
     );
     final plate = includePlate ? companyAgendaVehiclePlate(combo.vehicle) : '';
     return Semantics(
@@ -1021,12 +1036,14 @@ class _CompanyCrewUnsuitableSection extends StatelessWidget {
     required this.blocked,
     required this.extras,
     required this.plannedLocal,
+    required this.durationKnown,
   });
 
   final AppLanguage language;
   final List<CompanyCrewCombo> blocked;
   final List<CompanyAssignmentChoice> extras;
   final DateTime? plannedLocal;
+  final bool durationKnown;
 
   @override
   Widget build(BuildContext context) {
@@ -1045,6 +1062,7 @@ class _CompanyCrewUnsuitableSection extends StatelessWidget {
                 combo.presence,
                 language,
                 plannedLocal: plannedLocal,
+                durationKnown: durationKnown,
               ),
             ),
           ),

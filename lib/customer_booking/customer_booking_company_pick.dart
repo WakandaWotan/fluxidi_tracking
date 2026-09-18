@@ -15,6 +15,7 @@ CustomerBookingCompany? customerBookingCompanyFromNearbySelection(
     companyId: (selected['company_id'] ?? '').trim(),
     companyCode: (selected['company_code'] ?? '').trim(),
     companyName: (selected['company_name'] ?? '').trim(),
+    logoUrl: (selected['logo_url'] ?? '').trim(),
   );
 }
 

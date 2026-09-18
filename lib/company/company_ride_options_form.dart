@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_customer_quote_labels.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
 import 'package:fluxidi_tracking/company/company_form_date_time.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 
 const Key kCompanyRideServiceKey = Key('company_ride_service');
@@ -228,6 +229,9 @@ class CompanyRideOptionsForm extends StatelessWidget {
               dateLabel: value.airportDirection == 'from_airport'
                   ? kCompanyCustomerQuoteFlightAtInbound.of(language)
                   : kCompanyCustomerQuoteFlightAtOutbound.of(language),
+              timeLabel: value.airportDirection == 'from_airport'
+                  ? kCompanyCustomerQuoteFlightTimeInbound.of(language)
+                  : kCompanyCustomerQuoteFlightTimeOutbound.of(language),
               onChanged: (next) => onChanged(
                 value.copyWith(
                   flightAt: next == null ? '' : companyFormIsoFromLocal(next),
@@ -241,6 +245,24 @@ class CompanyRideOptionsForm extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 8),
+          if (value.airportDirection == 'to_airport')
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: TextFormField(
+                initialValue: '${value.arrivalMarginMin}',
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: kCompanyCustomerQuoteArrivalMargin.of(language),
+                ),
+                onChanged: (text) => onChanged(
+                  value.copyWith(
+                    arrivalMarginMin: (int.tryParse(text.trim()) ??
+                            kCompanyPlanDefaultAirportArrivalMarginMin)
+                        .clamp(0, 180),
+                  ),
+                ),
+              ),
+            ),
           if (value.airportDirection == 'from_airport') ...[
             Padding(
               padding: const EdgeInsets.only(bottom: 14),
@@ -271,28 +293,27 @@ class CompanyRideOptionsForm extends StatelessWidget {
                 ),
               ),
             ),
-            if (value.pickupArrangement == 'after_landing')
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: TextFormField(
-                  initialValue: value.pickupAfterMin == 0
-                      ? ''
-                      : '${value.pickupAfterMin}',
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText:
-                        kCompanyCustomerQuotePickupAfterLanding.of(language),
-                  ),
-                  onChanged: (text) => onChanged(
-                    value.copyWith(
-                      pickupAfterMin: (int.tryParse(text.trim()) ?? 0).clamp(
-                        0,
-                        240,
-                      ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: TextFormField(
+                initialValue: value.pickupAfterMin == 0
+                    ? ''
+                    : '${value.pickupAfterMin}',
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText:
+                      kCompanyCustomerQuotePickupAfterLanding.of(language),
+                ),
+                onChanged: (text) => onChanged(
+                  value.copyWith(
+                    pickupAfterMin: (int.tryParse(text.trim()) ?? 0).clamp(
+                      0,
+                      240,
                     ),
                   ),
                 ),
               ),
+            ),
           ],
         ],
         if (showMeet) ...[
@@ -353,6 +374,7 @@ class CompanyRideOptionsForm extends StatelessWidget {
             language: language,
             value: companyFormDateTimeFromIso(value.returnFlightAt),
             dateLabel: kCompanyCustomerQuoteFlightAtInbound.of(language),
+            timeLabel: kCompanyCustomerQuoteFlightTimeInbound.of(language),
             onChanged: (next) => onChanged(
               value.copyWith(
                 returnFlightAt:

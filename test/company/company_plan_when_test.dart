@@ -128,11 +128,12 @@ void main() {
     expect(fields['pickup_iso'], isNot(contains('1970')));
   });
 
-  test('canonical duration prefers quote then route then typed text', () {
+  test('canonical duration prefers quote then route then geometry then typed text', () {
     expect(
       companyPlanCanonicalDurationMin(
         quoteDurationMin: 60,
         durationRouteMin: 45,
+        geometryDurationMin: 94,
         durationText: '15',
       ),
       60,
@@ -140,9 +141,17 @@ void main() {
     expect(
       companyPlanCanonicalDurationMin(
         durationRouteMin: 45,
+        geometryDurationMin: 94,
         durationText: '',
       ),
       45,
+    );
+    expect(
+      companyPlanCanonicalDurationMin(
+        geometryDurationMin: 94,
+        durationText: '15',
+      ),
+      94,
     );
     expect(companyPlanCanonicalDurationMin(durationText: '0'), isNull);
   });
@@ -192,19 +201,90 @@ void main() {
     expect(
       companyPlanFlightDepartsBeforePickup(
         flightAt: '2026-09-15T09:00:00.000Z',
-        pickupLocal: DateTime.utc(2026, 9, 15, 10),
+        pickupLocal: DateTime(2026, 9, 15, 12, 0),
         whenNow: false,
       ),
       isTrue,
+    );
+    expect(
+      companyPlanFlightDepartsBeforePickup(
+        flightAt: '2026-09-15T09:00:00.000Z',
+        pickupLocal: DateTime(2026, 9, 15, 10, 0),
+        whenNow: false,
+      ),
+      isFalse,
+    );
+    final flightUtc = DateTime.parse('2026-09-15T10:00:00.000Z');
+    final flightLocal = companyTimezoneUtcToLocal(
+      flightUtc,
+      kCompanyDefaultTimezone,
     );
     expect(
       companyPlanSuggestedToAirportPickup(
         flightAt: '2026-09-15T10:00:00.000Z',
         durationMin: 45,
       ),
-      DateTime.parse('2026-09-15T10:00:00.000Z').toLocal().subtract(
-        const Duration(minutes: 45),
+      DateTime(
+        flightLocal.year,
+        flightLocal.month,
+        flightLocal.day,
+        flightLocal.hour,
+        flightLocal.minute,
+      ).subtract(const Duration(minutes: 60)),
+    );
+    expect(
+      companyPlanSuggestedToAirportPickup(
+        flightAt: '2026-09-15T10:00:00.000Z',
+        durationMin: 45,
+        arrivalMarginMin: 0,
       ),
+      DateTime(
+        flightLocal.year,
+        flightLocal.month,
+        flightLocal.day,
+        flightLocal.hour,
+        flightLocal.minute,
+      ).subtract(const Duration(minutes: 45)),
+    );
+    expect(
+      companyPlanSuggestedFromAirportPickup(
+        flightAt: '2026-09-15T10:00:00.000Z',
+        pickupAfterMin: 20,
+      ),
+      DateTime(
+        flightLocal.year,
+        flightLocal.month,
+        flightLocal.day,
+        flightLocal.hour,
+        flightLocal.minute,
+      ).add(const Duration(minutes: 20)),
+    );
+  });
+
+  test('25 Sep 22:00 Brussels flight with 94 min and 15 min margin is 20:11', () {
+    expect(
+      companyPlanSuggestedToAirportPickup(
+        flightAt: '2026-09-25T22:00:00',
+        durationMin: 94,
+        arrivalMarginMin: 15,
+      ),
+      DateTime(2026, 9, 25, 20, 11),
+    );
+    expect(
+      companyPlanAirportSuggestedPickup(
+        airportDirection: 'to_airport',
+        flightAt: '2026-09-25T20:00:00.000Z',
+        durationMin: 94,
+        arrivalMarginMin: 15,
+      ),
+      DateTime(2026, 9, 25, 20, 11),
+    );
+    expect(
+      companyPlanAssignmentWhenNow(
+        whenNow: true,
+        airportPickup: DateTime(2026, 9, 25, 20, 11),
+      ),
+      isFalse,
     );
   });
 }

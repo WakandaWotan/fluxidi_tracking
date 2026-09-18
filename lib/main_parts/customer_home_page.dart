@@ -1186,17 +1186,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           onTap: (i) {
             if (i == 0) return;
             if (i == 1) {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => NearbyPartnersPage(
-                    customerHomeBuilder: (_) => const CustomerHomePage(),
-                    regionRegistrationBuilder: (_) =>
-                        const CustomerRegionRegistrationPage(),
-                    syncCustomerProfileFromBackend:
-                        _syncCustomerProfileFromBackendBestEffort,
-                  ),
-                ),
-              );
+              unawaited(_openTaxiFlow(context));
               return;
             }
             if (i == 2) {
@@ -1277,20 +1267,35 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     );
   }
 
+  Future<void> _openTaxiFlow(
+    BuildContext context, {
+    CustomerBookingPlace? pickup,
+    CustomerBookingPlace? destination,
+    String sourceLabel = 'customer_home.taxi',
+  }) async {
+    if (!context.mounted) return;
+    await openCustomerBookingFlow(
+      context,
+      entry: CustomerBookingEntryContext(
+        kind: CustomerBookingKind.taxi,
+        company: _homeCompany ?? const CustomerBookingCompany(),
+        pickup: pickup,
+        destination: destination,
+        lockCompany: false,
+        sourceLabel: sourceLabel,
+      ),
+      onGoToStartPage: (_) => const CustomerHomePage(),
+    );
+  }
+
   void _openTaxiFromHomePanel() {
     final scheduled = _homeWhenNow ? null : _homePickupAt;
     unawaited(
-      openCustomerBookingFlow(
+      _openTaxiFlow(
         context,
-        entry: CustomerBookingEntryContext(
-          kind: CustomerBookingKind.taxi,
-          company: _homeCompany ?? const CustomerBookingCompany(),
-          pickup: _placeFromHomeAddress(_homePickup.value, startsAt: scheduled),
-          destination: _placeFromHomeAddress(_homeDropoff.value),
-          lockCompany: false,
-          sourceLabel: 'customer_home.search_ride',
-        ),
-        onGoToStartPage: (_) => const CustomerHomePage(),
+        pickup: _placeFromHomeAddress(_homePickup.value, startsAt: scheduled),
+        destination: _placeFromHomeAddress(_homeDropoff.value),
+        sourceLabel: 'customer_home.search_ride',
       ),
     );
   }

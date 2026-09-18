@@ -312,6 +312,10 @@ CompanyPlanVehicleMedia resolveCompanyPlanVehicleMedia({
       companyId: companyId,
     );
     if (url.isEmpty) continue;
+    final lower = candidate.trim().toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      continue;
+    }
     return CompanyPlanVehicleMedia(
       kind: CompanyPlanVehicleVisualKind.companyPhoto,
       photoUrl: url,
@@ -602,10 +606,13 @@ class CompanyPlanAssignedCrew extends StatelessWidget {
           );
     final vehicleMedia = vehicle == null
         ? CompanyPlanVehicleMedia(
-            kind: snapshot.vehiclePhotoUrl.isEmpty
-                ? CompanyPlanVehicleVisualKind.vectorFallback
+            kind: snapshot.vehiclePhotoUrl.trim().isEmpty
+                ? CompanyPlanVehicleVisualKind.genericCutout
                 : CompanyPlanVehicleVisualKind.companyPhoto,
             photoUrl: snapshot.vehiclePhotoUrl,
+            assetPath: companyPlanVehicleFallbackAsset(
+              CompanyPlanVehicleCategory.sedan,
+            ),
             fallbackIcon: Icons.directions_car_outlined,
             fit: kCompanyPlanVehicleVisualFit,
           )

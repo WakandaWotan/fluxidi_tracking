@@ -365,10 +365,9 @@ class _CompanyDateTimeFieldsState extends State<CompanyDateTimeFields> {
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(flex: 3, child: dateField),
+          Expanded(child: dateField),
           const SizedBox(width: 8),
           Expanded(
-            flex: 2,
             child: TextField(
               key: companyFormTimeFieldKey(widget.fieldId),
               controller: _timeCtrl,
@@ -398,15 +397,12 @@ class _CompanyDateTimeFieldsState extends State<CompanyDateTimeFields> {
   Widget _withLeading(Widget child) {
     final label = widget.leadingLabel?.trim() ?? '';
     if (label.isEmpty) return child;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          width: 72,
-          child: Text(label, style: Theme.of(context).textTheme.titleSmall),
-        ),
-        const SizedBox(width: 8),
-        Expanded(child: child),
+        Text(label, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        child,
       ],
     );
   }

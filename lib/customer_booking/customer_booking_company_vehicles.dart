@@ -6,10 +6,47 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_plan_media.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
+import 'package:fluxidi_tracking/nearby/public_partner_identity.dart';
 import 'package:fluxidi_tracking/nearby/public_partner_market.dart';
 import 'package:fluxidi_tracking/payment/booking_payment_options.dart';
 
 typedef CustomerBookingProfileGet = Future<http.Response> Function(Uri uri);
+
+/// Published company-settings logo for customer surfaces.
+///
+/// Nearby cards already read `logo_url` / `media.logo_url`. The booking banner
+/// must use the same fields, never the packaged Fluxidi mark.
+String customerBookingPublishedLogoUrl(Map<String, dynamic> profile) {
+  Map<String, dynamic> nested(String key) {
+    final raw = profile[key];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return const <String, dynamic>{};
+  }
+
+  final media = nested('media');
+  final branding = nested('branding');
+  for (final value in <Object?>[
+    profile['publicLogoUrl'],
+    profile['public_logo_url'],
+    profile['logo_url'],
+    profile['logoUrl'],
+    media['logo_url'],
+    media['logoUrl'],
+    branding['logo_url'],
+    branding['logoUrl'],
+  ]) {
+    final url = (value ?? '').toString().trim();
+    if (customerBookingLogoUrlIsRenderable(url)) return url;
+  }
+  return '';
+}
+
+bool customerBookingLogoUrlIsRenderable(String url) {
+  final text = url.trim();
+  if (publicPartnerLogoIsRenderable(text)) return true;
+  return text.startsWith('http://127.0.0.1') ||
+      text.startsWith('http://localhost');
+}
 
 List<CompanyPlanVehicleCategory> customerBookingBookableCategories(
   List<Map<String, dynamic>> vehicles, {
@@ -53,15 +90,25 @@ Map<String, dynamic>? customerBookingExampleVehicleForCategory({
 String customerBookingVehiclePhotoUrl(Map<String, dynamic>? vehicle) {
   if (vehicle == null) return '';
   for (final candidate in companyPlanVehiclePhotoCandidates(vehicle)) {
-    final https = resolvePublicHttpsMediaUrl(candidate);
-    if (https.isNotEmpty) return https;
     final raw = candidate.trim();
-    if (raw.toLowerCase().startsWith('https://') &&
-        !isLocalOrPrivateMediaRef(raw)) {
+    if (raw.isEmpty) continue;
+    final lower = raw.toLowerCase();
+    // Object keys such as public-media/... are storage refs, not a published
+    // company photo. Cards must use the category fallback asset instead.
+    if (!lower.startsWith('https://') && !lower.startsWith('http://')) {
+      continue;
+    }
+    final https = resolvePublicHttpsMediaUrl(raw);
+    if (https.isNotEmpty) return https;
+    if (lower.startsWith('https://') && !isLocalOrPrivateMediaRef(raw)) {
+      return raw;
+    }
+    if (lower.startsWith('http://127.0.0.1') ||
+        lower.startsWith('http://localhost')) {
       return raw;
     }
   }
-  return resolveCompanyPlanVehicleMedia(vehicle: vehicle).photoUrl.trim();
+  return '';
 }
 
 List<Map<String, dynamic>> customerBookingVehiclesFromProfile(

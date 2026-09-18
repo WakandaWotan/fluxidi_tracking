@@ -40,6 +40,8 @@ class CustomerBookingRouteMap extends StatefulWidget {
     this.onEditPickup,
     this.onEditDropoff,
     this.framed = true,
+    this.onRouteMetrics,
+    this.cameraFitInsets,
   });
 
   final AppLanguage language;
@@ -62,6 +64,8 @@ class CustomerBookingRouteMap extends StatefulWidget {
   final VoidCallback? onEditPickup;
   final VoidCallback? onEditDropoff;
   final bool framed;
+  final ValueChanged<CustomerBookingRouteGeometry?>? onRouteMetrics;
+  final EdgeInsets? cameraFitInsets;
 
   @override
   State<CustomerBookingRouteMap> createState() =>
@@ -113,18 +117,12 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     if (_routeFingerprint() != _requestFingerprint) {
       unawaited(_syncGeometry());
     }
-    _commitFitInsets(widget.fitInsets);
+    _commitFitInsets(widget.cameraFitInsets ?? widget.fitInsets);
   }
 
   void _commitFitInsets(EdgeInsets next) {
-    const slop = 28.0;
-    if (_appliedFitInsets == EdgeInsets.zero ||
-        (next.bottom - _appliedFitInsets.bottom).abs() > slop ||
-        (next.top - _appliedFitInsets.top).abs() > slop ||
-        (next.left - _appliedFitInsets.left).abs() > slop ||
-        (next.right - _appliedFitInsets.right).abs() > slop) {
-      _appliedFitInsets = next;
-    }
+    if (_appliedFitInsets == next) return;
+    _appliedFitInsets = next;
   }
 
   @override
@@ -190,7 +188,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
       origin: _pickupPoint,
       destination: _dropoffPoint,
       contentInsets: _appliedFitInsets == EdgeInsets.zero
-          ? widget.fitInsets
+          ? (widget.cameraFitInsets ?? widget.fitInsets)
           : _appliedFitInsets,
     );
   }
@@ -208,6 +206,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
         _geometryLoading = false;
       });
       _draw.value = 0;
+      widget.onRouteMetrics?.call(null);
       return;
     }
     if (fingerprint == _requestFingerprint &&
@@ -223,6 +222,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
         _geometryLoading = false;
         _userMovedCamera = false;
       });
+      widget.onRouteMetrics?.call(null);
       return;
     }
     final epoch = ++_requestEpoch;
@@ -251,6 +251,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
         _geometryError = result.hasLine ? null : 'route_failed';
         _userMovedCamera = false;
       });
+      widget.onRouteMetrics?.call(result.hasLine ? result : null);
       if (result.hasLine) {
         _draw
           ..value = 0
@@ -265,6 +266,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
         _geometryLoading = false;
         _geometryError = error.toString();
       });
+      widget.onRouteMetrics?.call(null);
       _draw.value = 0;
     }
   }
@@ -320,7 +322,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     final status = _statusText;
     final loading = widget.quoteLoading || _geometryLoading;
     final showError = !loading && status.isNotEmpty;
-    _commitFitInsets(widget.fitInsets);
+    _commitFitInsets(widget.cameraFitInsets ?? widget.fitInsets);
     final mapBody = LayoutBuilder(
           builder: (context, constraints) {
             final size = Size(constraints.maxWidth, constraints.maxHeight);
@@ -402,30 +404,12 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                     ),
                   ),
                 ),
-                ..._endpointLabels(size, camera),
-                if (_metricsText.isNotEmpty)
-                  Positioned(
-                    left: _visibleHole(size).left + 8,
-                    top: () {
-                      final hole = _visibleHole(size);
-                      const chipH = 32.0;
-                      const gap = 6.0;
-                      final destBottom = hole.top + 8 + chipH;
-                      final pickupTop = hole.bottom - 8 - chipH;
-                      var top = hole.center.dy - chipH / 2;
-                      if (top < destBottom + gap) top = destBottom + gap;
-                      if (top + chipH > pickupTop - gap) {
-                        top = pickupTop - gap - chipH;
-                      }
-                      if (top < hole.top + 8) top = hole.top + 8;
-                      return top;
-                    }(),
-                    child: _EndpointChip(
-                      icon: Icons.schedule,
-                      text: _metricsText,
-                      palette: widget.palette,
-                    ),
-                  ),
+                ..._endpointLabels(
+                  size,
+                  camera,
+                  metricsAvoid: _metricsAvoidRect(size),
+                ),
+                ?_metricsBadge(size),
                 Positioned(
                   top: _visibleHole(size).top + 4,
                   right: size.width - _visibleHole(size).right + 4,
@@ -433,15 +417,17 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                     key: kCustomerBookingFitRouteKey,
                     tooltip: kCustomerBookingFitRoute.of(widget.language),
                     onPressed: () {
+                      final insets =
+                          widget.cameraFitInsets ?? widget.fitInsets;
                       setState(() {
                         _userMovedCamera = false;
-                        _appliedFitInsets = widget.fitInsets;
+                        _appliedFitInsets = insets;
                         _movedCamera = customerBookingFitCamera(
                           points: _framePoints,
                           size: _viewport == Size.zero ? size : _viewport,
                           origin: _pickupPoint,
                           destination: _dropoffPoint,
-                          contentInsets: widget.fitInsets,
+                          contentInsets: insets,
                         );
                       });
                     },
@@ -527,13 +513,59 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     );
   }
 
-  EdgeInsets get _labelInsets =>
-      _appliedFitInsets == EdgeInsets.zero ? widget.fitInsets : _appliedFitInsets;
+  EdgeInsets get _labelInsets => widget.fitInsets;
 
   Rect _visibleHole(Size size) =>
       customerBookingVisibleMapHole(size, _labelInsets);
 
-  List<Widget> _endpointLabels(Size size, CustomerBookingMapCamera camera) {
+  Size _metricsBadgeSize(String text) {
+    final width = 36.0 + text.length * 7.2;
+    return Size(width.clamp(96.0, 280.0), 32);
+  }
+
+  Rect? _metricsAvoidRect(Size size) {
+    if (_metricsText.isEmpty) return null;
+    final placement = customerBookingMetricsBadgePlacement(
+      size: size,
+      visibleInsets: widget.fitInsets,
+      badgeSize: _metricsBadgeSize(_metricsText),
+    );
+    if (!placement.visible) return null;
+    final badge = _metricsBadgeSize(_metricsText);
+    return Rect.fromLTWH(
+      placement.offset.dx,
+      placement.offset.dy,
+      badge.width,
+      badge.height,
+    );
+  }
+
+  Positioned? _metricsBadge(Size size) {
+    if (_metricsText.isEmpty) return null;
+    final placement = customerBookingMetricsBadgePlacement(
+      size: size,
+      visibleInsets: widget.fitInsets,
+      badgeSize: _metricsBadgeSize(_metricsText),
+    );
+    if (!placement.visible) return null;
+    return Positioned(
+      left: placement.offset.dx,
+      top: placement.offset.dy,
+      child: _EndpointChip(
+        key: kCustomerBookingMetricsBadgeKey,
+        icon: Icons.schedule,
+        text: _metricsText,
+        palette: widget.palette,
+        truncate: false,
+      ),
+    );
+  }
+
+  List<Widget> _endpointLabels(
+    Size size,
+    CustomerBookingMapCamera camera, {
+    Rect? metricsAvoid,
+  }) {
     const labelSize = Size(168, 32);
     final hole = _visibleHole(size);
     Widget? chip({
@@ -551,9 +583,12 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
           : customerBookingCompactAddressLabel(raw);
       Offset pos;
       if (point == null) {
+        final reserve = metricsAvoid == null ? 0.0 : metricsAvoid.height + 10;
         pos = Offset(
           hole.left + 8,
-          pickup ? hole.bottom - labelSize.height - 8 : hole.top + 8,
+          pickup
+              ? hole.bottom - labelSize.height - 8 - reserve
+              : hole.top + 8,
         );
       } else {
         final anchor = customerBookingProject(point, camera, size);
@@ -563,6 +598,7 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
           visibleInsets: _labelInsets,
           labelSize: labelSize,
           nudge: nudge,
+          avoid: metricsAvoid,
         );
       }
       return Positioned(
@@ -632,17 +668,30 @@ class _EndpointChip extends StatelessWidget {
     required this.text,
     required this.palette,
     this.onTap,
+    this.truncate = true,
   });
 
   final IconData icon;
   final String text;
   final CustomerThemePalette palette;
   final VoidCallback? onTap;
+  final bool truncate;
 
   @override
   Widget build(BuildContext context) {
+    final label = Text(
+      text,
+      maxLines: 1,
+      overflow: truncate ? TextOverflow.ellipsis : TextOverflow.visible,
+      softWrap: false,
+      style: TextStyle(
+        color: palette.textPrimary,
+        fontWeight: FontWeight.w700,
+        fontSize: 11,
+      ),
+    );
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 168),
+      constraints: BoxConstraints(maxWidth: truncate ? 168 : 280),
       child: Material(
         color: palette.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(999),
@@ -656,18 +705,10 @@ class _EndpointChip extends StatelessWidget {
               children: [
                 Icon(icon, size: 16, color: palette.textPrimary),
                 const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
+                if (truncate)
+                  Flexible(child: label)
+                else
+                  label,
                 if (onTap != null) ...[
                   const SizedBox(width: 4),
                   Icon(Icons.edit_outlined, size: 14, color: palette.textMuted),

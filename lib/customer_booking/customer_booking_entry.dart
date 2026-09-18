@@ -18,6 +18,7 @@ class CustomerBookingCompany {
     this.companyId = '',
     this.companyCode = '',
     this.companyName = '',
+    this.logoUrl = '',
     this.vehicles = const <Map<String, dynamic>>[],
   });
 
@@ -26,6 +27,7 @@ class CustomerBookingCompany {
   final String companyId;
   final String companyCode;
   final String companyName;
+  final String logoUrl;
   final List<Map<String, dynamic>> vehicles;
 
   bool get hasPartner => partnerId.trim().isNotEmpty;
@@ -38,6 +40,7 @@ class CustomerBookingCompany {
     String? companyId,
     String? companyCode,
     String? companyName,
+    String? logoUrl,
     List<Map<String, dynamic>>? vehicles,
   }) {
     return CustomerBookingCompany(
@@ -46,6 +49,7 @@ class CustomerBookingCompany {
       companyId: companyId ?? this.companyId,
       companyCode: companyCode ?? this.companyCode,
       companyName: companyName ?? this.companyName,
+      logoUrl: logoUrl ?? this.logoUrl,
       vehicles: vehicles ?? this.vehicles,
     );
   }
@@ -143,6 +147,7 @@ class CustomerBookingEntryContext {
 }
 
 const List<String> kCustomerBookingTaxiCtaInventory = <String>[
+  'customer_home.taxis_nav',
   'customer_home.airport_rides',
   'customer_home.business',
   'customer_home.events.on_book_event',

@@ -247,13 +247,22 @@ class CompanyDriverSchedule {
     if (rawWeek is Map) {
       for (final entry in rawWeek.entries) {
         final weekday = companyDriverScheduleWeekday(entry.key);
-        if (weekday == null || entry.value is! List) continue;
+        if (weekday == null) continue;
+        final rawBlocks = <Map<String, dynamic>>[];
+        if (entry.value is List) {
+          for (final item in entry.value as List) {
+            if (item is Map) {
+              rawBlocks.add(Map<String, dynamic>.from(item));
+            }
+          }
+        } else if (entry.value is Map) {
+          rawBlocks.add(Map<String, dynamic>.from(entry.value as Map));
+        } else {
+          continue;
+        }
         final blocks = <CompanyDriverShiftBlock>[];
-        for (final item in entry.value as List) {
-          if (item is! Map) continue;
-          final block = CompanyDriverShiftBlock.fromJson(
-            Map<String, dynamic>.from(item),
-          );
+        for (final item in rawBlocks) {
+          final block = CompanyDriverShiftBlock.fromJson(item);
           if (block != null) blocks.add(block);
         }
         blocks.sort((a, b) => a.startMinute.compareTo(b.startMinute));
@@ -470,11 +479,15 @@ CompanyDriverScheduleWindow _windowForBlock({
   required CompanyDriverShiftBlock block,
 }) {
   DateTime toUtc(int minuteOfDay) {
+    final extraDays = minuteOfDay ~/ 1440;
+    final minute = minuteOfDay % 1440;
     final local = DateTime(
       localDate.year,
       localDate.month,
-      localDate.day,
-    ).add(Duration(minutes: minuteOfDay));
+      localDate.day + extraDays,
+      minute ~/ 60,
+      minute % 60,
+    );
     return companyTimezoneLocalToUtc(local, schedule.timezone);
   }
 

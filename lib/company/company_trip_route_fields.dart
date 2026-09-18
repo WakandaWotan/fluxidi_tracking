@@ -43,6 +43,7 @@ class CompanyTripRouteFields extends StatefulWidget {
     this.showGroundAddresses = true,
     this.betweenEndpoints,
     this.sectionTitle,
+    this.onApplySuggestedPickup,
   });
 
   final AppLanguage language;
@@ -67,6 +68,7 @@ class CompanyTripRouteFields extends StatefulWidget {
   final bool showGroundAddresses;
   final Widget? betweenEndpoints;
   final String? sectionTitle;
+  final ValueChanged<DateTime>? onApplySuggestedPickup;
 
   @override
   State<CompanyTripRouteFields> createState() => _CompanyTripRouteFieldsState();
@@ -281,8 +283,12 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
         ? companyPlanSuggestedToAirportPickup(
             flightAt: rideOptions.flightAt,
             durationMin: routeDurationMin,
+            arrivalMarginMin: rideOptions.arrivalMarginMin,
           )
-        : null;
+        : companyPlanSuggestedFromAirportPickup(
+            flightAt: rideOptions.flightAt,
+            pickupAfterMin: rideOptions.pickupAfterMin,
+          );
     final latePickup = kind == CompanyTripRouteKind.toAirport &&
         companyPlanFlightDepartsBeforePickup(
           flightAt: rideOptions.flightAt,
@@ -311,6 +317,9 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
         dateLabel: kind == CompanyTripRouteKind.fromAirport
             ? kCompanyCustomerQuoteFlightAtInbound.of(language)
             : kCompanyCustomerQuoteFlightAtOutbound.of(language),
+        timeLabel: kind == CompanyTripRouteKind.fromAirport
+            ? kCompanyCustomerQuoteFlightTimeInbound.of(language)
+            : kCompanyCustomerQuoteFlightTimeOutbound.of(language),
         onChanged: (next) => widget.onRideOptionsChanged(
           rideOptions.copyWith(
             flightAt: next == null ? '' : companyFormIsoFromLocal(next),
@@ -323,6 +332,24 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
         softWrap: true,
         style: Theme.of(context).textTheme.bodySmall,
       ),
+      if (kind == CompanyTripRouteKind.toAirport) ...[
+        const SizedBox(height: 16),
+        TextFormField(
+          key: const Key('company_plan_arrival_margin'),
+          initialValue: '${rideOptions.arrivalMarginMin}',
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: kCompanyCustomerQuoteArrivalMargin.of(language),
+          ),
+          onChanged: (text) => widget.onRideOptionsChanged(
+            rideOptions.copyWith(
+              arrivalMarginMin: (int.tryParse(text.trim()) ??
+                      kCompanyPlanDefaultAirportArrivalMarginMin)
+                  .clamp(0, 180),
+            ),
+          ),
+        ),
+      ],
       if (suggested != null) ...[
         const SizedBox(height: 8),
         Text(
@@ -332,6 +359,17 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
           key: const Key('company_plan_suggested_pickup'),
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (widget.onApplySuggestedPickup != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              key: const Key('company_plan_apply_suggested_pickup'),
+              onPressed: () => widget.onApplySuggestedPickup!(suggested),
+              child: Text(
+                kCompanyCustomerQuoteApplySuggestedPickup.of(language),
+              ),
+            ),
+          ),
       ],
       if (latePickup) ...[
         const SizedBox(height: 8),
@@ -370,23 +408,22 @@ class _CompanyTripRouteFieldsState extends State<CompanyTripRouteFields> {
             rideOptions.copyWith(pickupArrangement: next ?? 'scheduled'),
           ),
         ),
-        if (rideOptions.pickupArrangement == 'after_landing') ...[
-          const SizedBox(height: 16),
-          TextFormField(
-            initialValue: rideOptions.pickupAfterMin == 0
-                ? ''
-                : '${rideOptions.pickupAfterMin}',
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: kCompanyCustomerQuotePickupAfterLanding.of(language),
-            ),
-            onChanged: (text) => widget.onRideOptionsChanged(
-              rideOptions.copyWith(
-                pickupAfterMin: (int.tryParse(text.trim()) ?? 0).clamp(0, 240),
-              ),
+        const SizedBox(height: 16),
+        TextFormField(
+          key: const Key('company_plan_pickup_after_min'),
+          initialValue: rideOptions.pickupAfterMin == 0
+              ? ''
+              : '${rideOptions.pickupAfterMin}',
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: kCompanyCustomerQuotePickupAfterLanding.of(language),
+          ),
+          onChanged: (text) => widget.onRideOptionsChanged(
+            rideOptions.copyWith(
+              pickupAfterMin: (int.tryParse(text.trim()) ?? 0).clamp(0, 240),
             ),
           ),
-        ],
+        ),
       ],
     ];
   }

@@ -130,6 +130,7 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
           rideEndUtc: durationKnown
               ? pickupUtc.add(Duration(minutes: durationMin))
               : pickupUtc,
+          durationKnown: durationKnown,
         );
         if (presence.suitable) {
           onDuty = driver;
@@ -141,12 +142,7 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
     }
     final proposedId = (proposedDriverIds[id] ?? '').trim();
     final proposed = _driverById(mergedDrivers, proposedId) ?? onDuty;
-    if (!durationKnown &&
-        !availabilityResolved &&
-        blockedReason != 'assignment_driver_outside_hours' &&
-        blockedReason != 'assignment_driver_not_scheduled' &&
-        blockedReason != 'assignment_driver_planned_break' &&
-        blockedReason != 'assignment_driver_absent') {
+    if (!durationKnown && !availabilityResolved) {
       offers.add(
         CustomerBookingVehicleOffer(
           vehicle: vehicle,

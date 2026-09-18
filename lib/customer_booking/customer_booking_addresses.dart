@@ -55,6 +55,29 @@ LimousineAddressValue customerBookingAddressFromPlace(
   );
 }
 
+/// Return origin: typed return pickup, otherwise the outbound drop-off
+/// (airport included). Empty street fields must not wipe a fixed-price leg.
+LimousineAddressValue customerBookingReturnFromAddress({
+  required LimousineAddressValue returnPickup,
+  required LimousineAddressValue outboundDropoff,
+}) {
+  if (returnPickup.isRouteReady && returnPickup.routeText.trim().isNotEmpty) {
+    return returnPickup;
+  }
+  return outboundDropoff;
+}
+
+/// Return destination: typed return drop-off, otherwise the outbound pickup.
+LimousineAddressValue customerBookingReturnToAddress({
+  required LimousineAddressValue returnDropoff,
+  required LimousineAddressValue outboundPickup,
+}) {
+  if (returnDropoff.isRouteReady && returnDropoff.routeText.trim().isNotEmpty) {
+    return returnDropoff;
+  }
+  return outboundPickup;
+}
+
 String customerProfileDefaultAddressLine(CustomerProfile profile) {
   final street = profile.billingStreet.trim();
   if (street.isEmpty) return '';

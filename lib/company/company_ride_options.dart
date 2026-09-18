@@ -2,6 +2,7 @@
 
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
 
 const List<String> kCompanyRideServices = <String>[
   'airport',
@@ -37,6 +38,7 @@ class CompanyRideOptions {
     this.flightAt = '',
     this.pickupArrangement = '',
     this.pickupAfterMin = 0,
+    this.arrivalMarginMin = kCompanyPlanDefaultAirportArrivalMarginMin,
     this.flightTimezone = 'Europe/Brussels',
     this.returnAirportIata = '',
     this.returnFlightNumber = '',
@@ -59,6 +61,7 @@ class CompanyRideOptions {
   final String flightAt;
   final String pickupArrangement;
   final int pickupAfterMin;
+  final int arrivalMarginMin;
   final String flightTimezone;
   final String returnAirportIata;
   final String returnFlightNumber;
@@ -101,6 +104,7 @@ class CompanyRideOptions {
     String? flightAt,
     String? pickupArrangement,
     int? pickupAfterMin,
+    int? arrivalMarginMin,
     String? flightTimezone,
     String? returnAirportIata,
     String? returnFlightNumber,
@@ -123,6 +127,7 @@ class CompanyRideOptions {
       flightAt: flightAt ?? this.flightAt,
       pickupArrangement: pickupArrangement ?? this.pickupArrangement,
       pickupAfterMin: pickupAfterMin ?? this.pickupAfterMin,
+      arrivalMarginMin: arrivalMarginMin ?? this.arrivalMarginMin,
       flightTimezone: flightTimezone ?? this.flightTimezone,
       returnAirportIata: returnAirportIata ?? this.returnAirportIata,
       returnFlightNumber: returnFlightNumber ?? this.returnFlightNumber,
@@ -135,12 +140,34 @@ class CompanyRideOptions {
     );
   }
 
+  /// Opposite airport direction for a split return leg.
+  ///
+  /// A to-airport rule must not be sent again as to-airport when the return
+  /// starts at the airport. Wait minutes stay on the outbound assignment.
+  CompanyRideOptions forInboundLeg() {
+    final outbound = airportDirection.trim();
+    final inbound = outbound == 'to_airport'
+        ? 'from_airport'
+        : outbound == 'from_airport'
+        ? 'to_airport'
+        : outbound;
+    return copyWith(
+      waitMin: 0,
+      airportDirection: inbound,
+      pickupAfterMin: 0,
+      pickupArrangement: inbound == 'from_airport'
+          ? 'scheduled'
+          : (inbound == 'to_airport' ? '' : pickupArrangement),
+    );
+  }
+
   Map<String, dynamic> toJson() {
+    final airport = isAirport;
     return <String, dynamic>{
       if (service.trim().isNotEmpty) 'service': service.trim(),
       if (tier.trim().isNotEmpty) 'tier': tier.trim(),
       'bags': bags < 0 ? 0 : bags,
-      'wait_min': waitMin < 0 ? 0 : waitMin,
+      if (!airport) 'wait_min': waitMin < 0 ? 0 : waitMin,
       if (flightNumber.trim().isNotEmpty)
         'flight_number': flightNumber.trim().toUpperCase(),
       if (airportDirection.trim().isNotEmpty)
@@ -156,6 +183,8 @@ class CompanyRideOptions {
       if (pickupArrangement.trim().isNotEmpty)
         'pickup_arrangement': pickupArrangement.trim(),
       if (pickupAfterMin > 0) 'pickup_after_min': pickupAfterMin,
+      if (airportDirection == 'to_airport' && arrivalMarginMin > 0)
+        'arrival_margin_min': arrivalMarginMin,
       if (flightTimezone.trim().isNotEmpty)
         'flight_timezone': flightTimezone.trim(),
       if (returnAirportIata.trim().isNotEmpty)
@@ -225,6 +254,10 @@ CompanyRideOptions parseCompanyRideOptions(Object? raw) {
     ]).toLowerCase(),
     pickupAfterMin: asInt(map['pickup_after_min'] ?? map['pickupAfterMin'])
         .clamp(0, 240),
+    arrivalMarginMin: map.containsKey('arrival_margin_min') ||
+            map.containsKey('arrivalMarginMin')
+        ? asInt(map['arrival_margin_min'] ?? map['arrivalMarginMin']).clamp(0, 180)
+        : kCompanyPlanDefaultAirportArrivalMarginMin,
     flightTimezone: pick(const ['flight_timezone', 'flightTimezone']).isEmpty
         ? 'Europe/Brussels'
         : pick(const ['flight_timezone', 'flightTimezone']),
@@ -325,6 +358,15 @@ String formatCompanyRideOptionsSummary(
     if (options.flightNumber.isNotEmpty) options.flightNumber,
     if (options.flightAt.isNotEmpty) options.flightAt,
     if (options.pickupArrangement.isNotEmpty) options.pickupArrangement,
+    if (options.pickupAfterMin > 0)
+      language == AppLanguage.nl
+          ? 'uitstappen ${options.pickupAfterMin} min'
+          : 'deboard ${options.pickupAfterMin} min',
+    if (options.arrivalMarginMin > 0 &&
+        options.airportDirection == 'to_airport')
+      language == AppLanguage.nl
+          ? 'aankomstmarge ${options.arrivalMarginMin} min'
+          : 'arrival margin ${options.arrivalMarginMin} min',
     if (options.returnAirportIata.isNotEmpty)
       '${options.returnAirportIata} ${options.returnFlightNumber}'.trim(),
     if (options.extra.isNotEmpty && options.extra != 'none')
@@ -359,3 +401,52 @@ List<AppOption> companyRideExtraOptions() {
   if (enabled.isEmpty) return const <AppOption>[];
   return enabled;
 }
+
+/// Flight number, time and arrival margin do not change the route quote.
+bool companyRideOptionsAffectRouteQuote(
+  CompanyRideOptions previous,
+  CompanyRideOptions next,
+) {
+  return previous.service != next.service ||
+      previous.tier != next.tier ||
+      previous.bags != next.bags ||
+      previous.waitMin != next.waitMin ||
+      previous.airportIata != next.airportIata ||
+      previous.airportCountry != next.airportCountry ||
+      previous.airportDirection != next.airportDirection ||
+      previous.vehicleType != next.vehicleType ||
+      previous.returnAirportIata != next.returnAirportIata;
+}
+
+const List<String> kCompanyRideWaitPayloadKeys = <String>[
+  'wait_min',
+  'waitMin',
+  'waiting',
+  'wait_minutes',
+  'waitMinutes',
+  'booked_wait_minutes',
+  'bookedWaitMinutes',
+];
+
+Map<String, dynamic> companyRideOptionsStripWaitFields(
+  Map<String, dynamic> body,
+) {
+  for (final key in kCompanyRideWaitPayloadKeys) {
+    body.remove(key);
+  }
+  final nested = body['ride_options'];
+  if (nested is Map) {
+    final options = Map<String, dynamic>.from(nested);
+    for (final key in kCompanyRideWaitPayloadKeys) {
+      options.remove(key);
+    }
+    body['ride_options'] = options;
+  }
+  return body;
+}
+
+CompanyRideOptions companyRideOptionsWithoutWait(CompanyRideOptions options) {
+  if (options.waitMin <= 0) return options;
+  return options.copyWith(waitMin: 0);
+}
+

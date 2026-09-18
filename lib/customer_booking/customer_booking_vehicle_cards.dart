@@ -84,8 +84,7 @@ class CustomerBookingVehiclePhotoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final category = classifyCompanyPlanVehicleCategory(offer.vehicle) ??
-        CompanyPlanVehicleCategory.sedan;
+    final category = companyPlanVehicleFallbackCategory(offer.vehicle);
     final photo = customerBookingVehiclePhotoUrl(offer.vehicle);
     final title = customerBookingVehicleOfferTitle(
       offer: offer,

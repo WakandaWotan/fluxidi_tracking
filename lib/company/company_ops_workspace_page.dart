@@ -238,6 +238,9 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   CustomerBookingAvailabilitySnapshot _planReturnAvailability =
       const CustomerBookingAvailabilitySnapshot();
   int _planAvailabilitySeq = 0;
+  int? _planGeometryDurationMin;
+  bool _planPickupUserPicked = false;
+  bool _applyingSuggestedPickup = false;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
 
@@ -371,7 +374,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   Future<void> _refreshPlanAvailability() async {
-    final pickup = _planWhenNow ? companyPlanNowLocal() : _planPickupLocal;
+    final pickup = _planAssignmentPickupLocal;
     final duration = _planDurationMin;
     final companyId = (_boundCompanyId ?? '').trim();
     if (pickup == null || duration == null || duration <= 0 || companyId.isEmpty) {
@@ -550,7 +553,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                     (_planWhenNow ? companyPlanNowLocal() : _planPickupLocal))
               : _returnPickupLocal,
           whenNow: false,
-          options: _rideOptions.copyWith(waitMin: 0),
+          options: _rideOptions.forInboundLeg(),
           passengers: _passengers,
           stops: _returnStops.values,
         );
@@ -612,6 +615,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         _returnDurationCtrl.text = text;
       }
     }
+    _maybeAutoApplySuggestedAirportPickup();
+    _syncPlanAssignmentProposal();
   }
 
   String _compactAddress(LimousineAddressValue value) {
@@ -1120,7 +1125,66 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   void _onPlanAssignmentInputsChanged() {
     if (_draft == null) return;
+    _maybeAutoApplySuggestedAirportPickup();
+    _syncPlanAssignmentProposal();
     unawaited(_previewPlanOverlap());
+  }
+
+  void _onPlanRideOptionsChanged(CompanyRideOptions next) {
+    final affectsQuote = companyRideOptionsAffectRouteQuote(_rideOptions, next);
+    setState(() {
+      _rideOptions = next.copyWith(vehicleType: _rideOptions.vehicleType);
+      if (affectsQuote) {
+        _fixedPriceSnapshot = null;
+        _planQuoteResult = null;
+      }
+    });
+    _maybeAutoApplySuggestedAirportPickup();
+    _syncPlanAssignmentProposal();
+    _schedulePlanQuote();
+  }
+
+  void _applySuggestedAirportPickup(
+    DateTime when, {
+    required bool userRequested,
+  }) {
+    if (_applyingSuggestedPickup) return;
+    if (!userRequested &&
+        !_planWhenNow &&
+        companyPlanPickupWallEquals(_planPickupLocal, when)) {
+      return;
+    }
+    _applyingSuggestedPickup = true;
+    setState(() {
+      _planWhenNow = false;
+      _planPickupLocal = when;
+      _planLaterConceptLocal = when;
+      if (userRequested) _planPickupUserPicked = false;
+      final draft = _draft;
+      if (draft != null) {
+        _draft = draft.copyWith(whenNow: false, pickupLocal: when);
+      }
+    });
+    _applyingSuggestedPickup = false;
+    unawaited(_previewPlanOverlap());
+    _syncPlanAssignmentProposal();
+    _schedulePlanQuote();
+  }
+
+  void _maybeAutoApplySuggestedAirportPickup() {
+    if (_planPickupUserPicked || _applyingSuggestedPickup) return;
+    final suggested = _planAirportSuggestedPickup;
+    if (suggested == null) return;
+    if (!_planWhenNow &&
+        companyPlanPickupWallEquals(_planPickupLocal, suggested)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _planPickupUserPicked) return;
+      final next = _planAirportSuggestedPickup;
+      if (next == null) return;
+      _applySuggestedAirportPickup(next, userRequested: false);
+    });
   }
 
   int? get _planDurationMin {
@@ -1128,7 +1192,37 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       quoteDurationMin: _planQuoteResult?.durationMin,
       durationRouteMin:
           _draft?.durationRouteMin ?? _planQuoteResult?.durationMin,
+      geometryDurationMin: _planGeometryDurationMin,
       durationText: _durationCtrl.text,
+    );
+  }
+
+  DateTime? get _planAirportSuggestedPickup {
+    if (!_planAirportMode) return null;
+    return companyPlanAirportSuggestedPickup(
+      airportDirection: _rideOptions.airportDirection,
+      flightAt: _rideOptions.flightAt,
+      durationMin: _planDurationMin,
+      arrivalMarginMin: _rideOptions.arrivalMarginMin,
+      pickupAfterMin: _rideOptions.pickupAfterMin,
+      isAirportService: _rideOptions.isAirport,
+    );
+  }
+
+  bool get _planAssignmentWhenNow {
+    return companyPlanAssignmentWhenNow(
+      whenNow: _planWhenNow,
+      airportPickup: _planAirportSuggestedPickup,
+      futureAirportFlight: companyPlanFlightIsInFuture(_rideOptions.flightAt),
+    );
+  }
+
+  DateTime? get _planAssignmentPickupLocal {
+    return companyPlanAssignmentPickupLocal(
+      whenNow: _planWhenNow,
+      pickupLocal: _planPickupLocal,
+      airportPickup: _planAirportSuggestedPickup,
+      futureAirportFlight: companyPlanFlightIsInFuture(_rideOptions.flightAt),
     );
   }
 
@@ -1185,8 +1279,8 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
 
   List<CompanyCrewCombo> get _planCrewCombos {
     return _crewCombosForWindow(
-      whenNow: _planWhenNow,
-      pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+      whenNow: _planAssignmentWhenNow,
+      pickupLocal: _planAssignmentPickupLocal,
       durationMin: _planDurationMin,
       driverId: _planDriverId,
       vehicleId: _planVehicleId,
@@ -1227,6 +1321,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           ? pickup
           : pickup.add(Duration(minutes: durationMin)),
       schedules: companyDriverSchedulesFromRecords(_drivers),
+      durationKnown: durationMin != null && durationMin > 0,
     );
     final overlap = (_planOverlapPreview ?? '').trim();
     if (overlap.isEmpty ||
@@ -1313,8 +1408,14 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   }
 
   void _setPlanWhenNow(bool now) {
+    if (now && _planAirportSuggestedPickup != null) {
+      _planPickupUserPicked = false;
+      _maybeAutoApplySuggestedAirportPickup();
+      return;
+    }
     setState(() {
       if (now) {
+        _planPickupUserPicked = true;
         if (!_planWhenNow && _planPickupLocal != null) {
           _planLaterConceptLocal = _planPickupLocal;
         }
@@ -1409,7 +1510,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
   Widget? _planVehicleOfferCards() {
     final split = _roundtripChoice == CompanyRoundtripChoice.splitNoWait;
     final outbound = _planVehicleOfferGrid(
-      pickupLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+      pickupLocal: _planAssignmentPickupLocal,
       durationMin: _planDurationMin,
       snapshot: _planAvailability,
       selectedVehicleId: _planVehicleId,
@@ -1626,7 +1727,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
     final draft = _draft;
     final driverId = _planDriverId.trim();
     final vehicleId = _planVehicleId.trim();
-    final pickupAt = _planWhenNow ? companyPlanNowLocal() : _planPickupLocal;
+    final pickupAt = _planAssignmentPickupLocal;
     if (draft == null ||
         pickupAt == null ||
         (driverId.isEmpty && vehicleId.isEmpty)) {
@@ -3153,7 +3254,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
       language: _lang,
       currentDriverId: _planDriverId,
       vehicles: _planVehicleChoices,
-      whenNow: _planWhenNow,
+      whenNow: _planAssignmentWhenNow,
       companyId: _boundCompanyId ?? '',
     );
     final sameUnavailable =
@@ -3178,7 +3279,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           combos: combos,
           selectedId:
               outbound?.id ?? companyCrewComboId(_planDriverId, _planVehicleId),
-          plannedLocal: _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
+          plannedLocal: _planAssignmentPickupLocal,
           durationKnown: !_planDurationUnknown,
           includePlate: true,
           unsuitableChoices: unsuitable,
@@ -3370,16 +3471,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           pickup: _fromAddress,
           dropoff: _toAddress,
           rideOptions: _rideOptions,
-          onRideOptionsChanged: (next) {
-            setState(() {
-              _rideOptions = next.copyWith(
-                vehicleType: _rideOptions.vehicleType,
-              );
-              _fixedPriceSnapshot = null;
-              _planQuoteResult = null;
-            });
-            _schedulePlanQuote();
-          },
+          onRideOptionsChanged: _onPlanRideOptionsChanged,
           savedAddresses: draft.customer.addresses,
           pickupInputKey: kCompanyAgendaFromFieldKey,
           dropoffInputKey: kCompanyAgendaToFieldKey,
@@ -3398,6 +3490,10 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           whenNow: _planWhenNow,
           routeDurationMin: _planDurationMin,
           showFlightBlock: false,
+          onApplySuggestedPickup: (when) {
+            _planPickupUserPicked = false;
+            _applySuggestedAirportPickup(when, userRequested: true);
+          },
           betweenEndpoints: CompanyPlanWaypointFields(
             language: _lang,
             stops: _outboundStops,
@@ -3488,16 +3584,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 pickup: _fromAddress,
                 dropoff: _toAddress,
                 rideOptions: _rideOptions,
-                onRideOptionsChanged: (next) {
-                  setState(() {
-                    _rideOptions = next.copyWith(
-                      vehicleType: _rideOptions.vehicleType,
-                    );
-                    _fixedPriceSnapshot = null;
-                    _planQuoteResult = null;
-                  });
-                  _schedulePlanQuote();
-                },
+                onRideOptionsChanged: _onPlanRideOptionsChanged,
                 savedAddresses: draft.customer.addresses,
                 onRouteIdentityChanged: () {
                   _fillReturnRouteFromOutbound();
@@ -3512,6 +3599,10 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                 routeDurationMin: _planDurationMin,
                 showFlightBlock: true,
                 showGroundAddresses: false,
+                onApplySuggestedPickup: (when) {
+                  _planPickupUserPicked = false;
+                  _applySuggestedAirportPickup(when, userRequested: true);
+                },
               )
             : null,
         whenLaterFields: CompanyDateTimeFields(
@@ -3523,6 +3614,7 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
           leadingLabel: kCompanyRoundtripOutbound.of(_lang),
           onChanged: (next) {
             setState(() {
+              _planPickupUserPicked = true;
               _planPickupLocal = next;
               _planLaterConceptLocal = next;
               _planDriverId = '';
@@ -3640,16 +3732,17 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
         ),
         map: Builder(
           builder: (context) {
-            final window = MediaQuery.sizeOf(context);
-            if (companyOpsShowAgendaBesidePlanner(window)) {
-              return CompanyPlanRouteMap(
+            return KeyedSubtree(
+              key: kCompanyAgendaPlanMapKey,
+              child: CustomerBookingRouteMap(
                 language: _lang,
+                palette: paletteForCustomerTheme(customerThemeNotifier.value),
                 pickup: _fromAddress.value,
                 dropoff: _toAddress.value,
                 stops: _outboundStops.values,
                 quote: _planQuoteResult,
-                loading: _planQuoteLoading,
-                error: _planQuoteError,
+                quoteLoading: _planQuoteLoading,
+                errorText: _planQuoteError,
                 onRetry: () => unawaited(_refreshPlanQuote(force: true)),
                 pickupLocal:
                     _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
@@ -3659,33 +3752,22 @@ class CompanyOpsWorkspacePageState extends State<CompanyOpsWorkspacePage> {
                     _fromAddress.value.lat,
                 confirmLon: _fromAddress.locationCandidate?.lon ??
                     _fromAddress.value.lon,
-              );
-            }
-            return KeyedSubtree(
-              key: kCompanyAgendaPlanMapKey,
-              child: CustomerBookingRouteMap(
-              language: _lang,
-              palette: paletteForCustomerTheme(customerThemeNotifier.value),
-              pickup: _fromAddress.value,
-              dropoff: _toAddress.value,
-              stops: _outboundStops.values,
-              quote: _planQuoteResult,
-              quoteLoading: _planQuoteLoading,
-              errorText: _planQuoteError,
-              onRetry: () => unawaited(_refreshPlanQuote(force: true)),
-              pickupLocal:
-                  _planWhenNow ? companyPlanNowLocal() : _planPickupLocal,
-              pickupNeedsConfirm: _fromAddress.locationNeedsConfirm &&
-                  !_fromAddress.locationUserConfirmed,
-              confirmLat: _fromAddress.locationCandidate?.lat ??
-                  _fromAddress.value.lat,
-              confirmLon: _fromAddress.locationCandidate?.lon ??
-                  _fromAddress.value.lon,
-              onConfirmPickup: () {
-                _fromAddress.confirmCandidateLocation();
-                setState(() {});
-                _schedulePlanQuote();
-              },
+                onConfirmPickup: () {
+                  _fromAddress.confirmCandidateLocation();
+                  setState(() {});
+                  _schedulePlanQuote();
+                },
+                framed: true,
+                fitInsets: const EdgeInsets.fromLTRB(40, 56, 40, 56),
+                onRouteMetrics: (geometry) {
+                  final next = geometry?.durationMin;
+                  if (next == _planGeometryDurationMin) return;
+                  setState(() => _planGeometryDurationMin = next);
+                  _maybeAutoApplySuggestedAirportPickup();
+                  _syncPlanAssignmentProposal();
+                  unawaited(_previewPlanOverlap());
+                  unawaited(_refreshPlanAvailability());
+                },
               ),
             );
           },

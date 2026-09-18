@@ -157,13 +157,21 @@ void main() {
     expect(resolved.needsConfirm, isTrue);
   });
 
-  test('public-media photo refs become booking HTTPS and missing photos stay', () {
+  test('storage photo refs are not company photos; HTTPS photos stay', () {
     expect(
       customerBookingVehiclePhotoUrl(<String, dynamic>{
         'vehicle_id': 'vh_tesla',
         'photo_url': 'public-media/t1/c1/vehicles/vh_tesla/gallery/a.jpg',
       }),
-      contains('/public/media/t1/c1/vehicles/vh_tesla/gallery/a.jpg'),
+      isEmpty,
+    );
+    expect(
+      customerBookingVehiclePhotoUrl(<String, dynamic>{
+        'vehicle_id': 'vh_tesla',
+        'photo_url':
+            'https://cdn.example/public-media/t1/c1/vehicles/vh_tesla/gallery/a.jpg',
+      }),
+      'https://cdn.example/public-media/t1/c1/vehicles/vh_tesla/gallery/a.jpg',
     );
     expect(
       customerBookingVehiclePhotoUrl(<String, dynamic>{
@@ -171,6 +179,50 @@ void main() {
         'name': 'Cadillac',
       }),
       isEmpty,
+    );
+  });
+
+  test('published logo reads media.logo_url', () {
+    expect(
+      customerBookingPublishedLogoUrl(<String, dynamic>{
+        'media': <String, dynamic>{
+          'logo_url': 'https://cdn.example/logo.png',
+        },
+      }),
+      'https://cdn.example/logo.png',
+    );
+    expect(
+      customerBookingPublishedLogoUrl(<String, dynamic>{
+        'company_name': 'Demo',
+      }),
+      isEmpty,
+    );
+  });
+
+  test('return addresses fall back to the outbound airport ends', () {
+    final airport = customerBookingAddressFromText(
+      'Brussels Airport, 1930 Zaventem',
+      latitude: 50.901,
+      longitude: 4.484,
+    );
+    final home = customerBookingAddressFromText(
+      'Koekamerstraat 48A, Maarkedal',
+      latitude: 50.80,
+      longitude: 3.58,
+    );
+    expect(
+      customerBookingReturnFromAddress(
+        returnPickup: const LimousineAddressValue(),
+        outboundDropoff: airport,
+      ).routeText,
+      contains('Brussels Airport'),
+    );
+    expect(
+      customerBookingReturnToAddress(
+        returnDropoff: const LimousineAddressValue(),
+        outboundPickup: home,
+      ).routeText,
+      contains('Koekamerstraat'),
     );
   });
 

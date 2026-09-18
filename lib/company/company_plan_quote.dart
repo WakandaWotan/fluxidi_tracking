@@ -99,9 +99,15 @@ class CompanyPlanQuoteResult {
       returnDurationMin != null &&
       returnDurationMin! > 0;
 
-  num? get displayTotalPrice =>
-      totalPriceInclVat ??
-      _sumMoney(outboundPriceInclVat ?? priceInclVat, returnPriceInclVat);
+  num? get displayTotalPrice {
+    final outbound = outboundPriceInclVat ??
+        (returnPriceInclVat == null ? priceInclVat : outboundPriceInclVat);
+    final inbound = returnPriceInclVat;
+    if (outbound != null && inbound != null) {
+      return outbound + inbound;
+    }
+    return totalPriceInclVat ?? priceInclVat;
+  }
 }
 
 class CompanyPlanQuoteRequest {
@@ -319,10 +325,12 @@ CompanyPlanQuoteResult companyPlanMergeLegQuotes({
   required CompanyPlanQuoteResult outbound,
   required CompanyPlanQuoteResult inbound,
 }) {
-  final outboundPrice = outbound.priceAvailable ? outbound.priceInclVat : null;
-  final inboundPrice = inbound.priceAvailable ? inbound.priceInclVat : null;
+  final outboundPrice = outbound.outboundPriceInclVat ??
+      (outbound.returnPriceInclVat == null ? outbound.priceInclVat : outbound.outboundPriceInclVat);
+  final inboundPrice = inbound.outboundPriceInclVat ??
+      (inbound.returnPriceInclVat == null ? inbound.priceInclVat : inbound.outboundPriceInclVat);
   final total = _sumMoney(outboundPrice, inboundPrice);
-  return CompanyPlanQuoteResult(
+  final merged = CompanyPlanQuoteResult(
     fingerprint: '${outbound.fingerprint}||${inbound.fingerprint}',
     distanceKm: outbound.distanceKm,
     durationMin: outbound.durationMin,
@@ -352,6 +360,8 @@ CompanyPlanQuoteResult companyPlanMergeLegQuotes({
     breakdown: outbound.breakdown,
     returnBreakdown: inbound.breakdown ?? inbound.returnBreakdown,
   );
+  companyPlanLogQuoteTotalMismatch(merged);
+  return merged;
 }
 
 bool companyPlanQuoteNeedsInboundLeg(CompanyPlanQuoteResult result) {
@@ -394,7 +404,7 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
       (returnPrice != null
           ? _sumMoney(outboundPrice, returnPrice)
           : (outboundPrice ?? _quoteMoney(raw['price_incl_vat'])));
-  return CompanyPlanQuoteResult(
+  final result = CompanyPlanQuoteResult(
     fingerprint: fingerprint,
     distanceKm: _quoteMoney(raw['distance_km']),
     durationMin: _quoteMinutes(raw['duration_min']),
@@ -445,6 +455,20 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
     returnBreakdown: parseCompanyPlanQuoteBreakdown(
       raw['return_breakdown'] ?? returnRaw['breakdown'],
     ),
+  );
+  companyPlanLogQuoteTotalMismatch(result);
+  return result;
+}
+
+void companyPlanLogQuoteTotalMismatch(CompanyPlanQuoteResult result) {
+  final outbound = result.outboundPriceInclVat;
+  final inbound = result.returnPriceInclVat;
+  final listed = result.totalPriceInclVat;
+  if (outbound == null || inbound == null || listed == null) return;
+  final sum = outbound + inbound;
+  if ((sum - listed).abs() < 0.005) return;
+  debugPrint(
+    '[QUOTE][LEG_TOTAL_MISMATCH] listed=$listed outbound=$outbound return=$inbound sum=$sum extras_ex=${result.breakdown?.extrasEx()} return_extras_ex=${result.returnBreakdown?.extrasEx()} source=${result.pricingSource}',
   );
 }
 
@@ -892,7 +916,7 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     if (options.service.isNotEmpty) 'service': options.service,
     if (options.tier.isNotEmpty) 'tier': options.tier,
     if (options.bags > 0) 'bags': options.bags,
-    if (options.waitMin > 0) 'wait_min': options.waitMin,
+    if (!options.isAirport && options.waitMin > 0) 'wait_min': options.waitMin,
     if (options.airportIata.isNotEmpty) 'airport_iata': options.airportIata,
     if (options.airportDirection.isNotEmpty)
       'airport_direction': options.airportDirection,
@@ -937,6 +961,9 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     companyPlanStripClientScheduleFields(body);
   } else if (pickupLocal != null) {
     body['pickup_iso'] = companyPlanPickupIso(pickupLocal);
+  }
+  if (options.isAirport) {
+    companyRideOptionsStripWaitFields(body);
   }
   return CompanyPlanQuoteRequest(fingerprint: fingerprint, body: body);
 }

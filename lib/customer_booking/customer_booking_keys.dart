@@ -65,6 +65,9 @@ const Key kCustomerBookingSheetHandleKey = Key('customer_booking_sheet_handle');
 const Key kCustomerBookingSheetToggleKey = Key('customer_booking_sheet_toggle');
 const Key kCustomerBookingClockRowKey = Key('customer_booking_clock_row');
 const Key kCustomerBookingTaxiReadyAtKey = Key('customer_booking_taxi_ready_at');
+const Key kCustomerBookingCompanyLogoImageKey = Key(
+  'customer_booking_company_logo_image',
+);
 const Key kCustomerBookingCompanyLogoFallbackKey = Key(
   'customer_booking_company_logo_fallback',
 );
@@ -84,7 +87,13 @@ const Key kCustomerBookingAirportSelectedKey = Key(
 );
 const Key kCustomerBookingFitRouteKey = Key('customer_booking_fit_route');
 const Key kCustomerBookingRouteCanvasKey = Key('customer_booking_route_canvas');
+const Key kCustomerBookingMetricsBadgeKey = Key(
+  'customer_booking_metrics_badge',
+);
 const Key kCustomerBookingTripSummaryKey = Key('customer_booking_trip_summary');
+const Key kCustomerBookingReturnClockRowKey = Key(
+  'customer_booking_return_clock_row',
+);
 const Key kCustomerBookingFlightNumberKey = Key(
   'customer_booking_flight_number',
 );
