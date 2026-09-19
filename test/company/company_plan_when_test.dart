@@ -39,9 +39,7 @@ void main() {
 
   test('Nu stamps when_now and never keeps epoch pickup', () {
     debugCompanyPlanClock(() => DateTime.utc(2026, 9, 15, 7, 30));
-    final body = <String, dynamic>{
-      'pickup_iso': '1970-01-01T00:00:00.000Z',
-    };
+    final body = <String, dynamic>{'pickup_iso': '1970-01-01T00:00:00.000Z'};
     companyPlanApplyCreateWhenFields(
       body,
       CompanyRidePlanDraft(
@@ -88,7 +86,10 @@ void main() {
 
   test('epoch and unix-zero pickups are rejected', () {
     expect(companyPlanPickupIsEpoch(DateTime.utc(1970)), isTrue);
-    expect(companyPlanPickupIsEpoch(DateTime.fromMillisecondsSinceEpoch(0)), isTrue);
+    expect(
+      companyPlanPickupIsEpoch(DateTime.fromMillisecondsSinceEpoch(0)),
+      isTrue,
+    );
     expect(companyPlanPickupIsEpoch(DateTime.utc(2026, 9, 15)), isFalse);
     final body = <String, dynamic>{'pickup_iso': 'keep'};
     companyPlanApplyCreateWhenFields(
@@ -115,6 +116,33 @@ void main() {
     );
   });
 
+  test('configured min prep suggests the earliest valid Later time', () {
+    final now = DateTime.utc(2026, 9, 19, 6, 24);
+    expect(
+      companyPlanLaterPickupIsValid(DateTime(2026, 9, 19, 8, 30), now: now),
+      isTrue,
+    );
+    expect(
+      companyPlanLaterPickupBlockedByMinPrep(
+        DateTime(2026, 9, 19, 8, 30),
+        now: now,
+        minPrepMinutes: 15,
+      ),
+      isTrue,
+    );
+    expect(
+      companyPlanEarliestBookablePickup(now: now, minPrepMinutes: 15),
+      DateTime(2026, 9, 19, 8, 39),
+    );
+    expect(
+      companyPlanLaterPickupBlockedByMinPrep(
+        DateTime(2026, 9, 19, 8, 30),
+        now: now,
+      ),
+      isFalse,
+    );
+  });
+
   test('DST spring-forward keeps a timezone-aware later pickup', () {
     final before = DateTime(2026, 3, 29, 1, 30);
     final after = before.add(const Duration(hours: 2));
@@ -128,33 +156,36 @@ void main() {
     expect(fields['pickup_iso'], isNot(contains('1970')));
   });
 
-  test('canonical duration prefers quote then route then geometry then typed text', () {
-    expect(
-      companyPlanCanonicalDurationMin(
-        quoteDurationMin: 60,
-        durationRouteMin: 45,
-        geometryDurationMin: 94,
-        durationText: '15',
-      ),
-      60,
-    );
-    expect(
-      companyPlanCanonicalDurationMin(
-        durationRouteMin: 45,
-        geometryDurationMin: 94,
-        durationText: '',
-      ),
-      45,
-    );
-    expect(
-      companyPlanCanonicalDurationMin(
-        geometryDurationMin: 94,
-        durationText: '15',
-      ),
-      94,
-    );
-    expect(companyPlanCanonicalDurationMin(durationText: '0'), isNull);
-  });
+  test(
+    'canonical duration prefers quote then route then geometry then typed text',
+    () {
+      expect(
+        companyPlanCanonicalDurationMin(
+          quoteDurationMin: 60,
+          durationRouteMin: 45,
+          geometryDurationMin: 94,
+          durationText: '15',
+        ),
+        60,
+      );
+      expect(
+        companyPlanCanonicalDurationMin(
+          durationRouteMin: 45,
+          geometryDurationMin: 94,
+          durationText: '',
+        ),
+        45,
+      );
+      expect(
+        companyPlanCanonicalDurationMin(
+          geometryDurationMin: 94,
+          durationText: '15',
+        ),
+        94,
+      );
+      expect(companyPlanCanonicalDurationMin(durationText: '0'), isNull);
+    },
+  );
 
   test('create body refuses a leftover 1970 pickup_iso', () async {
     await expectLater(
@@ -261,30 +292,33 @@ void main() {
     );
   });
 
-  test('25 Sep 22:00 Brussels flight with 94 min and 15 min margin is 20:11', () {
-    expect(
-      companyPlanSuggestedToAirportPickup(
-        flightAt: '2026-09-25T22:00:00',
-        durationMin: 94,
-        arrivalMarginMin: 15,
-      ),
-      DateTime(2026, 9, 25, 20, 11),
-    );
-    expect(
-      companyPlanAirportSuggestedPickup(
-        airportDirection: 'to_airport',
-        flightAt: '2026-09-25T20:00:00.000Z',
-        durationMin: 94,
-        arrivalMarginMin: 15,
-      ),
-      DateTime(2026, 9, 25, 20, 11),
-    );
-    expect(
-      companyPlanAssignmentWhenNow(
-        whenNow: true,
-        airportPickup: DateTime(2026, 9, 25, 20, 11),
-      ),
-      isFalse,
-    );
-  });
+  test(
+    '25 Sep 22:00 Brussels flight with 94 min and 15 min margin is 20:11',
+    () {
+      expect(
+        companyPlanSuggestedToAirportPickup(
+          flightAt: '2026-09-25T22:00:00',
+          durationMin: 94,
+          arrivalMarginMin: 15,
+        ),
+        DateTime(2026, 9, 25, 20, 11),
+      );
+      expect(
+        companyPlanAirportSuggestedPickup(
+          airportDirection: 'to_airport',
+          flightAt: '2026-09-25T20:00:00.000Z',
+          durationMin: 94,
+          arrivalMarginMin: 15,
+        ),
+        DateTime(2026, 9, 25, 20, 11),
+      );
+      expect(
+        companyPlanAssignmentWhenNow(
+          whenNow: true,
+          airportPickup: DateTime(2026, 9, 25, 20, 11),
+        ),
+        isFalse,
+      );
+    },
+  );
 }

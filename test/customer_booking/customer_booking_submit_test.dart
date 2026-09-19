@@ -15,31 +15,34 @@ void main() {
     acceptance: LimousineAddressAcceptance.selected,
   );
 
-  test('confirm stays blocked until route, time, contact and company exist', () {
-    final issues = customerBookingSubmitIssues(
-      hasCompany: false,
-      pickup: const LimousineAddressValue(),
-      dropoff: const LimousineAddressValue(),
-      whenNow: true,
-      pickupLocal: null,
-      name: '',
-      phone: '',
-      quoteLoading: false,
-      quote: null,
-      quoteError: null,
-      successId: null,
-    );
-    expect(
-      issues.map((issue) => issue.code),
-      containsAll(<String>[
-        kCustomerBookingIssueNeedCompany,
-        kCustomerBookingIssueNeedPickup,
-        kCustomerBookingIssueNeedDropoff,
-        kCustomerBookingIssueNeedName,
-        kCustomerBookingIssueNeedPhone,
-      ]),
-    );
-  });
+  test(
+    'confirm stays blocked until route, time, contact and company exist',
+    () {
+      final issues = customerBookingSubmitIssues(
+        hasCompany: false,
+        pickup: const LimousineAddressValue(),
+        dropoff: const LimousineAddressValue(),
+        whenNow: true,
+        pickupLocal: null,
+        name: '',
+        phone: '',
+        quoteLoading: false,
+        quote: null,
+        quoteError: null,
+        successId: null,
+      );
+      expect(
+        issues.map((issue) => issue.code),
+        containsAll(<String>[
+          kCustomerBookingIssueNeedCompany,
+          kCustomerBookingIssueNeedPickup,
+          kCustomerBookingIssueNeedDropoff,
+          kCustomerBookingIssueNeedName,
+          kCustomerBookingIssueNeedPhone,
+        ]),
+      );
+    },
+  );
 
   test('failed price is not shown as on-request', () {
     const quote = CompanyPlanQuoteResult(
@@ -186,6 +189,18 @@ void main() {
         AppLanguage.nl,
       ),
       isNot(contains('velden')),
+    );
+  });
+
+  test('connection refused stays retryable with the same idempotency key', () {
+    final mapped = customerBookingBookExceptionFromCaught(
+      Exception('SocketException: Connection refused'),
+    );
+    expect(mapped.uncertain, isFalse);
+    expect(mapped.sent, isFalse);
+    expect(
+      customerBookingBookIssueFromException(mapped),
+      kCustomerBookingIssueNetwork,
     );
   });
 }

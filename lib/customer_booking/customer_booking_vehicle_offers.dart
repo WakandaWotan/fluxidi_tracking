@@ -21,8 +21,7 @@ class CustomerBookingVehicleOffer {
   final int? passengerSeats;
 
   String get vehicleId => companyAgendaVehicleId(vehicle);
-  String get driverId =>
-      driver == null ? '' : companyAgendaDriverId(driver!);
+  String get driverId => driver == null ? '' : companyAgendaDriverId(driver!);
 }
 
 List<Map<String, dynamic>> customerBookingDriversFromVehicles(
@@ -148,13 +147,18 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
           vehicle: vehicle,
           driver: proposed,
           available: false,
-          reason: 'need_duration',
+          reason:
+              blockedReason.isNotEmpty &&
+                  blockedReason != 'assignment_availability_unknown'
+              ? blockedReason
+              : 'need_duration',
           passengerSeats: seats,
         ),
       );
       continue;
     }
-    final serverKnown = durationKnown &&
+    final serverKnown =
+        durationKnown &&
         (availabilityResolved ||
             availableVehicleIds.isNotEmpty ||
             unavailableVehicleIds.isNotEmpty);
@@ -169,7 +173,7 @@ List<CustomerBookingVehicleOffer> customerBookingVehicleOffers({
         reason: available
             ? ''
             : (unavailableReasons[id] ??
-                (blockedReason.isNotEmpty ? blockedReason : 'unavailable')),
+                  (blockedReason.isNotEmpty ? blockedReason : 'unavailable')),
         passengerSeats: seats,
       ),
     );
@@ -197,12 +201,13 @@ bool _driverUsesVehicle(
   if (vehicleId.isEmpty) return false;
   final linked = companyAgendaDriverLinkedVehicleIds(driver);
   if (linked.contains(vehicleId)) return true;
-  final owner = (vehicle['assigned_driver_id'] ??
-          vehicle['assignedDriverId'] ??
-          vehicle['driver_id'] ??
-          '')
-      .toString()
-      .trim();
+  final owner =
+      (vehicle['assigned_driver_id'] ??
+              vehicle['assignedDriverId'] ??
+              vehicle['driver_id'] ??
+              '')
+          .toString()
+          .trim();
   return owner.isNotEmpty && owner == companyAgendaDriverId(driver);
 }
 
@@ -308,7 +313,5 @@ String customerBookingVehicleOfferCapacityLabel({
         ? 'Capacity unknown'
         : 'Capaciteit onbekend';
   }
-  return language == AppLanguage.en
-      ? '$seats passengers'
-      : '$seats passagiers';
+  return language == AppLanguage.en ? '$seats passengers' : '$seats passagiers';
 }

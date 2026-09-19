@@ -158,7 +158,9 @@ String customerBookingVehicleCapacityLabel({
         : '$seats pax · $bags bagage';
   }
   if (seats != null && seats > 0) {
-    return language == AppLanguage.en ? '$seats passengers' : '$seats passagiers';
+    return language == AppLanguage.en
+        ? '$seats passengers'
+        : '$seats passagiers';
   }
   return language == AppLanguage.en
       ? 'Capacity unknown'
@@ -201,7 +203,9 @@ bool customerBookingProfileOffersLimousine(Map<String, dynamic> profile) {
   }
   final services = profile['services'];
   if (services is List &&
-      services.any((item) => item.toString().trim().toLowerCase() == 'limousine')) {
+      services.any(
+        (item) => item.toString().trim().toLowerCase() == 'limousine',
+      )) {
     return true;
   }
   final projection = profile['limousine_projection'];
@@ -265,11 +269,9 @@ Future<CustomerBookingCompanySnapshot> fetchCustomerBookingCompanySnapshot({
   if (id.isEmpty || bookingBaseUrl.trim().isEmpty) {
     return const CustomerBookingCompanySnapshot();
   }
-  final uri = Uri.parse('$bookingBaseUrl/partners/profile').replace(
-    queryParameters: <String, String>{
-      'partner_id': id,
-    },
-  );
+  final uri = Uri.parse(
+    '$bookingBaseUrl/partners/profile',
+  ).replace(queryParameters: <String, String>{'partner_id': id});
   final getter = httpGet ?? http.get;
   final res = await getter(uri).timeout(const Duration(seconds: 12));
   if (res.statusCode != 200) {
@@ -290,6 +292,7 @@ class CustomerBookingAvailabilitySnapshot {
     this.drivers = const <Map<String, dynamic>>[],
     this.loadFailed = false,
     this.fetched = false,
+    this.expiresAt,
   });
 
   final Set<String> availableIds;
@@ -299,6 +302,7 @@ class CustomerBookingAvailabilitySnapshot {
   final List<Map<String, dynamic>> drivers;
   final bool loadFailed;
   final bool fetched;
+  final DateTime? expiresAt;
 
   bool get resolved => fetched && !loadFailed;
 }
@@ -306,9 +310,8 @@ class CustomerBookingAvailabilitySnapshot {
 Map<String, dynamic>? customerBookingAvailabilityDriverRecord(
   Map<dynamic, dynamic> item,
 ) {
-  final nested = item['driver'] ??
-      item['assigned_driver'] ??
-      item['assignedDriver'];
+  final nested =
+      item['driver'] ?? item['assigned_driver'] ?? item['assignedDriver'];
   final driverId = (item['driver_id'] ?? item['driverId'] ?? '')
       .toString()
       .trim();
@@ -353,41 +356,42 @@ Map<String, dynamic>? customerBookingAvailabilityDriverRecord(
 Map<String, dynamic> customerBookingPublishedDriverCard(
   Map<String, dynamic> driver,
 ) {
-  final profileOn = driver['public_profile_enabled'] == true ||
+  final profileOn =
+      driver['public_profile_enabled'] == true ||
       driver['publicProfileEnabled'] == true ||
       (driver['public_display_name'] ?? driver['publicDisplayName'] ?? '')
           .toString()
           .trim()
           .isNotEmpty;
-  final photoOn = driver['public_photo_enabled'] == true ||
+  final photoOn =
+      driver['public_photo_enabled'] == true ||
       driver['publicPhotoEnabled'] == true;
-  final publicName = (driver['public_display_name'] ??
-          driver['publicDisplayName'] ??
-          '')
-      .toString()
-      .trim();
-  final publicPhoto = (driver['public_photo_url'] ??
-          driver['publicPhotoUrl'] ??
-          '')
-      .toString()
-      .trim();
+  final publicName =
+      (driver['public_display_name'] ?? driver['publicDisplayName'] ?? '')
+          .toString()
+          .trim();
+  final publicPhoto =
+      (driver['public_photo_url'] ?? driver['publicPhotoUrl'] ?? '')
+          .toString()
+          .trim();
   final allowedPhoto = publicPhoto.isNotEmpty
       ? publicPhoto
       : (photoOn
-          ? (driver['driver_photo_url'] ??
-                  driver['driverPhotoUrl'] ??
-                  driver['photo_url'] ??
-                  driver['portrait_url'] ??
-                  '')
-              .toString()
-              .trim()
-          : '');
-  final firstName = (driver['first_name'] ??
-          driver['firstName'] ??
-          driver['given_name'] ??
-          '')
-      .toString()
-      .trim();
+            ? (driver['driver_photo_url'] ??
+                      driver['driverPhotoUrl'] ??
+                      driver['photo_url'] ??
+                      driver['portrait_url'] ??
+                      '')
+                  .toString()
+                  .trim()
+            : '');
+  final firstName =
+      (driver['first_name'] ??
+              driver['firstName'] ??
+              driver['given_name'] ??
+              '')
+          .toString()
+          .trim();
   final id = companyAgendaDriverId(driver);
   return <String, dynamic>{
     if (id.isNotEmpty) 'driver_id': id,
@@ -498,16 +502,16 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
   final seenDrivers = <String>{};
   for (final item in rows) {
     if (item is! Map) continue;
-    final id = (item['vehicle_id'] ?? item['vehicleId'] ?? '').toString().trim();
+    final id = (item['vehicle_id'] ?? item['vehicleId'] ?? '')
+        .toString()
+        .trim();
     if (id.isEmpty) continue;
     final record = customerBookingAvailabilityDriverRecord(item);
     final driverId = record == null
         ? (item['driver_id'] ?? item['driverId'] ?? '').toString().trim()
         : companyAgendaDriverId(record);
     if (driverId.isNotEmpty) drivers[id] = driverId;
-    if (record != null &&
-        driverId.isNotEmpty &&
-        seenDrivers.add(driverId)) {
+    if (record != null && driverId.isNotEmpty && seenDrivers.add(driverId)) {
       records.add(record);
     }
     if (item['available'] == true) {
@@ -517,6 +521,11 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
       reasons[id] = (item['reason'] ?? '').toString();
     }
   }
+  DateTime? expiresAt;
+  final rawExpiry = root['expires_at'] ?? root['expiresAt'];
+  if (rawExpiry != null) {
+    expiresAt = DateTime.tryParse(rawExpiry.toString().trim())?.toUtc();
+  }
   return CustomerBookingAvailabilitySnapshot(
     availableIds: available,
     unavailableIds: unavailable,
@@ -524,6 +533,7 @@ CustomerBookingAvailabilitySnapshot parseCustomerBookingAvailability(
     driverIds: drivers,
     drivers: records,
     fetched: true,
+    expiresAt: expiresAt,
   );
 }
 

@@ -68,13 +68,76 @@ String companyPlanPickupIso(DateTime laterPickup) {
   return companyPlanPickupUtc(laterPickup).toIso8601String();
 }
 
-bool companyPlanLaterPickupIsValid(DateTime pickup, {DateTime? now}) {
-  final clock = companyPlanWallClock(
+DateTime companyPlanCompanyWallClockNow({DateTime? now}) {
+  return companyPlanWallClock(
     now != null
         ? companyTimezoneUtcToLocal(now.toUtc(), kCompanyDefaultTimezone)
         : companyPlanCompanyNow(),
   );
-  return !companyPlanWallClock(pickup).isBefore(clock);
+}
+
+/// Earliest Later pickup. [minPrepMinutes] is applied only when the company
+/// actually configured a positive value. Zero/null does not invent a buffer.
+DateTime companyPlanEarliestBookablePickup({
+  DateTime? now,
+  int? minPrepMinutes,
+}) {
+  final clock = companyPlanCompanyWallClockNow(now: now);
+  final prep = minPrepMinutes;
+  if (prep == null || prep <= 0) {
+    return DateTime(
+      clock.year,
+      clock.month,
+      clock.day,
+      clock.hour,
+      clock.minute,
+    );
+  }
+  var earliest = clock.add(Duration(minutes: prep));
+  if (earliest.second > 0 ||
+      earliest.millisecond > 0 ||
+      earliest.microsecond > 0) {
+    earliest = DateTime(
+      earliest.year,
+      earliest.month,
+      earliest.day,
+      earliest.hour,
+      earliest.minute,
+    ).add(const Duration(minutes: 1));
+  }
+  return DateTime(
+    earliest.year,
+    earliest.month,
+    earliest.day,
+    earliest.hour,
+    earliest.minute,
+  );
+}
+
+bool companyPlanLaterPickupIsValid(
+  DateTime pickup, {
+  DateTime? now,
+  int? minPrepMinutes,
+}) {
+  final earliest = companyPlanEarliestBookablePickup(
+    now: now,
+    minPrepMinutes: minPrepMinutes,
+  );
+  return !companyPlanWallClock(pickup).isBefore(earliest);
+}
+
+bool companyPlanLaterPickupBlockedByMinPrep(
+  DateTime pickup, {
+  DateTime? now,
+  int? minPrepMinutes,
+}) {
+  if (minPrepMinutes == null || minPrepMinutes <= 0) return false;
+  if (!companyPlanLaterPickupIsValid(pickup, now: now)) return false;
+  return !companyPlanLaterPickupIsValid(
+    pickup,
+    now: now,
+    minPrepMinutes: minPrepMinutes,
+  );
 }
 
 String companyPlanQuoteFingerprintWhen({
@@ -93,17 +156,12 @@ Map<String, dynamic> companyPlanWhenWireFields({
   CompanyPlanClock? clock,
 }) {
   if (whenNow) {
-    return const <String, dynamic>{
-      'when': 'now',
-      'when_now': true,
-    };
+    return const <String, dynamic>{'when': 'now', 'when_now': true};
   }
   if (laterPickup == null || companyPlanPickupIsEpoch(laterPickup)) {
     return const <String, dynamic>{};
   }
-  return <String, dynamic>{
-    'pickup_iso': companyPlanPickupIso(laterPickup),
-  };
+  return <String, dynamic>{'pickup_iso': companyPlanPickupIso(laterPickup)};
 }
 
 void companyPlanStripClientScheduleFields(Map<String, dynamic> body) {

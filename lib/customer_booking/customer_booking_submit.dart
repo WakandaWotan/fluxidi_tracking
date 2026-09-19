@@ -45,6 +45,10 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
   required CompanyPlanQuoteResult? quote,
   required String? quoteError,
   required String? successId,
+  DateTime? now,
+  int? minPrepMinutes,
+  int? geometryDurationMin,
+  num? geometryDistanceKm,
 }) {
   if ((successId ?? '').trim().isNotEmpty) {
     return const [
@@ -88,7 +92,24 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
     );
   } else if (!whenNow &&
       pickupLocal != null &&
-      !companyPlanLaterPickupIsValid(pickupLocal)) {
+      companyPlanLaterPickupBlockedByMinPrep(
+        pickupLocal,
+        now: now,
+        minPrepMinutes: minPrepMinutes,
+      )) {
+    issues.add(
+      const CustomerBookingSubmitIssue(
+        code: kCustomerBookingIssueLaterInvalid,
+        focusKey: 'when',
+      ),
+    );
+  } else if (!whenNow &&
+      pickupLocal != null &&
+      !companyPlanLaterPickupIsValid(
+        pickupLocal,
+        now: now,
+        minPrepMinutes: minPrepMinutes,
+      )) {
     issues.add(
       const CustomerBookingSubmitIssue(
         code: kCustomerBookingIssueLaterInvalid,
@@ -121,12 +142,13 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
     );
   } else if ((quoteError ?? '').trim().isNotEmpty) {
     issues.add(
-      CustomerBookingSubmitIssue(
-        code: quoteError!.trim(),
-        focusKey: 'quote',
-      ),
+      CustomerBookingSubmitIssue(code: quoteError!.trim(), focusKey: 'quote'),
     );
-  } else if (quote == null || !quote.hasRoute) {
+  } else if (!customerBookingQuoteSupportsConfirm(
+    quote: quote,
+    geometryDurationMin: geometryDurationMin,
+    geometryDistanceKm: geometryDistanceKm,
+  )) {
     if (customerBookingAddressReady(pickup) &&
         customerBookingAddressReady(dropoff) &&
         (whenNow || pickupLocal != null)) {
@@ -137,7 +159,7 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
         ),
       );
     }
-  } else if (customerBookingQuotePriceFailed(quote)) {
+  } else if (quote != null && customerBookingQuotePriceFailed(quote)) {
     issues.add(
       const CustomerBookingSubmitIssue(
         code: kCustomerBookingIssuePriceFailed,
@@ -159,6 +181,25 @@ bool customerBookingQuotePriceFailed(CompanyPlanQuoteResult quote) {
   final amount = quote.displayTotalPrice ?? quote.outboundPriceInclVat;
   if (amount != null && amount > 0) return false;
   return quote.hasRoute;
+}
+
+bool customerBookingQuoteSupportsConfirm({
+  required CompanyPlanQuoteResult? quote,
+  int? geometryDurationMin,
+  num? geometryDistanceKm,
+}) {
+  if (quote == null) return false;
+  if (customerBookingQuotePriceFailed(quote)) return false;
+  if (quote.hasRoute) return true;
+  final duration = quote.durationMin ?? geometryDurationMin;
+  final distance = quote.distanceKm ?? geometryDistanceKm;
+  final price = quote.displayTotalPrice ?? quote.priceInclVat;
+  return duration != null &&
+      duration > 0 &&
+      distance != null &&
+      distance > 0 &&
+      price != null &&
+      price > 0;
 }
 
 String customerBookingSubmitIssueText(String code, AppLanguage language) {

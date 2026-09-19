@@ -31,33 +31,37 @@ CustomerBookingBookException customerBookingBookExceptionFromResponse({
   required http.Response res,
   required Map<String, dynamic> decoded,
 }) {
-  final error = (decoded['error'] ?? decoded['message'] ?? 'HTTP ${res.statusCode}')
-      .toString()
-      .trim();
+  final error =
+      (decoded['error'] ?? decoded['message'] ?? 'HTTP ${res.statusCode}')
+          .toString()
+          .trim();
   final availability = decoded['availability'] is Map
       ? Map<String, dynamic>.from(decoded['availability'] as Map)
       : const <String, dynamic>{};
-  final code = (decoded['error_code'] ??
-          decoded['code'] ??
-          availability['reason_code'] ??
-          availability['reason'] ??
-          '')
-      .toString()
-      .trim();
-  final allocator = (decoded['allocator_reason'] ??
-          availability['allocator_reason'] ??
-          availability['block_reason'] ??
-          '')
-      .toString()
-      .trim();
-  final requestId = (decoded['request_id'] ??
-          decoded['requestId'] ??
-          decoded['correlation_id'] ??
-          decoded['correlationId'] ??
-          res.headers['x-request-id'] ??
-          '')
-      .toString()
-      .trim();
+  final code =
+      (decoded['error_code'] ??
+              decoded['code'] ??
+              availability['reason_code'] ??
+              availability['reason'] ??
+              '')
+          .toString()
+          .trim();
+  final allocator =
+      (decoded['allocator_reason'] ??
+              availability['allocator_reason'] ??
+              availability['block_reason'] ??
+              '')
+          .toString()
+          .trim();
+  final requestId =
+      (decoded['request_id'] ??
+              decoded['requestId'] ??
+              decoded['correlation_id'] ??
+              decoded['correlationId'] ??
+              res.headers['x-request-id'] ??
+              '')
+          .toString()
+          .trim();
   return CustomerBookingBookException(
     statusCode: res.statusCode,
     code: code.isEmpty ? error : code,
@@ -68,11 +72,15 @@ CustomerBookingBookException customerBookingBookExceptionFromResponse({
   );
 }
 
-CustomerBookingBookException customerBookingBookExceptionFromCaught(Object error) {
+CustomerBookingBookException customerBookingBookExceptionFromCaught(
+  Object error,
+) {
   if (error is CustomerBookingBookException) return error;
   final lower = error.toString().toLowerCase();
-  final network = error is http.ClientException ||
-      lower.contains('timeout') ||
+  final timeout = lower.contains('timeout') || lower.contains('timed out');
+  final network =
+      error is http.ClientException ||
+      timeout ||
       lower.contains('socket') ||
       lower.contains('failed host lookup') ||
       lower.contains('connection refused') ||
@@ -84,11 +92,14 @@ CustomerBookingBookException customerBookingBookExceptionFromCaught(Object error
         : kCustomerBookingIssueBookFailed,
     raw: error.toString(),
     sent: !network,
-    uncertain: network,
+    // Timeouts may have reached the worker. Connection refused did not.
+    uncertain: timeout,
   );
 }
 
-String customerBookingBookIssueFromException(CustomerBookingBookException error) {
+String customerBookingBookIssueFromException(
+  CustomerBookingBookException error,
+) {
   if (error.uncertain || error.code == kCustomerBookingIssueNetwork) {
     return kCustomerBookingIssueNetwork;
   }

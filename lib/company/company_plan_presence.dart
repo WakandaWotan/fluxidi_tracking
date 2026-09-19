@@ -49,7 +49,8 @@ String companyPlanPresenceLabel(
   switch (presence.code) {
     case 'available':
     case 'assignment_availability_unknown':
-      if (!durationKnown || presence.code == 'assignment_availability_unknown') {
+      if (!durationKnown ||
+          presence.code == 'assignment_availability_unknown') {
         return kCompanyAgendaAvailabilityUnknown.of(language);
       }
       return kCompanyDriverPresenceAvailable.of(language);
@@ -165,13 +166,14 @@ CompanyPlanPresence resolveCompanyPlanPresence({
   );
   if (scheduleBlock != null) return scheduleBlock;
 
-  final status = (driver['availability_status'] ??
-          driver['availabilityStatus'] ??
-          driver['presence_label'] ??
-          '')
-      .toString()
-      .trim()
-      .toLowerCase();
+  final status =
+      (driver['availability_status'] ??
+              driver['availabilityStatus'] ??
+              driver['presence_label'] ??
+              '')
+          .toString()
+          .trim()
+          .toLowerCase();
   if (status == 'on_trip' || status == 'busy') {
     return CompanyPlanPresence(
       tone: CompanyPlanPresenceTone.busy,
@@ -198,12 +200,8 @@ CompanyPlanPresence resolveCompanyPlanPresence({
     );
     return CompanyPlanPresence(
       tone: CompanyPlanPresenceTone.blocked,
-      code: anyFit
-          ? 'assignment_driver_no_vehicle'
-          : 'assignment_capacity',
-      icon: anyFit
-          ? Icons.no_transfer_outlined
-          : Icons.event_seat_outlined,
+      code: anyFit ? 'assignment_driver_no_vehicle' : 'assignment_capacity',
+      icon: anyFit ? Icons.no_transfer_outlined : Icons.event_seat_outlined,
     );
   }
   final live = lastSeenUtc == null
@@ -225,12 +223,11 @@ CompanyPlanPresence resolveCompanyPlanPresence({
           ? CompanyPlanPresenceTone.unknown
           : CompanyPlanPresenceTone.available,
       code: whenNow ? 'assignment_driver_offline' : 'available',
-      icon: whenNow
-          ? Icons.bedtime_outlined
-          : Icons.check_circle_outline,
+      icon: whenNow ? Icons.bedtime_outlined : Icons.check_circle_outline,
     );
   }
-  final hasLiveField = driver.containsKey('last_seen_at') ||
+  final hasLiveField =
+      driver.containsKey('last_seen_at') ||
       driver.containsKey('lastSeenAt') ||
       driver.containsKey('availability_status') ||
       driver.containsKey('availabilityStatus') ||
@@ -248,9 +245,7 @@ CompanyPlanPresence resolveCompanyPlanPresence({
           ? CompanyPlanPresenceTone.unknown
           : CompanyPlanPresenceTone.available,
       code: whenNow ? 'scheduled_no_live' : 'available',
-      icon: whenNow
-          ? Icons.help_outline
-          : Icons.check_circle_outline,
+      icon: whenNow ? Icons.help_outline : Icons.check_circle_outline,
     );
   }
   if (status == 'available' || status == 'online') {
@@ -284,7 +279,27 @@ CompanyPlanPresence? _schedulePresenceBlock({
       icon: Icons.event_busy_outlined,
     );
   }
-  if (!durationKnown || rideStartUtc == null) {
+  if (rideStartUtc == null) {
+    return const CompanyPlanPresence(
+      tone: CompanyPlanPresenceTone.unknown,
+      code: 'assignment_availability_unknown',
+      icon: Icons.help_outline,
+    );
+  }
+  if (!durationKnown) {
+    final startConflict = companyDriverScheduleConflictFor(
+      schedule: schedule,
+      rideStartUtc: rideStartUtc,
+      rideEndUtc: rideStartUtc,
+      approach: Duration.zero,
+    );
+    if (startConflict == CompanyDriverScheduleConflict.outsideWorkingHours) {
+      return const CompanyPlanPresence(
+        tone: CompanyPlanPresenceTone.blocked,
+        code: 'assignment_driver_outside_hours',
+        icon: Icons.schedule_outlined,
+      );
+    }
     return const CompanyPlanPresence(
       tone: CompanyPlanPresenceTone.unknown,
       code: 'assignment_availability_unknown',
@@ -366,7 +381,9 @@ class CompanyPlanPresenceChip extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: color),
             ),
           ),
         ],

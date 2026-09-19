@@ -197,6 +197,55 @@ const LocalizedText kCustomerBookingLaterInvalid = LocalizedText(
   es: 'Elige una fecha y hora que aún no hayan pasado.',
 );
 
+const LocalizedText kCustomerBookingMinPrep = LocalizedText(
+  nl: 'Deze rit vraagt {time} als vroegste ophaaltijd. Dat is de ingestelde voorbereidingstijd van het bedrijf.',
+  en: 'This ride needs {time} as the earliest pickup. That is the company’s configured preparation time.',
+  fr: 'Cette course exige {time} comme heure de prise en charge la plus tôt. C’est le délai de préparation configuré par l’entreprise.',
+  es: 'Este viaje necesita {time} como hora de recogida más temprana. Ese es el tiempo de preparación configurado por la empresa.',
+);
+
+const LocalizedText kCustomerBookingPickupNeedsPin = LocalizedText(
+  nl: 'Het ophaaladres mist een kaartpositie. Bevestig de pin op de kaart.',
+  en: 'The pickup address is missing a map position. Confirm the pin on the map.',
+  fr: 'L’adresse de départ n’a pas de position sur la carte. Confirmez l’épingle.',
+  es: 'La dirección de recogida no tiene posición en el mapa. Confirma el pin.',
+);
+
+const LocalizedText kCustomerBookingDropoffNeedsPin = LocalizedText(
+  nl: 'De bestemming mist een kaartpositie. Kies een adres uit de lijst of zet de pin.',
+  en: 'The destination is missing a map position. Choose an address from the list or set the pin.',
+  fr: 'La destination n’a pas de position sur la carte. Choisissez une adresse ou placez l’épingle.',
+  es: 'El destino no tiene posición en el mapa. Elige una dirección o coloca el pin.',
+);
+
+const LocalizedText kCustomerBookingDropoffNeedsStreet = LocalizedText(
+  nl: 'De bestemming is te vaag. Vul een straat en huisnummer in of bevestig de pin op de kaart.',
+  en: 'The destination is too vague. Enter a street and house number or confirm the pin on the map.',
+  fr: 'La destination est trop vague. Saisissez une rue et un numéro ou confirmez l’épingle.',
+  es: 'El destino es demasiado vago. Introduce calle y número o confirma el pin.',
+);
+
+const LocalizedText kCustomerBookingOfferExpired = LocalizedText(
+  nl: 'Het aanbod is verlopen. We verversen prijs en beschikbaarheid zonder je invoer te wissen.',
+  en: 'The offer expired. Price and availability are refreshed without clearing your input.',
+  fr: 'L’offre a expiré. Prix et disponibilité sont actualisés sans effacer votre saisie.',
+  es: 'La oferta caducó. Se actualizan precio y disponibilidad sin borrar tus datos.',
+);
+
+const LocalizedText kCustomerBookingBookAlreadySent = LocalizedText(
+  nl: 'Deze boeking is al verzonden. Er start geen tweede poging.',
+  en: 'This booking was already sent. A second attempt will not start.',
+  fr: 'Cette réservation a déjà été envoyée. Aucune seconde tentative ne sera lancée.',
+  es: 'Esta reserva ya se envió. No se iniciará un segundo intento.',
+);
+
+const LocalizedText kCustomerBookingUseSuggestedTime = LocalizedText(
+  nl: 'Gebruik {time}',
+  en: 'Use {time}',
+  fr: 'Utiliser {time}',
+  es: 'Usar {time}',
+);
+
 const LocalizedText kCustomerBookingDriverPending = LocalizedText(
   nl: 'Nog geen chauffeur toegewezen',
   en: 'No driver assigned yet',

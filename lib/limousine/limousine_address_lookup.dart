@@ -619,18 +619,25 @@ LimousineOwnedAddressResolution limousineResolveOwnedAddress({
   if (nearMiss.isNotEmpty) {
     pinCandidate = nearMiss.first;
   } else {
+    final queryHasHouse = limousineParseStreetHouse(owned).hasNumber;
     for (final item in result.suggestions) {
-      if (item.hasCoordinates && item.isStreetLevel) {
-        pinCandidate = item;
-        break;
+      if (!item.hasCoordinates || !item.isStreetLevel) continue;
+      if (queryHasHouse &&
+          !limousineParseStreetHouse(item.label).hasNumber) {
+        continue;
       }
+      pinCandidate = item;
+      break;
     }
     if (pinCandidate == null) {
       for (final item in result.suggestions) {
-        if (item.hasCoordinates) {
-          pinCandidate = item;
-          break;
+        if (!item.hasCoordinates) continue;
+        if (queryHasHouse &&
+            !limousineParseStreetHouse(item.label).hasNumber) {
+          continue;
         }
+        pinCandidate = item;
+        break;
       }
     }
   }

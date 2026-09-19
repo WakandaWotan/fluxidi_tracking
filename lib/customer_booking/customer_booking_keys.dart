@@ -64,7 +64,9 @@ const Key kCustomerBookingSheetKey = Key('customer_booking_sheet');
 const Key kCustomerBookingSheetHandleKey = Key('customer_booking_sheet_handle');
 const Key kCustomerBookingSheetToggleKey = Key('customer_booking_sheet_toggle');
 const Key kCustomerBookingClockRowKey = Key('customer_booking_clock_row');
-const Key kCustomerBookingTaxiReadyAtKey = Key('customer_booking_taxi_ready_at');
+const Key kCustomerBookingTaxiReadyAtKey = Key(
+  'customer_booking_taxi_ready_at',
+);
 const Key kCustomerBookingCompanyLogoImageKey = Key(
   'customer_booking_company_logo_image',
 );
@@ -110,9 +112,7 @@ const Key kCustomerBookingArrivalMarginKey = Key(
 const Key kCustomerBookingApplySuggestedPickupKey = Key(
   'customer_booking_apply_suggested_pickup',
 );
-const Key kCustomerBookingLandingHintKey = Key(
-  'customer_booking_landing_hint',
-);
+const Key kCustomerBookingLandingHintKey = Key('customer_booking_landing_hint');
 const Key kCustomerBookingCompanyLockKey = Key('customer_booking_company_lock');
 const Key kCustomerBookingCompanyBannerKey = Key(
   'customer_booking_company_banner',
@@ -193,9 +193,7 @@ const Key kCustomerBookingAvailabilityCheckingKey = Key(
 const Key kCustomerBookingAvailabilityRetryKey = Key(
   'customer_booking_availability_retry',
 );
-const Key kCustomerBookingCompanyInfoKey = Key(
-  'customer_booking_company_info',
-);
+const Key kCustomerBookingCompanyInfoKey = Key('customer_booking_company_info');
 const Key kCustomerBookingContactSummaryKey = Key(
   'customer_booking_contact_summary',
 );
@@ -204,6 +202,12 @@ const Key kCustomerBookingConfirmPickupBannerKey = Key(
 );
 const Key kCustomerBookingProposedDriverKey = Key(
   'customer_booking_proposed_driver',
+);
+const Key kCustomerBookingConfirmReasonKey = Key(
+  'customer_booking_confirm_reason',
+);
+const Key kCustomerBookingSuggestedTimeKey = Key(
+  'customer_booking_suggested_time',
 );
 const Key kCustomerBookingReturnDateKey = Key('customer_booking_return_date');
 const Key kCustomerBookingReturnTimeKey = Key('customer_booking_return_time');

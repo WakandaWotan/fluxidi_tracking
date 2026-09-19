@@ -9,7 +9,8 @@ num? parseCompanyBookingMoney(Object? raw) {
 int? parseCompanyBookingDurationMin(Object? raw) {
   final money = parseCompanyBookingMoney(raw);
   if (money == null || money <= 0) return null;
-  return money.round();
+  final rounded = money.round();
+  return rounded <= 0 ? 1 : rounded;
 }
 
 Object? _firstRaw(Map<String, dynamic> raw, List<String> keys) {
@@ -118,10 +119,7 @@ num? resolveCompanyBookingPriceInclVat(Map<String, dynamic> raw) {
     if (parsed != null) return parsed;
   }
   final outboundPrice = parseCompanyBookingMoney(
-    _firstRaw(outbound, const [
-      'price_incl_vat',
-      'priceInclVat',
-    ]) ??
+    _firstRaw(outbound, const ['price_incl_vat', 'priceInclVat']) ??
         _firstRaw(pricingMain, const [
           'price_incl_vat',
           'priceInclVat',
@@ -135,10 +133,7 @@ num? resolveCompanyBookingPriceInclVat(Map<String, dynamic> raw) {
   );
   final inbound = _returnLeg(raw);
   final returnPrice = parseCompanyBookingMoney(
-    _firstRaw(raw, const [
-      'return_price_incl_vat',
-      'price_incl_vat_return',
-    ]) ??
+    _firstRaw(raw, const ['return_price_incl_vat', 'price_incl_vat_return']) ??
         _firstRaw(record, const [
           'return_price_incl_vat',
           'price_incl_vat_return',
@@ -151,10 +146,7 @@ num? resolveCompanyBookingPriceInclVat(Map<String, dynamic> raw) {
           'return_price_incl_vat',
           'price_incl_vat_return',
         ]) ??
-        _firstRaw(inbound, const [
-          'price_incl_vat',
-          'priceInclVat',
-        ]),
+        _firstRaw(inbound, const ['price_incl_vat', 'priceInclVat']),
   );
   if (outboundPrice != null && returnPrice != null) {
     return outboundPrice + returnPrice;
@@ -185,7 +177,13 @@ String resolveCompanyBookingCurrency(Map<String, dynamic> raw) {
   final booking = _asMap(record['booking']);
   final quote = _asMap(record['quote'] ?? raw['quote']);
   final pricing = _asMap(quote['pricing']);
-  for (final source in <Map<String, dynamic>>[raw, record, booking, quote, pricing]) {
+  for (final source in <Map<String, dynamic>>[
+    raw,
+    record,
+    booking,
+    quote,
+    pricing,
+  ]) {
     final value = (source['currency'] ?? '').toString().trim();
     if (value.isNotEmpty) return value;
   }
