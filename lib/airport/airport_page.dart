@@ -3677,6 +3677,21 @@ class _AirportPageState extends State<AirportPage> {
     };
   }
 
+  /// Curated server message for a return leg that could not be priced. Only
+  /// the two known codes are shown, so no arbitrary backend text reaches the
+  /// customer.
+  static String? _returnLegQuoteMessage(Map<String, dynamic>? data) {
+    if (data == null) return null;
+    const shown = <String>{
+      'return_fixed_fare_unresolved',
+      'return_quote_failed',
+    };
+    final code = (data['error_code'] ?? data['error'] ?? '').toString().trim();
+    if (!shown.contains(code)) return null;
+    final message = (data['message'] ?? '').toString().trim();
+    return message.isEmpty ? null : message;
+  }
+
   Future<Map<String, dynamic>?> _requestAirportQuoteForReview({
     required bool showSuccessSnackbar,
   }) async {
@@ -3758,9 +3773,14 @@ class _AirportPageState extends State<AirportPage> {
         isPublicCustomer: true,
         httpStatus: response.statusCode,
       );
+      // A return leg that cannot be priced answers with its own curated
+      // message. Showing it beats a generic failure, and no quote is kept so
+      // the ride cannot be requested.
+      final returnLegMessage = _returnLegQuoteMessage(data);
       setState(() {
         _airportQuote = null;
         _airportQuoteError =
+            returnLegMessage ??
             entitlementMsg ??
             _t(
               nl: 'Prijsberekening kon niet worden opgehaald.',

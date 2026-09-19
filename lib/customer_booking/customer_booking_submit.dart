@@ -19,6 +19,9 @@ const String kCustomerBookingIssuePayment = 'payment_failed';
 const String kCustomerBookingIssueCheckoutStart = 'checkout_start_failed';
 const String kCustomerBookingIssueNetwork = 'network_failed';
 const String kCustomerBookingIssuePriceInconsistent = 'price_inconsistent';
+/// Server code for a fixed-price route whose return leg stays unresolved.
+const String kCustomerBookingIssueReturnFixedFare =
+    'return_fixed_fare_unresolved';
 
 class CustomerBookingSubmitIssue {
   const CustomerBookingSubmitIssue({
@@ -232,6 +235,8 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
       return kCustomerBookingPriceFailed.of(language);
     case kCustomerBookingIssuePriceInconsistent:
       return kCustomerBookingPriceInconsistent.of(language);
+    case kCustomerBookingIssueReturnFixedFare:
+      return kCustomerBookingReturnFixedFareUnresolved.of(language);
     case kCustomerBookingIssueAlreadyBooked:
       return kCustomerBookingAlreadyBooked.of(language);
     case kCustomerBookingIssueNeedRoute:
