@@ -145,6 +145,42 @@ flutter {
     source = "../.."
 }
 
+// AAB 24 shipped libapp.so without flutter_assets: Material Icons and
+// Fluxidi images never reached the Play bundle. copyFlutterAssetsRelease
+// can be marked UP-TO-DATE after cleanMergeReleaseAssets has already
+// emptied the merge output. Never skip that copy for release, and fail
+// if AssetManifest.bin did not land in both compile and merge output.
+tasks.configureEach {
+    if (name != "copyFlutterAssetsRelease") return@configureEach
+    outputs.upToDateWhen { false }
+    doLast {
+        val compileManifest =
+            layout.buildDirectory
+                .get()
+                .asFile
+                .resolve("intermediates/flutter/release/flutter_assets/AssetManifest.bin")
+        val mergedManifest =
+            layout.buildDirectory
+                .get()
+                .asFile
+                .resolve(
+                    "intermediates/assets/release/mergeReleaseAssets/flutter_assets/AssetManifest.bin",
+                )
+        if (!compileManifest.isFile || compileManifest.length() < 1024L) {
+            throw GradleException(
+                "FLUTTER_ASSETS_MISSING: compile output AssetManifest.bin is missing. " +
+                    "A Play AAB built from this tree would omit Material Icons and images.",
+            )
+        }
+        if (!mergedManifest.isFile || mergedManifest.length() < 1024L) {
+            throw GradleException(
+                "FLUTTER_ASSETS_MISSING: merged AssetManifest.bin is missing after " +
+                    "copyFlutterAssetsRelease. Android bundle packaging omitted flutter_assets.",
+            )
+        }
+    }
+}
+
 // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A — JVM unit test setup for
 // the app-local native-follow bridge and the vendored plugin's registry.
 // Only affects the `test` source set; no impact on the shipped APK.

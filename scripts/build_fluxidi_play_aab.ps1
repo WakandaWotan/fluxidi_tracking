@@ -82,6 +82,19 @@ if ($forbidden.Count -gt 0) {
     throw 'Forbidden token present in Flutter build arguments'
 }
 
+# AAB 24 left empty flutter_assets directories in the Android merge tree.
+# Incremental assemble then packaged mlkit/sdk_versions only. Wipe those
+# trees so this release cannot copy an empty asset skeleton.
+foreach ($stale in @(
+        'build\app\intermediates\flutter\release\flutter_assets',
+        'build\app\intermediates\assets\release'
+    )) {
+    if (Test-Path -LiteralPath $stale) {
+        Remove-Item -LiteralPath $stale -Recurse -Force
+        Write-Host "cleared_stale_assets=$stale"
+    }
+}
+
 Write-Host 'Building Play release appbundle…'
 & flutter @flutterArguments
 Assert-LastExitCode -Step 'flutter build appbundle'
@@ -96,5 +109,9 @@ $size = (Get-Item -LiteralPath $aab).Length
 Write-Host "AAB=$aab"
 Write-Host "AAB_BYTES=$size"
 Write-Host "AAB_SHA256=$hash"
+
+Write-Host 'Checking Play AAB flutter_assets…'
+& dart run tool/check_play_aab_assets.dart $aab
+Assert-LastExitCode -Step 'check_play_aab_assets'
 Write-Host 'PLAY_SAAS_CHECKOUT=disabled'
 Write-Host 'RIDE_PAYMENTS=preserved'
