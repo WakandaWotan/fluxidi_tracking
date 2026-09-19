@@ -408,6 +408,9 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
                   size,
                   camera,
                   metricsAvoid: _metricsAvoidRect(size),
+                  textScale: MediaQuery.textScalerOf(
+                    context,
+                  ).scale(11) / 11,
                 ),
                 ?_metricsBadge(size),
                 Positioned(
@@ -561,81 +564,301 @@ class _CustomerBookingRouteMapState extends State<CustomerBookingRouteMap>
     );
   }
 
+  String _endpointText(String raw, String emptyLabel) {
+    final compact = customerBookingCompactAddressLabel(raw);
+    return compact.isEmpty ? emptyLabel : compact;
+  }
+
   List<Widget> _endpointLabels(
     Size size,
     CustomerBookingMapCamera camera, {
     Rect? metricsAvoid,
+    double textScale = 1.0,
   }) {
-    const labelSize = Size(168, 32);
     final hole = _visibleHole(size);
-    Widget? chip({
-      required Key key,
-      required FluxidiMapLonLat? point,
-      required String raw,
-      required String emptyLabel,
-      required IconData icon,
-      required Offset nudge,
-      required bool pickup,
-      VoidCallback? onTap,
-    }) {
-      final text = customerBookingCompactAddressLabel(raw).isEmpty
-          ? emptyLabel
-          : customerBookingCompactAddressLabel(raw);
-      Offset pos;
-      if (point == null) {
-        final reserve = metricsAvoid == null ? 0.0 : metricsAvoid.height + 10;
-        pos = Offset(
-          hole.left + 8,
-          pickup
-              ? hole.bottom - labelSize.height - 8 - reserve
-              : hole.top + 8,
-        );
-      } else {
-        final anchor = customerBookingProject(point, camera, size);
-        pos = customerBookingClampMapLabel(
-          anchor: anchor,
-          size: size,
-          visibleInsets: _labelInsets,
-          labelSize: labelSize,
-          nudge: nudge,
-          avoid: metricsAvoid,
-        );
-      }
-      return Positioned(
-        left: pos.dx,
-        top: pos.dy,
-        child: _EndpointChip(
-          key: key,
-          icon: icon,
-          text: text,
-          palette: widget.palette,
-          onTap: onTap,
+    final pickupText = _endpointText(
+      widget.pickup.displayText,
+      kCustomerBookingPickup.of(widget.language),
+    );
+    final dropoffText = _endpointText(
+      widget.dropoff.displayText,
+      kCustomerBookingDropoff.of(widget.language),
+    );
+    final pickupSize = customerBookingEndpointChipSize(
+      text: pickupText,
+      textScale: textScale,
+      hasEditIcon: widget.onEditPickup != null,
+    );
+    final dropoffSize = customerBookingEndpointChipSize(
+      text: dropoffText,
+      textScale: textScale,
+      hasEditIcon: widget.onEditDropoff != null,
+    );
+    final pickupAnchor = _pickupPoint == null
+        ? null
+        : customerBookingProject(_pickupPoint!, camera, size);
+    final dropoffAnchor = _dropoffPoint == null
+        ? null
+        : customerBookingProject(_dropoffPoint!, camera, size);
+
+    // No route yet: park the two chips in opposite corners of the hole.
+    if (pickupAnchor == null && dropoffAnchor == null) {
+      final reserve = metricsAvoid == null ? 0.0 : metricsAvoid.height + 10;
+      return [
+        Positioned(
+          left: hole.left + 8,
+          top: hole.bottom - pickupSize.height - 8 - reserve,
+          child: _EndpointChip(
+            key: kCustomerBookingMapPickupChipKey,
+            icon: Icons.trip_origin,
+            text: pickupText,
+            palette: widget.palette,
+            onTap: widget.onEditPickup,
+          ),
         ),
+        Positioned(
+          left: hole.left + 8,
+          top: hole.top + 8,
+          child: _EndpointChip(
+            key: kCustomerBookingMapDropoffChipKey,
+            icon: Icons.flag_outlined,
+            text: dropoffText,
+            palette: widget.palette,
+            onTap: widget.onEditDropoff,
+          ),
+        ),
+      ];
+    }
+
+    final placement = customerBookingPlaceEndpointLabels(
+      pickupAnchor: pickupAnchor,
+      dropoffAnchor: dropoffAnchor,
+      pickupSize: pickupSize,
+      dropoffSize: dropoffSize,
+      size: size,
+      visibleInsets: _labelInsets,
+      avoid: metricsAvoid,
+    );
+
+    if (placement.useCompactMarkers) {
+      return _compactEndpointMarkers(
+        size: size,
+        hole: hole,
+        pickupAnchor: pickupAnchor,
+        dropoffAnchor: dropoffAnchor,
+        pickupText: pickupText,
+        dropoffText: dropoffText,
+        metricsAvoid: metricsAvoid,
+        textScale: textScale,
       );
     }
 
     return [
-      ?chip(
-        key: kCustomerBookingMapPickupChipKey,
-        point: _pickupPoint,
-        raw: widget.pickup.displayText,
-        emptyLabel: kCustomerBookingPickup.of(widget.language),
-        icon: Icons.trip_origin,
-        nudge: const Offset(12, -36),
-        pickup: true,
-        onTap: widget.onEditPickup,
-      ),
-      ?chip(
-        key: kCustomerBookingMapDropoffChipKey,
-        point: _dropoffPoint,
-        raw: widget.dropoff.displayText,
-        emptyLabel: kCustomerBookingDropoff.of(widget.language),
-        icon: Icons.flag_outlined,
-        nudge: const Offset(-120, 14),
-        pickup: false,
-        onTap: widget.onEditDropoff,
+      if (placement.pickup != null)
+        Positioned(
+          left: placement.pickup!.dx,
+          top: placement.pickup!.dy,
+          child: _EndpointChip(
+            key: kCustomerBookingMapPickupChipKey,
+            icon: Icons.trip_origin,
+            text: pickupText,
+            palette: widget.palette,
+            onTap: widget.onEditPickup,
+          ),
+        ),
+      if (placement.dropoff != null)
+        Positioned(
+          left: placement.dropoff!.dx,
+          top: placement.dropoff!.dy,
+          child: _EndpointChip(
+            key: kCustomerBookingMapDropoffChipKey,
+            icon: Icons.flag_outlined,
+            text: dropoffText,
+            palette: widget.palette,
+            onTap: widget.onEditDropoff,
+          ),
+        ),
+    ];
+  }
+
+  /// Short routes put A and B on top of each other. The map then carries two
+  /// small badges and the addresses move into one fixed legend, so nothing
+  /// overlaps and both ends stay readable.
+  List<Widget> _compactEndpointMarkers({
+    required Size size,
+    required Rect hole,
+    required Offset? pickupAnchor,
+    required Offset? dropoffAnchor,
+    required String pickupText,
+    required String dropoffText,
+    required Rect? metricsAvoid,
+    required double textScale,
+  }) {
+    const badge = Size(22, 22);
+    Offset badgePos(Offset anchor, {required bool above}) {
+      final raw = Offset(
+        anchor.dx - badge.width / 2,
+        above ? anchor.dy - badge.height - 6 : anchor.dy + 6,
+      );
+      return Offset(
+        raw.dx.clamp(hole.left, math.max(hole.left, hole.right - badge.width)),
+        raw.dy.clamp(hole.top, math.max(hole.top, hole.bottom - badge.height)),
+      );
+    }
+
+    final legendWidth = math.max(120.0, math.min(300.0, hole.width - 16));
+    final reserve = metricsAvoid == null ? 0.0 : metricsAvoid.height + 10;
+    // A short hole may be smaller than the legend; never invert the bounds.
+    final legendHeight = math.min(
+      56.0 * textScale,
+      math.max(28.0, hole.height - 16),
+    );
+    final legendTop = math.max(
+      hole.top + 8,
+      hole.bottom - legendHeight - 8 - reserve,
+    );
+
+    return [
+      if (pickupAnchor != null)
+        Positioned(
+          left: badgePos(pickupAnchor, above: true).dx,
+          top: badgePos(pickupAnchor, above: true).dy,
+          child: _EndpointBadge(
+            key: kCustomerBookingMapPickupBadgeKey,
+            letter: 'A',
+            palette: widget.palette,
+          ),
+        ),
+      if (dropoffAnchor != null)
+        Positioned(
+          left: badgePos(dropoffAnchor, above: false).dx,
+          top: badgePos(dropoffAnchor, above: false).dy,
+          child: _EndpointBadge(
+            key: kCustomerBookingMapDropoffBadgeKey,
+            letter: 'B',
+            palette: widget.palette,
+          ),
+        ),
+      Positioned(
+        key: kCustomerBookingMapAddressLegendKey,
+        left: hole.left + 8,
+        top: legendTop,
+        width: legendWidth,
+        child: _AddressLegend(
+          palette: widget.palette,
+          pickupText: pickupText,
+          dropoffText: dropoffText,
+          onEditPickup: widget.onEditPickup,
+          onEditDropoff: widget.onEditDropoff,
+        ),
       ),
     ];
+  }
+}
+
+class _EndpointBadge extends StatelessWidget {
+  const _EndpointBadge({
+    super.key,
+    required this.letter,
+    required this.palette,
+  });
+
+  final String letter;
+  final CustomerThemePalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 22,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: palette.surface.withValues(alpha: 0.96),
+        shape: BoxShape.circle,
+        border: Border.all(color: palette.border),
+      ),
+      child: Text(
+        letter,
+        textScaler: TextScaler.noScaling,
+        style: TextStyle(
+          color: palette.textPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+class _AddressLegend extends StatelessWidget {
+  const _AddressLegend({
+    required this.palette,
+    required this.pickupText,
+    required this.dropoffText,
+    this.onEditPickup,
+    this.onEditDropoff,
+  });
+
+  final CustomerThemePalette palette;
+  final String pickupText;
+  final String dropoffText;
+  final VoidCallback? onEditPickup;
+  final VoidCallback? onEditDropoff;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget row(String letter, String text, VoidCallback? onTap) {
+      return InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                child: Text(
+                  letter,
+                  style: TextStyle(
+                    color: palette.textMuted,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              if (onTap != null)
+                Icon(Icons.edit_outlined, size: 14, color: palette.textMuted),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Material(
+      color: palette.surface.withValues(alpha: 0.96),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            row('A', pickupText, onEditPickup),
+            row('B', dropoffText, onEditDropoff),
+          ],
+        ),
+      ),
+    );
   }
 }
 

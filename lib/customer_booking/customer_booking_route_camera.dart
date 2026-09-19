@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:flutter/painting.dart' show EdgeInsets;
+import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/painting.dart'
+    show EdgeInsets, TextPainter, TextSpan, TextStyle;
 import 'package:fluxidi_tracking/maps/fluxidi_static_route_preview.dart';
 
 const double kCustomerBookingMapMinZoom = 4;
@@ -302,6 +304,171 @@ bool customerBookingPointInVisibleHole(
 }) {
   final hole = customerBookingVisibleMapHole(size, insets).deflate(pad);
   return hole.contains(point);
+}
+
+/// Real on-screen size of an endpoint chip, so placement reasons about the
+/// widget that is actually drawn instead of a fixed guess.
+Size customerBookingEndpointChipSize({
+  required String text,
+  double textScale = 1.0,
+  bool hasEditIcon = false,
+  double maxWidth = 168,
+}) {
+  const horizontalPadding = 20.0;
+  const iconWidth = 16.0;
+  const iconGap = 6.0;
+  final editWidth = hasEditIcon ? 18.0 : 0.0;
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: 11 * textScale,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+  )..layout();
+  final content = iconWidth + iconGap + painter.width + editWidth;
+  // Height follows the taller of the icon and the scaled text, plus the
+  // chip's vertical padding, so a larger text scale really grows the chip.
+  return Size(
+    math.min(maxWidth, horizontalPadding + content),
+    math.max(iconWidth, painter.height) + 12.0,
+  );
+}
+
+/// Where the two endpoint labels go, or the decision to fall back to compact
+/// A/B markers with a fixed legend when they cannot both fit.
+@immutable
+class CustomerBookingEndpointPlacement {
+  const CustomerBookingEndpointPlacement({
+    this.pickup,
+    this.dropoff,
+    this.useCompactMarkers = false,
+  });
+
+  final Offset? pickup;
+  final Offset? dropoff;
+  final bool useCompactMarkers;
+}
+
+List<Offset> _labelCandidateOffsets(Size labelSize) {
+  return <Offset>[
+    Offset(12, -labelSize.height - 6),
+    Offset(-labelSize.width - 8, -labelSize.height - 6),
+    const Offset(12, 14),
+    Offset(-labelSize.width - 8, 14),
+    Offset(-labelSize.width / 2, -labelSize.height - 12),
+    Offset(-labelSize.width / 2, 16),
+    Offset(12, -labelSize.height / 2),
+    Offset(-labelSize.width - 8, -labelSize.height / 2),
+  ];
+}
+
+Rect _labelRect(Offset pos, Size labelSize) {
+  return Rect.fromLTWH(pos.dx, pos.dy, labelSize.width, labelSize.height);
+}
+
+/// Places pickup and destination together. A pair is only accepted when the
+/// two rectangles do not touch each other, the route markers or the metrics
+/// badge; otherwise the caller switches to A/B markers plus a legend.
+CustomerBookingEndpointPlacement customerBookingPlaceEndpointLabels({
+  required Offset? pickupAnchor,
+  required Offset? dropoffAnchor,
+  required Size pickupSize,
+  required Size dropoffSize,
+  required Size size,
+  required EdgeInsets visibleInsets,
+  Rect? avoid,
+  double minAnchorSeparation = 64,
+}) {
+  final hole = customerBookingVisibleMapHole(size, visibleInsets).deflate(6);
+
+  Offset clampPos(Offset raw, Size labelSize) {
+    final maxLeft = math.max(hole.left, hole.right - labelSize.width);
+    final maxTop = math.max(hole.top, hole.bottom - labelSize.height);
+    return Offset(
+      raw.dx.clamp(hole.left, maxLeft),
+      raw.dy.clamp(hole.top, maxTop),
+    );
+  }
+
+  bool hitsMarker(Offset pos, Size labelSize, Offset? anchor) {
+    if (anchor == null) return false;
+    return _labelRect(pos, labelSize).inflate(4).contains(anchor);
+  }
+
+  bool hitsAvoid(Offset pos, Size labelSize) {
+    if (avoid == null || avoid.isEmpty) return false;
+    return _labelRect(pos, labelSize).inflate(6).overlaps(avoid);
+  }
+
+  if (pickupAnchor == null || dropoffAnchor == null) {
+    final anchor = pickupAnchor ?? dropoffAnchor;
+    final labelSize = pickupAnchor == null ? dropoffSize : pickupSize;
+    if (anchor == null) return const CustomerBookingEndpointPlacement();
+    Offset best = clampPos(anchor + _labelCandidateOffsets(labelSize).first, labelSize);
+    var bestScore = -1e9;
+    for (final candidate in _labelCandidateOffsets(labelSize)) {
+      final pos = clampPos(anchor + candidate, labelSize);
+      final score =
+          (hitsMarker(pos, labelSize, anchor) ? -400.0 : 200.0) +
+          (hitsAvoid(pos, labelSize) ? -500.0 : 80.0) -
+          (pos - (anchor + candidate)).distance;
+      if (score > bestScore) {
+        bestScore = score;
+        best = pos;
+      }
+    }
+    return CustomerBookingEndpointPlacement(
+      pickup: pickupAnchor == null ? null : best,
+      dropoff: pickupAnchor == null ? best : null,
+    );
+  }
+
+  // Two anchors this close leave no room for two readable address chips.
+  if ((pickupAnchor - dropoffAnchor).distance < minAnchorSeparation) {
+    return const CustomerBookingEndpointPlacement(useCompactMarkers: true);
+  }
+
+  Offset? bestPickup;
+  Offset? bestDropoff;
+  var bestScore = -1e9;
+  for (final pickupCandidate in _labelCandidateOffsets(pickupSize)) {
+    final pickupPos = clampPos(pickupAnchor + pickupCandidate, pickupSize);
+    final pickupRect = _labelRect(pickupPos, pickupSize);
+    final pickupPenalty =
+        (hitsMarker(pickupPos, pickupSize, pickupAnchor) ? -400.0 : 100.0) +
+        (hitsMarker(pickupPos, pickupSize, dropoffAnchor) ? -300.0 : 60.0) +
+        (hitsAvoid(pickupPos, pickupSize) ? -500.0 : 60.0) -
+        (pickupPos - (pickupAnchor + pickupCandidate)).distance;
+    for (final dropoffCandidate in _labelCandidateOffsets(dropoffSize)) {
+      final dropoffPos = clampPos(dropoffAnchor + dropoffCandidate, dropoffSize);
+      final dropoffRect = _labelRect(dropoffPos, dropoffSize);
+      // The whole point of pairwise placement: the two chips must not touch.
+      if (pickupRect.inflate(4).overlaps(dropoffRect.inflate(4))) continue;
+      final score =
+          pickupPenalty +
+          (hitsMarker(dropoffPos, dropoffSize, dropoffAnchor) ? -400.0 : 100.0) +
+          (hitsMarker(dropoffPos, dropoffSize, pickupAnchor) ? -300.0 : 60.0) +
+          (hitsAvoid(dropoffPos, dropoffSize) ? -500.0 : 60.0) -
+          (dropoffPos - (dropoffAnchor + dropoffCandidate)).distance;
+      if (score > bestScore) {
+        bestScore = score;
+        bestPickup = pickupPos;
+        bestDropoff = dropoffPos;
+      }
+    }
+  }
+
+  if (bestPickup == null || bestDropoff == null) {
+    return const CustomerBookingEndpointPlacement(useCompactMarkers: true);
+  }
+  return CustomerBookingEndpointPlacement(
+    pickup: bestPickup,
+    dropoff: bestDropoff,
+  );
 }
 
 /// Keeps a compact label near [anchor] inside the visible map hole, away from

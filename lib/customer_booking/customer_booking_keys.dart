@@ -84,6 +84,16 @@ const Key kCustomerBookingMapPickupChipKey = Key(
 const Key kCustomerBookingMapDropoffChipKey = Key(
   'customer_booking_map_dropoff_chip',
 );
+// Short routes swap the two address chips for A/B badges plus one legend.
+const Key kCustomerBookingMapPickupBadgeKey = Key(
+  'customer_booking_map_pickup_badge',
+);
+const Key kCustomerBookingMapDropoffBadgeKey = Key(
+  'customer_booking_map_dropoff_badge',
+);
+const Key kCustomerBookingMapAddressLegendKey = Key(
+  'customer_booking_map_address_legend',
+);
 const Key kCustomerBookingAirportSelectedKey = Key(
   'customer_booking_airport_selected',
 );
