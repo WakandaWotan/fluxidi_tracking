@@ -3310,6 +3310,11 @@ function chironOfficialKentekenplaatWire(value) {
   return alnum.length > 0 ? alnum : null;
 }
 
+function chironOfficialPlateMeetsCh1211(value) {
+  const wire = chironOfficialKentekenplaatWire(value);
+  return Boolean(wire && wire.length >= 7);
+}
+
 function normalizeChironMoney(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
@@ -3569,6 +3574,49 @@ function _chironResolveAssignedVehicleId(event, blueprint) {
       96,
     ) || null
   );
+}
+
+/**
+ * CH1211: the ids behind a vehicle identity, kept apart on purpose.
+ *
+ * `event` is the snapshot stored on the compliance event and can be stale.
+ * `assignment` is the roster truth. A plate may only ever be taken from the
+ * vehicle the ride is actually assigned to, so both ids are reported and the
+ * caller refuses to substitute when they disagree.
+ */
+function _chironVehicleIdentityIds(event, blueprint) {
+  const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
+  const eventVehicle =
+    safeEvent.vehicle && typeof safeEvent.vehicle === "object" && !Array.isArray(safeEvent.vehicle)
+      ? safeEvent.vehicle
+      : {};
+  const assignment =
+    safeEvent.assignment &&
+    typeof safeEvent.assignment === "object" &&
+    !Array.isArray(safeEvent.assignment)
+      ? safeEvent.assignment
+      : {};
+  const bpVehicle =
+    blueprint?.vehicle && typeof blueprint.vehicle === "object" && !Array.isArray(blueprint.vehicle)
+      ? blueprint.vehicle
+      : {};
+  const eventVehicleId =
+    cleanText(
+      eventVehicle.vehicle_id ?? eventVehicle.vehicleId ?? safeEvent.vehicle_id ?? safeEvent.vehicleId,
+      96,
+    ) || null;
+  const assignmentVehicleId =
+    cleanText(assignment.vehicle_id ?? assignment.vehicleId, 96) || null;
+  const blueprintVehicleId = cleanText(bpVehicle.vehicle_id, 96) || null;
+  return {
+    eventVehicleId,
+    assignmentVehicleId,
+    // The roster assignment is the authority when it is known.
+    assignedVehicleId: assignmentVehicleId || eventVehicleId || blueprintVehicleId,
+    mismatch: Boolean(
+      eventVehicleId && assignmentVehicleId && eventVehicleId !== assignmentVehicleId,
+    ),
+  };
 }
 
 function _chironResolveAssignedDriverId(event, blueprint) {
@@ -4013,6 +4061,15 @@ function verifyChironOfficialLicensePlate(value, context = {}) {
     return out;
   }
   out.checks.push("present");
+
+  const wirePlate = chironOfficialKentekenplaatWire(raw);
+  if (wirePlate && wirePlate.length < 7) {
+    out.status = "format_invalid";
+    out.errors.push("ch1211_license_plate_too_short");
+    out.warnings.push(`source_plate:${raw}`);
+    _chironApplyVehicleDocumentMarkers(out, raw, context);
+    return out;
+  }
 
   if (isChironPlaceholderValue(raw, "license_plate")) {
     out.status = "placeholder";
@@ -5236,35 +5293,78 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
     }
   }
 
+  const ids = _chironVehicleIdentityIds(safeEvent, safeBlueprint);
   let fleetRecord = null;
+  let plateBlockedReason = null;
+  let plateSubstitutedFrom = null;
   if (Array.isArray(cache.fleetVehicles) && cache.fleetVehicles.length) {
-    const vehicleId = _chironResolveAssignedVehicleId(safeEvent, safeBlueprint);
+    const vehicleId = ids.assignedVehicleId;
     const fleetMatch = _chironResolveVehiclePlateFromFleet(vehicleId, cache.fleetVehicles);
     if (fleetMatch.plate) {
       fleetRecord = _chironLookupFleetVehicleById(vehicleId, cache.fleetVehicles);
+      const fleetOk = chironOfficialPlateMeetsCh1211(fleetMatch.plate);
+      const eventOk = chironOfficialPlateMeetsCh1211(plate);
       if (!plate) {
         plate = fleetMatch.plate;
         source = "scoped_vehicle";
         record = fleetRecord;
         vehicleProfileLookup = "hit";
+      } else if (!eventOk && fleetOk && !ids.mismatch) {
+        // The event plate fails CH1211 (e.g. Tax002). Never pad it, and only
+        // take the plate of the very same assigned vehicle.
+        plateSubstitutedFrom = plate;
+        plate = fleetMatch.plate;
+        source = "scoped_vehicle";
+        record = fleetRecord;
+        vehicleProfileLookup = "hit";
       } else {
+        if (!eventOk && ids.mismatch) {
+          // A stale event names another vehicle. Borrowing that vehicle's
+          // plate would report the wrong car, so the ride stays blocked.
+          plateBlockedReason = "ch1211_vehicle_id_mismatch";
+        } else if (!eventOk && !fleetOk) {
+          // The assigned vehicle itself has no CH1211-valid plate. Nothing may
+          // be sent; the fleet record has to be corrected first.
+          plateBlockedReason = "ch1211_assigned_vehicle_plate_invalid";
+        }
         vehicleProfileLookup = "hit";
       }
     } else if (fleetMatch.lookup === "ambiguous") {
       vehicleProfileLookup = "ambiguous";
+      if (!chironOfficialPlateMeetsCh1211(plate)) {
+        plateBlockedReason = "ch1211_vehicle_lookup_ambiguous";
+      }
     } else if (cache.fleetLookup === "hit") {
       vehicleProfileLookup = "miss";
+      if (plate && !chironOfficialPlateMeetsCh1211(plate)) {
+        plateBlockedReason = "ch1211_assigned_vehicle_not_in_fleet";
+      }
     }
   }
 
   // Even if plate came from event, expose scoped fleet record for trust markers.
   if (!record && fleetRecord) record = fleetRecord;
 
+  if (plateBlockedReason || plateSubstitutedFrom) {
+    console.log(
+      `[CHIRON][PLATE_IDENTITY] event_vehicle=${ids.eventVehicleId || "none"} ` +
+        `assignment_vehicle=${ids.assignmentVehicleId || "none"} ` +
+        `assigned_vehicle=${ids.assignedVehicleId || "none"} ` +
+        `substituted_from=${plateSubstitutedFrom || "none"} ` +
+        `blocked=${plateBlockedReason || "none"}`,
+    );
+  }
+
   return {
     kentekenplaat: plate || null,
     source,
     vehicle_profile_lookup: vehicleProfileLookup,
     record,
+    event_vehicle_id: ids.eventVehicleId,
+    assignment_vehicle_id: ids.assignmentVehicleId,
+    assigned_vehicle_id: ids.assignedVehicleId,
+    plate_substituted_from: plateSubstitutedFrom,
+    plate_blocked_reason: plateBlockedReason,
   };
 }
 
@@ -7248,6 +7348,8 @@ function buildChironTaxiritApiPayload(officialPayload) {
     if (nummerplaatDisplay) {
       nummerplaat = chironOfficialKentekenplaatWire(nummerplaatDisplay);
       if (!nummerplaat) return null;
+      // CH1211: never pad a short plate, and never ship it.
+      if (nummerplaat.length < 7) return null;
     }
     const bestuurderspasnummer = cleanText(officialPayload.bestuurderspasnummer, 64);
     const vertrektijdstip = _chironWireDateTime(officialPayload.vertrektijdstip);
@@ -12995,6 +13097,10 @@ export const __testInternals = {
   _chironExportBaseUrlLooksTestOrAcc,
   chironOfficialRegistratieWire,
   chironOfficialKentekenplaatWire,
+  chironOfficialPlateMeetsCh1211,
+  hydrateChironOfficialVehicleIdentity,
+  verifyChironOfficialLicensePlate,
+  _chironVehicleIdentityIds,
   buildChironTaxiritApiPayload,
   normalizeChironKboRegistration,
   buildChironOfficialIdempotencyKey,
