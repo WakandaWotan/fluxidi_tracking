@@ -60,10 +60,10 @@ bool isCanonicalPaidStatusValue(Object? value) {
   if (value is bool) return value;
   final text = value.toString().trim().toLowerCase();
   if (text.isEmpty || text == 'null') return false;
+  // Ride lifecycle "completed" is not a settlement. Mollie paid is `paid`.
   return text == 'paid' ||
       text == 'settled' ||
       text == 'confirmed' ||
-      text == 'completed' ||
       text == 'success' ||
       text == 'succeeded' ||
       text == 'captured';

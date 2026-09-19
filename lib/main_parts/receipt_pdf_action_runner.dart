@@ -3502,7 +3502,6 @@ class _ReceiptPdfActionRunner {
       if (v == 'paid' ||
           v == 'settled' ||
           v == 'confirmed' ||
-          v == 'completed' ||
           v == 'success' ||
           v == 'true') {
         return _receiptText('paid');

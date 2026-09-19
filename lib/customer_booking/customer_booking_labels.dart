@@ -1,4 +1,5 @@
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 
 const LocalizedText kCustomerBookingTaxiTitle = LocalizedText(
   nl: 'Boek je rit',
@@ -805,6 +806,20 @@ const LocalizedText kCustomerBookingBookPayment = LocalizedText(
   es: 'No se pudo confirmar el pago. Elige otro método de pago.',
 );
 
+const LocalizedText kCustomerBookingCheckoutStart = LocalizedText(
+  nl: 'Online betaling kon niet worden gestart. Probeer opnieuw.',
+  en: 'Online payment could not be started. Please try again.',
+  fr: 'Le paiement en ligne n’a pas pu être démarré. Réessayez.',
+  es: 'No se pudo iniciar el pago online. Inténtalo de nuevo.',
+);
+
+const LocalizedText kCustomerBookingCompletePayment = LocalizedText(
+  nl: 'Boeking aangemaakt. Rond de online betaling af.',
+  en: 'Booking created. Complete the online payment.',
+  fr: 'Réservation créée. Finalisez le paiement en ligne.',
+  es: 'Reserva creada. Completa el pago en línea.',
+);
+
 const LocalizedText kCustomerBookingBookNetwork = LocalizedText(
   nl: 'De boeking is niet bevestigd door een verbindingsfout. Controleer of de rit is opgeslagen voordat je opnieuw boekt.',
   en: 'The booking was not confirmed because of a connection error. Check whether the ride was saved before booking again.',
@@ -902,3 +917,22 @@ const LocalizedText kCustomerBookingPaymentConfirm = LocalizedText(
   fr: 'Confirmer et continuer',
   es: 'Confirmar y continuar',
 );
+
+LocalizedText customerBookingTitleFor(CustomerBookingEntryContext entry) {
+  switch (entry.kind) {
+    case CustomerBookingKind.airport:
+      return kCustomerBookingAirportTitle;
+    case CustomerBookingKind.event:
+      return kCustomerBookingEventTitle;
+    case CustomerBookingKind.stay:
+      return kCustomerBookingStayTitle;
+    case CustomerBookingKind.business:
+      return kCustomerBookingBusinessTitle;
+    case CustomerBookingKind.companyPage:
+    case CustomerBookingKind.bookingLink:
+    case CustomerBookingKind.qr:
+      return kCustomerBookingCompanyTitle;
+    case CustomerBookingKind.taxi:
+      return kCustomerBookingTaxiTitle;
+  }
+}

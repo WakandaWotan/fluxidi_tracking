@@ -129,6 +129,37 @@ void main() {
         isTrue,
       );
     });
+
+    test('ride completed is not paid', () {
+      expect(isCanonicalPaidStatusValue('completed'), isFalse);
+      expect(isCanonicalPaidStatusValue('COMPLETED'), isFalse);
+      expect(
+        resolveCanonicalRidePaidDisplay(
+          historyRaw: <String, dynamic>{
+            'status': 'completed',
+            'payment_status': 'unpaid',
+          },
+          historyDetails: <String, dynamic>{
+            'status': 'completed',
+            'payment_status': 'unpaid',
+          },
+        ),
+        CanonicalRidePaidDisplay.unpaid,
+      );
+    });
+
+    test('Bancontact method without settlement stays unpaid', () {
+      expect(
+        resolveCanonicalRidePaidDisplay(
+          historyRaw: <String, dynamic>{
+            'status': 'completed',
+            'payment_status': 'unpaid',
+            'payment_method': 'bancontact',
+          },
+        ),
+        CanonicalRidePaidDisplay.unpaid,
+      );
+    });
   });
 
   test('Historiek and receipt share the same paid helper', () {

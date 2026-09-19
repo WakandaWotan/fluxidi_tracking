@@ -1103,8 +1103,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   }
 
   bool _methodImpliesPaid(String? method) {
+    // Online Bancontact/Mollie is unpaid until Mollie says paid.
+    // Only an in-car cash/card collection may imply paid, and only
+    // when payment_source is explicitly in_car.
     final m = method?.toLowerCase().trim() ?? '';
-    return m == 'cash' || m == 'bancontact' || m == 'qr' || m == 'card';
+    return m == 'cash' || m == 'card' || m == 'in_vehicle_card' || m == 'in_car';
   }
 
   Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(
@@ -1184,9 +1187,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     final sourceFromDetails = _paymentSourceFromDetails();
     final markAsPaidFromMethod =
         _methodImpliesPaid(methodFromDetails) &&
-        (sourceFromDetails == null ||
-            sourceFromDetails.isEmpty ||
-            sourceFromDetails == 'in_car');
+        sourceFromDetails == 'in_car';
     // Payment authority guard:
     //   If the compliance / local-register hydrated JSON already declares the
     //   ride paid (via any alias surfaced by `_isEffectiveReceiptPaid`), we

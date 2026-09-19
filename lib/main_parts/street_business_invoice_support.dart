@@ -1100,7 +1100,6 @@ bool _isConfirmedPaidStatusToken(String? raw) {
   return text == 'paid' ||
       text == 'settled' ||
       text == 'confirmed' ||
-      text == 'completed' ||
       text == 'success' ||
       text == 'succeeded' ||
       text == 'captured';

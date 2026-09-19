@@ -16,6 +16,7 @@ const String kCustomerBookingIssueAlreadyBooked = 'already_booked';
 const String kCustomerBookingIssueBookFailed = 'book_failed';
 const String kCustomerBookingIssueUnavailable = 'vehicle_unavailable';
 const String kCustomerBookingIssuePayment = 'payment_failed';
+const String kCustomerBookingIssueCheckoutStart = 'checkout_start_failed';
 const String kCustomerBookingIssueNetwork = 'network_failed';
 
 class CustomerBookingSubmitIssue {
@@ -190,6 +191,8 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
       return kCustomerBookingBookUnavailable.of(language);
     case kCustomerBookingIssuePayment:
       return kCustomerBookingBookPayment.of(language);
+    case kCustomerBookingIssueCheckoutStart:
+      return kCustomerBookingCheckoutStart.of(language);
     case kCustomerBookingIssueNetwork:
       return kCustomerBookingBookNetwork.of(language);
     default:
@@ -224,6 +227,12 @@ String customerBookingBookIssueFromRaw(String? raw) {
   if (lower.contains('missing') &&
       (lower.contains('date') || lower.contains('time'))) {
     return kCustomerBookingIssueNeedWhen;
+  }
+  if (lower.contains('checkout_url') ||
+      lower.contains('checkout_start') ||
+      lower.contains('could not be started') ||
+      lower.contains('kon niet worden gestart')) {
+    return kCustomerBookingIssueCheckoutStart;
   }
   if (lower.contains('payment') ||
       lower.contains('mollie') ||

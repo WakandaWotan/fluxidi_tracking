@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
+import 'package:fluxidi_tracking/chiron/chiron_license_plate_wire.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
@@ -5371,6 +5372,13 @@ class _ChironReadinessReportPage extends StatelessWidget {
           fr: 'Plaque démo détectée',
           es: 'Matrícula demo detectada',
         );
+      case 'ch1211_license_plate_too_short':
+        return _t(
+          nl: 'Nummerplaat korter dan 7 tekens (CH1211). Niet opgevuld.',
+          en: 'License plate shorter than 7 characters (CH1211). Not padded.',
+          fr: 'Plaque plus courte que 7 caractères (CH1211). Non complétée.',
+          es: 'Matrícula de menos de 7 caracteres (CH1211). Sin relleno.',
+        );
       case 'invalid_flemish_taxi_plate':
         return _t(
           nl: 'Ongeldig Vlaams taxi-kenteken',
@@ -6175,6 +6183,7 @@ class _ChironReadinessReportPage extends StatelessWidget {
         _readinessHaystackContains(haystack, const [
           'invalid_flemish_taxi_plate',
           'placeholder_license_plate',
+          'ch1211_license_plate_too_short',
           'invalid_license_plate',
           'taxi_plate',
           'kenteken',
@@ -15138,6 +15147,16 @@ class _LocalComplianceLedgerSectionState
     return null;
   }
 
+  String? _lookupVehicleProfilePlate(String? vehicleId) {
+    final id = (vehicleId ?? '').trim();
+    if (id.isEmpty) return null;
+    for (final vehicle in vehiclesNotifier.value) {
+      if (!_profileIdMatches(vehicle.id, id)) continue;
+      return _meaningfulDisplayToken(vehicle.licensePlate);
+    }
+    return null;
+  }
+
   String? _lookupVehicleProfileDisplay(String? vehicleId) {
     final id = (vehicleId ?? '').trim();
     if (id.isEmpty) return null;
@@ -15419,6 +15438,10 @@ class _LocalComplianceLedgerSectionState
         break;
       }
     }
+    plate = chironPreferredKentekenplaat(
+      eventPlate: plate,
+      fleetPlate: _lookupVehicleProfilePlate(entry.vehicleId),
+    );
 
     final labelCandidates = <String?>[
       _rawPathText(raw, const ['vehicle', 'label']),

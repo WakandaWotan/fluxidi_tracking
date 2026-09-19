@@ -1,9 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_checkout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_flow.dart';
-import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
+import 'package:fluxidi_tracking/payment/pending_payment.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+Future<bool> customerBookingOpenHostedCheckout(
+  CustomerBookingCheckoutPlan plan,
+) async {
+  if (!plan.canOpen) return false;
+  if (plan.paymentBookingId.isNotEmpty) {
+    setFluxidiPendingPayment(
+      paymentBookingId: plan.paymentBookingId,
+      publicBookingId: plan.publicReference.isEmpty ? null : plan.publicReference,
+    );
+    markFluxidiPendingPaymentChecking(paymentBookingId: plan.paymentBookingId);
+  }
+  final uri = Uri.tryParse(plan.checkoutUrl);
+  if (uri == null) return false;
+  return launchUrl(uri, mode: LaunchMode.externalApplication);
+}
 
 Future<T?> openCustomerBookingFlow<T>(
   BuildContext context, {
@@ -19,26 +37,8 @@ Future<T?> openCustomerBookingFlow<T>(
         bookingBaseUrl: bookingBaseUrl ?? kBookingBaseUrl,
         language: language ?? appConfig.currentLanguage,
         onGoToStartPage: onGoToStartPage,
+        hostedCheckout: customerBookingOpenHostedCheckout,
       ),
     ),
   );
-}
-
-LocalizedText customerBookingTitleFor(CustomerBookingEntryContext entry) {
-  switch (entry.kind) {
-    case CustomerBookingKind.airport:
-      return kCustomerBookingAirportTitle;
-    case CustomerBookingKind.event:
-      return kCustomerBookingEventTitle;
-    case CustomerBookingKind.stay:
-      return kCustomerBookingStayTitle;
-    case CustomerBookingKind.business:
-      return kCustomerBookingBusinessTitle;
-    case CustomerBookingKind.companyPage:
-    case CustomerBookingKind.bookingLink:
-    case CustomerBookingKind.qr:
-      return kCustomerBookingCompanyTitle;
-    case CustomerBookingKind.taxi:
-      return kCustomerBookingTaxiTitle;
-  }
 }

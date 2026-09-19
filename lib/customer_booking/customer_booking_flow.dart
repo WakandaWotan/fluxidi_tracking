@@ -17,19 +17,21 @@ import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_addresses.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_book_result.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_billing.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_checkout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_cards.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_vehicle_offers.dart';
+import 'package:fluxidi_tracking/company/company_driver_agenda_style.dart';
 import 'package:fluxidi_tracking/company/company_plan_when.dart';
 import 'package:fluxidi_tracking/company/company_form_date_time.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_home_notice.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
-import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_payment_page.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_price_block.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
@@ -68,6 +70,8 @@ class CustomerBookingFlow extends StatefulWidget {
     this.onGoToStartPage,
     this.profile,
     this.profileGet,
+    this.checkoutOpener,
+    this.hostedCheckout,
   });
 
   final CustomerBookingEntryContext entry;
@@ -81,6 +85,8 @@ class CustomerBookingFlow extends StatefulWidget {
   final WidgetBuilder? onGoToStartPage;
   final CustomerProfile? profile;
   final CustomerBookingProfileGet? profileGet;
+  final Future<bool> Function(String url)? checkoutOpener;
+  final Future<bool> Function(CustomerBookingCheckoutPlan plan)? hostedCheckout;
 
   @override
   State<CustomerBookingFlow> createState() => _CustomerBookingFlowState();
@@ -1515,6 +1521,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         }
       }
       final totalPrice = _quote?.displayTotalPrice;
+      String selectedPlate = '';
+      for (final offer in _outboundVehicleOffers) {
+        if (offer.vehicleId == (_selectedVehicleId ?? '').trim()) {
+          selectedPlate = companyAgendaVehiclePlate(offer.vehicle);
+          break;
+        }
+      }
       final body = <String, dynamic>{
         ...request.body,
         'name': _nameCtrl.text.trim(),
@@ -1526,6 +1539,8 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           'preferred_vehicle_id': _selectedVehicleId!.trim(),
         if ((_selectedVehicleId ?? '').trim().isNotEmpty)
           'vehicle_id': _selectedVehicleId!.trim(),
+        if (selectedPlate.isNotEmpty) 'license_plate': selectedPlate,
+        if (selectedPlate.isNotEmpty) 'licensePlate': selectedPlate,
         if (assignedDriverId.isNotEmpty) 'assigned_driver_id': assignedDriverId,
         if (_splitReturn && (_selectedReturnVehicleId ?? '').trim().isNotEmpty)
           'preferred_return_vehicle_id': _selectedReturnVehicleId!.trim(),
@@ -1559,12 +1574,27 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         entry: _entry,
         headers: headers,
       );
+      final checkout = customerBookingCheckoutPlan(
+        isMollieCheckout: selection.isMollieCheckout,
+        response: result,
+      );
+      if (checkout.requiredCheckout && !checkout.hasSafeUrl) {
+        throw const CustomerBookingBookException(
+          statusCode: 200,
+          code: kCustomerBookingIssueCheckoutStart,
+          raw: 'checkout_url_missing',
+        );
+      }
       final bookingId = customerBookingIdFromResponse(result);
       final assigned = customerBookingAssignedDriverFromMaps(booking: result);
+      final paymentBookingId = checkout.paymentBookingId.isNotEmpty
+          ? checkout.paymentBookingId
+          : bookingId;
       final stored = StoredCustomerBooking(
         bookingId: bookingId.isEmpty ? _idempotencyKey : bookingId,
         tenantId: _entry.company.tenantId,
         companyId: _entry.company.companyId,
+        paymentBookingId: paymentBookingId,
         from: _pickup.value.routeText,
         to: _dropoff.value.routeText,
         pickupIso: pickupAt == null
@@ -1577,6 +1607,10 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         service: _options.service,
         pax: '$_passengers',
         bags: '$_bags',
+        paymentStatus: customerBookingStoredPaymentStatus(
+          isMollieCheckout: selection.isMollieCheckout,
+          response: result,
+        ),
         status: 'CONFIRMED',
         companyName: _entry.company.companyName,
         quote: <String, dynamic>{
@@ -1612,7 +1646,30 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       });
       await _persistBookedRide(stored);
       if (!mounted) return;
-      _returnToCustomerHome();
+      if (checkout.requiredCheckout) {
+        final hosted = widget.hostedCheckout;
+        final opened = hosted != null
+            ? await hosted(checkout)
+            : await (widget.checkoutOpener ?? _launchCustomerBookingCheckout)(
+                checkout.checkoutUrl,
+              );
+        if (!opened) {
+          if (!mounted) return;
+          setState(() {
+            _submitError = customerBookingSubmitIssueText(
+              kCustomerBookingIssueCheckoutStart,
+              _language,
+            );
+          });
+          return;
+        }
+      }
+      if (!mounted) return;
+      _returnToCustomerHome(
+        notice: checkout.requiredCheckout
+            ? _t(kCustomerBookingCompletePayment)
+            : _t(kCustomerBookingSuccess),
+      );
     } catch (error) {
       if (!mounted) return;
       final mapped = customerBookingBookExceptionFromCaught(error);
@@ -1668,9 +1725,15 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     } catch (_) {}
   }
 
-  void _returnToCustomerHome() {
+  Future<bool> _launchCustomerBookingCheckout(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  void _returnToCustomerHome({String? notice}) {
     if (!mounted) return;
-    CustomerBookingHomeNotice.set(_t(kCustomerBookingSuccess));
+    CustomerBookingHomeNotice.set(notice ?? _t(kCustomerBookingSuccess));
     final home = widget.onGoToStartPage;
     if (home != null) {
       Navigator.of(context).pushAndRemoveUntil(

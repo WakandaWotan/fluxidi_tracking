@@ -153,6 +153,10 @@ void main() {
       kCustomerBookingIssuePayment,
     );
     expect(
+      customerBookingBookIssueFromRaw('checkout_url_missing'),
+      kCustomerBookingIssueCheckoutStart,
+    );
+    expect(
       customerBookingBookIssueFromRaw('TimeoutException after 0:00:20'),
       kCustomerBookingIssueNetwork,
     );
