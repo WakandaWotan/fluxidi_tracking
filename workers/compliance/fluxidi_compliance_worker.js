@@ -5345,6 +5345,13 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
   // Even if plate came from event, expose scoped fleet record for trust markers.
   if (!record && fleetRecord) record = fleetRecord;
 
+  // Ride 2026-09-032 carried no plate at all, so the plate came from the fleet
+  // row of the same vehicle and that row itself is CH1211-short (Tax002).
+  // Whatever the source, an invalid final plate must carry a reason.
+  if (!plateBlockedReason && plate && !chironOfficialPlateMeetsCh1211(plate)) {
+    plateBlockedReason = "ch1211_assigned_vehicle_plate_invalid";
+  }
+
   if (plateBlockedReason || plateSubstitutedFrom) {
     console.log(
       `[CHIRON][PLATE_IDENTITY] event_vehicle=${ids.eventVehicleId || "none"} ` +
