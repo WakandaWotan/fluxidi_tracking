@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
+import 'package:fluxidi_tracking/airport/airport_return_address_pin.dart';
 import 'package:fluxidi_tracking/airport/airport_selector.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
 import 'package:fluxidi_tracking/nearby/public_partner_identity.dart';
@@ -133,6 +134,10 @@ class _AirportPageState extends State<AirportPage> {
   String? _pickupPostcode;
   String? _destinationPostcode;
   String? _returnPostcode;
+  /// Address text the return coordinates were resolved for. Editing the text
+  /// keeps those coordinates while it still names the same place, so a
+  /// reformatted return address does not lose its pin and drop the fixed fare.
+  String? _returnCoordinateAnchor;
   Map<String, dynamic>? _airportQuote;
   String? _airportQuoteError;
 
@@ -1008,6 +1013,7 @@ class _AirportPageState extends State<AirportPage> {
         _returnLatitude = null;
         _returnLongitude = null;
         _returnPostcode = null;
+        _returnCoordinateAnchor = null;
       } else {
         _returnDateTimeController.clear();
         _prefillRoundtripReturnAddressFromOutbound();
@@ -1038,15 +1044,18 @@ class _AirportPageState extends State<AirportPage> {
       _returnLatitude = null;
       _returnLongitude = null;
       _returnPostcode = null;
+      _returnCoordinateAnchor = null;
       return;
     }
     _returnAddressController.text = sourceText;
     if (_hasValidCoordinates(sourceLatitude, sourceLongitude)) {
       _returnLatitude = sourceLatitude;
       _returnLongitude = sourceLongitude;
+      _returnCoordinateAnchor = sourceText;
     } else {
       _returnLatitude = null;
       _returnLongitude = null;
+      _returnCoordinateAnchor = null;
     }
     _returnPostcode = sourcePostcode.isEmpty ? null : sourcePostcode;
   }
@@ -1129,8 +1138,11 @@ class _AirportPageState extends State<AirportPage> {
             icon: Icons.pin_drop_outlined,
             onChanged: (value) {
               setState(() {
-                _returnLatitude = null;
-                _returnLongitude = null;
+                if (!_returnEditKeepsCoordinates(value)) {
+                  _returnLatitude = null;
+                  _returnLongitude = null;
+                  _returnCoordinateAnchor = null;
+                }
                 _returnPostcode = _extractLikelyPostcode(value);
               });
             },
@@ -3405,6 +3417,16 @@ class _AirportPageState extends State<AirportPage> {
       return false;
     }
     return true;
+  }
+
+  /// Whether an edited return address still names the place the current return
+  /// coordinates belong to, so the pin and the fixed fare survive a rewrite.
+  bool _returnEditKeepsCoordinates(String edited) {
+    if (!_hasValidCoordinates(_returnLatitude, _returnLongitude)) return false;
+    return airportReturnEditKeepsPin(
+      anchor: _returnCoordinateAnchor ?? '',
+      edited: edited,
+    );
   }
 
   String _extractLikelyPostcode(String rawAddress) {
