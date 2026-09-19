@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { createMemoryRegistryKv, upsertCompanyRegistryEntry } from "./company_registry_index.mjs";
+import { applyPublicVisibilityOverride, publicVisibilityCodeKey } from "./company_account_lifecycle.mjs";
 import {
   applyPublicMarketplaceProfileOverlay,
   classifyRegistryPublicVisibility,
@@ -65,6 +66,15 @@ async function seedIndex() {
   )));
   return kv;
 }
+
+test("missing registry lifecycle is never treated as public-active", () => {
+  const missing = classifyRegistryPublicVisibility({
+    company_code: "FLX-00033",
+    environment_class: "unknown",
+  });
+  assert.equal(missing.public, false);
+  assert.equal(missing.reason, "registry_lifecycle_inactive");
+});
 
 test("registry membership keeps real and review companies without a six-company hardlist", () => {
   const keepUnknown = classifyRegistryPublicVisibility({
@@ -155,12 +165,47 @@ test("link aliases include canonical partner id and scoped company id", () => {
   assert.ok(aliases.includes("FLX-00001"));
 });
 
+test("platform public visibility override hides an otherwise public review company", async () => {
+  const hiddenByField = classifyRegistryPublicVisibility({
+    company_code: "FLX-00020",
+    lifecycle_status: "active",
+    environment_class: "review",
+    public_visibility: "hidden",
+  });
+  assert.equal(hiddenByField.public, false);
+  assert.equal(hiddenByField.reason, "public_visibility_hidden");
+
+  const kv = await seedIndex();
+  await applyPublicVisibilityOverride(kv, {
+    tenantId: "cmp_fluxidi-google-review_f94c806649",
+    companyId: "cmp_fluxidi-google-review_f94c806649",
+    companyCode: "FLX-00020",
+    visibility: "hidden",
+  });
+  const beforeUpsert = kv.map.get(publicVisibilityCodeKey("FLX-00020"));
+  await upsertCompanyRegistryEntry(kv, {
+    company_code: "FLX-00020",
+    display_name: "Fluxidi Google Review",
+    environment_class: "review",
+    lifecycle_status: "active",
+  });
+  assert.equal(kv.map.get(publicVisibilityCodeKey("FLX-00020")), beforeUpsert);
+  const index = await loadPublicCompanyVisibilityIndex({ BOOKING_KV: kv });
+  assert.equal(isPublicMarketplaceCompanyCode(index, "FLX-00020"), false);
+  assert.equal(isPublicMarketplaceCompanyCode(index, "FLX-00001"), true);
+  assert.equal(isPublicMarketplacePartner(index, {
+    partner_id: "company:cmp_fluxidi-google-review_f94c806649:cmp_fluxidi-google-review_f94c806649",
+  }), false);
+});
+
 test("worker public surfaces call the registry visibility gate", () => {
   const moduleSrc = readFileSync(join(HERE, "public_company_visibility.mjs"), "utf8");
   assert.match(WORKER_SRC, /loadPublicCompanyVisibilityIndexCached/);
   assert.match(WORKER_SRC, /isPublicMarketplacePartner/);
   assert.match(WORKER_SRC, /isPublicMarketplaceCompanyCode/);
   assert.match(WORKER_SRC, /applyPublicMarketplaceProfileOverlay/);
+  assert.match(WORKER_SRC, /loadPublicVisibilityOverride/);
+  assert.match(WORKER_SRC, /applyPublicVisibilityOverride/);
   assert.match(WORKER_SRC, /fx-example-badge/);
   assert.match(moduleSrc, /Voorbeeldbedrijf/);
 });

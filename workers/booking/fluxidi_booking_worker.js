@@ -28,7 +28,7 @@ import {
   noteIsolateReads,
   logKvPass,
 } from "./modules/kv_op_budget.js";
-import { upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
+import { removeCompanyRegistryEntry, upsertCompanyRegistryEntry } from "./modules/company_registry_index.mjs";
 import {
   applyPublicMarketplaceProfileOverlay,
   configuredExampleCompanyCode,
@@ -400,7 +400,15 @@ import {
 } from "./modules/company_trial_entitlement.mjs";
 import {
   applyAccountAction,
+  applyPublicVisibilityOverride,
+  assertNotClosedIdentity,
   loadAccountLifecycle,
+  loadPublicVisibilityOverride,
+  operationalAccessEligibility,
+  publicListingEligibility,
+  publicPartnerAccountFields,
+  publicProfileEligibility,
+  removeCompanyFromPublicProjections,
 } from "./modules/company_account_lifecycle.mjs";
 import {
   fetchRatehawkHotelsStatus,
@@ -9028,6 +9036,13 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
   };
 
   try {
+    const billitAccount = await _loadCanonicalAccountForScope(env, scope);
+    if (!operationalAccessEligibility(billitAccount, "integration_auto").ok) {
+      console.log(
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped account_${billitAccount.state || "unknown"} booking=${maskedBooking}`,
+      );
+      return { ok: true, skipped: true, reason: `account_${billitAccount.state || "unknown"}` };
+    }
     // Read auto-create setting (missing/legacy profile => OFF). CREATE of a
     // new invoice/order stays behind this gate; paid sync of an existing
     // invoice/order bypasses it (1A).
@@ -9571,6 +9586,13 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
         `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=missing_tenant_scope`,
       );
       return { ok: true, skipped: true, reason: "missing_tenant_scope" };
+    }
+    const invoiceAccount = await _loadCanonicalAccountForScope(env, invoiceScope);
+    if (!operationalAccessEligibility(invoiceAccount, "integration_auto").ok) {
+      console.log(
+        `[DOCUMENT_CORE_INVOICE_LIFECYCLE][SKIP] booking=${maskedBooking} source=${source} reason=account_${invoiceAccount.state || "unknown"}`,
+      );
+      return { ok: true, skipped: true, reason: `account_${invoiceAccount.state || "unknown"}` };
     }
     if (!safeStr(bookingId, 200)) {
       console.log(
@@ -17783,6 +17805,47 @@ function _isFluxidiSubscriptionSuspended(profile) {
   return effective === "suspended";
 }
 
+async function _loadCanonicalAccountForScope(env, scope = {}, extra = {}) {
+  return loadAccountLifecycle(env?.BOOKING_KV, {
+    tenantId: sanitizeTenantString(scope?.tenant_id, 80),
+    companyId: sanitizeTenantString(scope?.company_id, 80),
+    companyCode: sanitizeTenantString(extra.companyCode || extra.company_code || scope?.company_code, 80),
+    publicPartnerId: sanitizeTenantString(extra.publicPartnerId || extra.public_partner_id, 160),
+    vatNumber: sanitizeTenantString(extra.vatNumber || extra.vat_number, 96),
+    ownerAccountId: sanitizeTenantString(extra.ownerAccountId || extra.owner_account_id, 120),
+  });
+}
+
+async function _accountRouteDecision(env, scope, routeClass, context = {}) {
+  const account = await _loadCanonicalAccountForScope(env, scope, context);
+  return {
+    account,
+    decision: operationalAccessEligibility(account, routeClass, {
+      ...context,
+      scope: { tenant_id: scope?.tenant_id, company_id: scope?.company_id },
+    }),
+  };
+}
+
+function _accountBlockedResponse(decision, { audience = "company" } = {}) {
+  if (!decision || decision.ok === true) return null;
+  if (audience === "public") return json({ ok: false, error: "company_unavailable" }, 503);
+  return json({
+    ok: false,
+    error: decision.error || "company_unavailable",
+    account_state: decision.state || null,
+  }, 403);
+}
+
+async function _assertCompanyCanMintSession(env, scope, extra = {}) {
+  const account = await _loadCanonicalAccountForScope(env, scope, extra);
+  const access = operationalAccessEligibility(account, "company_login");
+  if (!access.ok) {
+    return { ok: false, error: access.error || "company_unavailable", account_state: access.state };
+  }
+  return { ok: true, account };
+}
+
 // Guard used at new-booking/quote creation boundaries (never inside
 // handleBooking). Loads the company-scoped subscription profile read-only, then
 // best-effort runs the Patch 3.5 suspension materializer so a stale past_due
@@ -17791,6 +17854,15 @@ function _isFluxidiSubscriptionSuspended(profile) {
 // otherwise { ok: true }. Never throws; materializer failures fall back to the
 // loaded profile per existing best-effort conventions.
 async function _assertFluxidiCompanyCanCreateNewBooking(env, scope) {
+  try {
+    const account = await _loadCanonicalAccountForScope(env, scope);
+    const access = operationalAccessEligibility(account, "new_booking");
+    if (!access.ok) {
+      return { ok: false, error: access.error || "company_unavailable", account_state: access.state };
+    }
+  } catch (e) {
+    return { ok: false, error: "company_unavailable" };
+  }
   let profile = await loadSubscriptionProfile(env, scope, {
     allowTenantLegacyFallback: false,
   });
@@ -17859,14 +17931,70 @@ async function handleAdminCompanyAccount(request, url, env) {
   );
   if (request.method === "GET") {
     const record = await loadAccountLifecycle(env.BOOKING_KV, { tenantId, companyId });
+    const visibility = await loadPublicVisibilityOverride(env.BOOKING_KV, {
+      tenantId,
+      companyId,
+      companyCode: companyCode || record.company_code,
+    });
     return json({
       ok: true,
       tenant_id: tenantId,
       company_id: companyId,
       company_code: companyCode || record.company_code || null,
       account: record,
+      public_visibility: visibility.visibility || "listed",
+      public_visibility_override: visibility,
       subscription_untouched: true,
     }, 200);
+  }
+  let vatNumber = sanitizeTenantString(body.vat_number ?? body.vatNumber, 96);
+  let ownerAccountId = sanitizeTenantString(body.owner_account_id ?? body.ownerAccountId, 120);
+  if (!vatNumber || !ownerAccountId) {
+    try {
+      const businessProfile = await loadBusinessProfile(env, { tenant_id: tenantId, company_id: companyId }, {
+        allowTenantLegacyFallback: false,
+      });
+      vatNumber = vatNumber || sanitizeTenantString(
+        businessProfile?.vat_number
+          ?? businessProfile?.vatNumber
+          ?? businessProfile?.enterprise_number
+          ?? businessProfile?.enterpriseNumber,
+        96,
+      );
+      ownerAccountId = ownerAccountId || sanitizeTenantString(
+        businessProfile?.owner_account_id ?? businessProfile?.ownerAccountId ?? businessProfile?.account_id,
+        120,
+      );
+    } catch (_) {}
+  }
+  const requestedVisibility = sanitizeTenantString(
+    body.public_visibility ?? body.publicVisibility,
+    24,
+  ).toLowerCase();
+  let visibilityResult = null;
+  if (requestedVisibility === "hidden" || requestedVisibility === "listed") {
+    visibilityResult = await applyPublicVisibilityOverride(env.BOOKING_KV, {
+      tenantId,
+      companyId,
+      companyCode,
+      visibility: requestedVisibility,
+      actorId: sanitizeTenantString(body.actor_id ?? body.actorId, 80) || "platform_admin",
+      reason: sanitizeTenantString(body.reason, 240),
+    });
+    if (!visibilityResult.ok) return json(visibilityResult, 400);
+    if (!sanitizeTenantString(body.action, 40)) {
+      const record = await loadAccountLifecycle(env.BOOKING_KV, { tenantId, companyId });
+      return json({
+        ok: true,
+        tenant_id: tenantId,
+        company_id: companyId,
+        company_code: companyCode || record.company_code || null,
+        account: record,
+        public_visibility: visibilityResult,
+        account_state_unchanged: true,
+        subscription_untouched: true,
+      }, 200);
+    }
   }
   const result = await applyAccountAction(env.BOOKING_KV, {
     tenantId,
@@ -17876,14 +18004,18 @@ async function handleAdminCompanyAccount(request, url, env) {
     actorId: sanitizeTenantString(body.actor_id ?? body.actorId, 80) || "platform_admin",
     reason: sanitizeTenantString(body.reason, 240),
     confirmation: body.confirmation && typeof body.confirmation === "object" ? body.confirmation : null,
+    vatNumber,
+    ownerAccountId,
+    removeFromRegistry: async ({ companyCode: code }) => removeCompanyRegistryEntry(env.BOOKING_KV, code),
   });
-  if (!result.ok) {
+    if (!result.ok) {
     const status = result.error === "unauthorized" ? 401
-      : (result.error === "close_confirmation_required" || result.error === "action_not_available" || result.error === "hard_protected_company")
+      : (result.error === "close_confirmation_required" || result.error === "action_not_available" || result.error === "hard_protected_company" || result.error === "closed_is_final")
         ? 409
         : 400;
     return json(result, status);
   }
+  if (visibilityResult) result.public_visibility = visibilityResult;
   return json(result, 200);
 }
 
@@ -21253,6 +21385,10 @@ async function _syncCompanyRegistryMembership(env, {
     return { ok: false, error: "kv_unbound", already_indexed: false };
   }
   const playReviewCode = _playReviewConfiguredCompanyCode(env);
+  const closed = await assertNotClosedIdentity(env.BOOKING_KV, { companyCode: normalizedCode });
+  if (!closed.ok) {
+    return { ok: false, error: "company_closed", already_indexed: false };
+  }
   let result;
   try {
     result = await upsertCompanyRegistryEntry(env.BOOKING_KV, {
@@ -22696,6 +22832,11 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
     return null;
   }
   if (!tenantId || !companyId || !driverId) return null;
+  const account = await loadAccountLifecycle(env.BOOKING_KV, { tenantId, companyId });
+  if (!operationalAccessEligibility(account, "bootstrap").ok) {
+    try { await env.BOOKING_KV.delete(key); } catch (_) {}
+    return null;
+  }
   return {
     key,
     token_hash: tokenHash,
@@ -22707,6 +22848,7 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
     company_display_name: companyDisplayName,
     assigned_vehicle_id: assignedVehicleId,
     expires_at: expiresAt,
+    account_state: account.state,
   };
 }
 
@@ -23397,6 +23539,15 @@ async function _loadCompanySessionFromRequest(request, env) {
     return null;
   }
   if (!tenantId || !companyId) return null;
+  const account = await loadAccountLifecycle(env.BOOKING_KV, {
+    tenantId,
+    companyId,
+    companyCode,
+  });
+  if (!operationalAccessEligibility(account, "bootstrap").ok) {
+    try { await env.BOOKING_KV.delete(key); } catch (_) {}
+    return null;
+  }
   return {
     key,
     token_hash: tokenHash,
@@ -23406,6 +23557,7 @@ async function _loadCompanySessionFromRequest(request, env) {
     company_code: companyCode,
     company_display_name: companyDisplayName,
     expires_at: expiresAt,
+    account_state: account.state,
   };
 }
 
@@ -24654,6 +24806,13 @@ async function handlePublicCompanyRegister(body, env) {
   const peppolReadinessStatus = enterpriseNumber ? "prepared" : "missing_vat";
   const chironReadinessStatus = "pending";
 
+  const closedIdentity = await assertNotClosedIdentity(env.BOOKING_KV, {
+    vatNumber: normalizedBelgianVat || enterpriseNumber || vatLikeInput,
+  });
+  if (!closedIdentity.ok) {
+    return json({ ok: false, error: "company_unavailable" }, 409);
+  }
+
   const scope = await _allocateNewCompanyScopeForRegistration(env, companyName);
   if (!scope?.tenant_id || !scope?.company_id) {
     return json({ ok: false, error: "registration_failed" }, 500);
@@ -25281,6 +25440,18 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
     }
   }
 
+  const recoveryLogin = await _assertCompanyCanMintSession(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeValidation.code,
+  });
+  if (!recoveryLogin.ok) {
+    console.log(
+      `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=account_${recoveryLogin.account_state || "refused"}`,
+    );
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
+
   const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
   const companySessionToken = _generateOpaqueToken(32, "cst_");
   const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
@@ -25479,6 +25650,18 @@ async function handlePublicCompanyReviewAccessVerify(body, env, request = null) 
   ) {
     console.log(
       `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=company_unavailable`,
+    );
+    return deny();
+  }
+
+  const playReviewLogin = await _assertCompanyCanMintSession(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+    company_code: codeValidation.code,
+  });
+  if (!playReviewLogin.ok) {
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=account_${playReviewLogin.account_state || "refused"}`,
     );
     return deny();
   }
@@ -28552,6 +28735,14 @@ async function handlePublicCompanyLinkVerify(body, env) {
     expirationTtl: remainingSeconds,
   });
   await env.BOOKING_KV.delete(activeKey);
+  const pairingLogin = await _assertCompanyCanMintSession(env, {
+    tenant_id: sanitizeTenantString(companyRecord.tenant_id, 80),
+    company_id: sanitizeTenantString(companyRecord.company_id, 80),
+    company_code: sanitizeTenantString(companyRecord.company_code ?? codeRead.code, 80),
+  });
+  if (!pairingLogin.ok) {
+    return json({ ok: false, error: "verification_failed" }, 403);
+  }
   const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
   const companySessionToken = _generateOpaqueToken(32, "cst_");
   const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
@@ -31300,6 +31491,14 @@ async function handlePublicDriverLogin(body, env, request = null) {
   }
   const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
   if (!companyRecord || companyRecord.linking_enabled !== true) {
+    return _publicDriverLoginFail("verification_failed");
+  }
+  const driverAccount = await loadAccountLifecycle(env.BOOKING_KV, {
+    tenantId: sanitizeTenantString(companyRecord.tenant_id, 80),
+    companyId: sanitizeTenantString(companyRecord.company_id, 80),
+    companyCode: codeValidation.code,
+  });
+  if (!operationalAccessEligibility(driverAccount, "public_login").ok) {
     return _publicDriverLoginFail("verification_failed");
   }
   const scope = {
@@ -50154,6 +50353,41 @@ export default {
         if (!canonicalPartnerId) {
           return json({ ok: false, error: "invalid_partner_scope" }, 400);
         }
+        const publishAccount = await _loadCanonicalAccountForScope(env, explicitScope, {
+          publicPartnerId: canonicalPartnerId,
+        });
+        if (publishAccount.state === "closed") {
+          await removeCompanyFromPublicProjections(env.BOOKING_KV, {
+            tenantId: explicitScope.tenant_id,
+            companyId: explicitScope.company_id,
+            publicPartnerId: canonicalPartnerId,
+          });
+          return json({ ok: false, error: "company_unavailable", account_state: "closed" }, 409);
+        }
+        let publishCompanyCode = sanitizeTenantString(incoming.company_code ?? incoming.companyCode, 80);
+        if (!publishCompanyCode) {
+          try {
+            const scopeLink = await env.BOOKING_KV.get(
+              `company_link:index:scope:${explicitScope.tenant_id}:${explicitScope.company_id}:v1`,
+              { type: "json" },
+            );
+            const scopeRecord = scopeLink?.record && typeof scopeLink.record === "object"
+              ? scopeLink.record
+              : scopeLink;
+            publishCompanyCode = sanitizeTenantString(
+              scopeRecord?.company_code ?? scopeRecord?.companyCode,
+              80,
+            );
+          } catch (_) {
+            publishCompanyCode = "";
+          }
+        }
+        const publishVisibility = await loadPublicVisibilityOverride(env.BOOKING_KV, {
+          tenantId: explicitScope.tenant_id,
+          companyId: explicitScope.company_id,
+          companyCode: publishCompanyCode,
+        });
+        const publicHidden = publishVisibility.visibility === "hidden";
         let _existingScopedPartnerRecord = null;
         try {
           _existingScopedPartnerRecord = await env.BOOKING_KV.get(
@@ -50272,27 +50506,10 @@ export default {
           sourceRevision: _limousineRevision.source_revision,
         });
 
-        const rawProfiles = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
-        const currentProfiles = Array.isArray(rawProfiles)
-          ? rawProfiles
-          : (rawProfiles && typeof rawProfiles === "object" && Array.isArray(rawProfiles.profiles)
-              ? rawProfiles.profiles
-              : []);
-        const existingProfiles = currentProfiles
-          .map(_normalizePublicPartnerProfileEntry)
-          .filter((p) => p !== null);
-        const nextProfiles = existingProfiles
-          .filter((p) => p.partner_id !== normalizedProfile.partner_id)
-          .concat([normalizedProfile]);
-        await env.BOOKING_KV.put(
-          PARTNER_PROFILES_KEY,
-          JSON.stringify({ profiles: nextProfiles }),
-        );
-
         const normalizedDirectoryEntry = _normalizePartnerEntry({
           partner_id: normalizedProfile.partner_id,
           company_name: normalizedProfile.company_name,
-          is_active: normalizedProfile.is_active === true,
+          is_active: publishAccount.state === "active" && normalizedProfile.is_active === true,
           subscription_status: normalizedProfile.subscription_status,
           primary_postcode: normalizedProfile?.coverage?.primary_postcode ?? "",
           supported_postcodes: Array.isArray(normalizedProfile?.coverage?.postcodes)
@@ -50302,29 +50519,13 @@ export default {
         if (!normalizedDirectoryEntry) {
           return json({ ok: false, error: "invalid directory projection" }, 400);
         }
-        const rawDirectory = await env.BOOKING_KV.get(PARTNER_DIRECTORY_KEY, { type: "json" });
-        const currentDirectory = Array.isArray(rawDirectory)
-          ? rawDirectory
-          : (rawDirectory && typeof rawDirectory === "object" && Array.isArray(rawDirectory.partners)
-              ? rawDirectory.partners
-              : []);
-        const existingDirectory = currentDirectory
-          .map(_normalizePartnerEntry)
-          .filter((p) => p !== null);
-        const nextDirectory = existingDirectory
-          .filter((p) => p.partner_id !== normalizedDirectoryEntry.partner_id)
-          .concat([normalizedDirectoryEntry]);
-        await env.BOOKING_KV.put(
-          PARTNER_DIRECTORY_KEY,
-          JSON.stringify({ partners: nextDirectory }),
-        );
 
         const partnerRouteEntry = _normalizePartnerBookingRouteEntry({
           partner_id: normalizedProfile.partner_id,
           tenant_id: explicitScope.tenant_id,
           company_id: explicitScope.company_id,
           company_name: normalizedProfile.company_name,
-          is_active: normalizedProfile.is_active === true,
+          is_active: publishAccount.state === "active" && normalizedProfile.is_active === true,
           subscription_status: normalizedProfile.subscription_status,
           updated_at: new Date().toISOString(),
         });
@@ -50362,6 +50563,54 @@ export default {
             company_id: explicitScope.company_id,
             booking_route: partnerRouteEntry,
           }),
+        );
+        if (publicHidden) {
+          await removeCompanyFromPublicProjections(env.BOOKING_KV, {
+            tenantId: explicitScope.tenant_id,
+            companyId: explicitScope.company_id,
+            publicPartnerId: canonicalPartnerId,
+          });
+          return json({
+            ok: true,
+            profile: normalizedProfile,
+            directory_entry: normalizedDirectoryEntry,
+            booking_route: partnerRouteEntry,
+            public_listed: false,
+            public_visibility: "hidden",
+            account_state_unchanged: true,
+          }, 200);
+        }
+        const rawProfiles = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
+        const currentProfiles = Array.isArray(rawProfiles)
+          ? rawProfiles
+          : (rawProfiles && typeof rawProfiles === "object" && Array.isArray(rawProfiles.profiles)
+              ? rawProfiles.profiles
+              : []);
+        const existingProfiles = currentProfiles
+          .map(_normalizePublicPartnerProfileEntry)
+          .filter((p) => p !== null);
+        const nextProfiles = existingProfiles
+          .filter((p) => p.partner_id !== normalizedProfile.partner_id)
+          .concat([normalizedProfile]);
+        await env.BOOKING_KV.put(
+          PARTNER_PROFILES_KEY,
+          JSON.stringify({ profiles: nextProfiles }),
+        );
+        const rawDirectory = await env.BOOKING_KV.get(PARTNER_DIRECTORY_KEY, { type: "json" });
+        const currentDirectory = Array.isArray(rawDirectory)
+          ? rawDirectory
+          : (rawDirectory && typeof rawDirectory === "object" && Array.isArray(rawDirectory.partners)
+              ? rawDirectory.partners
+              : []);
+        const existingDirectory = currentDirectory
+          .map(_normalizePartnerEntry)
+          .filter((p) => p !== null);
+        const nextDirectory = existingDirectory
+          .filter((p) => p.partner_id !== normalizedDirectoryEntry.partner_id)
+          .concat([normalizedDirectoryEntry]);
+        await env.BOOKING_KV.put(
+          PARTNER_DIRECTORY_KEY,
+          JSON.stringify({ partners: nextDirectory }),
         );
         const rawRoutes = await env.BOOKING_KV.get(PARTNER_BOOKING_ROUTE_KEY, {
           type: "json",
@@ -50450,6 +50699,7 @@ export default {
           profile: normalizedProfile,
           directory_entry: normalizedDirectoryEntry,
           booking_route: partnerRouteEntry,
+          public_listed: true,
         }, 200);
       }
 
@@ -83338,65 +83588,78 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
     const currentEntry = dedupedByKey.get(dedupeKey);
     dedupedByKey.set(dedupeKey, _preferPublicPartnerCandidate(currentEntry, entry));
   }
-  return dedupeOrder
-    .map((dedupeKey) => dedupedByKey.get(dedupeKey))
-    .filter((entry) => !!entry)
-    .filter((entry) => isPublicMarketplacePartner(visibility, {
+  const listed = [];
+  for (const dedupeKey of dedupeOrder) {
+    const entry = dedupedByKey.get(dedupeKey);
+    if (!entry) continue;
+    if (!isPublicMarketplacePartner(visibility, {
       partner_id: entry.p?.partner_id,
       company_id: entry.routeCompanyId,
       tenant_id: entry.routeTenantId,
-    }))
-    .map((entry) => {
-      const p = entry.p;
-      const media = publicMediaByPartnerId.get(p.partner_id) || {};
-      const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
-      const nearbySignalCompanyId =
-        entry.routeCompanyId ||
-        _scopeFromCanonicalPublicPartnerId(p.partner_id)?.company_id ||
-        "";
-      const limousineSignals =
-        serviceFilter === "limousine" &&
-        _limousineTestCompanyAllowlisted(env, nearbySignalCompanyId)
-        ? {
-            ...(limousineSignalsByPartnerId.get(p.partner_id) || {}),
-            ..._buildLimousineNearbyCardProjection(
-              profileByPartnerId.get(p.partner_id),
-              { testPreview: true },
-            ),
-          }
-        : {};
-      _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
-      const presentation = publicPresentationForPartner(visibility, {
-        partner_id: p.partner_id,
-        company_id: entry.routeCompanyId || nearbySignalCompanyId,
-        tenant_id: entry.routeTenantId,
-      });
-      const presented = applyPublicMarketplaceProfileOverlay({
-        company_name: p.company_name,
-      }, presentation);
-      return {
-        partner_id: p.partner_id,
-        company_name: p.company_name,
-        is_active: true,
-        subscription_status: p.subscription_status,
-        supported_postcodes: entry.supportedPostcodes,
-        ...(serviceFilter === "limousine"
-          ? _publicLimousineDistanceFields(entry.distanceKm)
-          : entry.distanceKm != null && hasGeoQuery
-            ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
-            : {}),
-        hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
-        logo_url: _safePublicHttpsUrl(media.logo_url, 600),
-        ...capabilitySignals,
-        ...limousineSignals,
-        ...(presented?.example_company ? { example_company: true } : {}),
-        ...(presented?.review_environment ? { review_environment: true } : {}),
-        ...(presented?.public_presentation
-          ? { public_presentation: presented.public_presentation }
-          : {}),
-        ...(presented?.tagline ? { tagline: presented.tagline } : {}),
-      };
+    })) continue;
+    const nearbySignalCompanyId =
+      entry.routeCompanyId ||
+      _scopeFromCanonicalPublicPartnerId(entry.p.partner_id)?.company_id ||
+      "";
+    const account = await _loadCanonicalAccountForScope(env, {
+      tenant_id: entry.routeTenantId,
+      company_id: nearbySignalCompanyId,
+    }, { publicPartnerId: entry.p.partner_id });
+    const listing = publicListingEligibility(account);
+    if (!listing.list || listing.state === "closed" || listing.state === "blocked" || listing.state === "paused") {
+      continue;
+    }
+    const accountFields = publicPartnerAccountFields(account);
+    const p = entry.p;
+    const media = publicMediaByPartnerId.get(p.partner_id) || {};
+    const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
+    const limousineSignals =
+      serviceFilter === "limousine" &&
+      _limousineTestCompanyAllowlisted(env, nearbySignalCompanyId)
+      ? {
+          ...(limousineSignalsByPartnerId.get(p.partner_id) || {}),
+          ..._buildLimousineNearbyCardProjection(
+            profileByPartnerId.get(p.partner_id),
+            { testPreview: true },
+          ),
+        }
+      : {};
+    _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
+    const presentation = publicPresentationForPartner(visibility, {
+      partner_id: p.partner_id,
+      company_id: entry.routeCompanyId || nearbySignalCompanyId,
+      tenant_id: entry.routeTenantId,
     });
+    const presented = applyPublicMarketplaceProfileOverlay({
+      company_name: p.company_name,
+    }, presentation);
+    listed.push({
+      partner_id: p.partner_id,
+      company_name: p.company_name,
+      is_active: accountFields.bookable === true,
+      bookable: accountFields.bookable === true,
+      account_state: accountFields.account_state,
+      availability_status: accountFields.availability_status,
+      subscription_status: p.subscription_status,
+      supported_postcodes: entry.supportedPostcodes,
+      ...(serviceFilter === "limousine"
+        ? _publicLimousineDistanceFields(entry.distanceKm)
+        : entry.distanceKm != null && hasGeoQuery
+          ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
+          : {}),
+      hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
+      logo_url: _safePublicHttpsUrl(media.logo_url, 600),
+      ...capabilitySignals,
+      ...limousineSignals,
+      ...(presented?.example_company ? { example_company: true } : {}),
+      ...(presented?.review_environment ? { review_environment: true } : {}),
+      ...(presented?.public_presentation
+        ? { public_presentation: presented.public_presentation }
+        : {}),
+      ...(presented?.tagline ? { tagline: presented.tagline } : {}),
+    });
+  }
+  return listed;
 }
 
 function supportedPostcodesIncludes(postcodes, needle) {
@@ -84524,12 +84787,24 @@ async function getPublicPartnerProfileById(env, partnerId) {
   if (!_isPublicPartnerProfileVisible(profile)) return null;
   const visibility = await _publicMarketplaceVisibilityIndex(env);
   if (!isPublicMarketplacePartner(visibility, profile)) return null;
+  const profileScope = _scopeFromCanonicalPublicPartnerId(profile.partner_id) || {
+    tenant_id: sanitizeTenantString(profile.tenant_id ?? profile.tenantId, 80),
+    company_id: sanitizeTenantString(profile.company_id ?? profile.companyId, 80),
+  };
+  const account = await _loadCanonicalAccountForScope(env, profileScope, {
+    publicPartnerId: profile.partner_id,
+  });
+  const profileEligibility = publicProfileEligibility(account);
+  if (!profileEligibility.visible) return null;
   const presentation = publicPresentationForPartner(visibility, profile);
   let normalizedProfile = applyPublicMarketplaceProfileOverlay({
     partner_id: profile.partner_id,
     company_name: profile.company_name,
     profile_enabled: true,
-    is_active: true,
+    is_active: profileEligibility.bookable === true,
+    bookable: profileEligibility.bookable === true,
+    account_state: profileEligibility.state,
+    availability_status: profileEligibility.bookable === true ? "active" : "inactive",
     subscription_status: profile.subscription_status,
     ...(profile.published_at ? { published_at: profile.published_at } : {}),
     tagline: profile.tagline,

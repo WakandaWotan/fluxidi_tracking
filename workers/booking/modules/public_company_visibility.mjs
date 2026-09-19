@@ -9,6 +9,7 @@
  */
 
 import { codesOf, readRegistrySnapshot } from "./company_registry_index.mjs";
+import { loadPublicVisibilityOverride } from "./company_account_lifecycle.mjs";
 
 export const COMPANY_LINK_CODE_PREFIX = "company_link:index:code:";
 export const COMPANY_LINK_CODE_SUFFIX = ":v1";
@@ -94,7 +95,7 @@ export function configuredReviewCompanyCode(env) {
 
 export function classifyRegistryPublicVisibility(entry, options = {}) {
   const code = normalizeFluxidiCompanyCode(entry?.company_code ?? entry?.companyCode);
-  const lifecycle = text(entry?.lifecycle_status ?? entry?.lifecycleStatus, 24).toLowerCase() || "active";
+  const lifecycle = text(entry?.lifecycle_status ?? entry?.lifecycleStatus, 24).toLowerCase() || "unknown";
   const environment = text(entry?.environment_class ?? entry?.environmentClass, 24).toLowerCase() || "unknown";
   const exampleCode = normalizeFluxidiCompanyCode(options.exampleCompanyCode) || DEFAULT_EXAMPLE_COMPANY_CODE;
   const reviewCode = normalizeFluxidiCompanyCode(options.reviewCompanyCode) || DEFAULT_REVIEW_COMPANY_CODE;
@@ -104,6 +105,10 @@ export function classifyRegistryPublicVisibility(entry, options = {}) {
   }
   if (lifecycle !== "active") {
     return { public: false, reason: "registry_lifecycle_inactive", presentation: null };
+  }
+  const visibility = text(entry?.public_visibility ?? entry?.publicVisibility, 24).toLowerCase();
+  if (visibility === "hidden") {
+    return { public: false, reason: "public_visibility_hidden", presentation: null };
   }
   if (HIDDEN_PUBLIC_ENVIRONMENT_CLASSES.includes(environment)) {
     return { public: false, reason: "environment_hidden", presentation: null };
@@ -284,23 +289,6 @@ export async function loadPublicCompanyVisibilityIndex(env, options = {}) {
   index.ok = true;
   for (const code of codes) {
     const entry = byCode.get(code) || { company_code: code };
-    const decision = classifyRegistryPublicVisibility(entry, {
-      exampleCompanyCode,
-      reviewCompanyCode,
-    });
-    const classified = {
-      company_code: code,
-      display_name: text(entry.display_name ?? entry.displayName, 160),
-      environment_class: text(entry.environment_class, 24) || "unknown",
-      lifecycle_status: text(entry.lifecycle_status, 24) || "active",
-      public: decision.public === true,
-      reason: decision.reason,
-      presentation_role: decision.presentation?.role || null,
-    };
-    index.classified.push(classified);
-    if (!decision.public) continue;
-    index.public_company_codes.add(code);
-    index.presentation_by_code.set(code, decision.presentation);
     const key = companyLinkCodeKey(code);
     let link = null;
     if (key) {
@@ -310,6 +298,33 @@ export async function loadPublicCompanyVisibilityIndex(env, options = {}) {
         link = null;
       }
     }
+    const source = unwrapLinkRecord(link) || {};
+    const override = await loadPublicVisibilityOverride(kv, {
+      companyCode: code,
+      tenantId: source.tenant_id ?? source.tenantId,
+      companyId: source.company_id ?? source.companyId,
+    });
+    const decision = classifyRegistryPublicVisibility({
+      ...entry,
+      public_visibility: override.visibility || entry.public_visibility,
+    }, {
+      exampleCompanyCode,
+      reviewCompanyCode,
+    });
+    const classified = {
+      company_code: code,
+      display_name: text(entry.display_name ?? entry.displayName, 160),
+      environment_class: text(entry.environment_class, 24) || "unknown",
+      lifecycle_status: text(entry.lifecycle_status, 24) || "unknown",
+      public_visibility: override.visibility || "",
+      public: decision.public === true,
+      reason: decision.reason,
+      presentation_role: decision.presentation?.role || null,
+    };
+    index.classified.push(classified);
+    if (!decision.public) continue;
+    index.public_company_codes.add(code);
+    index.presentation_by_code.set(code, decision.presentation);
     const aliases = partnerAliasesFromLink(link, code);
     for (const alias of aliases) {
       addPartnerAlias(index.public_partner_ids, alias);

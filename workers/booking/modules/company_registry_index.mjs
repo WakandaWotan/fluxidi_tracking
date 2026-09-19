@@ -123,6 +123,26 @@ export function codesOf(snapshot) {
   return codes;
 }
 
+export function applyRegistryRemove(snapshot, companyCode) {
+  const next = cloneSnapshot(snapshot);
+  const code = String(companyCode || "").trim();
+  let removed = false;
+  for (const page of next.pages) {
+    const idx = page.companies.findIndex((row) => row.company_code === code);
+    if (idx >= 0) {
+      page.companies.splice(idx, 1);
+      removed = true;
+    }
+  }
+  if (removed) {
+    next.manifest.membership_generation += 1;
+    for (const page of next.pages) page.membership_generation = next.manifest.membership_generation;
+    next.manifest.total = [...codesOf(next)].length;
+    next.manifest.updated_at = new Date().toISOString();
+  }
+  return { ...next, membershipChanged: removed };
+}
+
 export function applyRegistryUpsert(snapshot, entry) {
   const next = cloneSnapshot(snapshot);
   const { manifest, pages } = next;
@@ -218,10 +238,51 @@ function confirmOk(before, intended, confirm, entry, token) {
   return true;
 }
 
+export async function removeCompanyRegistryEntry(kv, companyCode, {
+  maxAttempts = 8,
+  randomToken = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `tok_${Date.now()}_${Math.random()}`),
+} = {}) {
+  const ops = emptyRegistryOps();
+  const code = String(companyCode || "").trim();
+  if (!kv || typeof kv.get !== "function" || typeof kv.put !== "function") {
+    return { ok: false, error: "kv_unbound", ops: tallyWrite(ops) };
+  }
+  if (!/^FLX-[0-9]{4,12}$/.test(code)) {
+    return { ok: false, error: "invalid_company_code", ops: tallyWrite(ops) };
+  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const before = await readRegistrySnapshot(kv, ops);
+    const intended = applyRegistryRemove(before, code);
+    if (intended.membershipChanged !== true) {
+      ops.code_gets += 1;
+      const codeKey = registryCodeKey(code);
+      if (typeof kv.delete === "function") await kv.delete(codeKey);
+      return { ok: true, removed: false, attempts: attempt, ops: tallyWrite(ops) };
+    }
+    const token = randomToken();
+    await writeRegistrySnapshot(kv, intended, token, ops);
+    const confirm = await readRegistrySnapshot(kv, ops);
+    if (!codesOf(confirm).has(code) && confirm.manifest.write_token === token) {
+      ops.code_puts += 1;
+      if (typeof kv.delete === "function") await kv.delete(registryCodeKey(code));
+      return {
+        ok: true,
+        removed: true,
+        attempts: attempt,
+        membershipChanged: true,
+        manifest: confirm.manifest,
+        ops: tallyWrite(ops),
+      };
+    }
+  }
+  return { ok: false, error: "registry_concurrent_update", ops: tallyWrite(ops) };
+}
+
 export async function upsertCompanyRegistryEntry(kv, input, {
   nowIso = new Date().toISOString(),
   maxAttempts = 8,
   randomToken = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `tok_${Date.now()}_${Math.random()}`),
+  isClosed = null,
 } = {}) {
   const ops = emptyRegistryOps();
   if (!kv || typeof kv.get !== "function" || typeof kv.put !== "function") {
@@ -230,6 +291,17 @@ export async function upsertCompanyRegistryEntry(kv, input, {
   const code = String(input?.company_code || "").trim();
   if (!/^FLX-[0-9]{4,12}$/.test(code)) {
     return { ok: false, error: "invalid_company_code", already_indexed: false, ops: tallyWrite(ops) };
+  }
+  if (typeof isClosed === "function") {
+    const closed = await isClosed({ company_code: code, ...input });
+    if (closed) {
+      return { ok: false, error: "company_closed", already_indexed: false, ops: tallyWrite(ops) };
+    }
+  } else {
+    const tombstone = await kvGetJson(kv, `company_registry:tombstone:${code}:v1`);
+    if (tombstone && (tombstone.revoked === true || tombstone.state === "closed" || tombstone.reason === "account_close")) {
+      return { ok: false, error: "company_closed", already_indexed: false, ops: tallyWrite(ops) };
+    }
   }
   const codeKey = registryCodeKey(code);
   ops.code_gets += 1;
