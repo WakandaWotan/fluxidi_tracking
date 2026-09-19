@@ -1749,10 +1749,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       paymentMode: sourceView.paymentMode,
       paymentMethod: sourceView.paymentMethod,
     );
-    if (_optimisticPaidApplied &&
-        !_isPaidCustomerPaymentDisplayToken(paymentToken)) {
-      paymentToken = 'paid';
-    }
+    // Dossier 02: no local upgrade to paid. The authoritative record decides.
     return paymentToken;
   }
 
@@ -2996,17 +2993,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               paymentMode: v.paymentMode,
               paymentMethod: v.paymentMethod,
             );
-            // G3-N: apply optimistic paid override only when classifier did
-            // not already classify the booking as paid. Avoids regressing a
-            // backend-confirmed paid booking into "online_pending" because of
-            // a transient stale field.
-            if (_optimisticPaidApplied &&
-                !_isPaidCustomerPaymentDisplayToken(paymentToken)) {
-              debugPrint(
-                '[CUSTOMER_BOOKINGS][STALE_PAYMENT_LABEL_GUARD] booking=${_safeRefPreview(v.internalBookingId.isNotEmpty ? v.internalBookingId : widget.bookingId)} backendToken=$paymentToken overrideTo=paid surface=detail',
-              );
-              paymentToken = 'paid';
-            }
+            // Dossier 02: the displayed token follows the authoritative
+            // record. A return from checkout never forces Paid on the device.
             final paid = _isPaidCustomerPaymentDisplayToken(paymentToken);
             final partiallyPaid = _isPartialCustomerPaymentDisplayToken(
               paymentToken,

@@ -45,6 +45,7 @@
 
 import { safeStr } from "./parsing_utils.js";
 import { normalizeCompliancePaymentStatus } from "./compliance_events.js";
+import { providerStatusIsVerifiedPaid } from "./canonical_payment_truth.mjs";
 
 /* ---- Payment-status token collector ---------------------------------- */
 
@@ -83,15 +84,8 @@ export function _bookingRecordIsPaidForCredit(rec) {
   if (!rec || typeof rec !== "object") return false;
   const booking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
   const payload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
-  const paidLike = new Set([
-    "paid",
-    "confirmed",
-    "completed",
-    "success",
-    "settled",
-    "succeeded",
-    "captured",
-  ]);
+  // Dossier 02: only a verified provider `paid` counts. A completed or
+  // confirmed ride says nothing about whether money arrived.
   const notPaidLike = new Set([
     "pending",
     "open",
@@ -114,7 +108,7 @@ export function _bookingRecordIsPaidForCredit(rec) {
     "authorized",
   ]);
   const statusTokens = _bookingPaymentStatusTokens(rec);
-  if (statusTokens.some((token) => paidLike.has(token))) return true;
+  if (statusTokens.some((token) => providerStatusIsVerifiedPaid(token))) return true;
   if (statusTokens.some((token) => notPaidLike.has(token))) return false;
   if (
     rec?.__mollie_paid === true ||

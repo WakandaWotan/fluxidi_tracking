@@ -48,13 +48,9 @@ String _normalizeCustomerPaymentDisplayToken(String? raw) {
 }
 
 bool _isPaidCustomerPaymentDisplayToken(String token) {
-  return token == 'paid' ||
-      token == 'confirmed' ||
-      token == 'success' ||
-      token == 'completed' ||
-      token == 'settled' ||
-      token == 'succeeded' ||
-      token == 'captured';
+  // Dossier 02: only a verified provider settlement shows as Paid. Ride
+  // lifecycle tokens and settlement batches are not payments.
+  return token == 'paid';
 }
 
 bool _isPartialCustomerPaymentDisplayToken(String token) {

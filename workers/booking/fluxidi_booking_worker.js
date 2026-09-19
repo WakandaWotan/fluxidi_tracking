@@ -26,6 +26,7 @@ import {
   composeAirportRoundTripTotals,
   resolveAirportReturnFixedFareDecision,
 } from "./modules/airport_return_fixed_fare.mjs";
+import { canonicalPaymentStatusFromProvider } from "./modules/canonical_payment_truth.mjs";
 import {
   scheduleBaseCancellation,
   cascadeAddonCancellations,
@@ -95185,18 +95186,8 @@ async function updateBookingOperationalLegPaymentAuthoritative(
 
   const asText = (value) => String(value ?? "").trim();
   const rawStatus = asText(payment?.payment_status || payment?.paymentStatus).toLowerCase();
-  const normalizedLegStatus =
-    rawStatus === "paid" ||
-    rawStatus === "confirmed" ||
-    rawStatus === "completed" ||
-    rawStatus === "success" ||
-    rawStatus === "settled"
-      ? "paid"
-      : rawStatus === "pending" || rawStatus === "authorized" || rawStatus === "open"
-        ? "pending"
-        : rawStatus === "failed" || rawStatus === "cancelled" || rawStatus === "canceled"
-          ? "failed"
-          : "paid";
+  // Dossier 02: the same canonical rule as the parent booking writer.
+  const normalizedLegStatus = canonicalPaymentStatusFromProvider(rawStatus);
   const method = asText(payment?.payment_method || payment?.paymentMethod).toLowerCase();
   const source =
     asText(payment?.payment_source || payment?.paymentSource).toLowerCase() || "in_car";
@@ -95398,18 +95389,9 @@ async function updateBookingPaymentAuthoritative(
     String(rec?.payment_status || rec?.paymentStatus || "").toLowerCase() === "paid";
 
   const rawStatus = asText(payment?.payment_status || payment?.paymentStatus).toLowerCase();
-  const normalizedStatus =
-    rawStatus === "paid" ||
-    rawStatus === "confirmed" ||
-    rawStatus === "completed" ||
-    rawStatus === "success" ||
-    rawStatus === "settled"
-      ? "paid"
-      : rawStatus === "pending" || rawStatus === "authorized" || rawStatus === "open"
-        ? "pending"
-        : rawStatus === "failed" || rawStatus === "cancelled" || rawStatus === "canceled"
-          ? "failed"
-          : "paid";
+  // Dossier 02: one canonical rule. Only a verified provider `paid` is paid,
+  // and an unrecognised token is unpaid instead of falling through to paid.
+  const normalizedStatus = canonicalPaymentStatusFromProvider(rawStatus);
 
   const method = asText(payment?.payment_method || payment?.paymentMethod).toLowerCase();
   const source = asText(payment?.payment_source || payment?.paymentSource).toLowerCase() || "in_car";

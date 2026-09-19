@@ -60,13 +60,9 @@ bool isCanonicalPaidStatusValue(Object? value) {
   if (value is bool) return value;
   final text = value.toString().trim().toLowerCase();
   if (text.isEmpty || text == 'null') return false;
-  // Ride lifecycle "completed" is not a settlement. Mollie paid is `paid`.
-  return text == 'paid' ||
-      text == 'settled' ||
-      text == 'confirmed' ||
-      text == 'success' ||
-      text == 'succeeded' ||
-      text == 'captured';
+  // Dossier 02: only a verified provider settlement is paid. A completed or
+  // confirmed ride, a chosen method and a settlement batch are not payments.
+  return text == 'paid';
 }
 
 bool isCanonicalUnpaidStatusValue(Object? value) {

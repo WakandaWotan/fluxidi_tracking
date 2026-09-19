@@ -16,10 +16,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
   Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
   // G3-N: canonical / payment booking ids whose payment_return.dart notifier
   // transitioned to paid/confirmed while this list was visible. Used to
-  // upgrade the displayed token to "paid" even before the next authoritative
-  // refresh round-trips, so resumed Mollie payments do not flicker as
-  // "Pay in car" on the way back from the Mollie checkout.
-  final Set<String> _optimisticallyPaidBookingIds = <String>{};
+  // refresh from the authoritative record. The displayed token is never
+  // upgraded locally: only a verified provider settlement makes a booking paid.
   String _t({
     required String nl,
     required String en,
@@ -107,21 +105,11 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     if (matched == null) return;
     final canonicalId = matched.canonicalBookingId.trim();
     if (canonicalId.isEmpty) return;
-    if (_optimisticallyPaidBookingIds.contains(canonicalId)) return;
+    // Dossier 02: never patch the local entry to paid. The authoritative
+    // record decides, so a return from checkout only triggers a refresh.
     debugPrint(
-      '[CUSTOMER_BOOKINGS][PAYMENT_STATUS_PATCHED] booking=${_safeRefPreview(canonicalId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} from=${matched.paymentStatus.isEmpty ? "-" : matched.paymentStatus} to=paid source=list_notifier',
+      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=list booking=${_safeRefPreview(canonicalId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name} local_patch=none',
     );
-    debugPrint(
-      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=list booking=${_safeRefPreview(canonicalId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name}',
-    );
-    _optimisticallyPaidBookingIds.add(canonicalId);
-    final updated = matched.copyWith(paymentStatus: 'paid');
-    setState(() {
-      _bookings = _bookings
-          .map((b) => b.canonicalBookingId.trim() == canonicalId ? updated : b)
-          .toList(growable: false);
-    });
-    unawaited(CustomerBookingsStore.instance.upsert(updated));
     if (!_refreshing) {
       unawaited(_refreshAuthoritative());
     }
@@ -273,17 +261,6 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         paymentMode: channel.mode,
         paymentMethod: channel.method,
       );
-    }
-    // G3-N: stale-label guard. If the pending-payment notifier already
-    // confirmed paid for this canonical booking but the cached token has not
-    // been refreshed yet, force the displayed token to "paid".
-    if (bookingId.isNotEmpty &&
-        _optimisticallyPaidBookingIds.contains(bookingId) &&
-        !_isPaidCustomerPaymentDisplayToken(token)) {
-      debugPrint(
-        '[CUSTOMER_BOOKINGS][STALE_PAYMENT_LABEL_GUARD] booking=${_safeRefPreview(bookingId)} backendToken=$token overrideTo=paid surface=list',
-      );
-      return 'paid';
     }
     return token;
   }

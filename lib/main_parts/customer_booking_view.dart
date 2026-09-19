@@ -1508,19 +1508,16 @@ class CustomerBookingView {
     ]),
   ]);
 
-  bool get _methodImpliesPaid {
-    const inCarPaidMethods = <String>{'cash', 'bancontact', 'qr', 'card'};
-    return inCarPaidMethods.contains(paymentMethod);
+  /// Methods the driver collects in the car. This says where the money is
+  /// taken, never that it was already taken.
+  bool get _methodIsCollectedInCar {
+    const inCarMethods = <String>{'cash', 'bancontact', 'qr', 'card'};
+    return inCarMethods.contains(paymentMethod);
   }
 
-  bool get isPaid {
-    final s = rawPaymentStatus;
-    return s == 'paid' ||
-        s == 'confirmed' ||
-        s == 'completed' ||
-        s == 'success' ||
-        _methodImpliesPaid;
-  }
+  /// Dossier 02: a chosen payment method is not a payment. Cash, Bancontact,
+  /// QR and card only become paid once the settlement is recorded.
+  bool get isPaid => rawPaymentStatus == 'paid';
 
   /// True when the customer paid online (Mollie/online) and must contact the
   /// company instead of cancelling directly from "Mijn boekingen".
@@ -1534,7 +1531,7 @@ class CustomerBookingView {
         !_isPartialCustomerPaymentDisplayToken(token)) {
       return false;
     }
-    if (_methodImpliesPaid) return false;
+    if (_methodIsCollectedInCar) return false;
     if (_isManualCustomerPaymentChannel(
       provider: paymentProvider,
       mode: paymentMode,
