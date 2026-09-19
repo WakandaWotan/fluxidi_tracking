@@ -128,6 +128,45 @@ test("two fleet rows for one vehicle id never produce a plate", () => {
   assert.equal(hydrated.plate_substituted_from, null);
 });
 
+test("live shape of 2026-09-032: no event plate, fleet plate Tax002, nothing sent", () => {
+  // Read-only from COMPLIANCE_KV: both the ride_start and the ride_stop event
+  // carry only vehicle_id vh_1786881139131 and no license plate, and the live
+  // fleet row for that same vehicle holds Tax002.
+  for (const event of [
+    { vehicle: { vehicle_id: "vh_1786881139131" }, booking_id: "2026-09-032" },
+    {
+      vehicle: { vehicle_id: "vh_1786881139131" },
+      booking_id: "2026-09-032",
+      leg_id: "2026-09-032:OUTBOUND",
+    },
+  ]) {
+    const hydrated = hydrate(event);
+    assert.equal(hydrated.event_vehicle_id, "vh_1786881139131");
+    assert.equal(hydrated.assignment_vehicle_id, null);
+    assert.equal(hydrated.assigned_vehicle_id, "vh_1786881139131");
+    assert.equal(hydrated.kentekenplaat, "Tax002");
+    assert.equal(hydrated.source, "scoped_vehicle");
+    assert.equal(
+      hydrated.plate_blocked_reason,
+      "ch1211_assigned_vehicle_plate_invalid",
+      "a plate filled from the fleet must still be reported when it is invalid",
+    );
+    const body = buildChironTaxiritApiPayload({
+      status: "vertrek",
+      ritnummer: "2026-09-032",
+      registratie: "0772.931.038",
+      naam: "VC Construct & Graphics",
+      broncreatiedatum: "2026-09-18T15:56:44.772Z",
+      kentekenplaat: hydrated.kentekenplaat,
+      bestuurderspasnummer: "BE1234567A8B9012",
+      vertrektijdstip: "2026-09-18T15:56:44.772Z",
+      vertrekpunt_lengtegraad: 3.6694744,
+      vertrekpunt_breedtegraad: 50.7719435,
+    });
+    assert.equal(body, null, "CH1211 must be prevented before the POST");
+  }
+});
+
 test("a missing event plate still fills from the same assigned vehicle", () => {
   const hydrated = hydrate({
     vehicle: { vehicle_id: "vh_1787076028764" },
