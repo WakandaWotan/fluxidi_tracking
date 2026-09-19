@@ -876,12 +876,25 @@ export function _synthesizeReturnOperationalLegForReadModel(rec, bookingId, exis
     from: returnFrom,
     to: returnTo,
     priceInclVat: _bookingReturnPriceInclVatFromRecord(rec),
+    // A synthesized return leg may only report an assignment the server really
+    // made for that leg. A waiting round trip stays on one car, so the outbound
+    // assignment is its own; a split round trip drives twice and may use another
+    // car, so an unassigned return leg stays unassigned instead of borrowing the
+    // outbound one.
     assignedDriverId:
-      safeStr(outboundLeg?.assigned_driver_id ?? outboundLeg?.assignedDriverId, 96) ||
-      bookingAssignedDriverId(rec),
+      safeStr(rec?.return_assigned_driver_id ?? rec?.returnAssignedDriverId, 96) ||
+      safeStr(booking?.return_assigned_driver_id ?? booking?.returnAssignedDriverId, 96) ||
+      (ctx.normalizedWaitMin > 0
+        ? safeStr(outboundLeg?.assigned_driver_id ?? outboundLeg?.assignedDriverId, 96) ||
+          bookingAssignedDriverId(rec)
+        : ""),
     assignedVehicleId:
-      safeStr(outboundLeg?.assigned_vehicle_id ?? outboundLeg?.assignedVehicleId, 128) ||
-      bookingAssignedVehicleId(rec),
+      safeStr(rec?.return_vehicle_id ?? rec?.returnVehicleId, 128) ||
+      safeStr(booking?.return_vehicle_id ?? booking?.returnVehicleId, 128) ||
+      (ctx.normalizedWaitMin > 0
+        ? safeStr(outboundLeg?.assigned_vehicle_id ?? outboundLeg?.assignedVehicleId, 128) ||
+          bookingAssignedVehicleId(rec)
+        : ""),
     lifecycleStatus: returnLifecycle,
     createdAt: safeStr(rec?.created_at ?? rec?.createdAt ?? booking?.created_at, 80),
     updatedAt: safeStr(rec?.updated_at ?? rec?.updatedAt ?? booking?.updated_at, 80),

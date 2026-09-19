@@ -277,6 +277,28 @@ import {
   vehicleMatchesRequiredVehicle as _vehicleMatchesRequiredVehicle,
 } from "./modules/required_vehicle_constraint.mjs";
 import {
+  legRequiredVehicleId as _legRequiredVehicleId,
+  legsUseDifferentVehicles as _legsUseDifferentVehicles,
+  perLegAssignmentFromLegResults as _perLegAssignmentFromLegResults,
+  returnAssignmentRecordFields as _returnAssignmentRecordFields,
+  returnRequestedDriverIdFromPayload as _returnRequestedDriverIdFromPayload,
+  returnRequestedRecordFields as _returnRequestedRecordFields,
+  returnRequestedVehicleIdFromPayload as _returnRequestedVehicleIdFromPayload,
+} from "./modules/return_leg_assignment.mjs";
+import {
+  RETURN_QUOTE_PHASES as _RETURN_QUOTE_PHASES,
+  isUsableAmount as _isUsableReturnAmount,
+  resolveReturnRoutePoints as _resolveReturnRoutePoints,
+  returnAfterOutboundParts as _returnAfterOutboundParts,
+  returnQuoteError as _returnQuoteError,
+  returnQuoteFailure as _returnQuoteFailure,
+  returnQuotePhaseOf as _returnQuotePhaseOf,
+  returnQuoteReasonOf as _returnQuoteReasonOf,
+  returnScheduleRequested as _returnScheduleRequested,
+  sanitizeReturnStops as _sanitizeReturnStops,
+  sumLegAmounts as _sumLegAmounts,
+} from "./modules/return_leg_quote.mjs";
+import {
   buildLimousineAcceptedSnapshot as _buildLimousineAcceptedSnapshot,
   buildLimousineQuoteResult as _buildLimousineQuoteResult,
   compareLimousineQuoteForBook as _compareLimousineQuoteForBook,
@@ -29308,28 +29330,73 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   let quoteReturnExplicitFixedFareMatched = false;
   let quoteReturnReusedMainFixedFare = false;
   let quoteReturnFallbackReason = "not_requested";
+  // A scheduled return leg must either produce its own server price or fail the
+  // whole quote. Silently dropping it used to leave the outbound amount posing
+  // as the round-trip total.
+  const quoteReturnScheduled = _returnScheduleRequested(body);
+  let quoteReturnFailure = null;
+  let quoteReturnRouteStrategy = "not_requested";
+  let quoteReturnPhaseHint = _RETURN_QUOTE_PHASES.PRICING;
   try {
-    if (pricingProfile.return_enabled && body.return_enabled && body.return_date && body.return_time) {
+    if (quoteReturnScheduled && !pricingProfile.return_enabled) {
+      throw _returnQuoteError(_RETURN_QUOTE_PHASES.PRICING, "return_disabled_for_company");
+    }
+    if (quoteReturnScheduled) {
       quoteReturnFallbackReason = "route_pricing_fallback";
       const rf = body.return_from || body.to;
       const rt = body.return_to || body.from;
-      if (!rf || !rt) throw new Error("Missing return_from/return_to");
-      const returnStops = Array.isArray(body?.return_stops)
-        ? body.return_stops
-        : Array.isArray(body?.returnStops)
-          ? body.returnStops
-          : [];
-      const retRouteOut = await routeFromTextsWithStopsDetailed({
-        fromText: rf,
-        toText: rt,
-        stopsTexts: returnStops,
-        token: env.MAPBOX_TOKEN
+      if (!rf || !rt) {
+        throw _returnQuoteError(_RETURN_QUOTE_PHASES.PRICING, "missing_return_addresses");
+      }
+      const retWhen = normalizeWhen(body.return_date, body.return_time);
+      if (
+        !_returnAfterOutboundParts({
+          outboundDate: body.date,
+          outboundTime: body.time,
+          returnDate: body.return_date,
+          returnTime: body.return_time,
+        })
+      ) {
+        throw _returnQuoteError(_RETURN_QUOTE_PHASES.PRICING, "return_before_outbound");
+      }
+      const returnStops = _sanitizeReturnStops(body);
+      const returnPoints = _resolveReturnRoutePoints({
+        body,
+        outboundFrom: body.from,
+        outboundTo: body.to,
+        returnFrom: rf,
+        returnTo: rt,
+        outboundFromPoint: fromPoint || routeOut?.resolved_from_point || null,
+        outboundToPoint: toPoint || routeOut?.resolved_to_point || null,
       });
+      quoteReturnRouteStrategy = returnPoints.strategy;
+      let retRouteOut;
+      try {
+        retRouteOut = await routeFromTextsWithStopsDetailed({
+          fromText: rf,
+          toText: rt,
+          fromPoint: returnPoints.fromPoint,
+          toPoint: returnPoints.toPoint,
+          stopsTexts: returnStops,
+          token: env.MAPBOX_TOKEN
+        });
+      } catch (routeErr) {
+        const routeMessage = String(routeErr?.message || routeErr || "").toLowerCase();
+        throw _returnQuoteError(
+          routeMessage.includes("geocode")
+            ? _RETURN_QUOTE_PHASES.GEOCODE
+            : _RETURN_QUOTE_PHASES.ROUTE,
+          _sanitizeRouteErrorMessage(routeErr?.message || "return_route_failed", 64) ||
+            "return_route_failed",
+        );
+      }
+      if (!isUsableMapboxRoute(retRouteOut?.route)) {
+        throw _returnQuoteError(_RETURN_QUOTE_PHASES.ROUTE, "return_route_not_usable");
+      }
 
       const retRoute = retRouteOut.route;
       const retDistance_km = round1(retRoute.distance / 1000);
       const retDuration_min = Math.round(retRoute.duration / 60);
-      const retWhen = normalizeWhen(body.return_date, body.return_time);
 
       let retPricing = calcPrice({
         distance_km: retDistance_km,
@@ -29346,6 +29413,10 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         pricing_profile: pricingProfile,
         apply_return_fee: true,
       });
+      // Fixed prices are resolved for this leg on its own addresses, direction,
+      // date and time, so a per-ride fixed fare is charged twice for a round
+      // trip instead of once.
+      quoteReturnPhaseHint = _RETURN_QUOTE_PHASES.FIXED_PRICE;
       const outboundDirection = _fixedFareNormalizeText(
         body?.airport_direction ?? body?.airportDirection,
         24,
@@ -29544,6 +29615,11 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         `[AIRPORT_FIXED_FARE][QUOTE][RETURN] main=${quoteMainFixedFareApplied ? "1" : "0"} explicit=${quoteReturnExplicitFixedFareMatched ? "1" : "0"} reused_main=${quoteReturnReusedMainFixedFare ? "1" : "0"} fallback=${quoteReturnFallbackReason}`,
       );
 
+      quoteReturnPhaseHint = _RETURN_QUOTE_PHASES.PRICING;
+      if (!quoteRequestQuoteRequired && !_isUsableReturnAmount(retPricing.price_incl_vat)) {
+        throw _returnQuoteError(_RETURN_QUOTE_PHASES.PRICING, "return_price_not_numeric");
+      }
+
       returnQuote = {
         distance_km: retDistance_km,
         duration_min: retDuration_min,
@@ -29555,14 +29631,28 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         fixed_fare_applied: quoteReturnUsesFixedFare,
         fixed_fare_rule_id: quoteReturnFixedFareRuleId,
         breakdown: retPricing.breakdown || null,
+        route_strategy: quoteReturnRouteStrategy,
       };
     }
   } catch (e) {
-    // If return quote fails, we keep main quote and simply omit returnQuote
     returnQuote = null;
+    if (quoteReturnScheduled) {
+      // A requested return leg that cannot be priced is a failed quote, not a
+      // one-way quote with a misleading total.
+      quoteReturnFailure = _returnQuoteFailure({
+        phase: _returnQuotePhaseOf(e, quoteReturnPhaseHint),
+        reason: _returnQuoteReasonOf(e, "return_quote_exception"),
+      });
+    }
     console.log(
       `[AIRPORT_FIXED_FARE][QUOTE][RETURN] main=${quoteMainFixedFareApplied ? "1" : "0"} explicit=${quoteReturnExplicitFixedFareMatched ? "1" : "0"} reused_main=${quoteReturnReusedMainFixedFare ? "1" : "0"} fallback=exception`,
     );
+  }
+  if (quoteReturnFailure) {
+    console.log(
+      `${quoteReturnFailure.logLine} tenant=${sanitizeTenantString(quoteScope?.tenant_id, 80) || "-"} company=${sanitizeTenantString(quoteScope?.company_id, 80) || "-"} strategy=${quoteReturnRouteStrategy}`,
+    );
+    return { status: quoteReturnFailure.status, out: quoteReturnFailure.out };
   }
   function moneyNumber(value) {
     const n = Number(String(value ?? "0").replace(",", "."));
@@ -29574,6 +29664,14 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   const retEx = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_ex_vat);
   const retVat = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_vat);
   const retIncl = quoteRequestQuoteRequired || !returnQuote ? null : moneyNumber(returnQuote.price_incl_vat);
+  // Same money shape as before (2 decimals), but summed in cents and never
+  // silently dropping a requested return leg.
+  function quoteLegTotal(mainValue, returnValue) {
+    const total = _sumLegAmounts(mainValue, returnValue, {
+      returnRequired: quoteReturnScheduled,
+    });
+    return total === null ? null : round2(total);
+  }
   const availabilityMode = _availabilityMode(env);
   const quoteScopeMask = _bookingIntentScopeMask({
     tenant_id: quoteScope?.tenant_id,
@@ -29948,16 +30046,18 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       fixed_fare_rule_id: quoteFixedFareRuleId,
       fixed_price_needs_more_detail: quoteFixedPriceNeedsDetail,
       pricing_source_main: quoteMainPricingSource,
-      pricing_source_return: returnQuote?.pricing_source ?? "route_calc",
+      // Never claim a return pricing source when there is no return quote.
+      pricing_source_return: returnQuote ? returnQuote.pricing_source : null,
       fixed_fare_applied_main: quoteMainFixedFareApplied,
       fixed_fare_applied_return: quoteReturnUsesFixedFare,
       fixed_fare_rule_id_main: quoteMainFixedFareRuleId,
       fixed_fare_rule_id_return: quoteReturnFixedFareRuleId,
 
-      // totals (main + optional return)
-      total_price_ex_vat: quoteSuppressAutoPrice ? null : round2((mainEx || 0) + (retEx || 0)),
-      total_price_vat: quoteSuppressAutoPrice ? null : round2((mainVat || 0) + (retVat || 0)),
-      total_price_incl_vat: quoteSuppressAutoPrice ? null : round2((mainIncl || 0) + (retIncl || 0)),
+      // totals (main + optional return), summed in whole cents so a round trip
+      // is exactly main + return without floating point drift
+      total_price_ex_vat: quoteSuppressAutoPrice ? null : quoteLegTotal(mainEx, retEx),
+      total_price_vat: quoteSuppressAutoPrice ? null : quoteLegTotal(mainVat, retVat),
+      total_price_incl_vat: quoteSuppressAutoPrice ? null : quoteLegTotal(mainIncl, retIncl),
 
       return: returnQuote,
       breakdown: mainPricing.breakdown,
@@ -68298,6 +68398,12 @@ async function handleBooking(payload, env, request, options = {}) {
   const allocatorReservations = [];
   let handleBookingLegDispatchResults = null;
   let handleBookingDispatchMode = "single";
+  // Confirmed assignment per ride leg, or null when this booking is not a
+  // split round trip. Availability is never reported here.
+  const bookingAssignmentByLeg = () =>
+    handleBookingDispatchMode === "split_no_wait"
+      ? _perLegAssignmentFromLegResults(handleBookingLegDispatchResults)
+      : null;
   const explicitAssignmentTrusted = options?.explicitAssignmentTrusted === true;
   const explicitAssignmentTrustSource = safeStr(
     options?.explicitAssignmentTrustSource,
@@ -68807,6 +68913,15 @@ async function handleBooking(payload, env, request, options = {}) {
       : "";
     const _bookingRequiredVehicleId =
       _limousineRequiredVehicleId || _taxiRequestedVehicleId;
+    // A split round trip is two drives. The return leg carries its own vehicle
+    // and driver choice; when the customer sent none, the allocator resolves
+    // the return moment on its own instead of inheriting the outbound car.
+    const _bookingRequestedReturnVehicleId = !_limousineAccepted
+      ? safeStr(_returnRequestedVehicleIdFromPayload(payload), 128)
+      : "";
+    const _bookingRequestedReturnDriverId = !_limousineAccepted
+      ? safeStr(_returnRequestedDriverIdFromPayload(payload), 96)
+      : "";
     // Stable server-side identifier of the accepted quote. Only the accepted
     // manual-quote path has one; it is read from the authoritative record the
     // pre-flight re-loaded, never from the request body.
@@ -69717,6 +69832,7 @@ async function handleBooking(payload, env, request, options = {}) {
               bookingDropoffLngForAllocator,
               bookingServiceMin,
               requiredVehicleId: _bookingRequiredVehicleId,
+              returnRequiredVehicleId: _bookingRequestedReturnVehicleId,
             });
             const failedLeg = (dispatchOutcome?.legResults || []).find(
               (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -69798,6 +69914,7 @@ async function handleBooking(payload, env, request, options = {}) {
               dropoffLat: bookingDropoffLatForAllocator,
               dropoffLng: bookingDropoffLngForAllocator,
               requiredVehicleId: _bookingRequiredVehicleId,
+              returnRequiredVehicleId: _bookingRequestedReturnVehicleId,
             });
             if (!vehicleCapacity.ok) {
               console.log(
@@ -69915,6 +70032,8 @@ async function handleBooking(payload, env, request, options = {}) {
             bookingReference: publicBookingReference,
             public_reference: publicBookingReference,
             publicReference: publicBookingReference,
+            assignment_by_leg: bookingAssignmentByLeg(),
+            roundtrip_dispatch_mode: handleBookingDispatchMode,
             planning_reference: planningReference,
             planningReference: planningReference,
             tenant_id: tenantContext.tenant_id,
@@ -70423,6 +70542,8 @@ async function handleBooking(payload, env, request, options = {}) {
             bookingReference: publicBookingReference,
             public_reference: publicBookingReference,
             publicReference: publicBookingReference,
+            assignment_by_leg: bookingAssignmentByLeg(),
+            roundtrip_dispatch_mode: handleBookingDispatchMode,
             planning_reference: planningReference,
             planningReference: planningReference,
             payment_booking_id: pay.bookingId || null,
@@ -70626,6 +70747,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           bookingDropoffLngForAllocator,
           bookingServiceMin,
           requiredVehicleId: _bookingRequiredVehicleId,
+          returnRequiredVehicleId: _bookingRequestedReturnVehicleId,
         });
         const failedLeg = (dispatchOutcome?.legResults || []).find(
           (leg) => leg?.ok !== true && leg?.skipped !== true,
@@ -70707,6 +70829,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           dropoffLat: bookingDropoffLatForAllocator,
           dropoffLng: bookingDropoffLngForAllocator,
           requiredVehicleId: _bookingRequiredVehicleId,
+          returnRequiredVehicleId: _bookingRequestedReturnVehicleId,
         });
         if (!vehicleCapacity.ok) {
           console.log(
@@ -70866,6 +70989,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         bookingReference: publicBookingReference,
         public_reference: publicBookingReference,
         publicReference: publicBookingReference,
+        assignment_by_leg: bookingAssignmentByLeg(),
+        roundtrip_dispatch_mode: handleBookingDispatchMode,
         planning_reference: planningReference,
         planningReference: planningReference,
         operational_legs: provisionalOperationalLegs,
@@ -71173,6 +71298,8 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         bookingReference: publicBookingReference,
         public_reference: publicBookingReference,
         publicReference: publicBookingReference,
+        assignment_by_leg: bookingAssignmentByLeg(),
+        roundtrip_dispatch_mode: handleBookingDispatchMode,
         planning_reference: planningReference,
         planningReference: planningReference,
         payment_booking_id: pay.bookingId || null,
@@ -71208,6 +71335,10 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         resolvedAssignedDriver?.id,
       96,
     ) || null;
+    // Confirmed per-leg assignment for a split round trip. Only allocator
+    // results land here, so a reader can tell a guaranteed assignment from mere
+    // availability.
+    const bookingPerLegAssignment = bookingAssignmentByLeg();
     const bookingAssignmentFields = {
       ..._bookingAssignmentAliasFields(
         resolvedAssignedDriver,
@@ -71219,7 +71350,19 @@ Retour route: ${return_from || to} → ${return_to || from}`,
             customerRequestedVehicleId: _taxiRequestedVehicleId,
           }
         : {}),
+      ..._returnRequestedRecordFields({
+        vehicleId: _bookingRequestedReturnVehicleId,
+        driverId: _bookingRequestedReturnDriverId,
+      }),
+      ...(bookingPerLegAssignment
+        ? _returnAssignmentRecordFields(bookingPerLegAssignment)
+        : {}),
     };
+    if (bookingPerLegAssignment) {
+      console.log(
+        `[ROUNDTRIP_DISPATCH][PER_LEG_ASSIGNMENT] booking=${_bookingIntentMask(canonicalBookingId)} outbound_vehicle=${_bookingIntentMask(bookingPerLegAssignment.outbound.vehicle_id || "-")} return_vehicle=${_bookingIntentMask(bookingPerLegAssignment.return.vehicle_id || "-")} different_vehicles=${_legsUseDifferentVehicles(bookingPerLegAssignment) ? "1" : "0"}`,
+      );
+    }
     const bookingOperationalLegs = _buildOperationalLegsFoundation({
       parentBookingId: canonicalBookingId,
       service,
@@ -71433,6 +71576,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         : {}),
       pickupStartIso: pickup_iso,
       returnPickupIso: return_pickup_iso,
+      return_pickup_iso,
 
       // return
       return_enabled: ret.enabled,
@@ -108811,6 +108955,7 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
   dropoffLat = null,
   dropoffLng = null,
   requiredVehicleId = "",
+  returnRequiredVehicleId = "",
 } = {}) {
   const mode = resolveRoundtripDispatchMode(rec || bookingFields || {});
   const bookingObj = bookingFields && typeof bookingFields === "object" ? bookingFields : {};
@@ -108866,8 +109011,18 @@ async function _vehicleCapacityGateForRoundtripDispatch(env, {
     stopCount: bookingObj.stop_count,
   });
   for (const spec of legSpecs) {
+    // Each leg is gated against its own vehicle choice. The return leg is only
+    // pinned when the customer picked a return vehicle.
+    const legPinnedVehicleId = _legRequiredVehicleId({
+      legKey: spec.legKey,
+      outboundVehicleId: pinnedVehicleId,
+      returnVehicleId: safeStr(returnRequiredVehicleId, 128),
+    });
+    const legCommon = { ...common };
+    delete legCommon.required_vehicle_id;
+    if (legPinnedVehicleId) legCommon.required_vehicle_id = legPinnedVehicleId;
     const gate = await _vehicleCapacityGateForRequest(env, {
-      ...common,
+      ...legCommon,
       pickupMs: spec.pickupMs,
       serviceMin: spec.serviceMin,
       from: spec.from,
@@ -108912,6 +109067,7 @@ async function _runBookingCreationFleetDispatch(env, {
   bookingDropoffLngForAllocator = null,
   bookingServiceMin = 30,
   requiredVehicleId = "",
+  returnRequiredVehicleId = "",
 } = {}) {
   const bookingFields = {
     service,
@@ -108963,6 +109119,7 @@ async function _runBookingCreationFleetDispatch(env, {
     allowPartialLegAssignment: false,
     bookingFields,
     requiredVehicleId,
+    returnRequiredVehicleId,
   });
 }
 
@@ -108977,6 +109134,7 @@ async function _dispatchFleetAssignmentForBooking(
     allowPartialLegAssignment = true,
     bookingFields = null,
     requiredVehicleId = "",
+    returnRequiredVehicleId = "",
   } = {},
 ) {
   const safeParentId = safeStr(parentBookingId, 160);
@@ -109189,7 +109347,13 @@ async function _dispatchFleetAssignmentForBooking(
           spec,
           fleetScope,
           sourceLabel,
-          pinnedVehicleId,
+          // Per-leg constraint: the outbound choice is never pinned onto the
+          // return leg, so an unspecified return leg is allocated on its own.
+          _legRequiredVehicleId({
+            legKey: spec.legKey,
+            outboundVehicleId: pinnedVehicleId,
+            returnVehicleId: safeStr(returnRequiredVehicleId, 128),
+          }),
         );
       } catch (err) {
         result = {
