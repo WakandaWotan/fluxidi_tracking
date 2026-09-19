@@ -13,8 +13,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   String? _error;
   List<CustomerSavedBooking> _bookings = const <CustomerSavedBooking>[];
   Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
-  // G3-N: see customer_bookings_page.dart for rationale.
-  final Set<String> _optimisticallyPaidBookingIds = <String>{};
+  // Dossier 02: see customer_bookings_page.dart. A return from checkout only
+  // triggers a reload; the displayed status is never upgraded locally.
   CustomerThemePalette get _palette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _palette.isDark;
@@ -43,11 +43,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     super.dispose();
   }
 
-  // G3-N: pending-payment notifier hook. Same semantics as the active-list
-  // page; we optimistically mark the matching saved booking as paid so the
-  // UI does not flash "Pay in car" after a successful resumed Mollie
-  // payment. We do not write to the saved-bookings store from here; the
-  // background re-load via _loadLocal() picks up the canonical state.
+  // Dossier 02: pending-payment notifier hook. Same semantics as the
+  // active-list page. A paid/confirmed notifier value only schedules a
+  // re-load; the canonical state from _loadLocal() decides what is shown.
   void _onPendingPaymentNotifierChangedForCustomerSavedList() {
     if (!mounted) return;
     final pending = fluxidiPendingPaymentNotifier.value;
@@ -80,16 +78,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     if (matched == null) return;
     final bookingId = matched.bookingId.trim();
     if (bookingId.isEmpty) return;
-    if (_optimisticallyPaidBookingIds.contains(bookingId)) return;
     debugPrint(
-      '[CUSTOMER_BOOKINGS][PAYMENT_STATUS_PATCHED] booking=${_safeRefPreview(bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} from=${matched.paymentStatus.isEmpty ? "-" : matched.paymentStatus} to=paid source=saved_list_notifier',
+      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=saved_list booking=${_safeRefPreview(bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name} local_patch=none',
     );
-    debugPrint(
-      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=saved_list booking=${_safeRefPreview(bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name}',
-    );
-    setState(() {
-      _optimisticallyPaidBookingIds.add(bookingId);
-    });
     if (!_loading) {
       unawaited(_loadLocal());
     }
@@ -554,14 +545,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         paymentMethod: channel.method,
       );
     }
-    if (bookingId.isNotEmpty &&
-        _optimisticallyPaidBookingIds.contains(bookingId) &&
-        !_isPaidCustomerPaymentDisplayToken(token)) {
-      debugPrint(
-        '[CUSTOMER_BOOKINGS][STALE_PAYMENT_LABEL_GUARD] booking=${_safeRefPreview(bookingId)} backendToken=$token overrideTo=paid surface=saved_list',
-      );
-      return 'paid';
-    }
+    // Dossier 02: the authoritative record owns the displayed status.
     return token;
   }
 

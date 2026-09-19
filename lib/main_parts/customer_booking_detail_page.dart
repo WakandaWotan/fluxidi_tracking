@@ -60,13 +60,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   bool _hasValidRatingSession = false;
   String? _refreshError;
   late bool _usingLocalCache = widget.startsFromLocalCache;
-  // G3-N: when fluxidiPendingPaymentNotifier transitions to paid/confirmed for
-  // this booking, we set _optimisticPaidApplied so the build path treats the
-  // booking as paid even before the next /bookings/:id refresh has hydrated
-  // the new payment_status. This prevents the brief "pay in car" / unpaid
-  // label flicker after a successful resumed Mollie payment.
-  bool _optimisticPaidApplied = false;
-  String? _optimisticPaidPaymentBookingId;
+  // Dossier 02: a paid/confirmed notifier value for this booking only
+  // schedules one authoritative refresh. The last handled payment id keeps
+  // that refresh from repeating; it never marks the booking paid.
+  String? _handledPaidNotifierPaymentBookingId;
+  bool _handledPaidNotifier = false;
   bool _pendingActionConsumed = false;
 
   String _t({
@@ -130,13 +128,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     super.dispose();
   }
 
-  // G3-N: when payment_return.dart's pending-payment notifier transitions to
-  // paid/confirmed AND it matches this booking, immediately re-fetch the
-  // authoritative state and remember the optimistic-paid flag so the build
-  // method does NOT keep painting "pay in car" / pending labels until the
-  // refresh round-trips. This is the customer-facing display fix; the
-  // backend canonical record is already paid by this point because
-  // /pay/status drives finalizeResumePaidPaymentToCanonical synchronously.
+  // Dossier 02: when payment_return.dart's notifier reports paid/confirmed for
+  // this booking, re-fetch the authoritative state once. The displayed status
+  // stays whatever /bookings/:id returns, so an unsettled return from checkout
+  // keeps reading pending instead of Paid.
   void _onPendingPaymentNotifierChangedForCustomerDetail() {
     if (!mounted) return;
     final pending = fluxidiPendingPaymentNotifier.value;
@@ -159,21 +154,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         (paymentBookingIdHit.isNotEmpty &&
             paymentBookingIdHit == widget.bookingId.trim());
     if (!viewMatches) return;
-    if (_optimisticPaidApplied &&
-        _optimisticPaidPaymentBookingId == paymentBookingIdHit) {
+    if (_handledPaidNotifier &&
+        _handledPaidNotifierPaymentBookingId == paymentBookingIdHit) {
       return;
     }
-    _optimisticPaidApplied = true;
-    _optimisticPaidPaymentBookingId = paymentBookingIdHit.isNotEmpty
+    _handledPaidNotifier = true;
+    _handledPaidNotifierPaymentBookingId = paymentBookingIdHit.isNotEmpty
         ? paymentBookingIdHit
         : null;
     debugPrint(
-      '[CUSTOMER_BOOKINGS][PAYMENT_STATUS_PATCHED] booking=${_safeRefPreview(_view.internalBookingId.isNotEmpty ? _view.internalBookingId : widget.bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} from=${_view.rawPaymentStatus.isEmpty ? "-" : _view.rawPaymentStatus} to=paid source=detail_notifier',
+      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=detail booking=${_safeRefPreview(_view.internalBookingId.isNotEmpty ? _view.internalBookingId : widget.bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name} local_patch=none',
     );
-    debugPrint(
-      '[PAYMENT_RETURN][CUSTOMER_REFRESH] surface=detail booking=${_safeRefPreview(_view.internalBookingId.isNotEmpty ? _view.internalBookingId : widget.bookingId)} paymentBooking=${_safeRefPreview(paymentBookingIdHit)} status=${pending.status.name}',
-    );
-    setState(() {});
     if (!_refreshing) {
       unawaited(_refresh());
     }

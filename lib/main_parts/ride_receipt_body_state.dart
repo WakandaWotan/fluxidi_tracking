@@ -1102,14 +1102,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     ])?.toLowerCase().trim();
   }
 
-  bool _methodImpliesPaid(String? method) {
-    // Online Bancontact/Mollie is unpaid until Mollie says paid.
-    // Only an in-car cash/card collection may imply paid, and only
-    // when payment_source is explicitly in_car.
-    final m = method?.toLowerCase().trim() ?? '';
-    return m == 'cash' || m == 'card' || m == 'in_vehicle_card' || m == 'in_car';
-  }
-
   Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(
     String bookingId,
   ) async {
@@ -1159,7 +1151,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     final nestedPaymentStatus = _historyNestedPaymentStatus();
 
     String? authoritativePaymentStatus;
-    String? authoritativePaymentMethod;
     if (bookingId.isNotEmpty) {
       final fields = await _fetchAuthoritativePaymentFields(bookingId);
       if (fields != null && fields.isNotEmpty) {
@@ -1167,9 +1158,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         authoritativePaymentStatus =
             _mapText(fields, 'payment_status') ??
             _mapText(fields, 'paymentStatus');
-        authoritativePaymentMethod =
-            _mapText(fields, 'payment_method') ??
-            _mapText(fields, 'paymentMethod');
       }
     }
 
@@ -1182,12 +1170,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       historyNestedStatus: nestedPaymentStatus,
     );
 
-    final methodFromDetails =
-        authoritativePaymentMethod ?? _paymentMethodFromDetails();
-    final sourceFromDetails = _paymentSourceFromDetails();
-    final markAsPaidFromMethod =
-        _methodImpliesPaid(methodFromDetails) &&
-        sourceFromDetails == 'in_car';
     // Payment authority guard:
     //   If the compliance / local-register hydrated JSON already declares the
     //   ride paid (via any alias surfaced by `_isEffectiveReceiptPaid`), we
@@ -1216,10 +1198,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         _paymentStatus = _ReceiptPaymentStatus.paid;
         return;
       }
-      _paymentStatus =
-          markAsPaidFromMethod && fromStatus != _ReceiptPaymentStatus.paid
-          ? _ReceiptPaymentStatus.paid
-          : fromStatus;
+      // Dossier 02: an in-car cash or card method is a collection channel,
+      // not a settlement. Paid follows the authoritative status, which the
+      // authenticated "cash received" action writes with paid_at and
+      // paid_by_driver_id.
+      _paymentStatus = fromStatus;
     });
   }
 
