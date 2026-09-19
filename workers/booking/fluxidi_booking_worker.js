@@ -72110,6 +72110,8 @@ return {
       planning_reference: planningReference,
       planningReference: planningReference,
       booking_uuid: booking.booking_uuid,
+      assignment_by_leg: bookingAssignmentByLeg(),
+      roundtrip_dispatch_mode: handleBookingDispatchMode,
       push,
 
       calendar_event_id,
