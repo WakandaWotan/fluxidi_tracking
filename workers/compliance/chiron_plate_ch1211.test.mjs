@@ -15,8 +15,8 @@ test("TAX002 is CH1211-short and is never padded", () => {
   assert.equal(chironOfficialKentekenplaatWire("TAX002"), "TAX002");
   assert.equal(chironOfficialPlateMeetsCh1211("TAX002"), false);
   const check = verifyChironOfficialLicensePlate("TAX002");
-  assert.equal(check.status, "format_invalid");
-  assert.ok(check.errors.includes("ch1211_license_plate_too_short"));
+  assert.notEqual(check.status, "format_invalid");
+  assert.ok(check.warnings.includes("ch1211_license_plate_too_short"));
 });
 
 test("hydrate prefers fleet T-XAA-674 over event TAX002", () => {
@@ -39,7 +39,7 @@ test("hydrate prefers fleet T-XAA-674 over event TAX002", () => {
   assert.equal(hydrated.source, "scoped_vehicle");
 });
 
-test("serializer refuses TAX002 instead of padding or shipping it", () => {
+test("serializer ships TAX002 unpadded instead of withholding the ride", () => {
   const body = buildChironTaxiritApiPayload({
     status: "vertrek",
     ritnummer: "2026-09-032",
@@ -52,5 +52,5 @@ test("serializer refuses TAX002 instead of padding or shipping it", () => {
     vertrekpunt_lengtegraad: 4.35662,
     vertrekpunt_breedtegraad: 50.845825,
   });
-  assert.equal(body, null);
+  assert.equal(body.rit.voertuig.nummerplaat, "TAX002");
 });

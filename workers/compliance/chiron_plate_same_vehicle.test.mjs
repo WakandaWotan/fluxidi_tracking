@@ -58,7 +58,7 @@ test("a stale event plate is replaced by the valid plate of the same vehicle", (
   assert.equal(hydrated.assigned_vehicle_id, "vh_1");
 });
 
-test("an assigned vehicle whose only plate is invalid sends nothing", () => {
+test("an assigned vehicle whose only plate is short still reports that plate", () => {
   const hydrated = hydrate({
     vehicle: { vehicle_id: "vh_1786881139131", license_plate: "Tax002" },
     assignment: { vehicle_id: "vh_1786881139131" },
@@ -72,8 +72,8 @@ test("an assigned vehicle whose only plate is invalid sends nothing", () => {
   assert.equal(hydrated.plate_blocked_reason, "ch1211_assigned_vehicle_plate_invalid");
 
   const check = verifyChironOfficialLicensePlate(hydrated.kentekenplaat);
-  assert.equal(check.status, "format_invalid");
-  assert.ok(check.errors.includes("ch1211_license_plate_too_short"));
+  assert.notEqual(check.status, "format_invalid");
+  assert.ok(check.warnings.includes("ch1211_license_plate_too_short"));
 
   const body = buildChironTaxiritApiPayload({
     status: "vertrek",
@@ -87,7 +87,9 @@ test("an assigned vehicle whose only plate is invalid sends nothing", () => {
     vertrekpunt_lengtegraad: 4.35662,
     vertrekpunt_breedtegraad: 50.845825,
   });
-  assert.equal(body, null, "nothing may be shipped for an invalid plate");
+  // The plate is shipped as the production build did, so Chiron answers CH1211
+  // itself instead of the ride silently never being exported.
+  assert.equal(body.rit.voertuig.nummerplaat, "TAX002");
 });
 
 test("TXAA674 is never borrowed from another vehicle", () => {
@@ -128,7 +130,7 @@ test("two fleet rows for one vehicle id never produce a plate", () => {
   assert.equal(hydrated.plate_substituted_from, null);
 });
 
-test("live shape of 2026-09-032: no event plate, fleet plate Tax002, nothing sent", () => {
+test("live shape of 2026-09-032: no event plate, fleet plate Tax002, TAX002 sent", () => {
   // Read-only from COMPLIANCE_KV: both the ride_start and the ride_stop event
   // carry only vehicle_id vh_1786881139131 and no license plate, and the live
   // fleet row for that same vehicle holds Tax002.
@@ -163,7 +165,7 @@ test("live shape of 2026-09-032: no event plate, fleet plate Tax002, nothing sen
       vertrekpunt_lengtegraad: 3.6694744,
       vertrekpunt_breedtegraad: 50.7719435,
     });
-    assert.equal(body, null, "CH1211 must be prevented before the POST");
+    assert.equal(body.rit.voertuig.nummerplaat, "TAX002");
   }
 });
 

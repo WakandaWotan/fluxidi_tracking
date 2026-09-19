@@ -4062,13 +4062,13 @@ function verifyChironOfficialLicensePlate(value, context = {}) {
   }
   out.checks.push("present");
 
+  // CH1211 is Chiron's own rejection for a plate under 7 characters. It is
+  // reported as a warning so the dashboard can ask for a correction, but it no
+  // longer marks the plate invalid: that turned a reportable ride into a ride
+  // that was never exported at all.
   const wirePlate = chironOfficialKentekenplaatWire(raw);
   if (wirePlate && wirePlate.length < 7) {
-    out.status = "format_invalid";
-    out.errors.push("ch1211_license_plate_too_short");
-    out.warnings.push(`source_plate:${raw}`);
-    _chironApplyVehicleDocumentMarkers(out, raw, context);
-    return out;
+    out.warnings.push("ch1211_license_plate_too_short");
   }
 
   if (isChironPlaceholderValue(raw, "license_plate")) {
@@ -5346,8 +5346,8 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
   if (!record && fleetRecord) record = fleetRecord;
 
   // Ride 2026-09-032 carried no plate at all, so the plate came from the fleet
-  // row of the same vehicle and that row itself is CH1211-short (Tax002).
-  // Whatever the source, an invalid final plate must carry a reason.
+  // row of the same vehicle and that row itself is CH1211-short (Tax002). The
+  // reason is recorded for the dashboard; it does not withhold the export.
   if (!plateBlockedReason && plate && !chironOfficialPlateMeetsCh1211(plate)) {
     plateBlockedReason = "ch1211_assigned_vehicle_plate_invalid";
   }
@@ -5358,7 +5358,7 @@ function hydrateChironOfficialVehicleIdentity(event, blueprint, context = {}) {
         `assignment_vehicle=${ids.assignmentVehicleId || "none"} ` +
         `assigned_vehicle=${ids.assignedVehicleId || "none"} ` +
         `substituted_from=${plateSubstitutedFrom || "none"} ` +
-        `blocked=${plateBlockedReason || "none"}`,
+        `needs_review=${plateBlockedReason || "none"}`,
     );
   }
 
@@ -7355,8 +7355,10 @@ function buildChironTaxiritApiPayload(officialPayload) {
     if (nummerplaatDisplay) {
       nummerplaat = chironOfficialKentekenplaatWire(nummerplaatDisplay);
       if (!nummerplaat) return null;
-      // CH1211: never pad a short plate, and never ship it.
-      if (nummerplaat.length < 7) return null;
+      // CH1211: never pad a short plate. A plate that is too short is still
+      // shipped, exactly as the production build did, so Chiron answers CH1211
+      // itself and the ride stays visible and retryable instead of silently
+      // never being exported.
     }
     const bestuurderspasnummer = cleanText(officialPayload.bestuurderspasnummer, 64);
     const vertrektijdstip = _chironWireDateTime(officialPayload.vertrektijdstip);
