@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_breakdown.dart';
 import 'package:fluxidi_tracking/company/company_fixed_price_labels.dart';
+import 'package:fluxidi_tracking/company/company_plan_quote.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -24,6 +26,9 @@ import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+
+const Key kAirportReviewTotalMismatchKey = Key('airport_review_total_mismatch');
+const Key kAirportReviewSubmitKey = Key('airport_review_submit');
 
 class AirportBookingReviewPage extends StatefulWidget {
   const AirportBookingReviewPage({
@@ -1673,6 +1678,9 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
         quote['price_incl_vat_main'] ?? quote['price_incl_vat'];
     final priceInclReturn =
         quote['price_incl_vat_return'] ?? returnMap['price_incl_vat'];
+    // The roundtrip total must equal its two legs. A drift is shown and blocks
+    // the request; it is never silently recalculated on the device.
+    final totalCheck = companyPlanQuoteTotalCheckFromWire(quote);
     final priceEx =
         quote['total_price_ex_vat'] ??
         quote['price_ex_vat'] ??
@@ -2080,6 +2088,19 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                             es: 'Total ida y vuelta con IVA',
                           ),
                           _fmtMoney(priceIncl),
+                        ),
+                      if (!totalCheck.consistent)
+                        Padding(
+                          key: kAirportReviewTotalMismatchKey,
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            kCustomerBookingPriceInconsistent.of(_appLanguage),
+                            softWrap: true,
+                            style: const TextStyle(
+                              color: Color(0xFFB3261E),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
                       if (requestQuoteRequired)
                         Padding(
@@ -2536,7 +2557,8 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
                 _billingDetailsSectionCard(),
                 const SizedBox(height: 12),
                 FilledButton(
-                  onPressed: _isSubmitting || _isSubmitted
+                  key: kAirportReviewSubmitKey,
+                  onPressed: _isSubmitting || _isSubmitted || !totalCheck.consistent
                       ? null
                       : _submitBooking,
                   style: FilledButton.styleFrom(

@@ -38,7 +38,7 @@ void main() {
     expect(kCustomerBookingCompanyLogoHeight, inInclusiveRange(40, 48));
   });
 
-  test('listed 401 with two 200 legs still displays 400', () {
+  test('listed 401 with two 200 legs is reported, not masked as 400', () {
     final parsed = parseCompanyPlanQuote(
       <String, dynamic>{
         'ok': true,
@@ -58,7 +58,11 @@ void main() {
     expect(parsed.outboundPriceInclVat, 200);
     expect(parsed.returnPriceInclVat, 200);
     expect(parsed.totalPriceInclVat, 401);
-    expect(parsed.displayTotalPrice, 400);
+    // The wrong server total stays visible; the app reports the drift instead
+    // of quietly presenting an invented 400.
+    expect(parsed.displayTotalPrice, 401);
+    expect(parsed.totalCheck.consistent, isFalse);
+    expect(parsed.totalCheck.driftCents, 100);
   });
 
   test('merged 200+200 stays 400 even if a combined listed total was 401', () {

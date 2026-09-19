@@ -23,6 +23,10 @@ import {
 import { corsHeaders, json, html } from "./modules/http_response.js";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import {
+  composeAirportRoundTripTotals,
+  resolveAirportReturnFixedFareDecision,
+} from "./modules/airport_return_fixed_fare.mjs";
+import {
   scheduleBaseCancellation,
   cascadeAddonCancellations,
   shouldRejectRecurringAfterCancel,
@@ -28799,35 +28803,27 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
           fixedFareQuoteResult.pricing &&
           _isAirportFixedFareEligiblePayload(body)
         ) {
-          const outboundDirection = _fixedFareNormalizeText(
-            body?.airport_direction ?? body?.airportDirection,
-            24,
-          ).toLowerCase();
-          const expectedReturnDirection =
-            outboundDirection === "to_airport" ? "from_airport" : "to_airport";
-          const rawReturnDirection = _fixedFareNormalizeText(
-            body?.return_direction ?? body?.returnDirection,
-            24,
-          ).toLowerCase();
-          const reverseByAddress =
-            safeStr(rf, 300).trim().toLowerCase() ===
-              safeStr(body?.to, 300).trim().toLowerCase() &&
-            safeStr(rt, 300).trim().toLowerCase() ===
-              safeStr(body?.from, 300).trim().toLowerCase();
-          const reverseByDirection =
-            !rawReturnDirection || rawReturnDirection === expectedReturnDirection;
-          if (reverseByAddress && reverseByDirection) {
+          const reuse = resolveAirportReturnFixedFareDecision({
+            returnRequested: true,
+            mainFixedFareApplied: true,
+            explicitReturnMatched: false,
+            outboundDirection: body?.airport_direction ?? body?.airportDirection,
+            returnDirection: body?.return_direction ?? body?.returnDirection,
+            outboundFrom: body?.from,
+            outboundTo: body?.to,
+            returnFrom: rf,
+            returnTo: rt,
+            outboundUserSideCoords: _airportFixedFareUserSideCoords(body, false),
+            returnUserSideCoords: _airportFixedFareUserSideCoords(body, true),
+          });
+          if (reuse.useMainFixedFare) {
             retPricing = fixedFareQuoteResult.pricing;
             quoteReturnUsesFixedFare = true;
             quoteReturnReusedMainFixedFare = true;
             quoteReturnFixedFareRuleId = quoteMainFixedFareRuleId;
             quoteReturnPricingSource = "airport_fixed_fare";
-            quoteReturnFallbackReason = "reused_main_fixed_fare_rule";
-          } else {
-            quoteReturnFallbackReason = reverseByAddress
-              ? "return_direction_not_reverse"
-              : "return_addresses_not_reverse";
           }
+          quoteReturnFallbackReason = reuse.fallbackReason;
         }
       }
       console.log(
@@ -28863,6 +28859,15 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
   const retEx = returnQuote ? moneyNumber(returnQuote.price_ex_vat) : 0;
   const retVat = returnQuote ? moneyNumber(returnQuote.price_vat) : 0;
   const retIncl = returnQuote ? moneyNumber(returnQuote.price_incl_vat) : 0;
+  const quoteRoundTripTotals = composeAirportRoundTripTotals({
+    main: mainPricing,
+    ret: returnQuote,
+  });
+  console.log(
+    `[AIRPORT_FIXED_FARE][QUOTE][TOTAL_CENTS] main=${quoteRoundTripTotals.price_incl_vat_main_cents} ` +
+      `return=${quoteRoundTripTotals.price_incl_vat_return_cents ?? "none"} ` +
+      `total=${quoteRoundTripTotals.total_price_incl_vat_cents}`,
+  );
   const availabilityMode = _availabilityMode(env);
   const quoteScopeMask = _bookingIntentScopeMask({
     tenant_id: quoteScope?.tenant_id,
@@ -29238,10 +29243,10 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
       fixed_fare_rule_id_main: quoteMainFixedFareRuleId,
       fixed_fare_rule_id_return: quoteReturnFixedFareRuleId,
 
-      // totals (main + optional return)
-      total_price_ex_vat: round2(mainEx + retEx),
-      total_price_vat: round2(mainVat + retVat),
-      total_price_incl_vat: round2(mainIncl + retIncl),
+      // totals (main + optional return), summed in integer cents
+      total_price_ex_vat: quoteRoundTripTotals.total_price_ex_vat,
+      total_price_vat: quoteRoundTripTotals.total_price_vat,
+      total_price_incl_vat: quoteRoundTripTotals.total_price_incl_vat,
 
       return: returnQuote,
       breakdown: mainPricing.breakdown,
@@ -68220,35 +68225,27 @@ async function handleBooking(payload, env, request, options = {}) {
             fixedFareBookingResult.pricing &&
             _isAirportFixedFareEligiblePayload(payload)
           ) {
-            const outboundDirection = _fixedFareNormalizeText(
-              payload?.airport_direction ?? payload?.airportDirection,
-              24,
-            ).toLowerCase();
-            const expectedReturnDirection =
-              outboundDirection === "to_airport" ? "from_airport" : "to_airport";
-            const rawReturnDirection = _fixedFareNormalizeText(
-              payload?.return_direction ?? payload?.returnDirection,
-              24,
-            ).toLowerCase();
-            const reverseByAddress =
-              safeStr(return_from, 300).trim().toLowerCase() ===
-                safeStr(to, 300).trim().toLowerCase() &&
-              safeStr(return_to, 300).trim().toLowerCase() ===
-                safeStr(from, 300).trim().toLowerCase();
-            const reverseByDirection =
-              !rawReturnDirection || rawReturnDirection === expectedReturnDirection;
-            if (reverseByAddress && reverseByDirection) {
+            const reuse = resolveAirportReturnFixedFareDecision({
+              returnRequested: true,
+              mainFixedFareApplied: true,
+              explicitReturnMatched: false,
+              outboundDirection: payload?.airport_direction ?? payload?.airportDirection,
+              returnDirection: payload?.return_direction ?? payload?.returnDirection,
+              outboundFrom: from,
+              outboundTo: to,
+              returnFrom: return_from,
+              returnTo: return_to,
+              outboundUserSideCoords: _airportFixedFareUserSideCoords(payload, false),
+              returnUserSideCoords: _airportFixedFareUserSideCoords(payload, true),
+            });
+            if (reuse.useMainFixedFare) {
               returnPricing = fixedFareBookingResult.pricing;
               bookingReturnUsesFixedFare = true;
               bookingReturnReusedMainFixedFare = true;
               bookingReturnFixedFareRuleId = bookingMainFixedFareRuleId;
               bookingReturnPricingSource = "airport_fixed_fare";
-              bookingReturnFallbackReason = "reused_main_fixed_fare_rule";
-            } else {
-              bookingReturnFallbackReason = reverseByAddress
-                ? "return_direction_not_reverse"
-                : "return_addresses_not_reverse";
             }
+            bookingReturnFallbackReason = reuse.fallbackReason;
           }
         }
       }
@@ -68296,20 +68293,19 @@ async function handleBooking(payload, env, request, options = {}) {
       const main = mainPricing || {};
       const retp = (ret.enabled && returnPricing) ? returnPricing : null;
 
-      // NOTE: calcPrice returns monetary fields as strings ("143.24"), so we MUST cast to numbers before summing.
-      const mainEx = Number(String(main.price_ex_vat ?? "0").replace(",", "."));
-      const mainVat = Number(String(main.price_vat ?? "0").replace(",", "."));
-      const mainIncl = Number(String(main.price_incl_vat ?? "0").replace(",", "."));
-
-      const retEx = retp ? Number(String(retp.price_ex_vat ?? "0").replace(",", ".")) : 0;
-      const retVat = retp ? Number(String(retp.price_vat ?? "0").replace(",", ".")) : 0;
-      const retIncl = retp ? Number(String(retp.price_incl_vat ?? "0").replace(",", ".")) : 0;
-
-      const ex = round2((Number.isFinite(mainEx) ? mainEx : 0) + (Number.isFinite(retEx) ? retEx : 0));
-      const vat = round2((Number.isFinite(mainVat) ? mainVat : 0) + (Number.isFinite(retVat) ? retVat : 0));
-      const incl = round2((Number.isFinite(mainIncl) ? mainIncl : 0) + (Number.isFinite(retIncl) ? retIncl : 0));
-
-      return { price_ex_vat: ex, price_vat: vat, price_incl_vat: incl };
+      // calcPrice returns monetary fields as strings ("143.24"); the composer
+      // parses them into integer cents so 200 + 200 is exactly 400.
+      const totals = composeAirportRoundTripTotals({ main, ret: retp });
+      console.log(
+        `[AIRPORT_FIXED_FARE][BOOK][TOTAL_CENTS] main=${totals.price_incl_vat_main_cents} ` +
+          `return=${totals.price_incl_vat_return_cents ?? "none"} ` +
+          `total=${totals.total_price_incl_vat_cents}`,
+      );
+      return {
+        price_ex_vat: totals.total_price_ex_vat,
+        price_vat: totals.total_price_vat,
+        price_incl_vat: totals.total_price_incl_vat,
+      };
     })();
     const bookingPricingSource = _limousineAccepted
       ? _limousineAccepted.pricingSource
@@ -77644,6 +77640,37 @@ function _fixedFareNormalizeZoneValue(zoneType, value) {
     return raw.toLowerCase();
   }
   return raw;
+}
+
+/**
+ * Coordinates of the customer side of one leg. On a to_airport outbound the
+ * customer is the pickup, and on its return leg the customer is the dropoff.
+ */
+function _airportFixedFareUserSideCoords(payload, isReturnLeg) {
+  const toAirport =
+    _fixedFareNormalizeText(
+      payload?.airport_direction ?? payload?.airportDirection,
+      24,
+    ).toLowerCase() !== "from_airport";
+  const customerIsPickup = isReturnLeg ? !toAirport : toAirport;
+  const lat = isReturnLeg
+    ? customerIsPickup
+      ? payload?.return_from_lat ?? payload?.returnFromLat ?? payload?.return_pickup_lat
+      : payload?.return_to_lat ?? payload?.returnToLat ?? payload?.return_destination_lat
+    : customerIsPickup
+      ? payload?.pickup_lat ?? payload?.pickupLat ?? payload?.from_lat
+      : payload?.destination_lat ?? payload?.destinationLat ?? payload?.to_lat;
+  const lng = isReturnLeg
+    ? customerIsPickup
+      ? payload?.return_from_lng ?? payload?.returnFromLng ?? payload?.return_pickup_lng
+      : payload?.return_to_lng ?? payload?.returnToLng ?? payload?.return_destination_lng
+    : customerIsPickup
+      ? payload?.pickup_lng ?? payload?.pickupLng ?? payload?.from_lng
+      : payload?.destination_lng ?? payload?.destinationLng ?? payload?.to_lng;
+  const latNum = _fixedFareFiniteNumberOrNull(lat);
+  const lngNum = _fixedFareFiniteNumberOrNull(lng);
+  if (latNum === null || lngNum === null) return null;
+  return { lat: latNum, lng: lngNum };
 }
 
 function _fixedFareFiniteNumberOrNull(value) {

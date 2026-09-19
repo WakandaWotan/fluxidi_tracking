@@ -99,15 +99,96 @@ class CompanyPlanQuoteResult {
       returnDurationMin != null &&
       returnDurationMin! > 0;
 
-  num? get displayTotalPrice {
-    final outbound = outboundPriceInclVat ??
-        (returnPriceInclVat == null ? priceInclVat : outboundPriceInclVat);
-    final inbound = returnPriceInclVat;
-    if (outbound != null && inbound != null) {
-      return outbound + inbound;
-    }
-    return totalPriceInclVat ?? priceInclVat;
+  num? get _outboundForTotalCheck =>
+      outboundPriceInclVat ??
+      (returnPriceInclVat == null ? priceInclVat : outboundPriceInclVat);
+
+  /// Compares the server total against the sum of its legs. A round trip of
+  /// 200 + 200 that is listed as 401 must surface as a problem, not be quietly
+  /// rewritten to 400 behind the customer's back.
+  CompanyPlanQuoteTotalCheck get totalCheck => companyPlanQuoteTotalCheck(
+        outboundInclVat: _outboundForTotalCheck,
+        returnInclVat: returnPriceInclVat,
+        listedTotalInclVat: totalPriceInclVat ?? priceInclVat,
+      );
+
+  /// The authoritative server total. Never a locally repaired number: when it
+  /// disagrees with the legs, [totalCheck] reports the drift and the caller
+  /// blocks the price instead of showing an invented one.
+  num? get displayTotalPrice => totalPriceInclVat ?? priceInclVat;
+}
+
+/// Result of comparing a listed round-trip total with its two legs, in cents.
+@immutable
+class CompanyPlanQuoteTotalCheck {
+  const CompanyPlanQuoteTotalCheck({
+    required this.comparable,
+    required this.legSumCents,
+    required this.listedCents,
+  });
+
+  final bool comparable;
+  final int? legSumCents;
+  final int? listedCents;
+
+  bool get consistent => !comparable || legSumCents == listedCents;
+  int get driftCents =>
+      comparable ? (listedCents ?? 0) - (legSumCents ?? 0) : 0;
+  num? get legSum => legSumCents == null ? null : legSumCents! / 100;
+}
+
+int? _quoteCentsOrNull(num? amount) {
+  if (amount == null) return null;
+  return (amount * 100).round();
+}
+
+CompanyPlanQuoteTotalCheck companyPlanQuoteTotalCheck({
+  required num? outboundInclVat,
+  required num? returnInclVat,
+  required num? listedTotalInclVat,
+}) {
+  final outbound = _quoteCentsOrNull(outboundInclVat);
+  final inbound = _quoteCentsOrNull(returnInclVat);
+  final listed = _quoteCentsOrNull(listedTotalInclVat);
+  if (outbound == null || inbound == null || listed == null) {
+    return CompanyPlanQuoteTotalCheck(
+      comparable: false,
+      legSumCents: outbound != null && inbound != null ? outbound + inbound : null,
+      listedCents: listed,
+    );
   }
+  return CompanyPlanQuoteTotalCheck(
+    comparable: true,
+    legSumCents: outbound + inbound,
+    listedCents: listed,
+  );
+}
+
+/// Same check straight from a raw `/quote` body, for screens that read the wire
+/// map instead of a parsed [CompanyPlanQuoteResult] (the airport review page).
+CompanyPlanQuoteTotalCheck companyPlanQuoteTotalCheckFromWire(
+  Map<String, dynamic> raw,
+) {
+  final returnRaw = raw['return'] is Map
+      ? Map<String, dynamic>.from(raw['return'] as Map)
+      : const <String, dynamic>{};
+  return companyPlanQuoteTotalCheck(
+    outboundInclVat: _quoteMoney(
+      raw['price_incl_vat_main'] ??
+          raw['outbound_price_incl_vat'] ??
+          (returnRaw.isEmpty ? raw['price_incl_vat'] : null),
+    ),
+    returnInclVat: _quoteMoney(
+      raw['return_price_incl_vat'] ??
+          raw['price_incl_vat_return'] ??
+          returnRaw['price_incl_vat'],
+    ),
+    listedTotalInclVat: _quoteMoney(
+      raw['total_price_incl_vat'] ??
+          raw['price_incl_vat_total'] ??
+          raw['price_incl_vat'],
+    ),
+  );
 }
 
 class CompanyPlanQuoteRequest {
@@ -461,14 +542,10 @@ CompanyPlanQuoteResult parseCompanyPlanQuote(
 }
 
 void companyPlanLogQuoteTotalMismatch(CompanyPlanQuoteResult result) {
-  final outbound = result.outboundPriceInclVat;
-  final inbound = result.returnPriceInclVat;
-  final listed = result.totalPriceInclVat;
-  if (outbound == null || inbound == null || listed == null) return;
-  final sum = outbound + inbound;
-  if ((sum - listed).abs() < 0.005) return;
+  final check = result.totalCheck;
+  if (check.consistent) return;
   debugPrint(
-    '[QUOTE][LEG_TOTAL_MISMATCH] listed=$listed outbound=$outbound return=$inbound sum=$sum extras_ex=${result.breakdown?.extrasEx()} return_extras_ex=${result.returnBreakdown?.extrasEx()} source=${result.pricingSource}',
+    '[QUOTE][LEG_TOTAL_MISMATCH] listed_cents=${check.listedCents} leg_sum_cents=${check.legSumCents} drift_cents=${check.driftCents} outbound=${result.outboundPriceInclVat} return=${result.returnPriceInclVat} extras_ex=${result.breakdown?.extrasEx()} return_extras_ex=${result.returnBreakdown?.extrasEx()} source=${result.pricingSource}',
   );
 }
 

@@ -806,6 +806,13 @@ const LocalizedText kCustomerBookingPriceFailed = LocalizedText(
   es: 'No se pudo calcular el precio. Comprueba la empresa e inténtalo de nuevo.',
 );
 
+const LocalizedText kCustomerBookingPriceInconsistent = LocalizedText(
+  nl: 'Het totaal klopt niet met de prijs van de heen- en terugrit. Vraag een nieuwe prijs aan; boek niet met dit bedrag.',
+  en: 'The total does not match the outbound and return prices. Request a new price; do not book this amount.',
+  fr: 'Le total ne correspond pas aux prix aller et retour. Demandez un nouveau prix; ne réservez pas ce montant.',
+  es: 'El total no coincide con los precios de ida y vuelta. Solicita un precio nuevo; no reserves este importe.',
+);
+
 const LocalizedText kCustomerBookingQuoteFailed = LocalizedText(
   nl: 'De offerte kon niet worden opgehaald. Probeer opnieuw.',
   en: 'The quote could not be retrieved. Try again.',

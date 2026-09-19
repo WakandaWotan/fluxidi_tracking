@@ -18,6 +18,7 @@ const String kCustomerBookingIssueUnavailable = 'vehicle_unavailable';
 const String kCustomerBookingIssuePayment = 'payment_failed';
 const String kCustomerBookingIssueCheckoutStart = 'checkout_start_failed';
 const String kCustomerBookingIssueNetwork = 'network_failed';
+const String kCustomerBookingIssuePriceInconsistent = 'price_inconsistent';
 
 class CustomerBookingSubmitIssue {
   const CustomerBookingSubmitIssue({
@@ -166,6 +167,13 @@ List<CustomerBookingSubmitIssue> customerBookingSubmitIssues({
         focusKey: 'quote',
       ),
     );
+  } else if (quote != null && !quote.totalCheck.consistent) {
+    issues.add(
+      const CustomerBookingSubmitIssue(
+        code: kCustomerBookingIssuePriceInconsistent,
+        focusKey: 'quote',
+      ),
+    );
   }
   return issues;
 }
@@ -222,6 +230,8 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
       return kCustomerBookingNeedQuote.of(language);
     case kCustomerBookingIssuePriceFailed:
       return kCustomerBookingPriceFailed.of(language);
+    case kCustomerBookingIssuePriceInconsistent:
+      return kCustomerBookingPriceInconsistent.of(language);
     case kCustomerBookingIssueAlreadyBooked:
       return kCustomerBookingAlreadyBooked.of(language);
     case kCustomerBookingIssueNeedRoute:
