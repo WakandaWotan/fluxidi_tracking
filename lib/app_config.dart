@@ -1674,9 +1674,23 @@ class BackendSubscriptionProfile {
   final bool providerAmountSyncPending;
   final String activationId;
   final List<String> warnings;
+  final bool internalDevAccount;
+  final bool subscriptionBillingExempt;
+  final bool unlimitedVehicles;
+  final bool unlimitedDrivers;
+  final bool ridePaymentsUnchanged;
 
   /// Purchased PDF credits remaining (authoritative; no fallback to allowance).
   int get purchasedPdfCredits => pdfPurchasedCreditsRemaining;
+
+  bool get isInternalDevAccount =>
+      internalDevAccount || subscriptionBillingExempt;
+
+  int get effectiveMaxVehicles =>
+      (unlimitedVehicles || isInternalDevAccount) ? 1000000 : maxVehicles;
+
+  int get effectiveMaxDrivers =>
+      (unlimitedDrivers || isInternalDevAccount) ? 1000000 : maxDrivers;
 
   const BackendSubscriptionProfile({
     required this.tenantId,
@@ -1755,6 +1769,11 @@ class BackendSubscriptionProfile {
     this.providerAmountSyncPending = false,
     this.activationId = '',
     this.warnings = const <String>[],
+    this.internalDevAccount = false,
+    this.subscriptionBillingExempt = false,
+    this.unlimitedVehicles = false,
+    this.unlimitedDrivers = false,
+    this.ridePaymentsUnchanged = true,
   });
 
   /// Defaults resolve to the Fluxidi Pro catalog for the active company
@@ -2234,6 +2253,31 @@ class BackendSubscriptionProfile {
         fallback.activationId,
       ),
       warnings: stringList('warnings', 'warnings'),
+      internalDevAccount: boolVal(
+        'internal_dev_account',
+        'internalDevAccount',
+        fallback.internalDevAccount,
+      ),
+      subscriptionBillingExempt: boolVal(
+        'subscription_billing_exempt',
+        'subscriptionBillingExempt',
+        fallback.subscriptionBillingExempt,
+      ),
+      unlimitedVehicles: boolVal(
+        'unlimited_vehicles',
+        'unlimitedVehicles',
+        fallback.unlimitedVehicles,
+      ),
+      unlimitedDrivers: boolVal(
+        'unlimited_drivers',
+        'unlimitedDrivers',
+        fallback.unlimitedDrivers,
+      ),
+      ridePaymentsUnchanged: boolVal(
+        'ride_payments_unchanged',
+        'ridePaymentsUnchanged',
+        fallback.ridePaymentsUnchanged,
+      ),
     );
   }
 
@@ -2323,6 +2367,11 @@ class BackendSubscriptionProfile {
     'provider_amount_sync_pending': providerAmountSyncPending,
     'activation_id': activationId,
     'warnings': warnings,
+    'internal_dev_account': internalDevAccount,
+    'subscription_billing_exempt': subscriptionBillingExempt,
+    'unlimited_vehicles': unlimitedVehicles,
+    'unlimited_drivers': unlimitedDrivers,
+    'ride_payments_unchanged': ridePaymentsUnchanged,
   };
 }
 

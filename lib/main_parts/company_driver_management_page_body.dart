@@ -2426,7 +2426,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
           tenantId: scopeId,
           companyId: scopeId,
         );
-        if (profile.maxDrivers > 0) {
+        if (profile.unlimitedDrivers || profile.isInternalDevAccount) {
+          effectiveMax = profile.effectiveMaxDrivers;
+          limitSource = 'profile.internalDevUnlimited';
+        } else if (profile.maxDrivers > 0) {
           effectiveMax = profile.maxDrivers;
           limitSource = 'profile.maxDrivers';
         } else if (profile.includedVehicles > 0 &&

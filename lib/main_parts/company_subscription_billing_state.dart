@@ -2588,6 +2588,84 @@ class _CompanySubscriptionBillingPageState
         legacy == 'trialing';
   }
 
+  bool _isInternalDevAccount(BackendSubscriptionProfile profile) {
+    return profile.isInternalDevAccount;
+  }
+
+  Widget _buildInternalDevAccountCard() {
+    final palette = _businessThemePalette;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(0.55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Intern ontwikkelaccount',
+              en: 'Internal development account',
+              fr: 'Compte de développement interne',
+              es: 'Cuenta interna de desarrollo',
+            ),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w900,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Gratis — geen abonnementsincasso',
+              en: 'Free — no subscription collection',
+              fr: 'Gratuit — aucun prélèvement d’abonnement',
+              es: 'Gratis — sin cobro de suscripción',
+            ),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w700,
+              fontSize: 13.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Onbeperkt voertuigen en chauffeurs',
+              en: 'Unlimited vehicles and drivers',
+              fr: 'Véhicules et chauffeurs illimités',
+              es: 'Vehículos y conductores ilimitados',
+            ),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w700,
+              fontSize: 13.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _t(
+              nl: 'Ritten blijven via de bestaande Mollie-koppeling betaald. Gratis Fluxidi-gebruik maakt ritten niet automatisch betaald. Interne testbetalingen blijven apart herkenbaar.',
+              en: 'Rides stay payable through the existing Mollie connection. Free Fluxidi use does not mark rides paid. Internal test payments stay separately recognizable.',
+              fr: 'Les courses restent payées via le lien Mollie existant. L’usage gratuit de Fluxidi ne paie pas les courses. Les paiements de test internes restent distincts.',
+              es: 'Los viajes siguen pagándose con la conexión Mollie existente. El uso gratuito de Fluxidi no marca los viajes como pagados. Los pagos de prueba internos siguen siendo reconocibles por separado.',
+            ),
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _effectiveCancelDate(BackendSubscriptionProfile profile) {
     final effective = profile.cancellationEffectiveAt.trim();
     if (effective.isNotEmpty) return _humanDate(effective);
@@ -2840,6 +2918,7 @@ class _CompanySubscriptionBillingPageState
   /// Cancel button (active/trialing, not yet scheduled) or a passive status
   /// card (already scheduled). Renders nothing for any other state.
   Widget _buildCancellationSection(BackendSubscriptionProfile profile) {
+    if (_isInternalDevAccount(profile)) return const SizedBox.shrink();
     if (profile.cancelAtPeriodEnd) {
       final pendingProvider = profile.providerCancelPending;
       final effective = _effectiveCancelDate(profile);
@@ -2986,6 +3065,7 @@ class _CompanySubscriptionBillingPageState
     BackendSubscriptionProfile profile,
     SubscriptionPlanCatalogEntry catalog,
   ) {
+    if (_isInternalDevAccount(profile)) return const SizedBox.shrink();
     final bool isActive =
         profile.status.trim().toLowerCase() == 'active' ||
         profile.subscriptionStatus.trim().toLowerCase() == 'active';
@@ -3171,6 +3251,7 @@ class _CompanySubscriptionBillingPageState
   }
 
   Widget _buildEntitlementStateBanner(BackendSubscriptionProfile profile) {
+    if (_isInternalDevAccount(profile)) return const SizedBox.shrink();
     final status =
         (profile.subscriptionStatus.trim().isNotEmpty
                 ? profile.subscriptionStatus
@@ -4187,6 +4268,7 @@ class _CompanySubscriptionBillingPageState
     );
 
     final marketDisplay = _marketDisplayName(catalog.market);
+    final isDevAccount = _isInternalDevAccount(profile);
 
     return Container(
       width: double.infinity,
@@ -4224,12 +4306,19 @@ class _CompanySubscriptionBillingPageState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _t(
-                        nl: 'Fluxidi Pro',
-                        en: 'Fluxidi Pro',
-                        fr: 'Fluxidi Pro',
-                        es: 'Fluxidi Pro',
-                      ),
+                      isDevAccount
+                          ? _t(
+                              nl: 'Intern ontwikkelaccount',
+                              en: 'Internal development account',
+                              fr: 'Compte de développement interne',
+                              es: 'Cuenta interna de desarrollo',
+                            )
+                          : _t(
+                              nl: 'Fluxidi Pro',
+                              en: 'Fluxidi Pro',
+                              fr: 'Fluxidi Pro',
+                              es: 'Fluxidi Pro',
+                            ),
                       style: TextStyle(
                         color: _goldInk,
                         fontWeight: FontWeight.w900,
@@ -4254,7 +4343,14 @@ class _CompanySubscriptionBillingPageState
               ),
               const SizedBox(width: 8),
               _chip(
-                text: _statusLabel(effectiveStatus),
+                text: isDevAccount
+                    ? _t(
+                        nl: 'Intern ontwikkelaccount',
+                        en: 'Internal development account',
+                        fr: 'Compte interne',
+                        es: 'Cuenta interna',
+                      )
+                    : _statusLabel(effectiveStatus),
                 bg: statusColors.bg,
                 border: statusColors.border,
                 textColor: statusColors.text,
@@ -4272,20 +4368,34 @@ class _CompanySubscriptionBillingPageState
               // excl.-VAT subtotal. The excl.-VAT subtotal is then shown
               // smaller below so incl. VAT stays visually dominant.
               Text(
-                hasRecurringVat
+                isDevAccount
+                    ? _t(
+                        nl: 'Gratis — geen abonnementsincasso',
+                        en: 'Free — no subscription collection',
+                        fr: 'Gratuit — aucun prélèvement d’abonnement',
+                        es: 'Gratis — sin cobro de suscripción',
+                      )
+                    : hasRecurringVat
                     ? _priceFromCents(recurringInclCents)
                     : monthlyText,
                 style: TextStyle(
                   color: palette.textPrimary,
-                  fontSize: 34,
+                  fontSize: isDevAccount ? 18 : 34,
                   fontWeight: FontWeight.w900,
-                  height: 1.0,
+                  height: 1.15,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  hasRecurringVat
+                  isDevAccount
+                      ? _t(
+                          nl: 'Onbeperkt voertuigen en chauffeurs',
+                          en: 'Unlimited vehicles and drivers',
+                          fr: 'Véhicules et chauffeurs illimités',
+                          es: 'Vehículos y conductores ilimitados',
+                        )
+                      : hasRecurringVat
                       ? _t(
                           nl: '/ maand incl. btw',
                           en: '/ month incl. VAT',
@@ -4307,7 +4417,7 @@ class _CompanySubscriptionBillingPageState
               ),
             ],
           ),
-          if (hasRecurringVat) ...[
+          if (!isDevAccount && hasRecurringVat) ...[
             const SizedBox(height: 8),
             // Transparent breakdown: subtotal excl. VAT + applicable rate + VAT
             // amount. Derived from the authoritative quote — never hard-coded.
@@ -4335,7 +4445,7 @@ class _CompanySubscriptionBillingPageState
                 height: 1.35,
               ),
             ),
-          ] else if (currentQuote?.isReverseCharge == true) ...[
+          ] else if (!isDevAccount && currentQuote?.isReverseCharge == true) ...[
             const SizedBox(height: 8),
             Text(
               _t(
@@ -4351,7 +4461,7 @@ class _CompanySubscriptionBillingPageState
                 height: 1.35,
               ),
             ),
-          ] else ...[
+          ] else if (!isDevAccount) ...[
             const SizedBox(height: 8),
             // Honest state when no authoritative VAT is available: never invent
             // a total; checkout/server amounts stay authoritative.
@@ -4370,7 +4480,7 @@ class _CompanySubscriptionBillingPageState
               ),
             ),
           ],
-          if (vQty > 0 || dQty > 0) ...[
+          if (!isDevAccount && (vQty > 0 || dQty > 0)) ...[
             const SizedBox(height: 6),
             Text(
               breakdownText,
@@ -4382,7 +4492,7 @@ class _CompanySubscriptionBillingPageState
               ),
             ),
           ],
-          if (isFounderLocked) ...[
+          if (!isDevAccount && isFounderLocked) ...[
             const SizedBox(height: 10),
             Container(
               width: double.infinity,
@@ -4444,7 +4554,14 @@ class _CompanySubscriptionBillingPageState
               fr: 'Prochain paiement',
               es: 'Próximo pago',
             ),
-            renewalLine,
+            isDevAccount
+                ? _t(
+                    nl: 'Geen abonnementsincasso',
+                    en: 'No subscription collection',
+                    fr: 'Aucun prélèvement d’abonnement',
+                    es: 'Sin cobro de suscripción',
+                  )
+                : renewalLine,
             icon: Icons.payments_outlined,
           ),
           if (profile.billingEmail.trim().isNotEmpty)
@@ -4459,36 +4576,38 @@ class _CompanySubscriptionBillingPageState
               icon: Icons.email_outlined,
             ),
           if (!isPaidActive) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                _chip(
-                  text: _t(
-                    nl: '2 weken gratis proefperiode',
-                    en: '2 weeks free trial',
-                    fr: '2 semaines d\'essai gratuit',
-                    es: '2 semanas de prueba gratis',
+            if (!isDevAccount) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  _chip(
+                    text: _t(
+                      nl: '2 weken gratis proefperiode',
+                      en: '2 weeks free trial',
+                      fr: '2 semaines d\'essai gratuit',
+                      es: '2 semanas de prueba gratis',
+                    ),
+                    bg: _green.withOpacity(0.16),
+                    border: _green.withOpacity(0.55),
+                    textColor: _green,
+                    icon: Icons.schedule_outlined,
                   ),
-                  bg: _green.withOpacity(0.16),
-                  border: _green.withOpacity(0.55),
-                  textColor: _green,
-                  icon: Icons.schedule_outlined,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            _infoLine(
-              _t(
-                nl: 'Proefperiode start/einde',
-                en: 'Trial start/end',
-                fr: 'Début/fin essai',
-                es: 'Inicio/fin de prueba',
+                ],
               ),
-              '${profile.trialStartedAt.trim().isEmpty ? "—" : _humanDate(profile.trialStartedAt)} / ${profile.trialEndsAt.trim().isEmpty ? "—" : _humanDate(profile.trialEndsAt)}',
-              icon: Icons.schedule_outlined,
-            ),
+              const SizedBox(height: 4),
+              _infoLine(
+                _t(
+                  nl: 'Proefperiode start/einde',
+                  en: 'Trial start/end',
+                  fr: 'Début/fin essai',
+                  es: 'Inicio/fin de prueba',
+                ),
+                '${profile.trialStartedAt.trim().isEmpty ? "—" : _humanDate(profile.trialStartedAt)} / ${profile.trialEndsAt.trim().isEmpty ? "—" : _humanDate(profile.trialEndsAt)}',
+                icon: Icons.schedule_outlined,
+              ),
+            ],
           ],
           _buildActivationSection(profile, catalog),
           _buildCancellationSection(profile),
@@ -4563,8 +4682,11 @@ class _CompanySubscriptionBillingPageState
       required Color accent,
       required double layoutWidth,
       required double cardWidth,
+      bool unlimited = false,
     }) {
-      final double progress = max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0);
+      final double progress = unlimited
+          ? 0.0
+          : (max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0));
       return Container(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
         decoration: BoxDecoration(
@@ -4614,7 +4736,14 @@ class _CompanySubscriptionBillingPageState
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  '/ ${_formatThousands(max)}',
+                  unlimited
+                      ? _t(
+                          nl: '/ onbeperkt',
+                          en: '/ unlimited',
+                          fr: '/ illimité',
+                          es: '/ ilimitado',
+                        )
+                      : '/ ${_formatThousands(max)}',
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 14,
@@ -4661,6 +4790,7 @@ class _CompanySubscriptionBillingPageState
               ),
               used: usedVehicles,
               max: profile.maxVehicles,
+              unlimited: profile.isInternalDevAccount,
               accent: _green,
               layoutWidth: width,
               cardWidth: cardW,
@@ -4678,6 +4808,7 @@ class _CompanySubscriptionBillingPageState
               ),
               used: usedDrivers,
               max: profile.maxDrivers,
+              unlimited: profile.isInternalDevAccount,
               accent: _secondaryAccent,
               layoutWidth: width,
               cardWidth: cardW,
@@ -5021,6 +5152,8 @@ class _CompanySubscriptionBillingPageState
                           24 + bottomSafeInset,
                         ),
                         children: [
+                          if (_isInternalDevAccount(profile))
+                            _buildInternalDevAccountCard(),
                           _buildSubscriptionHero(profile, catalog),
                           _sectionCard(
                             title: _t(
@@ -5036,7 +5169,8 @@ class _CompanySubscriptionBillingPageState
                               usedDrivers,
                             ),
                           ),
-                          if (isSupportedMarket)
+                          if (isSupportedMarket &&
+                              !_isInternalDevAccount(profile))
                             _sectionCard(
                               title: _t(
                                 nl: 'Maandelijkse uitbreidingen',

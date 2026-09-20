@@ -81,6 +81,20 @@ void main() {
       );
     });
 
+    test('internal development exemption copy is visible', () {
+      expect(billingSource.contains('Intern ontwikkelaccount'), isTrue);
+      expect(
+        billingSource.contains('Gratis — geen abonnementsincasso'),
+        isTrue,
+      );
+      expect(
+        billingSource.contains('Onbeperkt voertuigen en chauffeurs'),
+        isTrue,
+      );
+      expect(billingSource.contains('_buildInternalDevAccountCard'), isTrue);
+      expect(billingSource.contains('isInternalDevAccount'), isTrue);
+    });
+
     test('legacy "Fluxidi Platform" hero pill is gone', () {
       // The redesigned hero uses "Fluxidi Pro" plus the market name; the old
       // generic "Fluxidi Platform" branding pill must not linger.

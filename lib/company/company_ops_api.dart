@@ -321,13 +321,35 @@ Future<Map<String, dynamic>> fetchCompanyOpsSubscriptionProfile() async {
   return decoded;
 }
 
+bool companyOpsInternalDevAccount(Map<String, dynamic> profile) {
+  bool flag(String snake, String camel) {
+    final raw = profile[snake] ?? profile[camel];
+    return raw == true || raw == 1 || raw == 'true' || raw == '1';
+  }
+
+  return flag('internal_dev_account', 'internalDevAccount') ||
+      flag('subscription_billing_exempt', 'subscriptionBillingExempt') ||
+      flag('unlimited_vehicles', 'unlimitedVehicles') ||
+      flag('unlimited_drivers', 'unlimitedDrivers');
+}
+
 int companyOpsMaxVehicles(Map<String, dynamic> profile) {
+  if (companyOpsInternalDevAccount(profile) ||
+      profile['unlimited_vehicles'] == true ||
+      profile['unlimitedVehicles'] == true) {
+    return 1000000;
+  }
   final raw = profile['max_vehicles'] ?? profile['maxVehicles'] ?? 1;
   if (raw is num) return raw.toInt();
   return int.tryParse(raw.toString()) ?? 1;
 }
 
 int companyOpsMaxDrivers(Map<String, dynamic> profile) {
+  if (companyOpsInternalDevAccount(profile) ||
+      profile['unlimited_drivers'] == true ||
+      profile['unlimitedDrivers'] == true) {
+    return 1000000;
+  }
   final raw = profile['max_drivers'] ?? profile['maxDrivers'] ?? 1;
   if (raw is num) return raw.toInt();
   return int.tryParse(raw.toString()) ?? 1;

@@ -2050,7 +2050,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           companyId: scopeId,
         );
         liveProfile = profile;
-        if (profile.maxVehicles > 0) {
+        if (profile.unlimitedVehicles || profile.isInternalDevAccount) {
+          effectiveMax = profile.effectiveMaxVehicles;
+          limitSource = 'profile.internalDevUnlimited';
+        } else if (profile.maxVehicles > 0) {
           effectiveMax = profile.maxVehicles;
           limitSource = 'profile.maxVehicles';
         } else if (profile.includedVehicles > 0) {
@@ -2537,7 +2540,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
           tenantId: scopeId,
           companyId: scopeId,
         );
-        if (profile.maxDrivers > 0) {
+        if (profile.unlimitedDrivers || profile.isInternalDevAccount) {
+          effectiveMax = profile.effectiveMaxDrivers;
+          limitSource = 'profile.internalDevUnlimited';
+        } else if (profile.maxDrivers > 0) {
           effectiveMax = profile.maxDrivers;
           limitSource = 'profile.maxDrivers';
         } else if (profile.includedVehicles > 0 &&
