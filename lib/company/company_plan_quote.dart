@@ -888,6 +888,11 @@ bool companyPlanQuoteErrorIsMissingRoute(
       !companyPlanAddressIsQuoteReady(to);
 }
 
+String companyPlanPostcodeFromAddress(LimousineAddressValue address) {
+  final match = RegExp(r'\b(\d{4})\b').firstMatch(address.routeText);
+  return match?.group(1) ?? '';
+}
+
 String companyPlanQuoteFingerprint({
   required LimousineAddressValue from,
   required LimousineAddressValue to,
@@ -929,7 +934,9 @@ String companyPlanQuoteFingerprint({
     '${options.waitMin}',
     '$passengers',
     options.airportIata,
+    options.returnAirportIata,
     options.airportDirection,
+    options.tier,
     returnEnabled ? 'rt' : 'one',
     if (returnEnabled) minute(returnPickupLocal),
     if (returnEnabled) coord(returnFrom ?? const LimousineAddressValue()),
@@ -984,6 +991,10 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     for (final stop in returnStops)
       if (stop.routeText.isNotEmpty) stop.routeText,
   ];
+  final userSide = options.airportDirection == 'from_airport' ? to : from;
+  final userPostcode = options.isAirport
+      ? companyPlanPostcodeFromAddress(userSide)
+      : '';
   final body = <String, dynamic>{
     'from': from.routeText,
     'to': to.routeText,
@@ -995,8 +1006,20 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     if (options.bags > 0) 'bags': options.bags,
     if (!options.isAirport && options.waitMin > 0) 'wait_min': options.waitMin,
     if (options.airportIata.isNotEmpty) 'airport_iata': options.airportIata,
+    if (options.airportIata.isNotEmpty)
+      'airport_id': options.airportIata.trim().toLowerCase(),
+    if (options.returnAirportIata.isNotEmpty)
+      'return_airport_iata': options.returnAirportIata,
     if (options.airportDirection.isNotEmpty)
       'airport_direction': options.airportDirection,
+    if (userPostcode.isNotEmpty) ...<String, dynamic>{
+      'postcode': userPostcode,
+      'postal_code': userPostcode,
+      'pickup_postcode': userPostcode,
+      'from_postcode': userPostcode,
+      'fixed_fare_zone_type': 'postcode',
+      'fixed_fare_zone_value': userPostcode,
+    },
     if (from.lat != null && from.lon != null) ...<String, dynamic>{
       'pickup_lat': from.lat,
       'pickup_lon': from.lon,
@@ -1011,6 +1034,13 @@ CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
     },
     if (stopTexts.isNotEmpty) 'stops': stopTexts,
     'return_enabled': returnEnabled,
+    if (returnEnabled && options.isAirport) ...<String, dynamic>{
+      'return_direction': options.airportDirection == 'to_airport'
+          ? 'from_airport'
+          : (options.airportDirection == 'from_airport'
+                ? 'to_airport'
+                : options.airportDirection),
+    },
     if (returnEnabled && returnPickupLocal != null)
       'return_pickup_iso': companyPlanPickupIso(returnPickupLocal),
     if (returnEnabled && returnFrom != null && returnFrom.routeText.isNotEmpty)

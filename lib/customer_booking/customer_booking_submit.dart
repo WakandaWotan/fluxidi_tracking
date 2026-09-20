@@ -217,6 +217,8 @@ String customerBookingSubmitIssueText(String code, AppLanguage language) {
   switch (code) {
     case kCustomerBookingIssueNeedCompany:
       return kCustomerBookingNeedCompany.of(language);
+    case kCustomerBookingIssueNeedAirport:
+      return kCustomerBookingNeedAirport.of(language);
     case kCustomerBookingIssueNeedPickup:
       return kCustomerBookingNeedPickupField.of(language);
     case kCustomerBookingIssueNeedDropoff:
@@ -309,6 +311,11 @@ String customerBookingBookIssueFromRaw(String? raw) {
       lower.contains('missing tenant') ||
       lower.contains('public_partner')) {
     return kCustomerBookingIssueNeedCompany;
+  }
+  if (lower.contains('need_airport') ||
+      lower.contains('selecteer de luchthaven') ||
+      lower.contains('select the airport')) {
+    return kCustomerBookingIssueNeedAirport;
   }
   return kCustomerBookingIssueBookFailed;
 }

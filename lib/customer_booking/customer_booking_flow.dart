@@ -246,6 +246,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           ? (_toAirport ? 'to_airport' : 'from_airport')
           : '',
       airportIata: _airport?.iata ?? '',
+      returnAirportIata: _airportMode ? (_airport?.iata ?? '') : '',
       airportCountry: _airport?.countryCode ?? '',
       flightAt: _flightAt?.toIso8601String() ?? '',
       pickupAfterMin: _pickupAfterMin,
@@ -256,9 +257,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       vehicleType: _vehicleCategory == null
           ? companyPlanVehicleTypeWire(_vehicle)
           : companyPlanVehicleCategoryWire(_vehicleCategory!),
-      tier: _vehicleCategory == CompanyPlanVehicleCategory.premium
-          ? 'premium'
-          : '',
+      // Airport fixed-fare rules match comfort, same as AirportPage.
+      // Premium vehicle choice stays on vehicle_id, not on the fare tier.
+      tier: _airportMode
+          ? 'comfort'
+          : (_vehicleCategory == CompanyPlanVehicleCategory.premium
+                ? 'premium'
+                : ''),
     );
   }
 
@@ -1094,20 +1099,35 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       });
       return;
     }
+    if (_airportMode && !customerBookingAirportMetadataReady(_airport)) {
+      if (!mounted || seq != _quoteSeq) return;
+      setState(() {
+        _clearCurrentQuote();
+        _quoteError = kCustomerBookingIssueNeedAirport;
+        _quoteLoading = false;
+      });
+      unawaited(_refreshAvailability());
+      return;
+    }
     final pickupAt = _whenNow ? DateTime.now() : _pickupAt;
     final waitReturn = _returnKind == CustomerBookingReturnKind.wait;
+    final airportReturn =
+        _airportMode && _returnKind == CustomerBookingReturnKind.noWait;
+    final combinedReturn = waitReturn || airportReturn;
     final request = companyPlanQuoteRequestFromAddresses(
       from: _effectivePickupAddress,
       to: _effectiveDropoffAddress,
       pickupLocal: pickupAt,
       options: _options,
       passengers: _passengers,
-      returnEnabled: waitReturn,
-      returnPickupLocal: waitReturn ? pickupAt : null,
-      returnFrom: waitReturn ? _quotedReturnFrom : null,
-      returnTo: waitReturn ? _quotedReturnTo : null,
+      returnEnabled: combinedReturn,
+      returnPickupLocal: combinedReturn
+          ? (airportReturn ? (_returnAt ?? pickupAt) : pickupAt)
+          : null,
+      returnFrom: combinedReturn ? _quotedReturnFrom : null,
+      returnTo: combinedReturn ? _quotedReturnTo : null,
       stops: [for (final stop in _stops) _quoteAddress(stop)],
-      returnStops: waitReturn
+      returnStops: combinedReturn
           ? [for (final stop in _returnStops) _quoteAddress(stop)]
           : const <LimousineAddressValue>[],
       whenNow: _whenNow,
@@ -1135,7 +1155,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     try {
       var result = await _quotes.quote(request);
       if (!mounted || seq != _quoteSeq) return;
-      if (_splitReturn) {
+      if (_splitReturn && !airportReturn) {
         final inboundFrom = _quotedReturnFrom;
         final inboundTo = _quotedReturnTo;
         final inboundPickup = _returnAt ?? pickupAt;
@@ -1499,6 +1519,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     setState(() => _submitError = null);
     try {
       _syncReturnDefaults();
+      if (_airportMode && !customerBookingAirportMetadataReady(_airport)) {
+        throw const CustomerBookingBookException(
+          statusCode: 400,
+          code: kCustomerBookingIssueNeedAirport,
+          raw: 'need_airport',
+        );
+      }
       if (!_effectivePickupAddress.hasCoordinates) {
         await _geocodePickupIfNeeded();
       }

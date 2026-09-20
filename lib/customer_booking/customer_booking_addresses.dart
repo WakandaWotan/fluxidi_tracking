@@ -126,6 +126,11 @@ String customerBookingAirportSummary(AirportCatalogAirport airport) {
   return '✈ $name ($iata)';
 }
 
+bool customerBookingAirportMetadataReady(AirportCatalogAirport? airport) {
+  if (airport == null) return false;
+  return airport.iata.trim().length >= 3 || airport.id.trim().isNotEmpty;
+}
+
 String customerBookingAirportCompactSummary(AirportCatalogAirport airport) {
   final iata = airport.iata.trim().toUpperCase();
   final city = airport.city.trim();

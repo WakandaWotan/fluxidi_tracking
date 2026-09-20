@@ -687,6 +687,13 @@ const LocalizedText kCustomerBookingNeedRoute = LocalizedText(
   es: 'Introduce salida y destino para calcular la ruta.',
 );
 
+const LocalizedText kCustomerBookingNeedAirport = LocalizedText(
+  nl: 'Selecteer de luchthaven opnieuw',
+  en: 'Select the airport again',
+  fr: 'Sélectionnez à nouveau l’aéroport',
+  es: 'Vuelve a seleccionar el aeropuerto',
+);
+
 const LocalizedText kCustomerBookingNeedWhen = LocalizedText(
   nl: 'Kies een ophaaltijd om de route te berekenen.',
   en: 'Choose a pickup time to calculate the route.',
