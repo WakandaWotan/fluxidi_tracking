@@ -1,12 +1,50 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Read-only public partner lookups over https. The generated debug
          manifest only grants this for development builds. -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- Pickup from the customer's current position. Foreground only: no
+         background location and no location foreground service, exactly like
+         the existing app. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+
+    <!-- Scanning a company's booking QR code. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- Plugins in the shared source merge broad media-library permissions
+         that a customer app does not need. Strip them so this build cannot ask
+         for more than it uses. -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove"/>
+    <uses-permission
+        android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove"/>
+
     <application
         android:label="Fluxidi Customer Dev"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
+
+        <!-- Mapbox reads the token from this resource, which
+             android/app/build.gradle.kts fills from MAPBOX_TOKEN. -->
+        <meta-data
+            android:name="com.mapbox.maps.token"
+            android:value="@string/mapbox_access_token"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -17,8 +17,8 @@ Map<String, dynamic> customerBookingBookContractFields({
 }) {
   return <String, dynamic>{
     ...selection.toPayloadFields(),
-    'return_url': kFluxidiPaymentReturnUrl,
-    'returnUrl': kFluxidiPaymentReturnUrl,
+    'return_url': fluxidiPaymentReturnUrl,
+    'returnUrl': fluxidiPaymentReturnUrl,
     'booking_source': kCustomerBookingBookSource,
     'entry_channel': kCustomerBookingBookChannel,
     'entry_kind': kind.name,

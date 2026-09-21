@@ -13,6 +13,11 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # The existing customer screens pin the UI language with MaterialApp.locale,
+  # so Material/Widgets/Cupertino localizations must exist for nl/fr/es/de too.
+  flutter_localizations:
+    sdk: flutter
+
   # Incoming links only, for the app's own payment-return scheme. Same major
   # version as the existing app so both stay on one proven plugin line.
   app_links: ^6.4.1
@@ -20,10 +25,36 @@ dependencies:
   # Read-only public partner lookups. Same constraint as the existing app.
   http: ^1.2.2
 
+  # Customer-owned preference files (language), stored next to the customer
+  # theme file the bridged store already writes.
+  path_provider: ^2.1.4
+
+  # Same map plugin the bridged screens use. Declared directly because boot
+  # installs the Mapbox access token before any map is built. The version is
+  # decided by the dependency_overrides block below.
+  mapbox_maps_flutter: ^2.5.0
+
   # Shared ride core, extracted from the existing app. Both this app and a
   # future white-label customer app depend on it.
   fluxidi_customer_core:
     path: ../../packages/fluxidi_customer_core
+
+  # Bridge to the existing customer functionality. Step 1 of
+  # docs/MIGRATIE_PLAN.md: the full customer flows keep running from the
+  # existing source while they are peeled out module by module. Used read-only;
+  # this app never modifies the golden library.
+  fluxidi_tracking:
+    path: ../..
+
+# The bridge inherits mapbox_maps_flutter through fluxidi_tracking, but pub
+# ignores dependency_overrides declared by a dependency: only the entry package
+# is honoured. Without this block the app would resolve upstream 2.x instead of
+# the pinned local vendor of 2.18.0 that carries the MapView lifecycle patch
+# (third_party/mapbox_maps_flutter/PATCHES.md), and the native follow bridge in
+# the shared source would no longer line up with the plugin it was built for.
+dependency_overrides:
+  mapbox_maps_flutter:
+    path: ../../third_party/mapbox_maps_flutter
 
 dev_dependencies:
   flutter_test:
@@ -32,3 +63,19 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Mirrored from the repo root by tool/sync_bridge_assets.dart. A Flutter
+  # package can only share assets that live under its lib/, and the golden
+  # app's assets sit next to its pubspec, so this app carries its own copy
+  # under the same relative paths. That keeps every existing asset key
+  # ('assets/fluxidi/...') resolving in the bridged screens.
+  assets:
+    - assets/fluxidi/
+    - assets/booking/modes/v1/
+    - assets/booking/airports/v1/
+    - assets/vehicles/fallback/v1/
+    - assets/events/categories/
+    - assets/payment/png/
+    - assets/payment/logos/
+    - assets/payment/badges/
+    - assets/payment/providers/

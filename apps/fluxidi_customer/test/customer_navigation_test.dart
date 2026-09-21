@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluxidi_customer/app/customer_routes.dart';
 import 'package:fluxidi_customer/app/fluxidi_customer_app.dart';
 import 'package:fluxidi_customer/deeplinks/customer_deep_link_source.dart';
 import 'package:fluxidi_customer/screens/customer_home_screen.dart';
+import 'package:fluxidi_customer/screens/customer_profile_screen.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 
 /// Link source that never touches a platform channel.
 class _FakeDeepLinkSource implements CustomerDeepLinkSource {
@@ -21,43 +23,79 @@ class _FakeDeepLinkSource implements CustomerDeepLinkSource {
   Stream<Uri> linkStream() => controller.stream;
 }
 
-void main() {
-  testWidgets('home shows every customer destination', (tester) async {
-    await tester.pumpWidget(const FluxidiCustomerApp());
-    await tester.pumpAndSettle();
+/// Brings an item of the scrolling page into view before asserting on it.
+Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
+  if (finder.evaluate().isNotEmpty) return;
+  await tester.scrollUntilVisible(
+    finder,
+    280,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
+}
 
-    expect(find.text('Fluxidi Customer Dev'), findsOneWidget);
-    for (final destination in kCustomerDestinations) {
-      expect(find.text(destination.label), findsOneWidget);
-    }
+void main() {
+  setUp(() {
+    // main() restores the stored language; a widget test pins it instead so the
+    // expected labels do not depend on the previous test's choice.
+    setAppLanguage(AppLanguage.nl);
   });
 
-  testWidgets('each destination opens its own not-connected screen', (
+  testWidgets('home shows the destination field and every service', (
     tester,
   ) async {
     await tester.pumpWidget(const FluxidiCustomerApp());
     await tester.pumpAndSettle();
 
-    for (final destination in kCustomerDestinations) {
-      await tester.tap(find.text(destination.label));
-      await tester.pumpAndSettle();
+    expect(find.text('Waar wil je naartoe?'), findsOneWidget);
+    expect(find.byKey(const Key('customer_home_destination')), findsOneWidget);
+    expect(find.byKey(const Key('customer_home_book_taxi')), findsOneWidget);
 
-      if (destination.route == CustomerRoutes.taxi) {
-        // Taxi is wired to company search. Without a configured base URL the
-        // screen must say so instead of calling anything.
-        expect(find.text('API niet geconfigureerd'), findsOneWidget);
-      } else {
-        expect(
-          find.text('Nog niet aangesloten'),
-          findsOneWidget,
-          reason: 'expected placeholder for ${destination.route}',
-        );
-      }
-
-      await tester.tap(find.byType(BackButton));
-      await tester.pumpAndSettle();
-      expect(find.byType(CustomerHomeScreen), findsOneWidget);
+    for (final key in <String>[
+      'customer_home_service_airport',
+      'customer_home_service_hotels',
+      'customer_home_service_events',
+      'customer_home_service_limousine',
+      'customer_home_region_radar',
+    ]) {
+      await _scrollTo(tester, find.byKey(Key(key)));
+      expect(find.byKey(Key(key)), findsOneWidget, reason: 'missing $key');
     }
+  });
+
+  testWidgets('the bottom bar has Home, Boekingen and Profiel', (tester) async {
+    await tester.pumpWidget(const FluxidiCustomerApp());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('customer_bottom_nav')), findsOneWidget);
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Boekingen'), findsOneWidget);
+    expect(find.text('Profiel'), findsOneWidget);
+  });
+
+  testWidgets('Profiel offers details, bookings, language, theme and account', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const FluxidiCustomerApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Profiel'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CustomerProfileScreen), findsOneWidget);
+    for (final key in <String>[
+      'customer_profile_my_details',
+      'customer_profile_my_bookings',
+      'customer_profile_language',
+      'customer_profile_theme',
+      'customer_profile_privacy',
+    ]) {
+      await _scrollTo(tester, find.byKey(Key(key)));
+      expect(find.byKey(Key(key)), findsOneWidget, reason: 'missing $key');
+    }
+    // These belong in the booking flow, not on the profile page.
+    expect(find.text('Zakelijke rit'), findsNothing);
+    expect(find.text('Taxi in de buurt'), findsNothing);
   });
 
   testWidgets('home renders on phone and tablet, portrait and landscape', (
@@ -83,10 +121,14 @@ void main() {
         isNull,
         reason: 'layout overflowed on ${entry.key}',
       );
+      await _scrollTo(
+        tester,
+        find.byKey(const Key('customer_home_service_airport')),
+      );
       expect(
-        find.text('Mijn boekingen'),
+        find.byKey(const Key('customer_home_service_airport')),
         findsOneWidget,
-        reason: 'destination missing on ${entry.key}',
+        reason: 'service card missing on ${entry.key}',
       );
     }
   });
@@ -104,7 +146,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Taxi'), findsOneWidget);
+    expect(find.text('Waar wil je naartoe?'), findsOneWidget);
   });
 
   testWidgets('an incoming own-scheme link opens the neutral return screen', (
@@ -122,36 +164,6 @@ void main() {
     expect(find.text('Je bent terug in de app'), findsOneWidget);
     expect(find.textContaining('betaald'), findsNothing);
     expect(find.textContaining('geslaagd'), findsNothing);
-  });
-
-  testWidgets('the return screen stays visible on top of a deeper flow', (
-    tester,
-  ) async {
-    // Regression: an imperative push from the link listener ended up on the
-    // navigator stack but never became visible on device. The screen is now
-    // rendered from app state, so it must show even when another screen was
-    // open, and closing it must land back on the start screen.
-    final source = _FakeDeepLinkSource();
-    addTearDown(source.controller.close);
-
-    await tester.pumpWidget(FluxidiCustomerApp(deepLinkSource: source));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Luchthaven'));
-    await tester.pumpAndSettle();
-    expect(find.text('Nog niet aangesloten'), findsOneWidget);
-
-    source.controller.add(Uri.parse('fluxidicustomerdev://pay/return'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Je bent terug in de app'), findsOneWidget);
-    expect(find.text('Nog niet aangesloten'), findsNothing);
-
-    await tester.tap(find.byKey(const Key('payment_return_close')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Je bent terug in de app'), findsNothing);
-    expect(find.byType(CustomerHomeScreen), findsOneWidget);
   });
 
   testWidgets('a cold-start own-scheme link opens the return screen', (

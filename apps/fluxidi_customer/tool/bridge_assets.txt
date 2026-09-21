@@ -1,0 +1,52 @@
+# Assets the standalone customer app bundles under its own asset root, so the
+# asset keys the existing customer screens already use ('assets/fluxidi/...')
+# keep resolving. The golden app declares these in the repo-root pubspec, but a
+# Flutter package can only share assets that live under its lib/, so the
+# customer app carries its own copy.
+#
+# Format:
+#   dir  <path relative to repo root>          copies the directory recursively
+#   file <path relative to repo root>          copies one file
+#
+# Refresh with: dart run tool/sync_bridge_assets.dart   (from apps/fluxidi_customer)
+
+# Ride modes, airport photo cards and vehicle fallbacks used by the booking flow.
+dir  assets/booking/modes/v1
+dir  assets/booking/airports/v1
+dir  assets/vehicles/fallback/v1
+
+# Payment method artwork resolved by name in lib/payment/payment_method_logo.dart.
+dir  assets/payment/logos
+dir  assets/payment/badges
+dir  assets/payment/providers
+dir  assets/payment/png
+
+# Event category artwork used by the events pages.
+dir  assets/events/categories
+
+# Customer-facing photography and logos. Driver, company and role-entry
+# backgrounds are deliberately left out: this app never shows them.
+file assets/fluxidi/fluxidi_logo.png
+file assets/fluxidi/fluxidi_logo_horizontal_dark.png
+file assets/fluxidi/fluxidi_logo_horizontal_gold.png
+file assets/fluxidi/fluxidi_hero_taxi.png
+file assets/fluxidi/fluxidi_start_background.png
+file assets/fluxidi/fluxidi_customer_home_hero.webp
+file assets/fluxidi/fluxidi_customer_header_picture_landscape_tablet.webp
+file assets/fluxidi/customer_home_hero_light.webp
+file assets/fluxidi/customer_home_hero_dark.webp
+file assets/fluxidi/customer_home_airport_banner.webp
+file assets/fluxidi/customer_home_hotel_bb_banner.webp
+file assets/fluxidi/customer_home_events_banner.webp
+file assets/fluxidi/customer_home_limousine_banner.webp
+file assets/fluxidi/customer_home_business_banner.webp
+file assets/fluxidi/customer_home_business_banner_dark.webp
+file assets/fluxidi/airport_portret_background_GSM.webp
+file assets/fluxidi/Hotel&B&B_background.webp
+file assets/fluxidi/evenementen_picture_landscape_tablet.webp
+file assets/fluxidi/fluxidi_event_crowd_night.jpg
+file assets/fluxidi/fluxidi_business_briefcase_night.jpg
+file assets/fluxidi/zakelijke_picture_landscape_tablet.webp
+file assets/fluxidi/zakelijke_tablet_header_foto.webp
+file assets/fluxidi/zakelijke_tablet_header_foto_landscape.webp
+file assets/fluxidi/zakelijke_tablet_header_foto_landscape_daytime.webp

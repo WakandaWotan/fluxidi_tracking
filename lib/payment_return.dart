@@ -13,6 +13,16 @@ const String kFluxidiPaymentReturnScheme = 'fluxidi';
 const String kFluxidiPaymentReturnHost = 'pay';
 const String kFluxidiPaymentReturnUrl = 'fluxidi://pay/return';
 
+/// Return link the booking payload advertises and the coordinator answers to.
+///
+/// The combined Fluxidi app owns `fluxidi://pay/return` and never changes it.
+/// A second host app installed alongside it — the standalone customer app —
+/// owns its own scheme, so it declares that identity once at boot through
+/// [PaymentReturnCoordinator.start]. Until something declares otherwise this
+/// resolves to exactly the constants above.
+String get fluxidiPaymentReturnUrl =>
+    PaymentReturnCoordinator.instance.returnUrl;
+
 Map<String, String>? _activePaymentScopeQuery() =>
     resolveMollieStreetStatusScopeQuery();
 
@@ -34,13 +44,32 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
   bool _initialChecked = false;
   bool _reconcileInFlight = false;
   String _bookingBaseUrl = '';
+  String _returnScheme = kFluxidiPaymentReturnScheme;
+  String _returnHost = kFluxidiPaymentReturnHost;
+  String _returnUrl = kFluxidiPaymentReturnUrl;
+
+  /// Return link this app hands to the payment provider and accepts back.
+  String get returnUrl => _returnUrl;
 
   /// Starts (idempotently) the deep-link listener and lifecycle observer.
   /// [bookingBaseUrl] is the same value the rest of the app uses for the
   /// booking Worker; we keep it as a parameter so we don't pull main.dart's
   /// configuration into this lightweight module.
-  void start({required String bookingBaseUrl}) {
+  ///
+  /// [scheme], [host] and [returnUrl] default to the combined app's own
+  /// `fluxidi://pay/return` identity. A host app that owns a different scheme
+  /// passes its own, so two Fluxidi apps can be installed side by side without
+  /// intercepting each other's return links.
+  void start({
+    required String bookingBaseUrl,
+    String scheme = kFluxidiPaymentReturnScheme,
+    String host = kFluxidiPaymentReturnHost,
+    String returnUrl = kFluxidiPaymentReturnUrl,
+  }) {
     _bookingBaseUrl = bookingBaseUrl;
+    _returnScheme = scheme.trim().toLowerCase();
+    _returnHost = host.trim().toLowerCase();
+    _returnUrl = returnUrl.trim();
     if (_started) return;
     _started = true;
     WidgetsBinding.instance.addObserver(this);
@@ -69,8 +98,7 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
   void _handleIncomingDeepLink(Uri uri, {required String source}) {
     final scheme = uri.scheme.toLowerCase();
     final host = uri.host.toLowerCase();
-    if (scheme != kFluxidiPaymentReturnScheme ||
-        host != kFluxidiPaymentReturnHost) {
+    if (scheme != _returnScheme || host != _returnHost) {
       return;
     }
     final params = uri.queryParameters;

@@ -1,18 +1,29 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/main.dart'
+    show
+        kFluxidiLocalizationsDelegates,
+        kFluxidiSupportedLocales,
+        resolveFluxidiAppLocale;
 
+import '../bridge/customer_flows.dart';
 import '../deeplinks/customer_deep_link.dart';
 import '../deeplinks/customer_deep_link_source.dart';
 import '../screens/customer_payment_return_screen.dart';
+import '../screens/customer_shell_screen.dart';
 import 'customer_app_config.dart';
 import 'customer_routes.dart';
 import 'customer_theme.dart';
 
 /// Root of the standalone Fluxidi customer app.
 ///
-/// Owns its own startup: no company, driver or planner bootstrap, no session
-/// restore and no backend calls in this phase.
+/// Rebuilds on the customer theme and the app language, so the existing theme
+/// picker and the language choice apply to this shell and to every bridged
+/// screen opened from it.
 class FluxidiCustomerApp extends StatefulWidget {
   const FluxidiCustomerApp({
     super.key,
@@ -43,6 +54,11 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
   @override
   void initState() {
     super.initState();
+    // The bridged flows offer a "back to start" action. Point it at this app's
+    // own start page instead of the combined app's customer home.
+    registerCustomerStartPage(
+      (_) => CustomerShellScreen(config: widget.config),
+    );
     final source = widget.deepLinkSource;
     if (source == null) return;
     _linkSub = source.linkStream().listen(
@@ -90,24 +106,44 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: widget.config.appName,
-      debugShowCheckedModeBanner: false,
-      navigatorKey: _navigatorKey,
-      theme: buildCustomerTheme(widget.config),
-      initialRoute: CustomerRoutes.home,
-      onGenerateRoute: (settings) =>
-          generateCustomerRoute(settings, config: widget.config),
-      builder: (context, child) {
-        if (!_paymentReturnVisible) return child ?? const SizedBox.shrink();
-        return Stack(
-          children: <Widget>[
-            child ?? const SizedBox.shrink(),
-            CustomerPaymentReturnScreen(
-              config: widget.config,
-              onClose: _closePaymentReturn,
-            ),
-          ],
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, variant, _) {
+        return ValueListenableBuilder<AppLanguage>(
+          valueListenable: appLanguageNotifier,
+          builder: (context, _, __) {
+            return MaterialApp(
+              title: widget.config.appName,
+              debugShowCheckedModeBanner: false,
+              navigatorKey: _navigatorKey,
+              theme: buildCustomerTheme(widget.config, variant: variant),
+              // The chosen app language wins over the device locale, and the
+              // framework delegates must cover every language in the list or
+              // MaterialLocalizations.of() throws under nl/fr/es/de.
+              locale: resolveFluxidiAppLocale(),
+              supportedLocales: kFluxidiSupportedLocales,
+              localizationsDelegates: kFluxidiLocalizationsDelegates,
+              localeResolutionCallback: (deviceLocale, supported) =>
+                  resolveFluxidiAppLocale(supported),
+              initialRoute: CustomerRoutes.home,
+              onGenerateRoute: (settings) =>
+                  generateCustomerRoute(settings, config: widget.config),
+              builder: (context, child) {
+                if (!_paymentReturnVisible) {
+                  return child ?? const SizedBox.shrink();
+                }
+                return Stack(
+                  children: <Widget>[
+                    child ?? const SizedBox.shrink(),
+                    CustomerPaymentReturnScreen(
+                      config: widget.config,
+                      onClose: _closePaymentReturn,
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         );
       },
     );

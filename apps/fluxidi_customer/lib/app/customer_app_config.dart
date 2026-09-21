@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart'
+    show kBookingBaseUrl, kMapboxToken;
 
 /// Which product variant this build represents.
 ///
@@ -67,9 +69,10 @@ class CustomerAppConfig {
     required this.deepLinkPath,
     required this.variant,
     required this.brand,
-    this.publicBookingBaseUrl = kPublicBookingBaseUrlDefine,
-    this.mapboxToken = kMapboxTokenDefine,
-  });
+    String publicBookingBaseUrl = kPublicBookingBaseUrlDefine,
+    String mapboxToken = kMapboxTokenDefine,
+  })  : _publicBookingBaseUrl = publicBookingBaseUrl,
+        _mapboxToken = mapboxToken;
 
   /// User-visible app name.
   final String appName;
@@ -88,11 +91,30 @@ class CustomerAppConfig {
   final CustomerAppVariant variant;
   final CustomerBrandColors brand;
 
+  final String _publicBookingBaseUrl;
+  final String _mapboxToken;
+
   /// Base URL for the public booking API, without trailing slash.
-  final String publicBookingBaseUrl;
+  ///
+  /// This app's own define wins. When it is absent the bridged configuration
+  /// decides, so the screens written here and the customer flows reused from
+  /// the existing source can never end up talking to two different hosts.
+  String get publicBookingBaseUrl {
+    final own = _publicBookingBaseUrl.trim();
+    if (own.isNotEmpty) {
+      return own.endsWith('/') ? own.substring(0, own.length - 1) : own;
+    }
+    return kBookingBaseUrl;
+  }
 
   /// Mapbox access token for map tiles, geocoding and route geometry.
-  final String mapboxToken;
+  ///
+  /// Both halves read the same `MAPBOX_TOKEN` define, so this only differs
+  /// when a build deliberately passes a token to one of them.
+  String get mapboxToken {
+    final own = _mapboxToken.trim();
+    return own.isNotEmpty ? own : kMapboxToken;
+  }
 
   /// Payment-return link this build answers to, for documentation and tests.
   String get paymentReturnUrl => '$deepLinkScheme://$deepLinkHost$deepLinkPath';
