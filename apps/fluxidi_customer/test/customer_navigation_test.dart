@@ -133,6 +133,29 @@ void main() {
     }
   });
 
+  testWidgets('tablet stacks the service cards in portrait, two up in '
+      'landscape', (tester) async {
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 1.0;
+
+    Future<double> cardWidth(Size size) async {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(const FluxidiCustomerApp());
+      await tester.pumpAndSettle();
+      final finder = find.byKey(const Key('customer_home_service_airport'));
+      await _scrollTo(tester, finder);
+      return tester.getSize(finder).width;
+    }
+
+    final portrait = await cardWidth(const Size(800, 1280));
+    final landscape = await cardWidth(const Size(1280, 800));
+
+    // Portrait shows one wide photo card per service.
+    expect(portrait, greaterThan(600));
+    // Landscape puts two side by side, so each is roughly half as wide.
+    expect(landscape, lessThan(portrait * 0.75));
+  });
+
   testWidgets('home survives a large system text size on a phone', (
     tester,
   ) async {

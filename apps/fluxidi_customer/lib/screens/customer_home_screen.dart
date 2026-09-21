@@ -49,7 +49,8 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   @override
   void initState() {
     super.initState();
-    _addressClient = widget.addressClient ??
+    _addressClient =
+        widget.addressClient ??
         FluxidiAddressSearchClient(token: widget.config.mapboxToken);
     _destinationCtrl.addListener(_onDestinationChanged);
   }
@@ -139,55 +140,84 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth;
-            // Phone stacks the service cards; a tablet shows two columns in
-            // both portrait and landscape.
-            final twoColumns = width >= 600;
-            final horizontal = width >= 600 ? 24.0 : 16.0;
+            final isTablet = width >= 600;
+            // Wide photo cards stacked on a phone and on a tablet in portrait;
+            // two columns only when a tablet turns landscape and the height
+            // can no longer carry four full-width cards.
+            final twoColumns = isTablet && width > constraints.maxHeight;
+            final horizontal = isTablet ? 24.0 : 16.0;
             return ListView(
-              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 24),
+              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 20),
               children: <Widget>[
-                CustomerHeaderBar(config: widget.config),
-                const SizedBox(height: 20),
-                Text(
-                  CustomerText.whereTo.current,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: palette.textPrimary,
-                      ),
-                ),
-                const SizedBox(height: 12),
-                _DestinationField(
-                  controller: _destinationCtrl,
-                  focusNode: _destinationFocus,
-                  palette: palette,
-                  searching: _searching,
-                  canSearch: _addressClient.canSearch,
-                  noResults: _searched && _suggestions.isEmpty,
-                  suggestions: _suggestions,
-                  onPick: _pickSuggestion,
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 52,
-                  child: FilledButton.icon(
-                    key: const Key('customer_home_book_taxi'),
-                    onPressed: _bookTaxi,
-                    icon: const Icon(Icons.local_taxi_outlined),
-                    label: Text(CustomerText.bookTaxi.current),
+                Center(
+                  child: ConstrainedBox(
+                    // A tablet reads better with a bounded measure than with a
+                    // field and a button stretched edge to edge.
+                    constraints: const BoxConstraints(maxWidth: 880),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        CustomerHeaderBar(config: widget.config),
+                        SizedBox(height: isTablet ? 28 : 20),
+                        Text(
+                          CustomerText.whereTo.current,
+                          style:
+                              (isTablet
+                                      ? Theme.of(
+                                          context,
+                                        ).textTheme.headlineMedium
+                                      : Theme.of(
+                                          context,
+                                        ).textTheme.headlineSmall)
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: palette.textPrimary,
+                                  ),
+                        ),
+                        const SizedBox(height: 12),
+                        _DestinationField(
+                          controller: _destinationCtrl,
+                          focusNode: _destinationFocus,
+                          palette: palette,
+                          searching: _searching,
+                          canSearch: _addressClient.canSearch,
+                          noResults: _searched && _suggestions.isEmpty,
+                          suggestions: _suggestions,
+                          onPick: _pickSuggestion,
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: isTablet ? 58 : 52,
+                          child: FilledButton.icon(
+                            key: const Key('customer_home_book_taxi'),
+                            onPressed: _bookTaxi,
+                            icon: const Icon(Icons.local_taxi_outlined),
+                            label: Text(CustomerText.bookTaxi.current),
+                          ),
+                        ),
+                        SizedBox(height: isTablet ? 32 : 28),
+                        Text(
+                          CustomerText.services.current,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: palette.textPrimary,
+                              ),
+                        ),
+                        const SizedBox(height: 12),
+                        _ServiceGrid(
+                          twoColumns: twoColumns,
+                          cardHeight: _serviceCardHeight(
+                            isTablet: isTablet,
+                            twoColumns: twoColumns,
+                          ),
+                        ),
+                        SizedBox(height: isTablet ? 24 : 20),
+                        _RegionRadarCard(palette: palette),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 28),
-                Text(
-                  CustomerText.services.current,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: palette.textPrimary,
-                      ),
-                ),
-                const SizedBox(height: 12),
-                _ServiceGrid(twoColumns: twoColumns),
-                const SizedBox(height: 20),
-                _RegionRadarCard(palette: palette),
               ],
             );
           },
@@ -195,12 +225,26 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
       ),
     );
   }
+
+  /// Height of one service photo card.
+  ///
+  /// A full-width card carries a landscape photo, so it needs real height to
+  /// read as a photo rather than as a strip. Two columns halve the width, so
+  /// the same proportion needs less height.
+  static double _serviceCardHeight({
+    required bool isTablet,
+    required bool twoColumns,
+  }) {
+    if (twoColumns) return 190;
+    return isTablet ? 200 : 140;
+  }
 }
 
 class _ServiceGrid extends StatelessWidget {
-  const _ServiceGrid({required this.twoColumns});
+  const _ServiceGrid({required this.twoColumns, required this.cardHeight});
 
   final bool twoColumns;
+  final double cardHeight;
 
   static const List<_Service> _services = <_Service>[
     _Service(
@@ -251,6 +295,7 @@ class _ServiceGrid extends StatelessWidget {
           title: service.label.current,
           asset: service.asset,
           icon: service.icon,
+          height: cardHeight,
           onTap: () => _open(context, service.key),
         ),
     ];
@@ -259,10 +304,7 @@ class _ServiceGrid extends StatelessWidget {
       return Column(
         children: <Widget>[
           for (final card in cards)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: card,
-            ),
+            Padding(padding: const EdgeInsets.only(bottom: 12), child: card),
         ],
       );
     }
@@ -349,11 +391,11 @@ class _DestinationField extends StatelessWidget {
                     ),
                   )
                 : (controller.text.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: controller.clear,
-                      )),
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: controller.clear,
+                        )),
           ),
         ),
         if (!canSearch)

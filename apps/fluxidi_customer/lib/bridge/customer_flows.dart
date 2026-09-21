@@ -69,6 +69,73 @@ class CustomerFlowPlace {
   }
 }
 
+/// Builds the entry the taxi flow opens with.
+///
+/// Separate from [openTaxiFlow] so the hand-off can be asserted without a
+/// navigator: a destination picked on the start page must reach the flow with
+/// its coordinates intact, or the flow would geocode the label a second time
+/// and could quote a different point than the customer chose.
+CustomerBookingEntryContext customerTaxiEntry({
+  CustomerFlowPlace? pickup,
+  CustomerFlowPlace? destination,
+  DateTime? pickupAt,
+  String sourceLabel = 'customer_home_taxi',
+}) {
+  return CustomerBookingEntryContext(
+    kind: CustomerBookingKind.taxi,
+    pickup: pickup != null && pickup.hasAddress
+        ? pickup.toBookingPlace(startsAt: pickupAt)
+        : null,
+    destination: destination != null && destination.hasAddress
+        ? destination.toBookingPlace(startsAt: pickupAt)
+        : null,
+    sourceLabel: sourceLabel,
+  );
+}
+
+/// Builds the entry the airport flow opens with.
+CustomerBookingEntryContext customerAirportEntry({
+  CustomerFlowPlace? pickup,
+  bool toAirport = true,
+  String sourceLabel = 'airport_flow',
+}) {
+  return CustomerBookingEntryContext(
+    kind: CustomerBookingKind.airport,
+    pickup: pickup != null && pickup.hasAddress
+        ? pickup.toBookingPlace()
+        : null,
+    toAirport: toAirport,
+    sourceLabel: sourceLabel,
+  );
+}
+
+/// Builds the entry a hotel or B&B ride opens with.
+CustomerBookingEntryContext customerStayEntry({
+  CustomerFlowPlace? destination,
+  required String sourceLabel,
+}) {
+  return CustomerBookingEntryContext(
+    kind: CustomerBookingKind.stay,
+    destination: destination != null && destination.hasAddress
+        ? destination.toBookingPlace()
+        : null,
+    sourceLabel: sourceLabel,
+  );
+}
+
+/// Builds the entry an event ride opens with.
+CustomerBookingEntryContext customerEventEntry({
+  required CustomerFlowPlace destination,
+  DateTime? startsAt,
+  String sourceLabel = 'event_flow',
+}) {
+  return CustomerBookingEntryContext(
+    kind: CustomerBookingKind.event,
+    destination: destination.toBookingPlace(startsAt: startsAt),
+    sourceLabel: sourceLabel,
+  );
+}
+
 /// Opens the existing taxi booking flow.
 ///
 /// [destination] carries its coordinates through unchanged, so a destination
@@ -82,14 +149,10 @@ Future<void> openTaxiFlow(
 }) {
   return openCustomerBookingFlow(
     context,
-    entry: CustomerBookingEntryContext(
-      kind: CustomerBookingKind.taxi,
-      pickup: pickup?.hasAddress == true
-          ? pickup!.toBookingPlace(startsAt: pickupAt)
-          : null,
-      destination: destination?.hasAddress == true
-          ? destination!.toBookingPlace(startsAt: pickupAt)
-          : null,
+    entry: customerTaxiEntry(
+      pickup: pickup,
+      destination: destination,
+      pickupAt: pickupAt,
       sourceLabel: sourceLabel,
     ),
     onGoToStartPage: _startPage,
