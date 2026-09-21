@@ -3564,10 +3564,17 @@ async function _chironLoadScopedHydrationCache(env, scope, includeOfficialDraft 
 //
 // The envelope is created per scheduled scope pass and handed down by argument
 // only. It is never stored in module scope and never outlives the pass.
+//
+// CHIRON-CRON-KV-READS-P0 turns the leg map into a per-pass memo: `legTypeFetched`
+// records which booking ids were already attempted (including misses, so a miss
+// is never re-read) and `bookingLegTypeMap` is filled on demand. The envelope
+// object stays frozen; only those two collections are appended to, and both are
+// created per pass and never outlive it.
 function _chironBuildScopePreload(scope, {
   hydrationCache = null,
   bookingLegTypeMap = null,
   contextEntries = null,
+  legTypeFetched = null,
 } = {}) {
   const tenantId = cleanText(scope?.tenant_id, 128);
   const companyId = cleanText(scope?.company_id, 128);
@@ -3578,6 +3585,7 @@ function _chironBuildScopePreload(scope, {
     hydrationCache: hydrationCache || null,
     bookingLegTypeMap: bookingLegTypeMap instanceof Map ? bookingLegTypeMap : null,
     contextEntries: Array.isArray(contextEntries) ? contextEntries : null,
+    legTypeFetched: legTypeFetched instanceof Set ? legTypeFetched : null,
   });
 }
 
@@ -6167,17 +6175,28 @@ function _chironSingleLegTypeFromBookingRecord(rec) {
   return null;
 }
 
-async function _chironLoadBookingLegTypeMap(env, entries) {
+// CHIRON-CRON-KV-READS-P0: `restrictToBookingIds` narrows the fetch to the
+// bookings a pass actually needs. Leg stamping only ever reaches the draft
+// through `_chironBuildBatchRitStatusIndex` / the trusted-hydration index, and
+// both are keyed per ritnummer / per booking_id while every consumer looks up
+// only the target event's own key. An unstamped entry of some OTHER booking can
+// therefore never change the payload built for a candidate. Omit the option to
+// keep the original namespace-wide behavior.
+async function _chironLoadBookingLegTypeMap(env, entries, options = {}) {
   const map = new Map();
   const kv = _chironScopedProfileKv(env);
   if (!kv || !Array.isArray(entries)) return map;
+  const restrictTo =
+    options?.restrictToBookingIds instanceof Set ? options.restrictToBookingIds : null;
   const wanted = new Set();
   for (const entry of entries) {
     const event = entry?.event;
     if (!event || typeof event !== "object") continue;
     if (_chironEventHasLegScope(event)) continue;
     const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
-    if (bookingId) wanted.add(bookingId);
+    if (!bookingId) continue;
+    if (restrictTo && !restrictTo.has(bookingId)) continue;
+    wanted.add(bookingId);
   }
   if (wanted.size === 0) return map;
   await Promise.all(
@@ -6193,6 +6212,42 @@ async function _chironLoadBookingLegTypeMap(env, entries) {
     }),
   );
   return map;
+}
+
+// CHIRON-CRON-KV-READS-P0: fill the per-pass memo for exactly the booking this
+// event needs, at most one BOOKING_KV read per booking per pass.
+//
+// Only the target event's own booking can change the payload built for it: leg
+// stamping reaches the draft solely through `_chironBuildBatchRitStatusIndex` and
+// `_chironBuildBatchTrustedRideHydrationIndex`, which are keyed per ritnummer /
+// per booking_id, and every consumer looks up only the target's own key. Sibling
+// events of the SAME booking are stamped from the same memo entry, so roundtrip
+// inference keeps working.
+//
+// A miss is recorded too, so a booking without a usable record is read once per
+// pass and then left on its base ritnummer fallback — identical to the original
+// best-effort behavior.
+async function _chironEnsureBookingLegTypeForEvent(env, preload, event) {
+  const map = preload?.bookingLegTypeMap;
+  const fetched = preload?.legTypeFetched;
+  if (!(map instanceof Map) || !(fetched instanceof Set)) return false;
+  if (!event || typeof event !== "object" || Array.isArray(event)) return true;
+  if (_chironEventHasLegScope(event)) return true;
+  const bookingId = cleanText(event?.booking_id ?? event?.parent_booking_id, 128);
+  if (!bookingId) return true;
+  if (fetched.has(bookingId)) return true;
+  const kv = _chironScopedProfileKv(env);
+  if (!kv) return false;
+  fetched.add(bookingId);
+  try {
+    const rec = await kv.get(`booking:${bookingId}`, { type: "json" });
+    const legType = _chironSingleLegTypeFromBookingRecord(rec);
+    if (legType) map.set(bookingId, legType);
+  } catch (_) {
+    // Best-effort, exactly as the batch loader: a miss/error leaves the event on
+    // its base ritnummer fallback.
+  }
+  return true;
 }
 
 function _chironStampResolvedLegTypeOnEntries(entries, legTypeMap) {
@@ -11960,12 +12015,20 @@ async function _chironBuildOfficialDraftForSingleEvent(
   // preload is only reused when it was derived from this exact array. When the
   // target event had to be appended to the batch the identity check fails and
   // the map is rebuilt, keeping the stamped result byte-identical.
-  const legTypeMap =
+  // CHIRON-CRON-KV-READS-P0: the preloaded map is a per-pass memo. Top it up for
+  // this event's own booking and reuse it; only when there is no usable memo does
+  // the original whole-batch load run.
+  let legTypeMap = null;
+  if (
     scopePreload &&
     scopePreload.bookingLegTypeMap &&
-    scopePreload.contextEntries === entries
-      ? scopePreload.bookingLegTypeMap
-      : await _chironLoadBookingLegTypeMap(env, entries);
+    scopePreload.contextEntries === entries &&
+    (await _chironEnsureBookingLegTypeForEvent(env, scopePreload, event))
+  ) {
+    legTypeMap = scopePreload.bookingLegTypeMap;
+  } else {
+    legTypeMap = await _chironLoadBookingLegTypeMap(env, entries);
+  }
   _chironStampResolvedLegTypeOnEntries(entries, legTypeMap);
   // Roundtrip inference for legless ride_start events (see helper docstring).
   _chironInferLegTypeForLeglessRideStarts(entries);
@@ -12897,18 +12960,28 @@ async function _chironAutoReconcileScopeBestEffort(
     // neither changes inside the loop. A build failure degrades to null so every
     // event falls back to the original per-event load; a partially built
     // envelope is never published to any event or to another scope.
+    //
+    // CHIRON-CRON-KV-READS-P0: the leg map now starts EMPTY and is filled on
+    // demand, one booking per event that actually reaches a draft build, shared
+    // across the whole pass. The pass never pre-fetches the 14-day window's
+    // legless bookings, because only the target event's own booking can affect
+    // its payload. Worst case (every candidate built) equals the old count;
+    // steady state is the process-budget slice. Candidate selection, ordering
+    // and the process budget are untouched, so no ride is excluded.
     let scopePreload = null;
     if (candidates.length > 0) {
       const passScope = { tenant_id: tenantId, company_id: companyId };
       try {
-        const [passHydrationCache, passLegTypeMap] = await Promise.all([
-          _chironLoadScopedHydrationCache(env, passScope, true),
-          _chironLoadBookingLegTypeMap(env, contextEntries),
-        ]);
+        const passHydrationCache = await _chironLoadScopedHydrationCache(
+          env,
+          passScope,
+          true,
+        );
         scopePreload = _chironBuildScopePreload(passScope, {
           hydrationCache: passHydrationCache,
-          bookingLegTypeMap: passLegTypeMap,
+          bookingLegTypeMap: new Map(),
           contextEntries,
+          legTypeFetched: new Set(),
         });
       } catch (_) {
         scopePreload = null;
@@ -13260,6 +13333,8 @@ export const __testInternals = {
   _chironPreloadForScope,
   _chironLoadScopedHydrationCache,
   _chironLoadBookingLegTypeMap,
+  // CHIRON-CRON-KV-READS-P0 on-demand leg-type memo + cron gate.
+  _chironEnsureBookingLegTypeForEvent,
   parseChironTaxiritSubmitResponse,
   // CHIRON-OFFLINE-ARRIVAL-P0-2
   CHIRON_NEVER_CONFIRMING_FOUTCODES,
