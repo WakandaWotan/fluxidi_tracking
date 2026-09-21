@@ -27,6 +27,25 @@ crons = ["*/5 * * * *"]
 CHIRON_EXPORT_MODE = "test"
 CHIRON_EXPORT_BASE_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit"
 
+# CHIRON-CRON-KV-READS-P0 — scheduled-drain switch. INTENTIONALLY NOT SET here.
+#
+# Leaving it unset keeps the cron ENABLED, which is exactly the behavior that is
+# live today, so deploying this branch does not change what the cron does.
+#
+#   unset / anything else        -> enabled
+#   "0" / "false" / "off" / "no" -> disabled: the tick returns before any KV
+#                                  access, so it costs zero reads
+#
+# Affects the `*/5 * * * *` drain ONLY. Status-poll reconcile, append-time
+# auto-submit and the admin auto-reconcile route keep working when disabled, and
+# parked candidates are picked up unchanged by the next enabled tick.
+#
+# To disable without shipping code: add the variable in the Cloudflare dashboard
+# (Worker -> Settings -> Variables). That publishes a new version of the SAME code
+# with the variable attached. Uncommenting the line below instead makes it part of
+# a normal deploy.
+# CHIRON_CRON_ENABLED = "1"
+
 # CHIRON-OFFLINE-ARRIVAL-P0: intentionally NOT set. CH1303 is an *update*
 # conflict ("Vertrektijdstip kreeg een nieuwe waarde"), not an already-exists
 # acknowledgement, so it may never imply acceptance. The duplicate-confirmation

@@ -13121,6 +13121,29 @@ async function _chironListConnectionScopes(env, maxScopes = CHIRON_CRON_MAX_SCOP
   return scopes;
 }
 
+// CHIRON-CRON-KV-READS-P0: explicit operator switch for the scheduled drain.
+//
+// Documented behavior, evaluated on every tick so a change takes effect without
+// a code deploy:
+//
+//   unset / "" / any other value -> ENABLED  (current production behavior; a
+//                                            deploy of this patch therefore does
+//                                            not change what the cron does)
+//   "0" / "false" / "off" / "no"  -> DISABLED (the tick returns immediately,
+//                                            logs SKIPPED_DISABLED, and touches
+//                                            no KV at all)
+//
+// Scope: the scheduled drain ONLY. The status-poll reconcile, the append-time
+// auto-submit and the admin auto-reconcile route are deliberately unaffected, so
+// disabling the cron never blocks an operator-driven or user-driven submit.
+// Disabling parks work in the existing markers; the next enabled tick picks the
+// same candidates up with unchanged ordering, retries and cooldowns.
+function chironCronEnabled(env) {
+  const raw = cleanText(env?.CHIRON_CRON_ENABLED, 16).toLowerCase();
+  if (!raw) return true;
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+}
+
 /**
  * Scheduled drain. Runs the same bounded per-scope reconcile the status poll
  * uses, so an arrival parked on `waiting_for_departure` reaches Chiron after
@@ -13130,6 +13153,13 @@ async function _chironListConnectionScopes(env, maxScopes = CHIRON_CRON_MAX_SCOP
 async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
   const source = cleanText(options.source, 32) || "cron";
   const summary = { ok: true, source, scopes: 0, ran: 0, skipped_throttled: 0, failed: 0 };
+  // CHIRON-CRON-KV-READS-P0: gate first, before any KV access, so a disabled
+  // cron costs zero reads and zero lists.
+  if (!chironCronEnabled(env)) {
+    summary.disabled = true;
+    console.log(`[CHIRON_CRON_RECONCILE][SKIPPED_DISABLED] source=${source}`);
+    return summary;
+  }
   try {
     const scopes = await _chironListConnectionScopes(env);
     summary.scopes = scopes.length;
@@ -13335,6 +13365,7 @@ export const __testInternals = {
   _chironLoadBookingLegTypeMap,
   // CHIRON-CRON-KV-READS-P0 on-demand leg-type memo + cron gate.
   _chironEnsureBookingLegTypeForEvent,
+  chironCronEnabled,
   parseChironTaxiritSubmitResponse,
   // CHIRON-OFFLINE-ARRIVAL-P0-2
   CHIRON_NEVER_CONFIRMING_FOUTCODES,
