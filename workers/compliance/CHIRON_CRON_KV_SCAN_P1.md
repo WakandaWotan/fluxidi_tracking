@@ -94,14 +94,17 @@ pre-12:38Z P0 period**. Post-P0 live cycles were 0–11 BOOKING_KV reads/tick.
    already-synced departure re-arms the paired arrival at due-at-0.
 8. **BOOKING_KV P0 is kept**: on-demand leg memo + `CHIRON_CRON_ENABLED`.
 9. **Bounded unmarked-event recovery** (no full five-minute history scan):
-   each cron tick drains `chiron_reconcile_wakeup:v1:` and lists only recent
-   date-index prefixes (6-digit ms bucket, ~2.7 h, 20 newest keys). Window is
-   2 h during migration and for 2 h after a scope's `completed_at`, then
-   30 min. A P1 append writes the wakeup hint before the due marker and
-   deletes it after a successful arm. Old in-flight HTTP at the 100% cutover
-   is found by the recent prefix if the date-key timestamp is inside that
-   window. Older unmarked history still remigrates via the existing
-   `!done`/mig-key delete.
+   each cron tick drains `chiron_reconcile_wakeup:v1:` and walks date-index
+   prefixes from a durable per-scope watermark
+   (`chiron_reconcile_recover:v1/tenant/…/company/…`). Selection is
+   oldest-first, max 20 keys and two prefix lists per tick. The watermark
+   starts at the scope's `completed_at` minus 2 h (or `now − 2 h` while
+   migrating) and only advances after those keys were examined. A sliding
+   30 min / “20 newest” window is **not** used as the floor, so newer keys
+   and a clock jump cannot hide an unexamined event. A P1 append still
+   writes the wakeup hint before the due marker. Events older than the
+   initial watermark still remigrate via the existing `!done`/mig-key
+   delete.
 
 Unchanged rules: newest-booking-first, departure before arrival inside one
 booking, process budget 20, already-synced / waiting do not burn the budget,
@@ -110,27 +113,31 @@ duplicate guard, definitive cooldown / max attempts, company isolation.
 ## 4. Hermetic proof (no live Chiron, booking or payment)
 
 ```
-node --test workers/compliance/*.test.mjs
-# 441 tests, 441 pass, 0 fail
+node --test workers/compliance/chiron_cron_kv_scan_p1.test.mjs
+# 28 tests, 28 pass, 0 fail
 # cwd: D:\Projecten\_flutter_work\_fluxidi_chiron_due_index
 ```
 
-Fault injection (`chiron_cron_kv_scan_p1.test.mjs` test 21):
+Test 21 still proves a later cron can arm a stored markerless event when
+few newer keys exist. It does **not** prove the “20 newest in a recent
+window” case. That remaining gap is tests 22 and 23 (one pinned clock for
+`nowMs` and `Date.now()`):
 
-* canonical + date-index stored; no due marker; no wakeup; no append retry;
-  `waitUntil` auto-submit never ran;
-* later cron armed both the crashed persist and an old-cutover in-flight
-  write (`recovered_unmarked >= 2`, `due_selected >= 2`);
-* company B's unmarked event was not read on that tick;
-* finished `_old_N` history keys were not value-read;
-* after those events were marked `synced`, the next tick made **no**
-  provider call (duplicate guard).
+* **22:** one markerless event, no wakeup / auto-submit / producer retry,
+  25 newer unmarked keys, and a fresh armed ride on every tick. The older
+  event is found (`recovered_unmarked=20`, `recover_examined=20` on the
+  first tick). Armed new work still runs (`due_selected=20`). No remigration.
+* **23:** the same markerless persist sits through an interrupt of
+  2 h 31 min (longer than the 2 h catch-up and the old 30 min window).
+  After resume the event is found on the first bounded tick
+  (`recovered_unmarked=1`, `recover_examined=1`) while `!done` and the
+  per-scope mig key stay in place.
 
 P1 scenarios in `chiron_cron_kv_scan_p1.test.mjs` (counted KV ops per pass):
 
 | Scenario | Events processed | Lasting COMPLIANCE_KV |
 | --- | --- | --- |
-| Idle after `!done`, 40 historical events | 0 | 1 due list, 0 event reads, 0 writes, 0 provider |
+| Idle after `!done`, 40 historical events | 0 | 1 due list, 0 event reads, recover cursor write only, 0 provider |
 | New ride + 40 history | 1 | 1 event read (the new key only) |
 | Retryable fail | due-at 0 | stays selectable |
 | Definitive fail (young) | future due-at | not selected this tick |
@@ -170,10 +177,11 @@ migrates **one** armed scope page of 80 per tick. 1552+80 keys ⇒ 21 ticks,
 `!done` only on the last tick, `finished=true`. A timeout with partial
 counters is not treated as success.
 
-The extra lasting lists (5 vs the earlier 2) are the due prefix, `tenant:`,
-wakeup prefix, and one or two recent date-index **seek** prefixes. They are
-not a full-scope history list. Quiet ticks still do **0** event value reads
-and **0** writes.
+The extra lasting lists are the due prefix, `tenant:`, wakeup prefix, and
+one current date-index **seek** prefix (a first catch-up tick may list two
+seek prefixes). They are not a full-scope history list. Quiet ticks still
+do **0** event value reads. The recover watermark is written once while
+empty prefixes are walked, then **0** writes.
 
 T+60 s with three waiting arrivals is **not** a due-at: `due_selected=0`.
 The same fixture at T+5 min and T+10 min selects those three events
@@ -217,13 +225,31 @@ re-measured for this note.
 
 ### Expected lasting usage after `!done` (idle, no new rides)
 
+Counted after the recover watermark exists (second quiet tick):
+
 | Op | Per tick | Per 30 days |
 | --- | ---: | ---: |
-| Reads | 2 (connection + per-scope mig) | ~17k |
+| Reads | 3 (connection + per-scope mig + recover cursor) | ~26k |
 | Writes | 0 | 0 |
-| Lists | 5 (due, `tenant:`, wakeup, 1–2 recent seeks) | 43 200 |
+| Lists | 4 (due, `tenant:`, wakeup, 1 current seek) | 34 560 |
 | Deletes | 0 | 0 |
 | Worker invocations | 1 cron | 8 640 |
+
+First quiet tick after `!done`: **3 reads / 1 recover-cursor write / 5 lists
+/ 0 deletes**. That write is the watermark, not an event rewrite.
+
+### Unmarked-event recovery (tests 22–23, same clock)
+
+| Pass | Reads | Writes | Lists | Deletes | Recovered / examined |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| >20 newer keys + new armed work same tick | 284 | 141 | 5 | 40 | 20 / 20 (old event in the oldest-first batch; process budget 20) |
+| Resume after 2 h 31 min interrupt, one markerless event | 18 | 8 | 5 | 2 | 1 / 1 |
+| Lasting idle after watermark | 3 | 0 | 4 | 0 | 0 / 0 |
+
+Recovery work itself is the watermark write plus at most 20 event examines
+and two seek lists. The 284/141 tick is mostly the existing due-index
+processor handling the newly armed plus already-due work, not a history
+rescan. No remigration keys were deleted.
 
 A real new ride adds: 1 append arm-write, 1 due list, 1 event read, status /
 marker writes only when the official state changes, plus BOOKING_KV only if a
@@ -250,9 +276,10 @@ Cloudflare gradual-deployment docs (retrieved 2026-09-21) split **HTTP**
 traffic by percentage and warn about version skew. They do **not** pin Cron
 Triggers to a single version. Live `85f70b04` does not write due markers.
 If that HTTP handler still stores events after P1 has written `!done`, the
-bounded recover finds them when the date-key timestamp is inside the 2 h
-catch-up / 30 min window (old in-flight at cutover). Older unmarked history
-still needs remigration. **Do not use a percentage rollout.**
+durable recover finds them from the per-scope watermark (test 21–23),
+including after a pause longer than the old 30 min / 2 h windows. Events
+older than the initial watermark (`completed_at − 2 h`) still need
+remigration. **Do not use a percentage rollout.**
 
 ### Rollout (100% cutover only)
 
@@ -298,7 +325,7 @@ BOOKING_KV and is out of this patch's scope.
 | # | Point | Evidence / repair | Remaining limit |
 | --- | --- | --- | --- |
 | 1 | New events after `!done`; later-enabled company | Append (canonical, date recovery, legacy) arms then confirms. Status writes use `applyChironDueMarkerTransition`. Global `!done` no longer skips an unmigrated scope. Tests 13–14. | Company that was migrated, then written only by old HTTP, needs remigration or append retry. |
-| 2 | Event saved, marker missing; no producer retry | Wakeup hint on P1 arm; cron drains wakeups and lists only recent date-index prefixes (20 keys, 2 h then 30 min). Test 21: persist without marker/wakeup/auto-submit; later cron finds it; B isolated; synced recovered event is not resubmitted. | Date keys older than the recover window still need remigration. Not a full 5-minute history scan. |
+| 2 | Event saved, marker missing; no producer retry | Durable oldest-first watermark, 20 keys / 2 prefix lists per tick. Test 21: basic later-cron find. Test 22: found despite 25 newer keys and new work each tick. Test 23: found after a 2 h 31 min interrupt without remigration. | Date keys older than the initial watermark (`completed_at − 2 h`) still remigrate. Not a full 5-minute history scan. |
 | 3 | Waiting arrivals over full cycles | T+60 s: 2/0/5/0, `due_selected=0`. T+5 min and T+10 min: `due_selected=3`, 3 event reads. Quiet synced idle stays 2/0/5/0. | Process stamps `last_attempt` with `Date.now()`; the bench restamps to the simulated tick for the second due-at. |
 | 4 | ~1552 scale | One 80-key page, one armed scope per tick. Scale run **finished**: 21 ticks, 547 ms, examined 1633 ≥ 1632, `migration_done=true`. New ride during migration: `due_selected=1` before `!done`. | ~100 minutes at `*/5` for 1552 keys. Worker 1000-subrequest budget is the reason. |
 | 5 | Mixed versions | Gradual-deploy docs do not pin cron. Old HTTP has no markers. **100% only.** | Not live-verified on a split deploy (intentionally unused). |

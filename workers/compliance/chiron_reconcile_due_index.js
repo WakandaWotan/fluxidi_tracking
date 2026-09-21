@@ -27,13 +27,17 @@ export const CHIRON_RECONCILE_DUE_LEGACY_EVENT_PREFIX = "compliance_event_v1/";
 export const CHIRON_RECONCILE_WAKEUP_PREFIX = "chiron_reconcile_wakeup:v1:";
 export const CHIRON_WAITING_RECHECK_MS = 5 * 60 * 1000;
 export const CHIRON_BLOCKED_RECHECK_MS = 5 * 60 * 1000;
-// Bounded unmarked-event recovery. Never a full five-minute history scan:
-// list only recent date-index prefixes, newest 20 keys, one armed scope.
+// Bounded unmarked-event recovery. Never a full five-minute history scan.
+// Progress is a durable per-scope watermark (oldest-first, 20 keys/tick) so
+// newer keys and a sliding clock cannot hide an unexamined event.
+export const CHIRON_RECONCILE_RECOVER_PREFIX = "chiron_reconcile_recover:v1/tenant/";
+export const CHIRON_DUE_RECOVER_STATE_VERSION = 1;
 export const CHIRON_DUE_RECOVER_WINDOW_MS = 30 * 60 * 1000;
 export const CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS = 2 * 60 * 60 * 1000;
 export const CHIRON_DUE_RECOVER_CATCHUP_WALL_MS = 2 * 60 * 60 * 1000;
 export const CHIRON_DUE_RECOVER_BATCH = 20;
 export const CHIRON_DUE_RECOVER_PREFIX_DIGITS = 6;
+export const CHIRON_DUE_RECOVER_PREFIXES_PER_TICK = 2;
 
 /** Official Cloudflare Workers KV limits (docs retrieved 2026-08-18). */
 export const CF_KV_KEY_MAX_BYTES = 512;
@@ -350,9 +354,122 @@ export function buildChironRecentDateIndexPrefixes({
   return prefixes;
 }
 
+/**
+ * Sequential date-index prefixes from a watermark toward `toMs`.
+ * Does not jump to `toMs`, so a long pause cannot skip unexamined hours.
+ */
+export function buildChironDateIndexPrefixesFromWatermark({
+  tenantSeg,
+  companySeg,
+  fromMs,
+  toMs,
+  digits = CHIRON_DUE_RECOVER_PREFIX_DIGITS,
+  limit = CHIRON_DUE_RECOVER_PREFIXES_PER_TICK,
+} = {}) {
+  const tenant = safeText(tenantSeg, 128);
+  const company = safeText(companySeg, 128);
+  const from = Math.floor(Number(fromMs));
+  const to = Math.floor(Number(toMs));
+  const width = Math.min(13, Math.max(1, Math.floor(Number(digits) || CHIRON_DUE_RECOVER_PREFIX_DIGITS)));
+  const max = Math.min(16, Math.max(1, Math.floor(Number(limit) || 1)));
+  if (!tenant || !company || !Number.isFinite(from) || !Number.isFinite(to) || to < from) {
+    return [];
+  }
+  const step = 10 ** (13 - width);
+  const prefixes = [];
+  const seen = new Set();
+  const pushAt = (ms) => {
+    const parts = utcDateParts(ms);
+    const bucket = String(Math.max(0, Math.floor(ms))).padStart(13, "0").slice(0, width);
+    const prefix = [
+      CHIRON_RECONCILE_DUE_LEGACY_EVENT_PREFIX.slice(0, -1),
+      "tenant",
+      tenant,
+      "company",
+      company,
+      parts.y,
+      parts.m,
+      parts.day,
+      bucket,
+    ].join("/");
+    if (seen.has(prefix)) return;
+    seen.add(prefix);
+    prefixes.push(prefix);
+  };
+  let t = from;
+  let guard = 0;
+  while (t <= to && guard < max) {
+    pushAt(t);
+    const next = Math.floor(t / step) * step + step;
+    t = next <= t ? t + step : next;
+    guard += 1;
+  }
+  return prefixes;
+}
+
+export function chironEventKeyAfterRecoverWatermark(eventKey, fromMs, lastKey) {
+  const name = safeText(eventKey, 1024);
+  if (!name) return false;
+  const ts = chironDueMarkerEventRecencyMs(name);
+  const floor = Math.max(0, Math.floor(Number(fromMs) || 0));
+  if (ts > floor) return true;
+  if (ts < floor) return false;
+  const last = safeText(lastKey, 1024);
+  if (!last) return true;
+  return name > last;
+}
+
 export function isChironFullScopeEventListPrefix(prefix) {
   return /^compliance_event_v1\/tenant\/[^/]+\/company\/[^/]+\/$/.test(
     safeText(prefix, 1024),
+  );
+}
+
+export function buildChironScopeRecoverKey(tenantSeg, companySeg) {
+  const tenant = safeText(tenantSeg, 128);
+  const company = safeText(companySeg, 128);
+  if (!tenant || !company) return "";
+  return `${CHIRON_RECONCILE_RECOVER_PREFIX}${tenant}/company/${company}`;
+}
+
+export function chironDateIndexPrefixCoveredThroughMs(prefix) {
+  const m = /\/(\d{4})\/(\d{2})\/(\d{2})\/(\d+)$/.exec(safeText(prefix, 1024));
+  if (!m) return null;
+  const digits = m[4];
+  const start = Number(digits.padEnd(13, "0"));
+  if (!Number.isFinite(start)) return null;
+  const step = 10 ** (13 - digits.length);
+  return start + step - 1;
+}
+
+export function normalizeChironDueRecoverState(raw, { initialFromMs = 0 } = {}) {
+  const fallback = Math.max(0, Math.floor(Number(initialFromMs) || 0));
+  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+  if (!src || Number(src.version) !== CHIRON_DUE_RECOVER_STATE_VERSION) {
+    return {
+      version: CHIRON_DUE_RECOVER_STATE_VERSION,
+      from_ms: fallback,
+      last_key: null,
+      prefix: null,
+      cursor: null,
+    };
+  }
+  return {
+    version: CHIRON_DUE_RECOVER_STATE_VERSION,
+    from_ms: Math.max(0, Math.floor(Number(src.from_ms) || fallback)),
+    last_key: safeText(src.last_key, 1024) || null,
+    prefix: safeText(src.prefix, 1024) || null,
+    cursor: safeText(src.cursor, 1024) || null,
+  };
+}
+
+export function chironDueRecoverStateEqual(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.from_ms === b.from_ms &&
+    a.last_key === b.last_key &&
+    a.prefix === b.prefix &&
+    a.cursor === b.cursor
   );
 }
 

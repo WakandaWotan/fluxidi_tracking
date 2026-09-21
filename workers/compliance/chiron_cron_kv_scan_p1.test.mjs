@@ -13,8 +13,12 @@ import {
   CHIRON_RECONCILE_DUE_DONE_KEY,
   CHIRON_RECONCILE_DUE_MIGRATION_KEY,
   CHIRON_RECONCILE_DUE_PREFIX,
+  CHIRON_RECONCILE_RECOVER_PREFIX,
   CHIRON_RECONCILE_WAKEUP_PREFIX,
   CHIRON_WAITING_RECHECK_MS,
+  CHIRON_DUE_RECOVER_BATCH,
+  CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS,
+  CHIRON_DUE_RECOVER_WINDOW_MS,
   armChironDueMarker,
   buildChironRecentDateIndexPrefixes,
   isChironFullScopeEventListPrefix,
@@ -288,6 +292,63 @@ async function seedHistory(h, tenantId, companyId, n) {
   }
 }
 
+function withPinnedNow(nowMs, fn) {
+  const previous = Date.now;
+  Date.now = () => nowMs;
+  const restore = () => {
+    Date.now = previous;
+  };
+  try {
+    const result = fn();
+    if (result && typeof result.then === "function") {
+      return Promise.resolve(result).finally(restore);
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
+function hasDueMarkerFor(h, eventKey) {
+  return [...h.compliance.keys()].some(
+    (k) =>
+      k.startsWith(CHIRON_RECONCILE_DUE_PREFIX) &&
+      k !== CHIRON_RECONCILE_DUE_DONE_KEY &&
+      (h.compliance.get(k)?.metadata?.ek || "") === eventKey,
+  );
+}
+
+async function putUnmarkedRecent(h, bookingId, seq, atMs) {
+  const event = rideEvent("ride_start", TENANT_A, COMPANY_A, bookingId, seq, {
+    created_at_utc: new Date(atMs).toISOString(),
+    timestamps: {
+      event_at_utc: new Date(atMs).toISOString(),
+      started_at_utc: new Date(atMs).toISOString(),
+    },
+  });
+  const key = recentDateKey(event, atMs);
+  await h.env.COMPLIANCE_KV.put(canonicalKeyFor(event), JSON.stringify(event));
+  await h.env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  return { event, key };
+}
+
+async function putArmedRecent(h, bookingId, seq, atMs) {
+  const event = rideEvent("ride_start", TENANT_A, COMPANY_A, bookingId, seq, {
+    created_at_utc: new Date(atMs).toISOString(),
+    timestamps: {
+      event_at_utc: new Date(atMs).toISOString(),
+      started_at_utc: new Date(atMs).toISOString(),
+    },
+  });
+  const key = recentDateKey(event, atMs);
+  await h.env.COMPLIANCE_KV.put(canonicalKeyFor(event), JSON.stringify(event));
+  await h.env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  await armChironDueMarker(h.env.COMPLIANCE_KV, key, 0);
+  return { event, key };
+}
+
 test("1. idle after migration: 1 due list, 0 event reads, 0 writes, 0 provider", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
@@ -302,7 +363,11 @@ test("1. idle after migration: 1 due list, 0 event reads, 0 writes, 0 provider",
   assert.equal(summary.due_selected, 0);
   assert.equal(h.eventReads().length, 0);
   assert.equal(h.dueLists(), 1);
-  assert.equal(h.counts.writes, 0);
+  assert.equal(
+    h.writeKeys.every((k) => k.startsWith(CHIRON_RECONCILE_RECOVER_PREFIX)),
+    true,
+    "idle may persist the recover watermark only",
+  );
   assert.equal(h.counts.deletes, 0);
   assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
   assert.deepEqual(providerCalls, []);
@@ -1115,4 +1180,125 @@ test("21. fault injection: stored event, failed marker, no retry; later cron fin
     [],
     "duplicate guard does not submit an already-synced recovered event",
   );
+});
+
+test("22. markerless event is found despite >20 newer keys and fresh work each tick", async () => {
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+
+  const oldAt = NOW_MS - 12 * 60_000;
+  const { key: oldKey } = await putUnmarkedRecent(h, "street_recover_old", 500, oldAt);
+  const newerKeys = [];
+  for (let i = 1; i <= CHIRON_DUE_RECOVER_BATCH + 5; i += 1) {
+    const at = oldAt + i * 20_000;
+    const row = await putUnmarkedRecent(h, `street_recover_newer_${i}`, 500 + i, at);
+    newerKeys.push(row.key);
+  }
+  assert.ok(newerKeys.length > CHIRON_DUE_RECOVER_BATCH);
+  assert.equal(hasDueMarkerFor(h, oldKey), false);
+  assert.equal(
+    [...h.compliance.keys()].some((k) => k.startsWith(CHIRON_RECONCILE_WAKEUP_PREFIX)),
+    false,
+  );
+
+  let foundAtTick = -1;
+  const recoverCosts = [];
+  for (let tick = 0; tick < 6; tick += 1) {
+    const tickNow = NOW_MS + tick * 60_000;
+    const live = await putArmedRecent(
+      h,
+      `street_recover_live_${tick}`,
+      800 + tick,
+      tickNow,
+    );
+    h.resetCounts();
+    const summary = await withPinnedNow(tickNow, () =>
+      _chironCronReconcileAllScopesBestEffort(h.env, {
+        source: "cron",
+        nowMs: tickNow,
+      }),
+    );
+    recoverCosts.push({
+      tick,
+      ...h.snapshot(),
+      recovered_unmarked: summary.recovered_unmarked,
+      recover_examined: summary.recover_examined,
+      due_selected: summary.due_selected,
+    });
+    assert.ok(
+      summary.due_selected >= 1,
+      "armed new work still runs while recovery is catching up",
+    );
+    assert.ok(
+      hasDueMarkerFor(h, live.key) || h.eventReads().includes(live.key),
+      "normal new work is not blocked by unmarked recovery",
+    );
+    if (hasDueMarkerFor(h, oldKey) || h.eventReads().includes(oldKey)) {
+      foundAtTick = tick;
+      break;
+    }
+  }
+
+  assert.ok(foundAtTick >= 0, "older markerless event is found without remigration");
+  assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_DONE_KEY), true);
+  assert.equal(
+    [...h.compliance.keys()].some((k) => k.startsWith(CHIRON_RECONCILE_WAKEUP_PREFIX)),
+    false,
+    "recovery did not depend on wakeup or producer retry",
+  );
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
+  assert.ok(
+    recoverCosts.every((row) => row.recover_examined <= CHIRON_DUE_RECOVER_BATCH),
+    "recovery stays bounded per tick",
+  );
+});
+
+test("23. markerless event survives an interrupt longer than the recover window", async () => {
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+
+  const storedAt = NOW_MS - 12 * 60_000;
+  const { key: oldKey } = await putUnmarkedRecent(h, "street_recover_gap", 900, storedAt);
+  assert.equal(hasDueMarkerFor(h, oldKey), false);
+  assert.equal(
+    [...h.compliance.keys()].some((k) => k.startsWith(CHIRON_RECONCILE_WAKEUP_PREFIX)),
+    false,
+  );
+  assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_DONE_KEY), true);
+  const migKey = _chironScopeDueMigrationKey(TENANT_A, COMPANY_A);
+  assert.equal(h.compliance.has(migKey), true);
+
+  const interruptMs =
+    CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS + CHIRON_DUE_RECOVER_WINDOW_MS + 60_000;
+  const resumeMs = NOW_MS + interruptMs;
+  assert.ok(interruptMs > CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS);
+  assert.ok(interruptMs > CHIRON_DUE_RECOVER_WINDOW_MS);
+  assert.ok(resumeMs - storedAt > CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS);
+
+  let found = false;
+  let recovered = 0;
+  for (let tick = 0; tick < 8; tick += 1) {
+    const tickNow = resumeMs + tick * 60_000;
+    h.resetCounts();
+    const summary = await withPinnedNow(tickNow, () =>
+      _chironCronReconcileAllScopesBestEffort(h.env, {
+        source: "cron",
+        nowMs: tickNow,
+      }),
+    );
+    recovered += Number(summary.recovered_unmarked) || 0;
+    if (hasDueMarkerFor(h, oldKey) || h.eventReads().includes(oldKey)) {
+      found = true;
+      break;
+    }
+  }
+
+  assert.equal(found, true, "event is found after the window-long interrupt");
+  assert.ok(recovered >= 1);
+  assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_DONE_KEY), true);
+  assert.equal(h.compliance.has(migKey), true);
+  assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_MIGRATION_KEY), true);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
 });
