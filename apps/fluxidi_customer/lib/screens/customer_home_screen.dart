@@ -9,11 +9,15 @@ class CustomerDestination {
     required this.label,
     required this.icon,
     required this.route,
+    this.caption = 'Aansluiting volgt',
   });
 
   final String label;
   final IconData icon;
   final String route;
+
+  /// Honest one-line state of this destination.
+  final String caption;
 }
 
 const List<CustomerDestination> kCustomerDestinations = <CustomerDestination>[
@@ -21,6 +25,7 @@ const List<CustomerDestination> kCustomerDestinations = <CustomerDestination>[
     label: 'Taxi',
     icon: Icons.local_taxi_outlined,
     route: CustomerRoutes.taxi,
+    caption: 'Bedrijven zoeken',
   ),
   CustomerDestination(
     label: 'Luchthaven',
@@ -229,7 +234,7 @@ class _DestinationCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Aansluiting volgt',
+                    destination.caption,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(

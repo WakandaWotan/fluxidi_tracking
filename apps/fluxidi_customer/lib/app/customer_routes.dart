@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../api/public_partner_api.dart';
 import '../screens/customer_home_screen.dart';
 import '../screens/customer_payment_return_screen.dart';
 import '../screens/customer_placeholder_screen.dart';
+import '../screens/customer_taxi_search_screen.dart';
+import 'customer_app_config.dart';
 
 /// Named routes for the standalone customer app.
 abstract final class CustomerRoutes {
@@ -28,20 +31,16 @@ abstract final class CustomerRoutes {
 }
 
 /// Single place that turns a route name into a screen.
-Route<dynamic> generateCustomerRoute(RouteSettings settings) {
+Route<dynamic> generateCustomerRoute(
+  RouteSettings settings, {
+  CustomerAppConfig config = kCustomerAppConfig,
+}) {
   Widget page;
   switch (settings.name) {
     case CustomerRoutes.taxi:
-      page = const CustomerPlaceholderScreen(
-        title: 'Taxi boeken',
-        icon: Icons.local_taxi_outlined,
-        pending: <String>[
-          'Ophaal- en bestemmingsadres',
-          'Route en kaart',
-          'Prijsopgave van het taxibedrijf',
-          'Voertuig- en chauffeurkeuze',
-          'Boeking en betaling',
-        ],
+      page = CustomerTaxiSearchScreen(
+        api: PublicPartnerApi(baseUrl: config.publicBookingBaseUrl),
+        config: config,
       );
     case CustomerRoutes.airport:
       page = const CustomerPlaceholderScreen(

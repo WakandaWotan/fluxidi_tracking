@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_customer/app/customer_routes.dart';
 import 'package:fluxidi_customer/app/fluxidi_customer_app.dart';
 import 'package:fluxidi_customer/deeplinks/customer_deep_link_source.dart';
 import 'package:fluxidi_customer/screens/customer_home_screen.dart';
@@ -41,11 +42,17 @@ void main() {
       await tester.tap(find.text(destination.label));
       await tester.pumpAndSettle();
 
-      expect(
-        find.text('Nog niet aangesloten'),
-        findsOneWidget,
-        reason: 'expected placeholder for ${destination.route}',
-      );
+      if (destination.route == CustomerRoutes.taxi) {
+        // Taxi is wired to company search. Without a configured base URL the
+        // screen must say so instead of calling anything.
+        expect(find.text('API niet geconfigureerd'), findsOneWidget);
+      } else {
+        expect(
+          find.text('Nog niet aangesloten'),
+          findsOneWidget,
+          reason: 'expected placeholder for ${destination.route}',
+        );
+      }
 
       await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();

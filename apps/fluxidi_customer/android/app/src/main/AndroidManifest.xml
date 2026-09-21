@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Read-only public partner lookups over https. The generated debug
+         manifest only grants this for development builds. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="Fluxidi Customer Dev"
         android:name="${applicationName}"

@@ -17,6 +17,9 @@ dependencies:
   # version as the existing app so both stay on one proven plugin line.
   app_links: ^6.4.1
 
+  # Read-only public partner lookups. Same constraint as the existing app.
+  http: ^1.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

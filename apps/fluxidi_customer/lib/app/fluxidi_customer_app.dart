@@ -85,7 +85,8 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
       navigatorKey: _navigatorKey,
       theme: buildCustomerTheme(widget.config),
       initialRoute: CustomerRoutes.home,
-      onGenerateRoute: generateCustomerRoute,
+      onGenerateRoute: (settings) =>
+          generateCustomerRoute(settings, config: widget.config),
     );
   }
 }

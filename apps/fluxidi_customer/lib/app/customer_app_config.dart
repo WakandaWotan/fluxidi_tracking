@@ -34,6 +34,18 @@ class CustomerBrandColors {
   final Color textSoft;
 }
 
+/// Public booking API base URL, supplied at build time.
+///
+/// Deliberately empty by default: there is no hidden production fallback. A
+/// build without this define shows an explicit configuration notice instead of
+/// silently calling a server.
+const String kPublicBookingBaseUrlDefineKey = 'FLUXIDI_PUBLIC_BOOKING_BASE_URL';
+
+const String kPublicBookingBaseUrlDefine = String.fromEnvironment(
+  kPublicBookingBaseUrlDefineKey,
+  defaultValue: '',
+);
+
 /// Central configuration for name, development identity and branding.
 @immutable
 class CustomerAppConfig {
@@ -46,6 +58,7 @@ class CustomerAppConfig {
     required this.deepLinkPath,
     required this.variant,
     required this.brand,
+    this.publicBookingBaseUrl = kPublicBookingBaseUrlDefine,
   });
 
   /// User-visible app name.
@@ -65,10 +78,22 @@ class CustomerAppConfig {
   final CustomerAppVariant variant;
   final CustomerBrandColors brand;
 
+  /// Base URL for the public booking API, without trailing slash.
+  final String publicBookingBaseUrl;
+
   /// Payment-return link this build answers to, for documentation and tests.
   String get paymentReturnUrl => '$deepLinkScheme://$deepLinkHost$deepLinkPath';
 
   bool get isWhiteLabel => variant == CustomerAppVariant.whiteLabelSingleCompany;
+
+  /// True when this build may offer the general company search.
+  ///
+  /// The white-label variant must never fall back to the platform-wide company
+  /// list, so it stays unsupported until it is deliberately built.
+  bool get supportsCompanyDiscovery =>
+      variant == CustomerAppVariant.fluxidiMarketplace;
+
+  bool get hasPublicApiBaseUrl => publicBookingBaseUrl.trim().isNotEmpty;
 }
 
 /// Development identity for phase 1. Not a final Play identity.
