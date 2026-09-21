@@ -1,14 +1,37 @@
 // CHIRON-CRON-KV-READS-P0 — before/after KV read bench.
 //
 // Same fixture, same entry point, two worker builds:
-//   worker_prepatch.mjs  = deployed 331ffa95 (live v89 source)
-//   worker_postpatch.mjs = 331ffa95 + pass-scoped preload
+//   BEFORE = workers/compliance/fluxidi_compliance_worker.js at BASELINE_REF,
+//            which is the source of the live version this branch is based on
+//   AFTER  = the worker in the working tree
+//
+// The baseline is materialised from git at run time, so the bench needs no
+// network and no pre-staged files.
 //
 // Hermetic: in-memory KV, outbound fetch trapped. No Chiron submission.
-//   node bench.mjs
+//
+//   node workers/compliance/chiron_cron_kv_reads_p0_bench.mjs
 
-import { __testInternals as PRE } from "./worker_prepatch.mjs";
-import { __testInternals as POST } from "./worker_postpatch.mjs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync as writeFile } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const BASELINE_REF = process.env.BASELINE_REF || "331ffa95";
+const WORKER_PATH = "workers/compliance/fluxidi_compliance_worker.js";
+
+const baselineSource = execFileSync(
+  "git",
+  ["show", `${BASELINE_REF}:${WORKER_PATH}`],
+  { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+);
+const scratch = mkdtempSync(pathJoin(tmpdir(), "chiron-bench-"));
+const baselineFile = pathJoin(scratch, "worker_baseline.mjs");
+writeFile(baselineFile, baselineSource);
+
+const { __testInternals: PRE } = await import(pathToFileURL(baselineFile).href);
+const { __testInternals: POST } = await import("./fluxidi_compliance_worker.js");
 
 const ACC_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit";
 const TENANT_A = "T_bench_a";
@@ -213,6 +236,7 @@ async function runTwoScopes(internals, bookings) {
 const BOOKINGS = 317;
 
 const results = {
+  baseline_ref: BASELINE_REF,
   fixture: {
     distinct_bookings: BOOKINGS,
     events_per_booking: 2,
