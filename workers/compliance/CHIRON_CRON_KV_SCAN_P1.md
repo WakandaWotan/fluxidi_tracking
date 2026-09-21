@@ -20,7 +20,7 @@ Re-checked on 2026-09-21 (not assumed from the earlier report):
 | Tag | `chiron-cron-kv-reads-p0` |
 | Rollback of live | `16d11eeb-9f81-48a5-adb7-d98dbd8dc50f` |
 | Release line | `origin/release/compliance-worker-d03` = `780800ee` |
-| This worktree HEAD | `fix/chiron-compliance-due-index-p1` (P1 commit on `780800ee`) |
+| This worktree HEAD | `fix/chiron-compliance-due-index-p1` (P1 + recovery follow-up; not deployed) |
 | Prior BOOKING_KV worktree | `D:\Projecten\_flutter_work\_fluxidi_chiron_cron_fix` @ `fix/chiron-cron-kv-reads-p0` |
 
 August commits evaluated, not cherry-picked (they conflict with the live
@@ -72,14 +72,19 @@ pre-12:38Z P0 period**. Post-P0 live cycles were 0–11 BOOKING_KV reads/tick.
 
 1. **Durable due-index** (`chiron_reconcile_due:v1:<16-digit-due-at>:<32-hex-ref>`,
    metadata `{v, ek}`). Finished history is not value-read every five minutes.
-2. **Cron after `!done`**: one due-prefix list, process at most 20 due events
-   (newest-first), no `tenant:` scan, no event-prefix list.
-3. **Before `!done`**: process any already-due markers, 25/tick global
-   watchdog, then one full scoped scan per unmigrated **armed** company (same
-   10k cap as today). When every armed scope has a per-scope mig doc, write
-   `!done`.
-4. **Append** arms due-at-0 on a new canonical+date write only (not on pure
-   dedup). Sibling context is one keyed canonical get, not a history list.
+2. **Cron after `!done`**: due-prefix list (max 20 due events, newest-first)
+   plus a cheap `tenant:` connection list so a later-enabled company without a
+   per-scope mig doc is still scanned. Finished history is not value-read.
+3. **Before `!done`**: process any already-due markers, then **one** armed
+   scope page of 80 event keys per tick. `!done` is written only when every
+   armed scope has `completed=true` and no page failed. A full 1552-event
+   prefix therefore resumes across ticks instead of running in one invocation.
+4. **Due-marker write paths:** new canonical+date append; date-index
+   recovery; legacy single write; append dedup **confirm** if the marker is
+   missing; `_chironWriteExportStatus` via `applyChironDueMarkerTransition`;
+   paired-arrival re-arm after departure success / already_synced; scoped
+   migration pages. Pure dedup without a missing marker does not add a
+   second event. Sibling context is one keyed canonical get.
 5. **Writes only when functional fields change.** Waiting and already-synced
    counter repair skip identical documents. Throttle stamp skipped when still
    fresh.
@@ -88,6 +93,15 @@ pre-12:38Z P0 period**. Post-P0 live cycles were 0–11 BOOKING_KV reads/tick.
 7. **Waiting arrivals** stay on a 5-minute due-at. A successful or
    already-synced departure re-arms the paired arrival at due-at-0.
 8. **BOOKING_KV P0 is kept**: on-demand leg memo + `CHIRON_CRON_ENABLED`.
+9. **Bounded unmarked-event recovery** (no full five-minute history scan):
+   each cron tick drains `chiron_reconcile_wakeup:v1:` and lists only recent
+   date-index prefixes (6-digit ms bucket, ~2.7 h, 20 newest keys). Window is
+   2 h during migration and for 2 h after a scope's `completed_at`, then
+   30 min. A P1 append writes the wakeup hint before the due marker and
+   deletes it after a successful arm. Old in-flight HTTP at the 100% cutover
+   is found by the recent prefix if the date-key timestamp is inside that
+   window. Older unmarked history still remigrates via the existing
+   `!done`/mig-key delete.
 
 Unchanged rules: newest-booking-first, departure before arrival inside one
 booking, process budget 20, already-synced / waiting do not burn the budget,
@@ -97,9 +111,20 @@ duplicate guard, definitive cooldown / max attempts, company isolation.
 
 ```
 node --test workers/compliance/*.test.mjs
-# 427 tests, 427 pass, 0 fail
+# 441 tests, 441 pass, 0 fail
 # cwd: D:\Projecten\_flutter_work\_fluxidi_chiron_due_index
 ```
+
+Fault injection (`chiron_cron_kv_scan_p1.test.mjs` test 21):
+
+* canonical + date-index stored; no due marker; no wakeup; no append retry;
+  `waitUntil` auto-submit never ran;
+* later cron armed both the crashed persist and an old-cutover in-flight
+  write (`recovered_unmarked >= 2`, `due_selected >= 2`);
+* company B's unmarked event was not read on that tick;
+* finished `_old_N` history keys were not value-read;
+* after those events were marked `synced`, the next tick made **no**
+  provider call (duplicate guard).
 
 P1 scenarios in `chiron_cron_kv_scan_p1.test.mjs` (counted KV ops per pass):
 
@@ -110,7 +135,7 @@ P1 scenarios in `chiron_cron_kv_scan_p1.test.mjs` (counted KV ops per pass):
 | Retryable fail | due-at 0 | stays selectable |
 | Definitive fail (young) | future due-at | not selected this tick |
 | Waiting arrival | future due-at = last + 5 min | departure success writes due-at-0 |
-| Restart after `!done` | same due marker | no `compliance_event_v1/` list |
+| Restart after `!done` | same due marker | no full-scope `compliance_event_v1/tenant/…/company/…/` list |
 | Overlapping duplicate markers | 1 event | extra marker deleted |
 | Two companies | A only | B event never read |
 | Already-synced counters | — | no rewrite when rit already tracked |
@@ -119,19 +144,49 @@ P1 scenarios in `chiron_cron_kv_scan_p1.test.mjs` (counted KV ops per pass):
 | `CHIRON_CRON_ENABLED=0` | 0 | 0 lists, 0 reads, 0 writes |
 
 Counted comparison from `node workers/compliance/chiron_cron_kv_scan_p1_bench.mjs`
-(80 events, outbound fetch trapped):
+(outbound fetch trapped). The **old 80-event bench is not the live plateau**:
+that fixture has no export-status docs, so the old scan rewrites counters,
+waiting-shaped statuses and due markers (202 writes / 40 deletes). Live
+COMPLIANCE_KV over 11h50 was **1 656 reads / 40 writes / 5.1 lists / 0 deletes**
+per 5 min — reads of already-synced history, not a delete storm.
 
 | Pass | Reads | Writes | Lists | Deletes | Event value reads |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Old full scoped scan, every tick | 345 | 202 | 1 | 40 | 80 |
-| First tick, unsynced history (migration + drain) | 423 | 230 | 4 | 40 | 105 |
-| Next tick, leftover unsynced due-at-0 | 80 | 20 | 1 | 40 | 20 |
-| Idle after `!done`, no markers | 0 | 0 | 1 | 0 | 0 |
-| Production-shaped first tick (77 synced + 3 waiting) | 423 | 91 | 4 | 20 | 105 |
-| Production-shaped lasting tick | **0** | **0** | **1** | **0** | **0** |
+| Old full scoped scan, every tick (unsynced 80) | 344 | 202 | 1 | 40 | 80 |
+| Migration (unsynced 80, first tick) | 346 | 204 | 6 | 40 | 80 |
+| Quiet, no due work (80 synced, after `!done`) | **2** | **0** | **5** | **0** | **0** |
+| Quiet repeat tick | 2 | 0 | 5 | 0 | 0 |
+| 3 waiting arrivals, migration | 346 | 87 | 6 | 20 | 80 |
+| 3 waiting arrivals, T+60 s (not yet due) | **2** | **0** | **5** | **0** | **0** |
+| 3 waiting arrivals, first due-at (T+5 min) | 33 | 18 | 5 | 6 | 3 |
+| 3 waiting arrivals, second due-at (T+10 min) | 27 | 6 | 5 | 6 | 3 |
+| New work after quiet `!done` | 17 | 7 | 5 | 2 | 2 |
+| Scale first tick (1552 + 80) | 348 | 202 | 8 | 40 | 80 |
+| New ride during migration | 439 | 227 | 8 | 80 | 101 |
+| Scale complete | **21 ticks, 547 ms, examined 1633 ≥ 1632, `migration_done=true`** | | | | |
 
-Temporary migration (first armed tick) still pays one scoped scan. That cost
-is one-shot per company, not per five minutes.
+Scale first-tick KV ops = **598** (Workers Paid subrequest budget 1000). Cron
+migrates **one** armed scope page of 80 per tick. 1552+80 keys ⇒ 21 ticks,
+`!done` only on the last tick, `finished=true`. A timeout with partial
+counters is not treated as success.
+
+The extra lasting lists (5 vs the earlier 2) are the due prefix, `tenant:`,
+wakeup prefix, and one or two recent date-index **seek** prefixes. They are
+not a full-scope history list. Quiet ticks still do **0** event value reads
+and **0** writes.
+
+T+60 s with three waiting arrivals is **not** a due-at: `due_selected=0`.
+The same fixture at T+5 min and T+10 min selects those three events
+(`due_selected=3`, 3 event reads). The second due-at restamps
+`last_attempt` to the simulated tick because process writes use `Date.now()`;
+the 5-minute cadence is otherwise unchanged.
+
+A new ride written while the 1552-key migration is still running is recovered
+and selected on the next tick (`due_selected=1`, `recovered_unmarked=1`,
+`waited_for_full_history=false`). New work does not wait for `!done`.
+
+Temporary migration still pays one scoped page per tick. That cost is
+one-shot per company, not per five minutes.
 
 ## 5. Cost model (units, not invented euros)
 
@@ -164,9 +219,9 @@ re-measured for this note.
 
 | Op | Per tick | Per 30 days |
 | --- | ---: | ---: |
-| Reads | 0 event values | 0 from this scan |
+| Reads | 2 (connection + per-scope mig) | ~17k |
 | Writes | 0 | 0 |
-| Lists | 1 due prefix | 8 640 |
+| Lists | 5 (due, `tenant:`, wakeup, 1–2 recent seeks) | 43 200 |
 | Deletes | 0 | 0 |
 | Worker invocations | 1 cron | 8 640 |
 
@@ -175,44 +230,77 @@ marker writes only when the official state changes, plus BOOKING_KV only if a
 draft is built (P0 memo). A waiting arrival adds one future marker and one
 recheck every 5 minutes **only after its due-at**, not a full history scan.
 
-### Temporary migration (first armed Fluxidi tick)
+### Temporary migration (Fluxidi ~1 552 events)
 
-Live Fluxidi prefix is ~1 552 events. First tick may read those once, arm
-markers only where `computeChironReconcileDueAtMs` is non-null (synced history
-gets no marker), write one per-scope mig doc and `!done`. That is a one-off,
-not a monthly run-rate.
+Not one tick. Cron reads **80** event keys per armed scope per tick, arms only
+where `computeChironReconcileDueAtMs` is non-null (synced history gets no
+marker), and writes `!done` only after every armed scope page succeeded.
+Hermetic 1552+80: first tick 598 KV ops, **21 ticks to `!done`**, examined
+1633 keys, `finished=true`. One-off, not a monthly run-rate.
 
 ## 6. Rollout and rollback
 
-**Not live-verified:** first-tick migration on production KV, post-deploy
+**Not live-verified:** first production migration pages, post-deploy
 COMPLIANCE_KV analytics, account-wide invoice, delayed KV list visibility of
 new markers.
 
-### Rollout
+### Mixed versions
+
+Cloudflare gradual-deployment docs (retrieved 2026-09-21) split **HTTP**
+traffic by percentage and warn about version skew. They do **not** pin Cron
+Triggers to a single version. Live `85f70b04` does not write due markers.
+If that HTTP handler still stores events after P1 has written `!done`, the
+bounded recover finds them when the date-key timestamp is inside the 2 h
+catch-up / 30 min window (old in-flight at cutover). Older unmarked history
+still needs remigration. **Do not use a percentage rollout.**
+
+### Rollout (100% cutover only)
 
 1. Keep `CHIRON_CRON_ENABLED` unset (cron stays on).
 2. `wrangler versions upload` from this worktree (same bindings as live:
    `COMPLIANCE_KV`, `BOOKING_KV`, ACC URL, no new secrets).
-3. Deploy to a small percentage, then 100%, only when an operator asks.
-4. Watch one tick for `[CHIRON_DUE_INDEX]` and the scoped
-   `[CHIRON_AUTO_RECONCILE]` line. Expect a one-shot Fluxidi scan, then idle
-   ticks with `due_selected=0` and no `compliance_event_v1/` list.
+3. `wrangler versions deploy` the new version to **100%**. No 1%/10% split.
+4. Watch `[CHIRON_DUE_INDEX]` / `[CHIRON_AUTO_RECONCILE]`. Expect ~20 Fluxidi
+   pages (80 keys, one scope per tick), `migration_done=false` until the last
+   armed scope completes, then idle ticks with `due_selected=0` and no
+   full-scope `compliance_event_v1/tenant/…/company/…/` history list. Recent
+   timestamp-seek lists are expected and stay empty when there is no new work.
 5. Do not delete testdossiers to improve the graph.
 
-### Rollback (safe with the new index)
+### Rollback (primary = current live)
 
-- Redeploy live `85f70b04` (or `16d11eeb`). The old worker ignores
-  `chiron_reconcile_due:*` keys; they are disposable hints.
-- Authoritative state remains `compliance_event_*` + export-status docs.
-- To **resume this patch later** after the old cron has run: delete only
-  `chiron_reconcile_due:v1:!done`, `chiron_reconcile_due_mig:v1`, and
+- Primary rollback is the **immediately preceding production version**:
+  `85f70b04-adf9-474e-86bb-279ac6f35917` (BOOKING_KV on-demand memo).
+- `16d11eeb` is **not** an equivalent rollback: it reintroduces the
+  BOOKING_KV window scan.
+- The old worker ignores `chiron_reconcile_due:*` keys; they are disposable
+  hints. Authoritative state remains `compliance_event_*` + export-status.
+- To **resume this patch later** after `85f70b04` has written new events
+  without markers: delete only `chiron_reconcile_due:v1:!done`,
+  `chiron_reconcile_due_mig:v1`, and
   `chiron_reconcile_due_mig:v1/tenant/…/company/…`. Do **not** delete
   compliance events. The next P1 tick remigrates from the authoritative
-  records.
+  records. Hermetic proof: P1 → old-style put without marker → delete those
+  three key classes → P1 finds the event (`chiron_cron_kv_scan_p1.test.mjs`
+  test 18).
 - Overlapping ticks: duplicate markers are retired; the duplicate guard
   still blocks a second Chiron submit.
 
 ## 7. What is still live
 
-Production is still the P0 BOOKING_KV repair. COMPLIANCE_KV still full-scans
-every five minutes until this branch is deployed.
+Production is still the P0 BOOKING_KV repair (`85f70b04` @ 100%).
+COMPLIANCE_KV still full-scans every five minutes until this branch is
+deployed. The other namespace graph (~4.35 M reads / 178 k lists) is
+BOOKING_KV and is out of this patch's scope.
+
+## 8. Review-point closeout
+
+| # | Point | Evidence / repair | Remaining limit |
+| --- | --- | --- | --- |
+| 1 | New events after `!done`; later-enabled company | Append (canonical, date recovery, legacy) arms then confirms. Status writes use `applyChironDueMarkerTransition`. Global `!done` no longer skips an unmigrated scope. Tests 13–14. | Company that was migrated, then written only by old HTTP, needs remigration or append retry. |
+| 2 | Event saved, marker missing; no producer retry | Wakeup hint on P1 arm; cron drains wakeups and lists only recent date-index prefixes (20 keys, 2 h then 30 min). Test 21: persist without marker/wakeup/auto-submit; later cron finds it; B isolated; synced recovered event is not resubmitted. | Date keys older than the recover window still need remigration. Not a full 5-minute history scan. |
+| 3 | Waiting arrivals over full cycles | T+60 s: 2/0/5/0, `due_selected=0`. T+5 min and T+10 min: `due_selected=3`, 3 event reads. Quiet synced idle stays 2/0/5/0. | Process stamps `last_attempt` with `Date.now()`; the bench restamps to the simulated tick for the second due-at. |
+| 4 | ~1552 scale | One 80-key page, one armed scope per tick. Scale run **finished**: 21 ticks, 547 ms, examined 1633 ≥ 1632, `migration_done=true`. New ride during migration: `due_selected=1` before `!done`. | ~100 minutes at `*/5` for 1552 keys. Worker 1000-subrequest budget is the reason. |
+| 5 | Mixed versions | Gradual-deploy docs do not pin cron. Old HTTP has no markers. **100% only.** | Not live-verified on a split deploy (intentionally unused). |
+| 6 | Rollback / remigrate | Primary rollback `85f70b04`. `16d11eeb` rejected. Test 18 remigrates an old-writer event without deleting compliance events. | Operator must delete the three mig/`!done` keys to resume P1 after rollback. |
+

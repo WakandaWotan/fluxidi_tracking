@@ -24,8 +24,16 @@ export const CHIRON_RECONCILE_DUE_MIGRATION_BATCH = 25;
 export const CHIRON_RECONCILE_DUE_PROCESS_LIMIT = 20;
 export const CHIRON_RECONCILE_DUE_AT_DIGITS = 16;
 export const CHIRON_RECONCILE_DUE_LEGACY_EVENT_PREFIX = "compliance_event_v1/";
+export const CHIRON_RECONCILE_WAKEUP_PREFIX = "chiron_reconcile_wakeup:v1:";
 export const CHIRON_WAITING_RECHECK_MS = 5 * 60 * 1000;
 export const CHIRON_BLOCKED_RECHECK_MS = 5 * 60 * 1000;
+// Bounded unmarked-event recovery. Never a full five-minute history scan:
+// list only recent date-index prefixes, newest 20 keys, one armed scope.
+export const CHIRON_DUE_RECOVER_WINDOW_MS = 30 * 60 * 1000;
+export const CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS = 2 * 60 * 60 * 1000;
+export const CHIRON_DUE_RECOVER_CATCHUP_WALL_MS = 2 * 60 * 60 * 1000;
+export const CHIRON_DUE_RECOVER_BATCH = 20;
+export const CHIRON_DUE_RECOVER_PREFIX_DIGITS = 6;
 
 /** Official Cloudflare Workers KV limits (docs retrieved 2026-08-18). */
 export const CF_KV_KEY_MAX_BYTES = 512;
@@ -278,6 +286,103 @@ export function chironDueMarkerEventRecencyMs(eventKey) {
     return Number.isFinite(ms) ? ms : 0;
   }
   return 0;
+}
+
+function utcDateParts(ms) {
+  const d = new Date(ms);
+  return {
+    y: String(d.getUTCFullYear()).padStart(4, "0"),
+    m: String(d.getUTCMonth() + 1).padStart(2, "0"),
+    day: String(d.getUTCDate()).padStart(2, "0"),
+  };
+}
+
+/**
+ * Timestamp-seek prefixes for recent date-index keys. A 6-digit ms bucket
+ * is ~2.7 h and does not match older same-day history (e.g. 1780000… vs
+ * 1789992…). Day boundaries emit a second prefix.
+ */
+export function buildChironRecentDateIndexPrefixes({
+  tenantSeg,
+  companySeg,
+  fromMs,
+  toMs,
+  digits = CHIRON_DUE_RECOVER_PREFIX_DIGITS,
+} = {}) {
+  const tenant = safeText(tenantSeg, 128);
+  const company = safeText(companySeg, 128);
+  const from = Math.floor(Number(fromMs));
+  const to = Math.floor(Number(toMs));
+  const width = Math.min(13, Math.max(1, Math.floor(Number(digits) || CHIRON_DUE_RECOVER_PREFIX_DIGITS)));
+  if (!tenant || !company || !Number.isFinite(from) || !Number.isFinite(to) || to < from) {
+    return [];
+  }
+  const step = 10 ** (13 - width);
+  const prefixes = [];
+  const seen = new Set();
+  const pushAt = (ms) => {
+    const parts = utcDateParts(ms);
+    const bucket = String(Math.max(0, Math.floor(ms))).padStart(13, "0").slice(0, width);
+    const prefix = [
+      CHIRON_RECONCILE_DUE_LEGACY_EVENT_PREFIX.slice(0, -1),
+      "tenant",
+      tenant,
+      "company",
+      company,
+      parts.y,
+      parts.m,
+      parts.day,
+      bucket,
+    ].join("/");
+    if (seen.has(prefix)) return;
+    seen.add(prefix);
+    prefixes.push(prefix);
+  };
+  let t = from;
+  let guard = 0;
+  while (t <= to && guard < 16) {
+    pushAt(t);
+    const next = Math.floor(t / step) * step + step;
+    t = next <= t ? t + step : next;
+    guard += 1;
+  }
+  pushAt(to);
+  return prefixes;
+}
+
+export function isChironFullScopeEventListPrefix(prefix) {
+  return /^compliance_event_v1\/tenant\/[^/]+\/company\/[^/]+\/$/.test(
+    safeText(prefix, 1024),
+  );
+}
+
+export async function buildChironWakeupKey(eventKey) {
+  const ref = await chironOpaqueEventRef(eventKey);
+  if (!ref) return null;
+  return `${CHIRON_RECONCILE_WAKEUP_PREFIX}${ref}`;
+}
+
+export async function armChironWakeupHint(kv, eventKey) {
+  if (!kv || typeof kv.put !== "function") return null;
+  const key = await buildChironWakeupKey(eventKey);
+  const metadata = buildChironDueMarkerMetadata(eventKey);
+  if (!key || !metadata) return null;
+  await kv.put(key, JSON.stringify({ v: CHIRON_RECONCILE_DUE_INDEX_VERSION }), {
+    metadata,
+  });
+  return key;
+}
+
+export async function retireChironWakeupHint(kv, eventKey) {
+  if (!kv || typeof kv.delete !== "function") return false;
+  const key = await buildChironWakeupKey(eventKey);
+  if (!key) return false;
+  try {
+    await kv.delete(key);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /**

@@ -51,6 +51,7 @@ const {
   _chironShouldRunReconcileFromStatusPoll,
   _chironWriteExportStatus,
   _chironMigrateDueMarkersOnePage,
+  _chironMarkScopeDueMigrationComplete,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
   CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS,
   CHIRON_PENDING_STALE_MS,
@@ -240,6 +241,11 @@ async function seedConnection(h, tenantId, companyId, overrides = {}) {
   );
 }
 
+async function finishMigration(h, tenantId, companyId) {
+  await _chironMarkScopeDueMigrationComplete(h.env, tenantId, companyId, NOW_MS);
+  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+}
+
 async function seedEventWithDue(h, event, eventKey, dueAtMs, statusDoc = null) {
   await h.env.COMPLIANCE_KV.put(eventKey, JSON.stringify(event));
   if (statusDoc) {
@@ -262,7 +268,7 @@ async function seedEventWithDue(h, event, eventKey, dueAtMs, statusDoc = null) {
 test("1. no-due pass: 0 value reads, 1 due list, 0 writes, 0 provider", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   h.resetCounts();
   const summary = await _chironCronReconcileAllScopesBestEffort(h.env, {
     source: "cron",
@@ -270,9 +276,9 @@ test("1. no-due pass: 0 value reads, 1 due list, 0 writes, 0 provider", async ()
   });
   assert.equal(summary.ok, true);
   assert.equal(summary.due_selected, 0);
-  assert.equal(h.counts.valueReads, 0);
+  assert.equal(h.eventReads().length, 0);
   assert.equal(h.dueLists(), 1);
-  assert.equal(h.counts.lists, 1);
+  assert.equal(h.listPrefixes.includes("compliance_event_v1/"), false);
   assert.equal(h.counts.writes, 0);
   assert.equal(h.counts.deletes, 0);
   assert.deepEqual(providerCalls, []);
@@ -290,11 +296,11 @@ test("2. historical terminal records cause 0 value reads after migration", async
       JSON.stringify(rideEvent("ride_stop", TENANT_A, COMPANY_A, `old_${i}`, i)),
     );
   }
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   h.resetCounts();
   await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron", nowMs: NOW_MS });
   assert.equal(h.eventReads().length, 0);
-  assert.equal(h.counts.valueReads, 0);
+  assert.equal(h.listPrefixes.includes("compliance_event_v1/"), false);
   assert.equal(h.dueLists(), 1);
   assert.deepEqual(providerCalls, []);
 });
@@ -302,7 +308,7 @@ test("2. historical terminal records cause 0 value reads after migration", async
 test("3. one due marker targets exactly one event", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_one", 1);
   const key = eventKeyFor(TENANT_A, COMPANY_A, 1, "one");
   await seedEventWithDue(h, event, key, NOW_MS - 1000);
@@ -319,7 +325,7 @@ test("3. one due marker targets exactly one event", async () => {
 test("4+5. twenty due cap; more than twenty stays capped", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   for (let i = 0; i < 27; i += 1) {
     const event = rideEvent("ride_start", TENANT_A, COMPANY_A, `street_${i}`, i);
     const key = eventKeyFor(TENANT_A, COMPANY_A, i, `cap_${i}`);
@@ -443,7 +449,7 @@ test("8. success/terminal removes marker", async () => {
 test("9+10. duplicate and stale superseded markers reconcile", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_dup", 9);
   const eventKey = eventKeyFor(TENANT_A, COMPANY_A, 9, "dup");
   await seedEventWithDue(h, event, eventKey, NOW_MS - 5000);
@@ -461,7 +467,7 @@ test("9+10. duplicate and stale superseded markers reconcile", async () => {
 test("11. orphan marker deletes without provider call", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const missingKey = eventKeyFor(TENANT_A, COMPANY_A, 11, "missing");
   await armChironDueMarker(h.env.COMPLIANCE_KV, missingKey, NOW_MS - 1000);
   h.resetCounts();
@@ -489,7 +495,7 @@ test("12. wrong scope/binding fails closed", async () => {
 test("13. authoritative event is read before any provider call", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_order", 13);
   const key = eventKeyFor(TENANT_A, COMPANY_A, 13, "order");
   await seedEventWithDue(h, event, key, NOW_MS - 1000);
@@ -504,7 +510,7 @@ test("13. authoritative event is read before any provider call", async () => {
 test("14. concurrent event change does not submit stale data", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_old", 14);
   const key = eventKeyFor(TENANT_A, COMPANY_A, 14, "conc");
   await seedEventWithDue(h, event, key, NOW_MS - 1000);
@@ -637,7 +643,7 @@ test("20. tenant isolation across two scopes", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
   await seedConnection(h, TENANT_B, COMPANY_B);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const eventA = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_a", 21);
   const eventB = rideEvent("ride_start", TENANT_B, COMPANY_B, "street_b", 22);
   const keyA = eventKeyFor(TENANT_A, COMPANY_A, 21, "iso_a");
@@ -738,14 +744,13 @@ test("26. normal due processing continues during migration", async () => {
   });
   assert.equal(summary.due_selected, 1);
   assert.ok(summary.migration_examined > 0);
-  assert.ok(summary.migration_examined <= 25);
   assert.ok(h.eventReads().includes(liveKey));
 });
 
 test("27. migration completion permanently disables legacy value scan", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "after_done", 27);
   const key = eventKeyFor(TENANT_A, COMPANY_A, 27, "after_done");
   await h.env.COMPLIANCE_KV.put(key, JSON.stringify(event));
@@ -765,7 +770,7 @@ test("27. migration completion permanently disables legacy value scan", async ()
 test("28. already-synced marker: one event read, cleanup, no provider, no repair write", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "already", 28);
   const key = eventKeyFor(TENANT_A, COMPANY_A, 28, "already");
   await seedEventWithDue(h, event, key, NOW_MS - 1000, {
@@ -787,7 +792,7 @@ test("28. already-synced marker: one event read, cleanup, no provider, no repair
 test("29-30. hydration only for due candidates; BOOKING_KV independent of history", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const t = safeSegment(TENANT_A, "");
   const c = safeSegment(COMPANY_A, "");
   for (let i = 0; i < 40; i += 1) {
@@ -881,7 +886,7 @@ test("34. due-index helpers do not store request-specific mutable globals", () =
 test("35. no provider call when zero due", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   h.resetCounts();
   await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron", nowMs: NOW_MS });
   assert.deepEqual(providerCalls, []);

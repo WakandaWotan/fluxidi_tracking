@@ -22,6 +22,7 @@ import {
   markChironDueMigrationComplete,
   parseChironDueMarkerKey,
   selectDueChironMarkers,
+  isChironFullScopeEventListPrefix,
 } from "./chiron_reconcile_due_index.js";
 
 const {
@@ -31,6 +32,7 @@ const {
   _chironAppendContextEntries,
   _chironArmDueNowBestEffort,
   _chironConfirmDueMarkerAfterPersist,
+  _chironMarkScopeDueMigrationComplete,
   _chironWriteExportStatus,
   buildChironConnectionStatusResponse,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
@@ -248,10 +250,15 @@ async function seedConnection(h, tenantId, companyId) {
   );
 }
 
+async function finishMigration(h, tenantId, companyId) {
+  await _chironMarkScopeDueMigrationComplete(h.env, tenantId, companyId, NOW_MS);
+  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+}
+
 test("incident: newest due-at-0 street ride is selected over 25 historical retries", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
 
   for (let i = 0; i < 25; i += 1) {
     const old = {
@@ -421,19 +428,20 @@ test("synced persist retires the due marker; crash after arm still leaves a mark
 test("idle cron after migration: one due list, zero event value reads", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   h.resetCounts();
   await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron", nowMs: NOW_MS });
   assert.equal(h.eventReads().length, 0);
   assert.equal(h.dueLists(), 1);
   assert.equal(h.counts.bookingReads, 0);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
 });
 
 test("two tenants stay isolated when both have due-at-0 markers", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
   await seedConnection(h, TENANT_B, COMPANY_B);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const aKey = eventKeyFor(TENANT_A, COMPANY_A, "2026/08/18", 1787043121583, "a");
   const bKey = eventKeyFor(TENANT_B, COMPANY_B, "2026/08/18", 1787043121583, "b");
   await h.env.COMPLIANCE_KV.put(
@@ -470,7 +478,7 @@ test("two tenants stay isolated when both have due-at-0 markers", async () => {
 test("cron reads one authoritative event per selected marker and does not scan history", async () => {
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
-  await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
+  await finishMigration(h, TENANT_A, COMPANY_A);
   const start = streetEvent("ride_start", Date.parse("2026-08-18T08:52:01.583Z"));
   const startKey = eventKeyFor(TENANT_A, COMPANY_A, "2026/08/18", 1787043121583, "ride_start");
   await h.env.COMPLIANCE_KV.put(startKey, JSON.stringify(start));
@@ -488,7 +496,7 @@ test("cron reads one authoritative event per selected marker and does not scan h
   });
   assert.equal(summary.due_selected, 1);
   assert.deepEqual(h.eventReads(), [startKey]);
-  assert.equal(h.counts.eventPrefixLists, 0);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
   assert.equal(h.dueLists(), 1);
 });
 

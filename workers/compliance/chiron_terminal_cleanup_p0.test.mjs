@@ -18,6 +18,7 @@ import {
   computeChironReconcileDueAtMs,
   markChironDueMigrationComplete,
   selectDueChironMarkers,
+  isChironFullScopeEventListPrefix,
 } from "./chiron_reconcile_due_index.js";
 
 const {
@@ -32,6 +33,7 @@ const {
   buildChironOfficialIdempotencyKey,
   buildChironConnectionStatusResponse,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+  _chironMarkScopeDueMigrationComplete,
   safeSegment,
 } = __testInternals;
 
@@ -268,6 +270,7 @@ function parseDoc(h, key) {
 
 async function seedReadyScope(h) {
   await seedConnection(h, TENANT_A, COMPANY_A);
+  await _chironMarkScopeDueMigrationComplete(h.env, TENANT_A, COMPANY_A, NOW_MS);
   await markChironDueMigrationComplete(h.env.COMPLIANCE_KV, { now: new Date(NOW_MS) });
 }
 
@@ -403,7 +406,7 @@ test("5. stale due-at-0 marker is deleted without hydration or provider call", a
   assert.equal(summary.due_selected, 0);
   assert.equal(dueMarkerNames(h).length, 0);
   assert.equal(h.counts.bookingReads, 0);
-  assert.equal(h.counts.eventPrefixLists, 0);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
   assert.equal(providerCalls.length, 0);
   assert.ok(h.eventReads().length <= 1);
 });
@@ -663,7 +666,8 @@ test("15. idle cron after migration: one due list, zero event value reads", asyn
   assert.equal(h.eventReads().length, 0);
   assert.equal(h.dueLists(), 1);
   assert.equal(h.counts.bookingReads, 0);
-  assert.equal(h.counts.valueReads, 0);
+  assert.equal(h.listPrefixes.includes("compliance_event_v1/"), false);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
   assert.equal(h.counts.writes, 0);
   assert.equal(providerCalls.length, 0);
 });
@@ -688,7 +692,7 @@ test("16. considered-event growth does not reintroduce full-history reads", asyn
   });
   assert.ok(summary.due_selected <= CHIRON_AUTO_RECONCILE_MAX_PROCESS);
   assert.deepEqual(h.eventReads(), [startKey]);
-  assert.equal(h.counts.eventPrefixLists, 0);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
 });
 
 test("17. newest-first starvation regression remains green", async () => {
