@@ -1,0 +1,26 @@
+name: fluxidi_customer
+description: "Fluxidi Customer Dev - standalone customer app shell"
+publish_to: 'none'
+
+# Development shell. Versioning is deliberately independent from the existing
+# combined Fluxidi app (Play Internal 30 / 1.0.6+30).
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Incoming links only, for the app's own payment-return scheme. Same major
+  # version as the existing app so both stay on one proven plugin line.
+  app_links: ^6.4.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
