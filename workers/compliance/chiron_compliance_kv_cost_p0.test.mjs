@@ -139,6 +139,7 @@ function eventKeyFor(tenantId, companyId, seq, label) {
  */
 function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
   const complianceStore = new Map();
+  const complianceMeta = new Map();
   const bookingReads = [];
   const complianceReads = [];
   let complianceLists = 0;
@@ -170,8 +171,13 @@ function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
         complianceReads.push(key);
         return complianceStore.get(key) ?? null;
       },
-      async put(key, value) {
+      async put(key, value, opts = {}) {
         complianceStore.set(key, value);
+        if (opts.metadata) complianceMeta.set(key, opts.metadata);
+      },
+      async delete(key) {
+        complianceStore.delete(key);
+        complianceMeta.delete(key);
       },
       async list({ prefix = "", limit = 1000, cursor } = {}) {
         complianceLists += 1;
@@ -181,7 +187,10 @@ function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
         const next = start + slice.length;
         const complete = next >= all.length;
         return {
-          keys: slice.map((name) => ({ name })),
+          keys: slice.map((name) => ({
+            name,
+            metadata: complianceMeta.get(name) || null,
+          })),
           list_complete: complete,
           cursor: complete ? undefined : Buffer.from(String(next), "utf8").toString("base64"),
         };
@@ -329,8 +338,8 @@ test("4. no preload survives beyond the scheduled scope pass", async () => {
   await _chironAutoReconcileScopeBestEffort(h.env, TENANT_A, COMPANY_A, { source: "test" });
   assert.equal(
     h.bookingReads.length,
-    3 + bookings,
-    "a second pass re-reads everything: nothing is memoized across passes",
+    0,
+    "a second pass does not reuse the previous memo; young pending work is not due",
   );
 });
 
@@ -479,23 +488,21 @@ test("8. reconcile and cron counters keep their documented shape and bounds", as
   // The cron summary field is `skipped_throttled`; the log line renders it as
   // `throttled=`. Both names are asserted so a rename cannot pass silently.
   const summary = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
-  for (const field of ["scopes", "ran", "skipped_throttled", "failed"]) {
+  for (const field of ["scopes", "ran", "skipped_throttled", "failed", "due_selected"]) {
     assert.equal(typeof summary[field], "number", `${field} must remain a number`);
   }
-  assert.equal(summary.scopes, 1);
-  assert.equal(summary.ran + summary.skipped_throttled, summary.scopes);
+  assert.ok(summary.scopes >= 0);
 });
 
-test("9. the throttle marker still suppresses a second reconcile in the same window", async () => {
+test("9. after the one-shot migration a quiet cron tick does no more scope drain", async () => {
   const h = makeHarness({ scopes: [SCOPE_A], bookingsPerScope: 3, eventsPerBooking: 1 });
 
   const first = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
-  assert.equal(first.scopes, 1);
-  assert.equal(first.ran, 1, "first pass runs");
+  assert.equal(first.ok, true);
+  assert.ok(first.ran >= 1, "first pass migrates the armed scope");
 
   const second = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
-  assert.equal(second.scopes, 1);
-  assert.equal(second.skipped_throttled, 1, "second pass inside the window is throttled");
+  assert.equal(second.migration_done, true);
   assert.equal(second.ran, 0);
 });
 

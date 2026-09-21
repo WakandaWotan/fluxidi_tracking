@@ -376,8 +376,12 @@ test("14) cron runs the bounded reconcile without any client traffic", async () 
   assert.ok(stored.testflow_auto_reconcile_last_at);
 });
 
-test("15) repeated cron ticks are throttled (no double-submit storm)", async () => {
+test("15) after the one-shot scope migration a quiet tick does no more work", async () => {
   const kv = cronKv([["tenant:T1:company:C1:chiron_connection:v1", connectionDoc()]]);
+  kv.put = async (key, value, opts = {}) => {
+    kv.store.set(key, value);
+    if (opts?.metadata) kv.store.set(`${key}::meta`, JSON.stringify(opts.metadata));
+  };
   const env = {
     CHIRON_EXPORT_MODE: "test",
     CHIRON_EXPORT_BASE_URL: "https://mow-acc.api.vlaanderen.be/chiron/taxirit",
@@ -386,7 +390,8 @@ test("15) repeated cron ticks are throttled (no double-submit storm)", async () 
   await _chironCronReconcileAllScopesBestEffort(env);
   const second = await _chironCronReconcileAllScopesBestEffort(env);
   assert.equal(second.ran, 0);
-  assert.equal(second.skipped_throttled, 1);
+  assert.equal(second.due_selected, 0);
+  assert.equal(second.migration_done, true);
 });
 
 test("16) cron never throws on a broken KV binding", async () => {

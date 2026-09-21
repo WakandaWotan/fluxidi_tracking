@@ -1,3 +1,27 @@
+import {
+  CHIRON_RECONCILE_DUE_PREFIX,
+  CHIRON_RECONCILE_DUE_DONE_KEY,
+  CHIRON_RECONCILE_DUE_MIGRATION_KEY,
+  CHIRON_RECONCILE_DUE_MIGRATION_BATCH,
+  CHIRON_WAITING_RECHECK_MS,
+  CHIRON_BLOCKED_RECHECK_MS,
+  ChironDueIndexTestCrash,
+  armChironDueMarker,
+  retireChironDueMarker,
+  applyChironDueMarkerTransition,
+  buildChironDueMarkerKey,
+  computeChironReconcileDueAtMs,
+  selectDueChironMarkers,
+  dueListContainsMigrationDone,
+  normalizeChironDueMigrationState,
+  advanceChironDueMigrationState,
+  eventKeyMatchesScope,
+  formatChironDueIndexLog,
+  parseChironDueMarkerKey,
+  isChironReconcileDueDoneSentinel,
+  markChironDueMigrationComplete,
+} from "./chiron_reconcile_due_index.js";
+
 const ALLOWED_EVENT_TYPES = new Set([
   "ride_start",
   "ride_stop",
@@ -231,6 +255,8 @@ const CHIRON_CONNECTION_TEST_ALLOWED_TOP_LEVEL_KEYS = new Set([
 const CHIRON_READINESS_DEFAULT_LIMIT = 20;
 const CHIRON_READINESS_DEFAULT_EVENT_TYPE = "ride_stop";
 const CHIRON_EXPORT_STATUS_SCHEMA = "chiron_export_status_v1";
+const CHIRON_OFFICIAL_REF_SCHEMA = "chiron_official_ref_v1";
+const CHIRON_SCOPE_DUE_MIGRATION_PREFIX = "chiron_reconcile_due_mig:v1/tenant/";
 const CHIRON_EXPORT_MAX_SAMPLE_PAYLOADS = 3;
 const CHIRON_EXPORT_LIST_SCAN_CAP = 10000;
 
@@ -573,6 +599,234 @@ function buildComplianceCanonicalEventKey(event) {
   ].join("/");
 }
 
+function _chironResolveDateIndexEventKey(event, explicitKey = null) {
+  const explicit = cleanText(explicitKey, 1024);
+  if (explicit.startsWith("compliance_event_v1/")) return explicit;
+  if (
+    event &&
+    typeof event === "object" &&
+    !Array.isArray(event) &&
+    event.tenant_id &&
+    event.company_id &&
+    event.event_id
+  ) {
+    return buildDateIndexKeyForTimestamp(event, event.created_at_utc);
+  }
+  return null;
+}
+
+function _chironDueAtComputeOptions() {
+  return {
+    pendingStaleMs: CHIRON_PENDING_STALE_MS,
+    definitiveCooldownMs: CHIRON_DEFINITIVE_RETRY_COOLDOWN_MS,
+    definitiveMaxAttempts: CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS,
+    waitingRecheckMs: CHIRON_WAITING_RECHECK_MS,
+    blockedRecheckMs: CHIRON_BLOCKED_RECHECK_MS,
+    departureConfirmedExternal: CHIRON_DEPARTURE_CONFIRMED_EXTERNAL,
+  };
+}
+
+function _chironScopeDueMigrationKey(tenantId, companyId) {
+  const tenantSeg = safeSegment(tenantId, "");
+  const companySeg = safeSegment(companyId, "");
+  if (!tenantSeg || !companySeg) return "";
+  return `${CHIRON_SCOPE_DUE_MIGRATION_PREFIX}${tenantSeg}/company/${companySeg}`;
+}
+
+function _chironExportStatusFunctionallyEqual(prev, next) {
+  if (!prev || !next || typeof prev !== "object" || typeof next !== "object") {
+    return false;
+  }
+  const fields = [
+    "sync_state",
+    "official_idempotency_key",
+    "official_ritnummer",
+    "official_status",
+    "failure_kind",
+    "sanitized_error",
+    "reason_code",
+    "waiting_for_departure",
+    "paired_departure_idempotency_key",
+    "paired_departure_sync_state",
+    "external_status_code",
+    "fouten_count",
+    "outbound_fingerprint",
+    "effective_environment",
+  ];
+  for (const field of fields) {
+    const a = prev[field] ?? null;
+    const b = next[field] ?? null;
+    if (JSON.stringify(a) !== JSON.stringify(b)) return false;
+  }
+  return true;
+}
+
+function _chironTestflowCountersChanged(before, after) {
+  if (!after || typeof after !== "object") return false;
+  const prev = before && typeof before === "object" ? before : {};
+  const keys = [
+    "test_departure_sent_count",
+    "test_arrival_sent_count",
+    "test_messages_sent_count",
+    "test_rides_completed_count",
+    "testflow_status",
+    "testflow_completed_at",
+    "testflow_last_error",
+  ];
+  for (const key of keys) {
+    if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(after[key] ?? null)) {
+      return true;
+    }
+  }
+  const listKeys = [
+    "testflow_ritnummers_departure",
+    "testflow_ritnummers_arrival",
+    "testflow_ritnummers_completed",
+  ];
+  for (const key of listKeys) {
+    if (JSON.stringify(prev[key] || []) !== JSON.stringify(after[key] || [])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function _chironArmDueNowBestEffort(env, event, eventKey) {
+  if (!_chironAutoSubmitMessageTypeForEventType(event?.event_type)) return null;
+  const key = _chironResolveDateIndexEventKey(event, eventKey);
+  if (!key) return null;
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    throw new Error("chiron_due_marker_arm_unavailable");
+  }
+  try {
+    return await armChironDueMarker(env.COMPLIANCE_KV, key, 0);
+  } catch (err) {
+    if (err instanceof ChironDueIndexTestCrash) throw err;
+    return null;
+  }
+}
+
+async function _chironConfirmDueMarkerAfterPersist(env, event, eventKey) {
+  if (!_chironAutoSubmitMessageTypeForEventType(event?.event_type)) return null;
+  const key = _chironResolveDateIndexEventKey(event, eventKey);
+  if (!key || !env?.COMPLIANCE_KV) return null;
+  let markerKey = null;
+  try {
+    markerKey = await buildChironDueMarkerKey(0, key);
+  } catch (_) {
+    return null;
+  }
+  if (!markerKey) return null;
+  let raw = null;
+  try {
+    raw = await env.COMPLIANCE_KV.get(markerKey);
+  } catch (_) {
+    raw = null;
+  }
+  if (raw) return markerKey;
+  return _chironArmDueNowBestEffort(env, event, key);
+}
+
+async function _chironAppendContextEntries(env, event, eventKey) {
+  const entries = [{ key: eventKey, event }];
+  const type = cleanText(event?.event_type, 64).toLowerCase();
+  if (!CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(type)) return entries;
+  const tripId = cleanText(event?.trip_id, 128);
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  if (!tripId || !tenantId || !companyId || !env?.COMPLIANCE_KV) return entries;
+  const siblingEventId = `ride_start:${tenantId}:${companyId}:${tripId}`;
+  const canonicalKey = buildComplianceCanonicalEventKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+    event_id: siblingEventId,
+  });
+  try {
+    const raw = await env.COMPLIANCE_KV.get(canonicalKey);
+    if (!raw) return entries;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return entries;
+    }
+    const siblingKey = _chironResolveDateIndexEventKey(parsed);
+    entries.unshift({ key: siblingKey || canonicalKey, event: parsed });
+  } catch (_) {}
+  return entries;
+}
+
+function _chironConnectionThrottleIsFresh(statusDoc, nowMs) {
+  const lastRaw = cleanText(statusDoc?.testflow_auto_reconcile_last_at, 64);
+  if (!lastRaw) return false;
+  const lastMs = Date.parse(lastRaw);
+  if (!Number.isFinite(lastMs)) return false;
+  const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  return now - lastMs < CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS;
+}
+
+async function _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs = Date.now()) {
+  try {
+    const throttleRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+    if (_chironConnectionThrottleIsFresh(throttleRead.doc, nowMs)) return false;
+    const nextStatusDoc =
+      throttleRead.doc && typeof throttleRead.doc === "object"
+        ? { ...throttleRead.doc, testflow_auto_reconcile_last_at: nowIso() }
+        : null;
+    if (nextStatusDoc) {
+      await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+async function _chironReArmPairedArrivalAfterDeparture(env, departureEvent, contextEntries) {
+  if (_chironAutoSubmitMessageTypeForEventType(departureEvent?.event_type) !== "departure") {
+    return 0;
+  }
+  const tenantId = cleanText(departureEvent?.tenant_id, 128);
+  const companyId = cleanText(departureEvent?.company_id, 128);
+  const bookingId = cleanText(departureEvent?.booking_id, 128);
+  const tripId = cleanText(departureEvent?.trip_id, 128);
+  if (!tenantId || !companyId || (!bookingId && !tripId) || !env?.COMPLIANCE_KV) {
+    return 0;
+  }
+  const seen = new Set();
+  let armed = 0;
+  const tryArm = async (event, eventKey) => {
+    if (!event || typeof event !== "object") return;
+    if (_chironAutoSubmitMessageTypeForEventType(event.event_type) !== "arrival") return;
+    const sameBooking = bookingId && cleanText(event.booking_id, 128) === bookingId;
+    const sameTrip = tripId && cleanText(event.trip_id, 128) === tripId;
+    if (!sameBooking && !sameTrip) return;
+    const key = _chironResolveDateIndexEventKey(event, eventKey);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    const marker = await _chironArmDueNowBestEffort(env, event, key);
+    if (marker) armed += 1;
+  };
+  const rows = Array.isArray(contextEntries) ? contextEntries : [];
+  for (const row of rows) {
+    await tryArm(row?.event, row?.key);
+  }
+  const eventIds = [];
+  if (bookingId) eventIds.push(`ride_stop:${tenantId}:${companyId}:${bookingId}`);
+  if (tripId) eventIds.push(`ride_stop:${tenantId}:${companyId}:${tripId}`);
+  for (const eventId of eventIds) {
+    const canonicalKey = buildComplianceCanonicalEventKey({
+      tenant_id: tenantId,
+      company_id: companyId,
+      event_id: eventId,
+    });
+    try {
+      const raw = await env.COMPLIANCE_KV.get(canonicalKey);
+      if (!raw) continue;
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      await tryArm(parsed, _chironResolveDateIndexEventKey(parsed));
+    } catch (_) {}
+  }
+  return armed;
+}
+
 async function handleAppend(request, env, origin, ctx) {
   const authError = ensureAuthorized(request, env);
   if (authError) return authError;
@@ -684,6 +938,7 @@ async function handleAppend(request, env, origin, ctx) {
           dateKey,
           JSON.stringify(canonicalExisting),
         );
+        await _chironArmDueNowBestEffort(env, canonicalExisting, dateKey);
         recovered = true;
       }
       console.log(
@@ -711,6 +966,7 @@ async function handleAppend(request, env, origin, ctx) {
     await env.COMPLIANCE_KV.put(canonicalKey, JSON.stringify(event));
     const dateKey = buildDateIndexKeyForTimestamp(event, event.created_at_utc);
     await env.COMPLIANCE_KV.put(dateKey, JSON.stringify(event));
+    await _chironArmDueNowBestEffort(env, event, dateKey);
     console.log(
       `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
     );
@@ -736,6 +992,7 @@ async function handleAppend(request, env, origin, ctx) {
   // Legacy path (no client-supplied event_id): single date-indexed write.
   const key = buildEventStorageKey(event);
   await env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  await _chironArmDueNowBestEffort(env, event, key);
   console.log(
     `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
   );
@@ -7251,16 +7508,215 @@ async function _chironReadExportStatus(env, statusKey) {
   }
 }
 
-async function _chironWriteExportStatus(env, statusKey, statusDoc) {
+async function _chironWriteExportStatus(env, statusKey, statusDoc, options = {}) {
   if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
     return { ok: false, reason: "missing_kv" };
   }
-  try {
+  const persist = async () => {
     await env.COMPLIANCE_KV.put(statusKey, JSON.stringify(statusDoc));
+    const officialIdem = cleanText(statusDoc?.official_idempotency_key, 256);
+    if (options.skipOfficialLink !== true && options.event && officialIdem) {
+      await _chironPutOfficialCandidatePointer(
+        env,
+        options.event,
+        officialIdem,
+        statusDoc,
+      );
+    }
+  };
+  const eventKey =
+    _chironResolveDateIndexEventKey(options.event, options.eventKey) ||
+    cleanText(statusDoc?.source_event_key, 1024) ||
+    null;
+  try {
+    let previousStatus = options.previousStatus;
+    if (previousStatus === undefined) {
+      previousStatus = await _chironReadExportStatus(env, statusKey);
+    }
+    if (
+      options.skipIfUnchanged === true &&
+      _chironExportStatusFunctionallyEqual(previousStatus, statusDoc)
+    ) {
+      return { ok: true, skipped_unchanged: true };
+    }
+    const nowMs = Number(options.nowMs) || Date.now();
+    if (options.skipDueMarkers === true) {
+      await persist();
+      return { ok: true };
+    }
+    if (eventKey) {
+      if (statusDoc && typeof statusDoc === "object" && !statusDoc.source_event_key) {
+        statusDoc.source_event_key = eventKey;
+      }
+      const dueOpts = _chironDueAtComputeOptions();
+      const previousDueAtMs = computeChironReconcileDueAtMs(
+        previousStatus,
+        nowMs,
+        dueOpts,
+      );
+      const nextDueAtMs = computeChironReconcileDueAtMs(statusDoc, nowMs, dueOpts);
+      await applyChironDueMarkerTransition(env.COMPLIANCE_KV, {
+        eventKey,
+        previousDueAtMs,
+        nextDueAtMs,
+        persist,
+        crashAfter: options.crashAfter || null,
+      });
+      return { ok: true };
+    }
+    await persist();
     return { ok: true };
-  } catch (_) {
+  } catch (err) {
+    if (err instanceof ChironDueIndexTestCrash) throw err;
     return { ok: false, reason: "kv_put_failed" };
   }
+}
+
+function buildChironOfficialEventRefKey(tenantId, companyId, eventId) {
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  const eventSegment = safeSegment(eventId, "");
+  if (!tenantSegment || !companySegment || !eventSegment) return "";
+  return [
+    CHIRON_OFFICIAL_REF_SCHEMA,
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "event",
+    eventSegment,
+  ].join("/");
+}
+
+function _chironDeriveOfficialIdempotencyKeyFromEvent(event) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  const messageType = _chironAutoSubmitMessageTypeForEventType(event?.event_type);
+  const officialStatus = _chironExpectedOfficialStatusForMessageType(messageType);
+  const ritnummer = _chironResolveOfficialRitnummer(event, null);
+  const registratie = _chironResolveOfficialRegistratie(event);
+  if (!tenantId || !companyId || !officialStatus || !ritnummer || !registratie) {
+    return "";
+  }
+  return buildChironOfficialIdempotencyKey(
+    { tenant_id: tenantId, company_id: companyId },
+    registratie,
+    ritnummer,
+    officialStatus,
+  );
+}
+
+async function _chironPutOfficialCandidatePointer(
+  env,
+  event,
+  officialIdempotencyKey,
+  officialDoc,
+) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  const eventId = cleanText(event?.event_id, 200);
+  const officialIdem = cleanText(officialIdempotencyKey, 256);
+  if (!env?.COMPLIANCE_KV || !tenantId || !companyId || !eventId || !officialIdem) {
+    return null;
+  }
+  const officialTenant = cleanText(officialDoc?.tenant_id, 128);
+  const officialCompany = cleanText(officialDoc?.company_id, 128);
+  if (officialTenant && safeSegment(officialTenant, "") !== safeSegment(tenantId, "")) {
+    return null;
+  }
+  if (officialCompany && safeSegment(officialCompany, "") !== safeSegment(companyId, "")) {
+    return null;
+  }
+  const refKey = buildChironOfficialEventRefKey(tenantId, companyId, eventId);
+  if (!refKey) return null;
+  const existingRef = await _chironReadExportStatus(env, refKey);
+  if (cleanText(existingRef?.k, 256) !== officialIdem) {
+    await env.COMPLIANCE_KV.put(refKey, JSON.stringify({ v: 1, k: officialIdem }));
+  }
+  const candidateKey = _chironCandidateExportStatusKey(tenantId, companyId, event, null);
+  const existing = await _chironReadExportStatus(env, candidateKey);
+  const officialState = cleanText(officialDoc?.sync_state, 32).toLowerCase();
+  const officialIsTerminal =
+    officialDoc &&
+    typeof officialDoc === "object" &&
+    computeChironReconcileDueAtMs(
+      officialDoc,
+      Date.now(),
+      _chironDueAtComputeOptions(),
+    ) === null;
+  const next = {
+    schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    event_id: eventId,
+    trip_id: cleanText(event?.trip_id, 128) || existing?.trip_id || null,
+    booking_id: cleanText(event?.booking_id, 128) || existing?.booking_id || null,
+    official_idempotency_key: officialIdem,
+    official_ritnummer:
+      cleanText(officialDoc?.official_ritnummer, 256) ||
+      cleanText(existing?.official_ritnummer, 256) ||
+      null,
+    official_status:
+      cleanText(officialDoc?.official_status, 32) ||
+      cleanText(existing?.official_status, 32) ||
+      null,
+    official_payload_shape: "chiron_taxirit_api_v1",
+    sync_state: officialIsTerminal
+      ? officialState
+      : cleanText(existing?.sync_state, 32) || "pending_build",
+    reason_code: officialIsTerminal
+      ? null
+      : cleanText(existing?.reason_code, 96) || null,
+    failure_kind: existing?.failure_kind ?? null,
+    last_attempt_at: existing?.last_attempt_at || officialDoc?.last_attempt_at || null,
+    attempt_count: Number(existing?.attempt_count || 0),
+    auto_submit: true,
+    auto_submit_source: cleanText(existing?.auto_submit_source, 32) || null,
+    source_event_key:
+      cleanText(existing?.source_event_key, 1024) ||
+      _chironResolveDateIndexEventKey(event) ||
+      null,
+  };
+  if (!_chironExportStatusFunctionallyEqual(existing, next)) {
+    await env.COMPLIANCE_KV.put(candidateKey, JSON.stringify(next));
+  }
+  return { refKey, candidateKey };
+}
+
+async function _chironRetireKnownDueMarkersForEvent(
+  env,
+  eventKey,
+  extraMarkerKeys,
+  statusDocs,
+  nowMs,
+) {
+  if (!env?.COMPLIANCE_KV) return 0;
+  const seen = new Set();
+  let retired = 0;
+  const retire = async (markerKey) => {
+    const key = cleanText(markerKey, 512);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    const ok = await retireChironDueMarker(env.COMPLIANCE_KV, key);
+    if (ok) retired += 1;
+  };
+  for (const extra of Array.isArray(extraMarkerKeys) ? extraMarkerKeys : []) {
+    await retire(extra);
+  }
+  const ek = cleanText(eventKey, 1024);
+  if (ek) {
+    await retire(await buildChironDueMarkerKey(0, ek));
+    for (const doc of Array.isArray(statusDocs) ? statusDocs : []) {
+      const dueAt = computeChironReconcileDueAtMs(
+        doc,
+        nowMs,
+        _chironDueAtComputeOptions(),
+      );
+      if (dueAt === null) continue;
+      await retire(await buildChironDueMarkerKey(dueAt, ek));
+    }
+  }
+  return retired;
 }
 
 // CHIRON-OFFLINE-ARRIVAL-P0-2: fields Chiron registers once per ritnummer and
@@ -11831,7 +12287,12 @@ async function _chironPersistCandidateExportStatus(env, {
     auto_submit_source: source,
     ...extra,
   };
-  const written = await _chironWriteExportStatus(env, statusKey, doc);
+  const written = await _chironWriteExportStatus(env, statusKey, doc, {
+    event,
+    eventKey: extra?.source_event_key || _chironResolveDateIndexEventKey(event),
+    previousStatus: existing,
+    skipIfUnchanged: true,
+  });
   return { ok: written.ok === true, status_key: statusKey, doc };
 }
 
@@ -12133,6 +12594,21 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
   // sync_state=pending permanently (conflict_pending forever).
   let pendingStatusKey = null;
   let pendingDocSnapshot = null;
+  const dueWriteOpts = {
+    event,
+    eventKey: eventKey || _chironResolveDateIndexEventKey(event),
+  };
+  const bindKey = cleanText(eventKey, 1024) || dueWriteOpts.eventKey;
+  if (options.expectedScope) {
+    if (!_chironEventBindingOk(event, bindKey, options.expectedScope)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "scope_binding_mismatch",
+        source,
+      };
+    }
+  }
   try {
     const statusRead = await readChironConnectionStatusRaw(
       env,
@@ -12369,7 +12845,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           external_reference: null,
           response_shape: null,
           fouten_count: null,
-          last_attempt_at: null,
+          last_attempt_at: arrivalExisting?.last_attempt_at || null,
           attempt_count: Number(arrivalExisting?.attempt_count || 0),
           sanitized_error: null,
           waiting_for_departure: true,
@@ -12379,7 +12855,12 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           auto_submit_source: source,
           effective_environment: inheritedEnvForArrival,
         };
-        await _chironWriteExportStatus(env, arrivalStatusKey, waitingDoc);
+        await _chironWriteExportStatus(env, arrivalStatusKey, waitingDoc, {
+          event,
+          eventKey: eventKey || _chironResolveDateIndexEventKey(event),
+          previousStatus: arrivalExisting,
+          skipIfUnchanged: true,
+        });
         console.log(
           `[CHIRON_AUTO_SUBMIT][WAITING] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} paired_dep_state=${departureSyncState || "-"} source=${source}`,
         );
@@ -12459,18 +12940,27 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
             foutenCount: 0,
             sanitizedError: null,
           });
-          await writeChironConnectionStatusRaw(
-            env,
-            scope.tenant_id,
-            scope.company_id,
-            nextStatusDoc,
-          );
-          console.log(
-            `[CHIRON_AUTO_SUBMIT][ALREADY_SYNCED_COUNTER_REPAIR] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} source=${source}`,
-          );
+          if (_chironTestflowCountersChanged(statusRead.doc, nextStatusDoc)) {
+            await writeChironConnectionStatusRaw(
+              env,
+              scope.tenant_id,
+              scope.company_id,
+              nextStatusDoc,
+            );
+            console.log(
+              `[CHIRON_AUTO_SUBMIT][ALREADY_SYNCED_COUNTER_REPAIR] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} source=${source}`,
+            );
+          }
         } catch (_) {
           // Best-effort: counter repair never blocks the guard decision.
         }
+      }
+      if (guard.decision === "already_synced" && messageType === "departure") {
+        await _chironReArmPairedArrivalAfterDeparture(
+          env,
+          event,
+          options.preloadedContextEntries,
+        );
       }
       return {
         ok: false,
@@ -12530,7 +13020,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       outbound_fingerprint: outboundFingerprint,
       immutable_field_drift: freeze.drift.length ? freeze.drift : null,
     };
-    await _chironWriteExportStatus(env, statusKey, pendingDoc);
+    await _chironWriteExportStatus(env, statusKey, pendingDoc, dueWriteOpts);
     pendingStatusKey = statusKey;
     pendingDocSnapshot = pendingDoc;
     if (freeze.drift.length) {
@@ -12570,7 +13060,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           sanitized_error: sanitizedOauthError,
           last_attempt_at: nowIso(),
         };
-        await _chironWriteExportStatus(env, statusKey, failedDoc);
+        await _chironWriteExportStatus(env, statusKey, failedDoc, dueWriteOpts);
         pendingStatusKey = null;
       } else {
         try {
@@ -12603,7 +13093,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
         sanitized_error: "missing_taxirit_url",
         last_attempt_at: nowIso(),
       };
-      await _chironWriteExportStatus(env, statusKey, failedDoc);
+      await _chironWriteExportStatus(env, statusKey, failedDoc, dueWriteOpts);
       pendingStatusKey = null;
       return {
         ok: false,
@@ -12690,8 +13180,18 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           ? Number(previousStatus?.outbound_fingerprint_definitive_attempts || 0) + 1
           : 1,
     };
-    await _chironWriteExportStatus(env, statusKey, finalDoc);
+    await _chironWriteExportStatus(env, statusKey, finalDoc, dueWriteOpts);
     pendingStatusKey = null;
+    if (
+      messageType === "departure" &&
+      (acceptedByChiron || duplicateVertrekConfirmed)
+    ) {
+      await _chironReArmPairedArrivalAfterDeparture(
+        env,
+        event,
+        options.preloadedContextEntries,
+      );
+    }
 
     // Advance acceptance counters only for ACC/test submits. Production
     // rides must never inflate the 5/5 acceptance testflow. A duplicate
@@ -12753,7 +13253,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           failure_kind: "retryable",
           sanitized_error: "auto_submit_internal_exception",
           last_attempt_at: nowIso(),
-        });
+        }, dueWriteOpts);
       } catch (_) {
         // Best-effort; stale-pending guard is the backstop.
       }
@@ -12791,8 +13291,10 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
 //   * respects the auto-submit gate + cutoff.
 async function _chironAutoSubmitAfterAppendBestEffort(env, event, eventKey) {
   try {
+    const contextEntries = await _chironAppendContextEntries(env, event, eventKey);
     const outcome = await _chironAutoSubmitOneEvent(env, event, eventKey, {
       source: "append",
+      preloadedContextEntries: contextEntries,
     });
     return outcome;
   } catch (_) {
@@ -12804,6 +13306,459 @@ async function _chironAutoSubmitAfterAppendBestEffort(env, event, eventKey) {
 // `testflow_started_at` (bounded by CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS) and
 // tries auto-submit for every unsynced departure/arrival, in chronological
 // order. Never scans another tenant's namespace.
+async function _chironListDueMarkerEntries(env, nowMs = Date.now()) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return { keys: [], hasDone: false };
+  }
+  const keys = [];
+  let hasDone = false;
+  let cursor = undefined;
+  const now = Number(nowMs) || Date.now();
+  try {
+    for (let page = 0; page < 10; page += 1) {
+      const listed = await env.COMPLIANCE_KV.list({
+        prefix: CHIRON_RECONCILE_DUE_PREFIX,
+        limit: 1000,
+        ...(cursor ? { cursor } : {}),
+      });
+      const pageKeys = Array.isArray(listed?.keys) ? listed.keys : [];
+      for (const entry of pageKeys) {
+        if (isChironReconcileDueDoneSentinel(entry?.name)) hasDone = true;
+        keys.push(entry);
+      }
+      if (listed?.list_complete !== false) break;
+      const lastName = cleanText(pageKeys[pageKeys.length - 1]?.name, 512);
+      const parsed = parseChironDueMarkerKey(lastName);
+      if (parsed.ok && parsed.dueAtMs > now) break;
+      cursor = listed?.cursor;
+      if (!cursor) break;
+    }
+    return { keys, hasDone: hasDone || dueListContainsMigrationDone(keys) };
+  } catch (_) {
+    return { keys, hasDone: hasDone || dueListContainsMigrationDone(keys) };
+  }
+}
+
+async function _chironGlobalDueMigrationDone(env) {
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") {
+    return false;
+  }
+  try {
+    const done = await env.COMPLIANCE_KV.get(CHIRON_RECONCILE_DUE_DONE_KEY);
+    if (done) return true;
+    const raw = await env.COMPLIANCE_KV.get(CHIRON_RECONCILE_DUE_MIGRATION_KEY);
+    if (!raw) return false;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return normalizeChironDueMigrationState(parsed).completed === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function _chironLoadAuthoritativeEvent(env, eventKey) {
+  const key = cleanText(eventKey, 1024);
+  if (!key || !env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") {
+    return null;
+  }
+  try {
+    const raw = await env.COMPLIANCE_KV.get(key);
+    if (!raw) return null;
+    const event = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!event || typeof event !== "object" || Array.isArray(event)) return null;
+    return event;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _chironEventBindingOk(event, eventKey, expectedScope) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  if (!tenantId || !companyId) return false;
+  const tenantSeg = safeSegment(tenantId, "");
+  const companySeg = safeSegment(companyId, "");
+  if (!eventKeyMatchesScope(cleanText(eventKey, 1024), tenantSeg, companySeg)) {
+    return false;
+  }
+  if (expectedScope) {
+    if (tenantSeg !== safeSegment(expectedScope.tenantId, "")) return false;
+    if (companySeg !== safeSegment(expectedScope.companyId, "")) return false;
+  }
+  return true;
+}
+
+async function _chironReadBestExportStatusForEvent(env, event) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  const candidateKey = _chironCandidateExportStatusKey(
+    tenantId,
+    companyId,
+    event,
+    null,
+  );
+  const candidate = await _chironReadExportStatus(env, candidateKey);
+  let officialIdem = cleanText(candidate?.official_idempotency_key, 256);
+  if (!officialIdem) {
+    const eventId = cleanText(event?.event_id, 200);
+    const refKey = eventId
+      ? buildChironOfficialEventRefKey(tenantId, companyId, eventId)
+      : "";
+    if (refKey) {
+      const ref = await _chironReadExportStatus(env, refKey);
+      officialIdem = cleanText(ref?.k, 256);
+    }
+  }
+  if (!officialIdem) {
+    officialIdem = _chironDeriveOfficialIdempotencyKeyFromEvent(event);
+  }
+  if (officialIdem) {
+    const official = await _chironReadExportStatus(
+      env,
+      _chironCandidateExportStatusKey(tenantId, companyId, event, officialIdem),
+    );
+    if (official) {
+      const officialTenant = cleanText(official.tenant_id, 128);
+      const officialCompany = cleanText(official.company_id, 128);
+      if (
+        officialTenant &&
+        officialCompany &&
+        (safeSegment(officialTenant, "") !== safeSegment(tenantId, "") ||
+          safeSegment(officialCompany, "") !== safeSegment(companyId, ""))
+      ) {
+        return candidate;
+      }
+      return official;
+    }
+  }
+  return candidate;
+}
+
+async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
+  const eventKey = cleanText(item?.eventKey, 1024);
+  const markerKey = cleanText(item?.markerKey, 512);
+  if (!eventKey) {
+    if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    return { kind: "orphan" };
+  }
+  const event = await _chironLoadAuthoritativeEvent(env, eventKey);
+  if (!event) {
+    if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    return { kind: "orphan" };
+  }
+  if (!_chironEventBindingOk(event, eventKey, expectedScope)) {
+    return { kind: "binding_mismatch" };
+  }
+  const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+  if (!messageType) {
+    if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    return { kind: "not_submittable" };
+  }
+  const status = await _chironReadBestExportStatusForEvent(env, event);
+  const candidate = await _chironReadExportStatus(
+    env,
+    _chironCandidateExportStatusKey(
+      cleanText(event.tenant_id, 128),
+      cleanText(event.company_id, 128),
+      event,
+      null,
+    ),
+  );
+  const officialIdem = cleanText(status?.official_idempotency_key, 256);
+  if (status && officialIdem && !cleanText(candidate?.official_idempotency_key, 256)) {
+    await _chironPutOfficialCandidatePointer(env, event, officialIdem, status);
+  }
+  const dueAt = computeChironReconcileDueAtMs(
+    status,
+    nowMs,
+    _chironDueAtComputeOptions(),
+  );
+  if (dueAt === null) {
+    await _chironRetireKnownDueMarkersForEvent(
+      env,
+      eventKey,
+      [markerKey],
+      [candidate, status],
+      nowMs,
+    );
+    return { kind: "terminal", event, eventKey };
+  }
+  if (dueAt > nowMs) {
+    const desired = await buildChironDueMarkerKey(dueAt, eventKey);
+    await armChironDueMarker(env.COMPLIANCE_KV, eventKey, dueAt);
+    if (markerKey && markerKey !== desired) {
+      await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    }
+    const dueZero = await buildChironDueMarkerKey(0, eventKey);
+    if (dueZero && dueZero !== desired) {
+      await retireChironDueMarker(env.COMPLIANCE_KV, dueZero);
+    }
+    return { kind: "future" };
+  }
+  return {
+    kind: "due",
+    event,
+    eventKey,
+    markerKey,
+    messageType,
+    eventAtMs: Date.parse(cleanText(event.created_at_utc, 64)) || nowMs,
+    bookingId: cleanText(event.booking_id, 128) || "",
+    tenantId: cleanText(event.tenant_id, 128),
+    companyId: cleanText(event.company_id, 128),
+  };
+}
+
+async function _chironReadScopeDueMigration(env, tenantId, companyId) {
+  const key = _chironScopeDueMigrationKey(tenantId, companyId);
+  if (!key || !env?.COMPLIANCE_KV) return { completed: false, key };
+  try {
+    const raw = await env.COMPLIANCE_KV.get(key);
+    if (!raw) return { completed: false, key };
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return {
+      completed: parsed?.completed === true,
+      key,
+      state: normalizeChironDueMigrationState(parsed),
+    };
+  } catch (_) {
+    return { completed: false, key };
+  }
+}
+
+async function _chironWriteScopeDueMigration(env, tenantId, companyId, state) {
+  const key = _chironScopeDueMigrationKey(tenantId, companyId);
+  if (!key || !env?.COMPLIANCE_KV) return false;
+  try {
+    await env.COMPLIANCE_KV.put(key, JSON.stringify(state));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function _chironReconcileScopeGate(statusPayload, env, nowMs) {
+  const liveGate = _chironAutoSubmitRoutingGate(statusPayload, env);
+  if (liveGate) return { ok: false, gated: true, reason: liveGate };
+  const reconcileEffective = _chironDeriveEffectiveChironEnvironment(statusPayload);
+  if (reconcileEffective !== "production") {
+    if (statusPayload?.testflow_auto_submit_enabled !== true) {
+      return { ok: false, gated: true, reason: "testflow_auto_submit_disabled" };
+    }
+  }
+  const cutoffRaw =
+    reconcileEffective === "production"
+      ? null
+      : cleanText(statusPayload?.testflow_started_at, 64);
+  if (reconcileEffective !== "production" && !cutoffRaw) {
+    return { ok: false, gated: true, reason: "missing_testflow_started_at" };
+  }
+  const windowFloorMs = nowMs - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
+  let effectiveFloorMs = windowFloorMs;
+  if (reconcileEffective !== "production") {
+    const cutoffMs = Date.parse(cutoffRaw);
+    if (!Number.isFinite(cutoffMs)) {
+      return { ok: false, gated: true, reason: "invalid_testflow_started_at" };
+    }
+    effectiveFloorMs = Math.max(cutoffMs, windowFloorMs);
+  }
+  return { ok: true, gated: false, reason: null, effectiveFloorMs };
+}
+
+async function _chironArmDueMarkersFromScopedScan(
+  env,
+  tenantId,
+  companyId,
+  nowMs,
+  effectiveFloorMs,
+) {
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+  const allKeyNames = await listScopedComplianceEventKeys(env, prefix);
+  let marked = 0;
+  const contextEntries = [];
+  const candidates = [];
+  for (const key of allKeyNames) {
+    let raw;
+    try {
+      raw = await env.COMPLIANCE_KV.get(key);
+    } catch (_) {
+      continue;
+    }
+    if (!raw) continue;
+    let event;
+    try {
+      event = JSON.parse(raw);
+    } catch (_) {
+      continue;
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    contextEntries.push({ key, event });
+    const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+    if (!messageType) continue;
+    const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
+    if (!Number.isFinite(eventAtMs) || eventAtMs < effectiveFloorMs) continue;
+    candidates.push({
+      key,
+      event,
+      eventAtMs,
+      messageType,
+      bookingId: cleanText(event.booking_id, 128) || "",
+    });
+    const status = await _chironReadBestExportStatusForEvent(env, event);
+    const dueAt = computeChironReconcileDueAtMs(
+      status,
+      nowMs,
+      _chironDueAtComputeOptions(),
+    );
+    if (dueAt != null) {
+      try {
+        await armChironDueMarker(env.COMPLIANCE_KV, key, dueAt);
+        marked += 1;
+      } catch (_) {}
+    }
+  }
+  await _chironWriteScopeDueMigration(env, tenantId, companyId, {
+    version: 1,
+    completed: true,
+    scanned: allKeyNames.length,
+    marked,
+    started_at: new Date(nowMs).toISOString(),
+    updated_at: new Date(nowMs).toISOString(),
+    completed_at: new Date(nowMs).toISOString(),
+  });
+  return {
+    scanned: allKeyNames.length,
+    marked,
+    contextEntries,
+    candidates,
+  };
+}
+
+async function _chironMigrateDueMarkersOnePage(env, { nowMs } = {}) {
+  const result = { examined: 0, marked: 0, done: false, wroteState: false };
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return result;
+  }
+  const now = Number(nowMs) || Date.now();
+  let rawState = null;
+  try {
+    const raw = await env.COMPLIANCE_KV.get(CHIRON_RECONCILE_DUE_MIGRATION_KEY);
+    if (raw) rawState = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch (_) {
+    rawState = null;
+  }
+  const state = normalizeChironDueMigrationState(rawState, { now: new Date(now) });
+  if (state.completed) {
+    result.done = true;
+    return result;
+  }
+  let listed;
+  try {
+    listed = await env.COMPLIANCE_KV.list({
+      prefix: "compliance_event_v1/",
+      limit: CHIRON_RECONCILE_DUE_MIGRATION_BATCH,
+      ...(state.cursor ? { cursor: state.cursor } : {}),
+    });
+  } catch (_) {
+    return result;
+  }
+  const keys = Array.isArray(listed?.keys)
+    ? listed.keys.map((entry) => cleanText(entry?.name, 1024)).filter(Boolean)
+    : [];
+  let marked = 0;
+  for (const key of keys) {
+    if (result.examined >= CHIRON_RECONCILE_DUE_MIGRATION_BATCH) break;
+    if (!key.startsWith("compliance_event_v1/")) continue;
+    const event = await _chironLoadAuthoritativeEvent(env, key);
+    result.examined += 1;
+    if (!event) continue;
+    if (!_chironAutoSubmitMessageTypeForEventType(event.event_type)) continue;
+    if (!_chironEventBindingOk(event, key, null)) continue;
+    const status = await _chironReadBestExportStatusForEvent(env, event);
+    const dueAt = computeChironReconcileDueAtMs(
+      status,
+      now,
+      _chironDueAtComputeOptions(),
+    );
+    if (dueAt == null) continue;
+    try {
+      await armChironDueMarker(env.COMPLIANCE_KV, key, dueAt);
+      marked += 1;
+    } catch (_) {}
+  }
+  const next = advanceChironDueMigrationState(state, {
+    cursor: listed?.cursor || null,
+    listComplete: listed?.list_complete === true,
+    scanned: result.examined,
+    marked,
+    now: new Date(now),
+  });
+  try {
+    await env.COMPLIANCE_KV.put(CHIRON_RECONCILE_DUE_MIGRATION_KEY, JSON.stringify(next));
+    result.wroteState = true;
+    if (next.completed === true) {
+      await env.COMPLIANCE_KV.put(
+        CHIRON_RECONCILE_DUE_DONE_KEY,
+        JSON.stringify({ v: 1 }),
+        { metadata: { v: 1, done: true } },
+      );
+    }
+  } catch (_) {}
+  result.marked = marked;
+  result.done = next.completed === true;
+  return result;
+}
+
+async function _chironCollectDueIndexCandidates(env, tenantId, companyId, nowMs) {
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  const dueListed = await _chironListDueMarkerEntries(env, nowMs);
+  const picked = selectDueChironMarkers(dueListed.keys, {
+    nowMs,
+    limit: CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+    scopeFilter: { tenantSegment, companySegment },
+  });
+  const contextEntries = [];
+  const candidates = [];
+  for (const dup of picked.duplicates) {
+    await retireChironDueMarker(env.COMPLIANCE_KV, dup.markerKey);
+  }
+  for (const item of picked.selected) {
+    const resolved = await _chironResolveDueCandidate(env, item, nowMs, {
+      tenantId,
+      companyId,
+    });
+    if (resolved.kind === "due") {
+      const extras = await _chironAppendContextEntries(
+        env,
+        resolved.event,
+        resolved.eventKey,
+      );
+      for (const extra of extras) {
+        if (!contextEntries.some((row) => row.key === extra.key)) {
+          contextEntries.push(extra);
+        }
+      }
+      candidates.push({
+        key: resolved.eventKey,
+        event: resolved.event,
+        eventAtMs: resolved.eventAtMs,
+        messageType: resolved.messageType,
+        bookingId: resolved.bookingId,
+      });
+    }
+  }
+  return {
+    contextEntries,
+    candidates,
+    scanned: picked.inspected,
+    dueListed: dueListed.keys.length,
+    hasDone: dueListed.hasDone,
+    selected: picked.selected.length,
+  };
+}
+
 async function _chironAutoReconcileScopeBestEffort(
   env,
   tenantId,
@@ -12839,10 +13794,15 @@ async function _chironAutoReconcileScopeBestEffort(
       companyId,
       statusRead.doc,
     );
+    const nowMs = Number.isFinite(Number(options.nowMs))
+      ? Number(options.nowMs)
+      : Date.now();
     const liveGate = _chironAutoSubmitRoutingGate(statusPayload, env);
     if (liveGate) {
       outcome.ok = false;
+      outcome.gated = true;
       outcome.reason = liveGate;
+      await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
       return outcome;
     }
     const reconcileEffective =
@@ -12850,7 +13810,9 @@ async function _chironAutoReconcileScopeBestEffort(
     if (reconcileEffective !== "production") {
       if (statusPayload.testflow_auto_submit_enabled !== true) {
         outcome.ok = false;
+        outcome.gated = true;
         outcome.reason = "testflow_auto_submit_disabled";
+        await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
         return outcome;
       }
     }
@@ -12860,81 +13822,72 @@ async function _chironAutoReconcileScopeBestEffort(
         : cleanText(statusPayload.testflow_started_at, 64);
     if (reconcileEffective !== "production" && !cutoffRaw) {
       outcome.ok = false;
+      outcome.gated = true;
       outcome.reason = "missing_testflow_started_at";
+      await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
       return outcome;
     }
-    const nowMs = Number.isFinite(Number(options.nowMs))
-      ? Number(options.nowMs)
-      : Date.now();
     const windowFloorMs = nowMs - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
     let effectiveFloorMs = windowFloorMs;
     if (reconcileEffective !== "production") {
       const cutoffMs = Date.parse(cutoffRaw);
       if (!Number.isFinite(cutoffMs)) {
         outcome.ok = false;
+        outcome.gated = true;
         outcome.reason = "invalid_testflow_started_at";
+        await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
         return outcome;
       }
       effectiveFloorMs = Math.max(cutoffMs, windowFloorMs);
     }
 
-    const tenantSegment = safeSegment(tenantId, "");
-    const companySegment = safeSegment(companyId, "");
-    const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+    const scopeMig = await _chironReadScopeDueMigration(env, tenantId, companyId);
+    const globalDone = await _chironGlobalDueMigrationDone(env);
+    let contextEntries = [];
+    let candidates = [];
 
-    // Walk the FULL scoped key set (bounded by CHIRON_EXPORT_LIST_SCAN_CAP =
-    // 10,000). Naively taking the first `CHIRON_AUTO_RECONCILE_MAX_EVENTS`
-    // lexicographic keys never sees the newest events (KV list returns keys
-    // ascending, and our date-indexed keys are lexicographic == chronological
-    // ascending). Instead we scan everything, filter for auto-submittable
-    // event types after `effectiveFloorMs`, then process at most
-    // `CHIRON_AUTO_RECONCILE_MAX_PROCESS` in chronological order so a
-    // departure is always attempted before its paired arrival.
-    let allKeyNames;
-    try {
-      allKeyNames = await listScopedComplianceEventKeys(env, prefix);
-    } catch (_) {
-      outcome.ok = false;
-      outcome.reason = "kv_list_failed";
-      return outcome;
-    }
-    outcome.scanned = allKeyNames.length;
-
-    // Fetch, parse, and filter down to the candidate set. Bounded by the
-    // total list-scan cap so a very old namespace can't blow up CPU.
-    // `contextEntries` collects EVERY parsed event (not just submittables) so
-    // downstream leg inference / batch-rit-status can see paired
-    // ride_start/ride_stop / booking_* siblings when building each event's
-    // official draft. Bounded by CHIRON_EXPORT_LIST_SCAN_CAP.
-    const contextEntries = [];
-    const candidates = [];
-    for (const key of allKeyNames) {
-      let raw;
+    if (scopeMig.completed === true || globalDone === true) {
+      const duePass = await _chironCollectDueIndexCandidates(
+        env,
+        tenantId,
+        companyId,
+        nowMs,
+      );
+      contextEntries = duePass.contextEntries;
+      candidates = duePass.candidates;
+      outcome.scanned = duePass.scanned;
+      outcome.due_index = true;
+      console.log(
+        formatChironDueIndexLog({
+          source,
+          dueListed: duePass.dueListed,
+          dueSelected: duePass.selected,
+          eventReads: duePass.scanned,
+          migrationDone: true,
+        }),
+      );
+    } else {
+      // First armed pass for this scope: keep the proven full scoped scan so
+      // no pending event is dropped, and arm due markers from the events we
+      // already read. After this pass the scope switches to the due index.
       try {
-        raw = await env.COMPLIANCE_KV.get(key);
+        const migrated = await _chironArmDueMarkersFromScopedScan(
+          env,
+          tenantId,
+          companyId,
+          nowMs,
+          effectiveFloorMs,
+        );
+        contextEntries = migrated.contextEntries;
+        candidates = migrated.candidates;
+        outcome.scanned = migrated.scanned;
+        outcome.due_index = false;
+        outcome.migration_marked = migrated.marked;
       } catch (_) {
-        continue;
+        outcome.ok = false;
+        outcome.reason = "kv_list_failed";
+        return outcome;
       }
-      if (!raw) continue;
-      let event;
-      try {
-        event = JSON.parse(raw);
-      } catch (_) {
-        continue;
-      }
-      if (!event || typeof event !== "object" || Array.isArray(event)) continue;
-      contextEntries.push({ key, event });
-      const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
-      if (!messageType) continue;
-      const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
-      if (!Number.isFinite(eventAtMs) || eventAtMs < effectiveFloorMs) continue;
-      candidates.push({
-        key,
-        event,
-        eventAtMs,
-        messageType,
-        bookingId: cleanText(event.booking_id, 128) || "",
-      });
     }
     // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: prefer newer bookings
     // so post-acceptance ACC rides are not starved by a long already-synced
@@ -12997,6 +13950,7 @@ async function _chironAutoReconcileScopeBestEffort(
         preloadedContextEntries: contextEntries,
         nowMs,
         scopePreload,
+        expectedScope: { tenantId, companyId },
       });
       // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: already-synced
       // historical events must not consume the per-pass process budget, or
@@ -13068,7 +14022,7 @@ async function _chironAutoReconcileScopeBestEffort(
       throttleRead.doc && typeof throttleRead.doc === "object"
         ? { ...throttleRead.doc, testflow_auto_reconcile_last_at: nowIso() }
         : null;
-    if (nextStatusDoc) {
+    if (nextStatusDoc && !_chironConnectionThrottleIsFresh(throttleRead.doc, nowMs)) {
       await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
     }
 
@@ -13145,56 +14099,231 @@ function chironCronEnabled(env) {
 }
 
 /**
- * Scheduled drain. Runs the same bounded per-scope reconcile the status poll
- * uses, so an arrival parked on `waiting_for_departure` reaches Chiron after
- * connectivity recovery with no phone, app resume, Chiron screen, status poll
- * or admin action. Single-flight per scope via the existing throttle marker.
+ * Scheduled drain. Processes the global ordered due-marker index (max 20
+ * authoritative event reads) and, until migration completes, one bounded
+ * legacy page (max 25 event reads) plus at most one unmigrated armed scope
+ * scan. Idle after `!done` is one due-prefix list and no connection scan.
  */
 async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
   const source = cleanText(options.source, 32) || "cron";
-  const summary = { ok: true, source, scopes: 0, ran: 0, skipped_throttled: 0, failed: 0 };
-  // CHIRON-CRON-KV-READS-P0: gate first, before any KV access, so a disabled
-  // cron costs zero reads and zero lists.
+  const nowMs = Number(options.nowMs) || Date.now();
+  const summary = {
+    ok: true,
+    source,
+    scopes: 0,
+    ran: 0,
+    skipped_throttled: 0,
+    failed: 0,
+    gated: 0,
+    due_selected: 0,
+    migration_examined: 0,
+    migration_done: false,
+  };
   if (!chironCronEnabled(env)) {
     summary.disabled = true;
     console.log(`[CHIRON_CRON_RECONCILE][SKIPPED_DISABLED] source=${source}`);
     return summary;
   }
   try {
-    const scopes = await _chironListConnectionScopes(env);
-    summary.scopes = scopes.length;
-    for (const scope of scopes) {
-      let statusDoc = null;
-      try {
-        const read = await readChironConnectionStatusRaw(
-          env,
-          scope.tenant_id,
-          scope.company_id,
-        );
-        statusDoc = read?.doc || null;
-      } catch (_) {
-        statusDoc = null;
-      }
-      // Same gate + throttle as the status poll: never double-run a scope.
-      if (!_chironShouldRunReconcileFromStatusPoll(statusDoc)) {
-        summary.skipped_throttled += 1;
+    const dueListed = await _chironListDueMarkerEntries(env, nowMs);
+    const picked = selectDueChironMarkers(dueListed.keys, {
+      nowMs,
+      limit: CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+    });
+    for (const skipped of picked.skip) {
+      if (
+        skipped.reason === "migration_done_sentinel" ||
+        skipped.reason === "scope_mismatch_or_missing_meta"
+      ) {
         continue;
       }
-      try {
-        const outcome = await _chironAutoReconcileScopeBestEffort(
-          env,
-          scope.tenant_id,
-          scope.company_id,
-          { source },
-        );
-        summary.ran += 1;
-        if (outcome?.ok !== true) summary.failed += 1;
-      } catch (_) {
-        summary.failed += 1;
-      }
+      await retireChironDueMarker(env.COMPLIANCE_KV, skipped.markerKey);
     }
+    for (const dup of picked.duplicates) {
+      await retireChironDueMarker(env.COMPLIANCE_KV, dup.markerKey);
+    }
+
+    const resolved = [];
+    for (const item of picked.selected) {
+      const next = await _chironResolveDueCandidate(env, item, nowMs, null);
+      if (next.kind === "due") resolved.push(next);
+      else if (next.kind === "binding_mismatch") summary.failed += 1;
+    }
+    summary.due_selected = resolved.length;
+
+    const byScope = new Map();
+    for (const candidate of resolved) {
+      const scopeKey = `${candidate.tenantId}::${candidate.companyId}`;
+      if (!byScope.has(scopeKey)) byScope.set(scopeKey, []);
+      byScope.get(scopeKey).push(candidate);
+    }
+    summary.scopes = byScope.size;
+
+    for (const list of byScope.values()) {
+      list.sort((a, b) => {
+        if (a.bookingId && a.bookingId === b.bookingId) {
+          if (a.messageType !== b.messageType) {
+            return a.messageType === "departure" ? -1 : 1;
+          }
+          return a.eventAtMs - b.eventAtMs;
+        }
+        if (b.eventAtMs !== a.eventAtMs) return b.eventAtMs - a.eventAtMs;
+        if (a.messageType !== b.messageType) {
+          return a.messageType === "departure" ? -1 : 1;
+        }
+        return 0;
+      });
+      const tenantId = list[0].tenantId;
+      const companyId = list[0].companyId;
+      let statusPayload = null;
+      try {
+        const read = await readChironConnectionStatusRaw(env, tenantId, companyId);
+        statusPayload = buildChironConnectionStatusResponse(
+          tenantId,
+          companyId,
+          read?.doc,
+        );
+      } catch (_) {
+        statusPayload = null;
+      }
+      const liveGate = _chironAutoSubmitRoutingGate(statusPayload, env);
+      if (liveGate) {
+        summary.gated += 1;
+        for (const candidate of list) {
+          if (candidate.markerKey) {
+            await retireChironDueMarker(env.COMPLIANCE_KV, candidate.markerKey);
+          }
+        }
+        continue;
+      }
+      const contextEntries = [];
+      for (const row of list) {
+        const extras = await _chironAppendContextEntries(
+          env,
+          row.event,
+          row.eventKey,
+        );
+        for (const extra of extras) {
+          if (!contextEntries.some((entry) => entry.key === extra.key)) {
+            contextEntries.push(extra);
+          }
+        }
+      }
+      let scopePreload = null;
+      try {
+        const passScope = { tenant_id: tenantId, company_id: companyId };
+        const passHydrationCache = await _chironLoadScopedHydrationCache(
+          env,
+          passScope,
+          true,
+        );
+        scopePreload = _chironBuildScopePreload(passScope, {
+          hydrationCache: passHydrationCache,
+          bookingLegTypeMap: new Map(),
+          contextEntries,
+          legTypeFetched: new Set(),
+        });
+      } catch (_) {
+        scopePreload = null;
+      }
+      for (const candidate of list) {
+        const submitOutcome = await _chironAutoSubmitOneEvent(
+          env,
+          candidate.event,
+          candidate.eventKey,
+          {
+            source,
+            preloadedContextEntries: contextEntries,
+            scopePreload,
+            expectedScope: { tenantId, companyId },
+            nowMs,
+          },
+        );
+        if (submitOutcome?.ok !== true && submitOutcome?.skipped !== true) {
+          summary.failed += 1;
+        }
+      }
+      summary.ran += 1;
+    }
+
+    if (!dueListed.hasDone) {
+      const mig = await _chironMigrateDueMarkersOnePage(env, { nowMs });
+      summary.migration_examined = mig.examined;
+      summary.migration_done = mig.done === true;
+
+      const scopes = await _chironListConnectionScopes(env);
+      if (summary.scopes === 0) summary.scopes = scopes.length;
+      let unmigratedArmed = 0;
+      let migratedArmed = 0;
+      for (const scope of scopes) {
+        const tenantId = scope.tenant_id;
+        const companyId = scope.company_id;
+        let statusRead = { doc: null };
+        try {
+          statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+        } catch (_) {
+          statusRead = { doc: null };
+        }
+        const statusPayload = buildChironConnectionStatusResponse(
+          tenantId,
+          companyId,
+          statusRead.doc,
+        );
+        const gate = _chironReconcileScopeGate(statusPayload, env, nowMs);
+        if (!gate.ok) {
+          summary.gated += 1;
+          await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
+          continue;
+        }
+        const scopeMig = await _chironReadScopeDueMigration(env, tenantId, companyId);
+        if (scopeMig.completed === true) {
+          migratedArmed += 1;
+          continue;
+        }
+        unmigratedArmed += 1;
+        if (!_chironShouldRunReconcileFromStatusPoll(statusRead.doc)) {
+          summary.skipped_throttled += 1;
+          continue;
+        }
+        try {
+          const outcome = await _chironAutoReconcileScopeBestEffort(
+            env,
+            tenantId,
+            companyId,
+            { source, nowMs },
+          );
+          summary.ran += 1;
+          if (outcome?.gated === true) summary.gated += 1;
+          else if (outcome?.ok !== true) summary.failed += 1;
+          if (outcome?.ok === true && outcome?.gated !== true) {
+            migratedArmed += 1;
+            unmigratedArmed -= 1;
+          }
+        } catch (_) {
+          summary.failed += 1;
+        }
+      }
+      if (unmigratedArmed === 0 && migratedArmed > 0) {
+        try {
+          await markChironDueMigrationComplete(env.COMPLIANCE_KV, {
+            now: new Date(nowMs),
+          });
+          summary.migration_done = true;
+        } catch (_) {}
+      }
+    } else {
+      summary.migration_done = true;
+    }
+
     console.log(
-      `[CHIRON_CRON_RECONCILE] scopes=${summary.scopes} ran=${summary.ran} throttled=${summary.skipped_throttled} failed=${summary.failed} source=${source}`,
+      formatChironDueIndexLog({
+        source,
+        dueListed: dueListed.keys.length,
+        dueSelected: resolved.length,
+        eventReads: resolved.length + (summary.migration_examined || 0),
+        migrationExamined: summary.migration_examined,
+        migrationDone: summary.migration_done,
+      }),
     );
   } catch (err) {
     summary.ok = false;
@@ -13366,6 +14495,24 @@ export const __testInternals = {
   // CHIRON-CRON-KV-READS-P0 on-demand leg-type memo + cron gate.
   _chironEnsureBookingLegTypeForEvent,
   chironCronEnabled,
+  _chironWriteExportStatus,
+  _chironMigrateDueMarkersOnePage,
+  _chironCollectDueIndexCandidates,
+  _chironResolveDueCandidate,
+  _chironArmDueNowBestEffort,
+  _chironConfirmDueMarkerAfterPersist,
+  _chironAppendContextEntries,
+  _chironExportStatusFunctionallyEqual,
+  _chironTestflowCountersChanged,
+  _chironScopeDueMigrationKey,
+  _chironGlobalDueMigrationDone,
+  _chironReArmPairedArrivalAfterDeparture,
+  _chironReadBestExportStatusForEvent,
+  _chironDeriveOfficialIdempotencyKeyFromEvent,
+  _chironPutOfficialCandidatePointer,
+  _chironCandidateExportStatusKey,
+  buildChironOfficialEventRefKey,
+  computeChironReconcileDueAtMs,
   parseChironTaxiritSubmitResponse,
   // CHIRON-OFFLINE-ARRIVAL-P0-2
   CHIRON_NEVER_CONFIRMING_FOUTCODES,

@@ -128,6 +128,7 @@ function makeHarness({
   bookingRecords = false,
 }) {
   const complianceStore = new Map();
+  const complianceMeta = new Map();
   const bookingReads = [];
   const complianceReads = [];
   let complianceLists = 0;
@@ -165,8 +166,13 @@ function makeHarness({
         complianceReads.push(key);
         return complianceStore.get(key) ?? null;
       },
-      async put(key, value) {
+      async put(key, value, opts = {}) {
         complianceStore.set(key, value);
+        if (opts.metadata) complianceMeta.set(key, opts.metadata);
+      },
+      async delete(key) {
+        complianceStore.delete(key);
+        complianceMeta.delete(key);
       },
       async list({ prefix = "", limit = 1000, cursor } = {}) {
         complianceLists += 1;
@@ -178,7 +184,10 @@ function makeHarness({
         const next = start + slice.length;
         const complete = next >= all.length;
         return {
-          keys: slice.map((name) => ({ name })),
+          keys: slice.map((name) => ({
+            name,
+            metadata: complianceMeta.get(name) || null,
+          })),
           list_complete: complete,
           cursor: complete ? undefined : Buffer.from(String(next), "utf8").toString("base64"),
         };
@@ -278,10 +287,14 @@ test("3. nothing is memoized across passes", async () => {
 
   await _chironAutoReconcileScopeBestEffort(h.env, TENANT_A, COMPANY_A, { source: "test" });
   const first = h.bookingReads.length;
+  assert.ok(first > 0, "first pass still reads bookings while building drafts");
   h.reset();
   await _chironAutoReconcileScopeBestEffort(h.env, TENANT_A, COMPANY_A, { source: "test" });
 
-  assert.equal(h.bookingReads.length, first, "a fresh pass re-reads from KV");
+  // The in-memory memo dies with the pass. Young pending_build work is not
+  // due yet, so the second pass correctly reads zero bookings instead of
+  // replaying the first pass from a leftover map.
+  assert.equal(h.bookingReads.length, 0, "a fresh pass does not reuse the previous memo");
 });
 
 /* ===================== 2. equivalence with real leg records ============ */
@@ -531,12 +544,9 @@ test("9. candidates beyond the budget stay available for the next tick", async (
   });
 
   assert.equal(first.processed, CHIRON_AUTO_RECONCILE_MAX_PROCESS);
-  assert.equal(
-    second.scanned,
-    first.scanned,
-    "the next tick still sees the whole batch, so nothing is permanently excluded",
-  );
-  assert.ok(second.considered > 0, "the next tick still has candidates to work on");
+  assert.equal(first.due_index, false, "first armed pass still full-scans once");
+  assert.equal(second.due_index, true, "later passes use the due index");
+  assert.ok(second.considered > 0, "remaining due markers stay available");
 });
 
 /* ===================== 5. explicit on/off gate ===================== */
