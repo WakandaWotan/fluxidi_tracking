@@ -12,9 +12,13 @@ class CustomerPaymentReturnScreen extends StatelessWidget {
   const CustomerPaymentReturnScreen({
     super.key,
     this.config = kCustomerAppConfig,
+    this.onClose,
   });
 
   final CustomerAppConfig config;
+
+  /// Closes this screen. Falls back to popping when no callback is given.
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -86,7 +90,9 @@ class CustomerPaymentReturnScreen extends StatelessWidget {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: FilledButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
+                      key: const Key('payment_return_close'),
+                      onPressed:
+                          onClose ?? () => Navigator.of(context).maybePop(),
                       child: const Text('Naar het startscherm'),
                     ),
                   ),

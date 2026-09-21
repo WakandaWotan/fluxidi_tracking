@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../deeplinks/customer_deep_link.dart';
 import '../deeplinks/customer_deep_link_source.dart';
+import '../screens/customer_payment_return_screen.dart';
 import 'customer_app_config.dart';
 import 'customer_routes.dart';
 import 'customer_theme.dart';
@@ -31,6 +32,13 @@ class FluxidiCustomerApp extends StatefulWidget {
 class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription<Uri>? _linkSub;
+
+  /// Shown above the current screen after an own-scheme return link.
+  ///
+  /// Held as state instead of a pushed route: an imperative push from the link
+  /// listener landed on the navigator stack but never became visible on device,
+  /// so the screen is rendered declaratively and cannot be lost that way.
+  bool _paymentReturnVisible = false;
 
   @override
   void initState() {
@@ -69,12 +77,15 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
       'reason=${result.reason}',
     );
     if (!result.opensPaymentReturnScreen) return;
-    final navigator = _navigatorKey.currentState;
-    if (navigator == null) return;
-    navigator.pushNamedAndRemoveUntil(
-      CustomerRoutes.paymentReturn,
-      (route) => route.isFirst,
-    );
+    // Leave any deeper flow first, so closing the return screen lands on start.
+    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    if (!mounted) return;
+    setState(() => _paymentReturnVisible = true);
+  }
+
+  void _closePaymentReturn() {
+    if (!_paymentReturnVisible) return;
+    setState(() => _paymentReturnVisible = false);
   }
 
   @override
@@ -87,6 +98,18 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
       initialRoute: CustomerRoutes.home,
       onGenerateRoute: (settings) =>
           generateCustomerRoute(settings, config: widget.config),
+      builder: (context, child) {
+        if (!_paymentReturnVisible) return child ?? const SizedBox.shrink();
+        return Stack(
+          children: <Widget>[
+            child ?? const SizedBox.shrink(),
+            CustomerPaymentReturnScreen(
+              config: widget.config,
+              onClose: _closePaymentReturn,
+            ),
+          ],
+        );
+      },
     );
   }
 }

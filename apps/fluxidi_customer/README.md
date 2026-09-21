@@ -37,6 +37,21 @@ kunnen staan zonder om dezelfde link te concurreren.
 
 Alle identiteitswaarden staan op één plek: `lib/app/customer_app_config.dart`.
 
+## Mapbox-configuratie
+
+De kaart, adressuggesties en routegeometrie gebruiken dezelfde provider en
+dezelfde configuratiemethode als de bestaande app: een Mapbox-token uit
+`~/.fluxidi/fluxidi-dev-env.ps1`, doorgegeven als dart-define. Zonder token
+toont het ritscherm dat kaart en suggesties niet beschikbaar zijn; er wordt dan
+niets getekend.
+
+```powershell
+. $env:USERPROFILE\.fluxidi\fluxidi-dev-env.ps1
+# daarna: --dart-define=MAPBOX_TOKEN=$env:MAPBOX_TOKEN
+```
+
+Het token staat niet in de broncode en wordt niet gecommit.
+
 ## Publieke API-configuratie
 
 De basis-URL van de publieke booking-API is **niet** ingebouwd. Er is geen
@@ -56,9 +71,11 @@ flutter pub get
 flutter analyze
 flutter test
 
-# Debug-APK met publieke API
+# Debug-APK met publieke API en kaart
+. $env:USERPROFILE\.fluxidi\fluxidi-dev-env.ps1
 flutter build apk --debug `
-  --dart-define=FLUXIDI_PUBLIC_BOOKING_BASE_URL=https://fluxidi-booking-api.fluxidi.workers.dev
+  --dart-define=FLUXIDI_PUBLIC_BOOKING_BASE_URL=https://fluxidi-booking-api.fluxidi.workers.dev `
+  "--dart-define=MAPBOX_TOKEN=$($env:MAPBOX_TOKEN)"
 # resultaat: build\app\outputs\flutter-apk\app-debug.apk
 
 # Op een aangesloten toestel
@@ -78,7 +95,8 @@ Dat opent een neutraal scherm. Het bevestigt niets.
 | Controle | Resultaat |
 |----------|-----------|
 | `flutter analyze` | Geen meldingen |
-| `flutter test` | 45 tests groen (navigatie, layoutmaten, deeplink, API-contract, zoekflow) |
+| `flutter test` | 64 tests groen (navigatie, layoutmaten, deeplink, contracten, zoekflow, ritvoorbereiding) |
+| `dart test` in `packages/fluxidi_customer_core` | 32 tests groen (quote-body, tijdzone, quote-antwoord, beschikbaarheid, aanbod) |
 | `flutter build apk --debug` | Geslaagd |
 | Publieke read-only GET-controle | `/partners/nearby?postcode=9600` → 200; zonder parameters → 400; `/partners/profile` → 200 |
 | APK-identiteit (`aapt2 dump badging`) | `com.fluxidi.customer.dev`, label `Fluxidi Customer Dev` |
@@ -127,6 +145,8 @@ commit 9df7e7b9 en daarna live geverifieerd met publieke GET-controles.
 |----------|---------|
 | `GET /partners/nearby?postcode=<code>` | Bedrijven zoeken. Antwoord: `ok`, `postcode`, `count`, `partners[]` |
 | `GET /partners/profile?partner_id=<id>` | Publiek bedrijfsprofiel. Antwoord: `ok`, `profile{}` |
+| `POST /quote` | Prijsopgave voor een rit (fase 2B). Vereist `from`, `to`, `date`, `time` plus partnerroutering |
+| `GET /partners/availability?partner_id=&pickup_iso=&pax=&duration_min=` | Voertuigaanbod voor dat moment (fase 2B) |
 
 Het endpoint accepteert daarnaast `lat` + `lng` (samen verplicht) met optionele
 `radius_km`, en een optionele `service`-filter. Zonder parameters antwoordt het
@@ -144,8 +164,23 @@ aandrijven zonder platformkanaal.
 ## Bewust niet overgenomen
 
 De zichtbaarheids-, identiteits- en presentatieregels zijn opnieuw
-geïmplementeerd in `lib/api/`, met de bestaande betekenis als referentie. De
-quote-, prijs-, booking- en payment-engines zijn **niet** overgenomen.
+geïmplementeerd in `lib/api/`, met de bestaande betekenis als referentie.
+
+De ritkern (adreswaarde, ritopties, tijdzone en pickup, quote-body, quote-antwoord,
+beschikbaarheid, voertuigaanbod) is in fase 2B **gecontroleerd geëxtraheerd** naar
+`packages/fluxidi_customer_core`, zodat deze app en een latere white-labelapp
+dezelfde kern gebruiken. Herkomst per symbool staat in
+`packages/fluxidi_customer_core/EXTRACTED.md`. Er is **geen tweede prijsengine**:
+de prijs komt uitsluitend van de server.
+
+Twee afwijkingen op fase 2A, na controle van de oorspronkelijke helper:
+
+- Een **expliciet gepubliceerde** bedrijfsnaam wordt nooit verborgen, ook niet
+  als die "Fluxidi" is. Alleen een *fallback* (bedrijfscode) weigert de
+  platformnaam, en interne identifiers blijven geweigerd.
+- Boekbaarheid faalt nu dicht: een expliciete `bookable=false` (ook als tekst of
+  `0`) wint altijd, en een **onbekende** `availability_status` wordt niet meer
+  boekbaar via `is_active`.
 
 Uit de bestaande app is niets geïmporteerd, gekopieerd of herschreven:
 
@@ -167,6 +202,8 @@ voorlopig een eenvoudig merkvlak.
 | Registreren en aanmelden als klant | niet aangesloten |
 | Klantprofiel | niet aangesloten |
 | Taxibedrijf zoeken en profiel bekijken | **aangesloten (fase 2A)** |
+| Rit voorbereiden, prijsopgave en voertuigaanbod | **aangesloten (fase 2B)** |
+| Adressuggesties, kaart, markers, route en camera | **aangesloten (fase 2B)** — vereist `MAPBOX_TOKEN` |
 | Taxi boeken | niet aangesloten |
 | Luchthavenvervoer | niet aangesloten |
 | Retourritten | niet aangesloten |

@@ -46,6 +46,15 @@ const String kPublicBookingBaseUrlDefine = String.fromEnvironment(
   defaultValue: '',
 );
 
+/// Mapbox access token, supplied at build time under the same name the existing
+/// Fluxidi app uses. Empty means no map, no geocoding and no route line.
+const String kMapboxTokenDefineKey = 'MAPBOX_TOKEN';
+
+const String kMapboxTokenDefine = String.fromEnvironment(
+  kMapboxTokenDefineKey,
+  defaultValue: '',
+);
+
 /// Central configuration for name, development identity and branding.
 @immutable
 class CustomerAppConfig {
@@ -59,6 +68,7 @@ class CustomerAppConfig {
     required this.variant,
     required this.brand,
     this.publicBookingBaseUrl = kPublicBookingBaseUrlDefine,
+    this.mapboxToken = kMapboxTokenDefine,
   });
 
   /// User-visible app name.
@@ -81,6 +91,9 @@ class CustomerAppConfig {
   /// Base URL for the public booking API, without trailing slash.
   final String publicBookingBaseUrl;
 
+  /// Mapbox access token for map tiles, geocoding and route geometry.
+  final String mapboxToken;
+
   /// Payment-return link this build answers to, for documentation and tests.
   String get paymentReturnUrl => '$deepLinkScheme://$deepLinkHost$deepLinkPath';
 
@@ -94,6 +107,8 @@ class CustomerAppConfig {
       variant == CustomerAppVariant.fluxidiMarketplace;
 
   bool get hasPublicApiBaseUrl => publicBookingBaseUrl.trim().isNotEmpty;
+
+  bool get hasMapboxToken => mapboxToken.trim().isNotEmpty;
 }
 
 /// Development identity for phase 1. Not a final Play identity.

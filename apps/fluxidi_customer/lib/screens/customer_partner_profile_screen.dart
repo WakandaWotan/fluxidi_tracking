@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_customer_core/fluxidi_customer_core.dart';
 
 import '../api/public_partner_api.dart';
 import '../api/public_partner_models.dart';
 import '../api/public_partner_visibility.dart';
+import '../api/ride_quote_api.dart';
 import '../app/customer_app_config.dart';
 import '../widgets/partner_media.dart';
+import 'customer_ride_prepare_screen.dart';
 import 'customer_taxi_search_screen.dart' show failureMessage, failureTitle;
 
 /// Public profile of one existing taxi company.
@@ -69,7 +72,7 @@ class _CustomerPartnerProfileScreenState
   String get _title {
     final name = _profile?.companyName ?? '';
     if (name.isNotEmpty) return name;
-    final fallback = sanitizePublicPartnerBrandName(widget.companyNameFallback);
+    final fallback = publicPartnerRealName(widget.companyNameFallback);
     return fallback.isNotEmpty ? fallback : 'Bedrijfsprofiel';
   }
 
@@ -110,6 +113,27 @@ class _CustomerPartnerProfileScreenState
       showAllPostcodes: _showAllPostcodes,
       onShowAllPostcodes: () => setState(() => _showAllPostcodes = true),
       previewLimit: _postcodePreviewLimit,
+      onPrepareRide: profile.bookable ? () => _openRidePrepare(profile) : null,
+    );
+  }
+
+  void _openRidePrepare(PublicPartnerProfile profile) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CustomerRidePrepareScreen(
+          api: RideQuoteApi(baseUrl: widget.api.baseUrl),
+          scope: FluxidiPartnerScope(
+            partnerId: profile.partnerId,
+            tenantId: profile.scopedTenantId,
+            companyId: profile.scopedCompanyId,
+            companyName: profile.companyName,
+            entryKind: 'taxi',
+            sourceLabel: 'customer_partner_profile',
+          ),
+          profileVehicles: profile.vehicles,
+          config: widget.config,
+        ),
+      ),
     );
   }
 }
@@ -167,6 +191,7 @@ class _ProfileBody extends StatelessWidget {
     required this.showAllPostcodes,
     required this.onShowAllPostcodes,
     required this.previewLimit,
+    required this.onPrepareRide,
   });
 
   final PublicPartnerProfile profile;
@@ -174,6 +199,9 @@ class _ProfileBody extends StatelessWidget {
   final bool showAllPostcodes;
   final VoidCallback onShowAllPostcodes;
   final int previewLimit;
+
+  /// Null when the company is not active, so no price can be requested.
+  final VoidCallback? onPrepareRide;
 
   @override
   Widget build(BuildContext context) {
@@ -308,6 +336,13 @@ class _ProfileBody extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 22),
+        if (onPrepareRide != null)
+          FilledButton(
+            key: const Key('profile_prepare_ride'),
+            onPressed: onPrepareRide,
+            child: const Text('Prijs voor een rit opvragen'),
+          ),
+        const SizedBox(height: 12),
         Container(
           key: const Key('profile_booking_not_connected'),
           padding: const EdgeInsets.all(14),
@@ -327,7 +362,7 @@ class _ProfileBody extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Je kunt dit bedrijf hier bekijken. Prijs opvragen, boeken en '
+                'Je kunt dit bedrijf bekijken en een prijs opvragen. Boeken en '
                 'betalen zijn in deze app nog niet aangesloten.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: config.brand.textSoft,

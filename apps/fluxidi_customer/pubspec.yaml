@@ -20,6 +20,11 @@ dependencies:
   # Read-only public partner lookups. Same constraint as the existing app.
   http: ^1.2.2
 
+  # Shared ride core, extracted from the existing app. Both this app and a
+  # future white-label customer app depend on it.
+  fluxidi_customer_core:
+    path: ../../packages/fluxidi_customer_core
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

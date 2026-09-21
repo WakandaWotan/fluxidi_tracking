@@ -1,0 +1,17 @@
+name: fluxidi_customer_core
+description: "Shared customer ride core: address value, ride options, schedule, quote and availability contracts."
+publish_to: 'none'
+version: 0.1.0
+
+# Pure Dart on purpose: both the general Fluxidi customer app and a future
+# white-label customer app depend on this, and neither should inherit UI or
+# platform code through the shared core.
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  http: ^1.2.2
+
+dev_dependencies:
+  test: ^1.25.8
+  lints: ^5.0.0

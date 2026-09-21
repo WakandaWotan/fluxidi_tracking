@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_customer/api/public_company_presentation.dart';
 import 'package:fluxidi_customer/api/public_partner_api.dart';
+import 'package:fluxidi_customer/api/public_partner_visibility.dart';
 import 'package:http/http.dart' as http;
 
 const String _base = 'https://example.invalid';
@@ -158,7 +159,9 @@ void main() {
       expect(result.partners.single.bookable, isFalse);
     });
 
-    test('the platform brand is never used as a partner name', () async {
+    test('an explicitly published name is kept, even when it is Fluxidi', () async {
+      // A company really called Fluxidi may not be hidden or replaced just
+      // because of its name. Only a *fallback* refuses the platform brand.
       final api = PublicPartnerApi(
         baseUrl: _base,
         httpGet: _respond(
@@ -172,10 +175,90 @@ void main() {
         ),
       );
 
-      final result = await api.searchByPostcode('9600');
+      final partner = (await api.searchByPostcode('9600')).partners.single;
 
-      expect(result.partners.single.companyName, isEmpty);
-      expect(result.partners.single.displayName, 'FLX-0001');
+      expect(partner.companyName, 'Fluxidi');
+      expect(partner.displayName, 'Fluxidi');
+    });
+
+    test('the platform brand is refused as a fallback name', () async {
+      final api = PublicPartnerApi(
+        baseUrl: _base,
+        httpGet: _respond(
+          _nearbyBody(<Map<String, dynamic>>[
+            <String, dynamic>{'partner_id': 'p1', 'company_code': 'Fluxidi'},
+          ]),
+        ),
+      );
+
+      final partner = (await api.searchByPostcode('9600')).partners.single;
+
+      expect(partner.companyName, isEmpty);
+      expect(partner.displayName, 'p1');
+    });
+
+    test('an internal identifier is never shown as a name', () async {
+      final api = PublicPartnerApi(
+        baseUrl: _base,
+        httpGet: _respond(
+          _nearbyBody(<Map<String, dynamic>>[
+            <String, dynamic>{
+              'partner_id': 'company:t1:c1',
+              'company_name': 'cmp_1a2b3c',
+            },
+          ]),
+        ),
+      );
+
+      final partner = (await api.searchByPostcode('9600')).partners.single;
+
+      expect(partner.companyName, isEmpty);
+    });
+
+    test('an explicit bookable=false survives an is_active=true fallback', () {
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{
+          'bookable': false,
+          'is_active': true,
+          'availability_status': 'active',
+        }),
+        isFalse,
+      );
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{
+          'bookable': 'False',
+          'is_active': true,
+        }),
+        isFalse,
+      );
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{
+          'bookable': 0,
+          'is_active': true,
+        }),
+        isFalse,
+      );
+    });
+
+    test('an unknown availability status never becomes bookable', () {
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{
+          'availability_status': 'suspended',
+          'is_active': true,
+        }),
+        isFalse,
+      );
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{
+          'availability_status': 'active',
+        }),
+        isTrue,
+      );
+      expect(
+        isPublicPartnerBookable(<String, dynamic>{'is_active': true}),
+        isTrue,
+      );
+      expect(isPublicPartnerBookable(const <String, dynamic>{}), isFalse);
     });
 
     test('an http-only image url is not rendered', () async {

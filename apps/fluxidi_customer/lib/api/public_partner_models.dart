@@ -95,16 +95,23 @@ class PublicPartnerSummary {
 
     return PublicPartnerSummary(
       partnerId: readText(json, const <String>['partner_id', 'partnerId']),
-      companyName: sanitizePublicPartnerBrandName(
-        readText(json, const <String>[
-          'company_name',
-          'companyName',
-          'public_company_code',
-          'publicCompanyCode',
-          'company_code',
-          'companyCode',
-        ]),
-      ),
+      // An explicitly published company_name is a real name. Only when it is
+      // missing do we fall back to a code, and a fallback may never be the
+      // platform brand.
+      companyName: publicPartnerRealName(
+            readText(json, const <String>['company_name', 'companyName']),
+          ).isNotEmpty
+          ? publicPartnerRealName(
+              readText(json, const <String>['company_name', 'companyName']),
+            )
+          : sanitizePublicPartnerFallbackName(
+              readText(json, const <String>[
+                'public_company_code',
+                'publicCompanyCode',
+                'company_code',
+                'companyCode',
+              ]),
+            ),
       companyCode: readText(json, const <String>[
         'public_company_code',
         'publicCompanyCode',
@@ -166,8 +173,13 @@ class PublicPartnerSummary {
     countryCode,
   ].where((part) => part.trim().isNotEmpty).join(' · ');
 
-  String get displayName =>
-      companyName.isNotEmpty ? companyName : (companyCode.isNotEmpty ? companyCode : partnerId);
+  /// Name to show. Falls back to a public code and finally to the partner id,
+  /// but a fallback is never the platform brand.
+  String get displayName {
+    if (companyName.isNotEmpty) return companyName;
+    final code = sanitizePublicPartnerFallbackName(companyCode);
+    return code.isNotEmpty ? code : partnerId;
+  }
 }
 
 /// `GET /partners/nearby` response envelope.
@@ -222,6 +234,7 @@ class PublicPartnerProfile {
     required this.verifiedPartner,
     required this.bookable,
     required this.presentation,
+    required this.vehicles,
   });
 
   factory PublicPartnerProfile.fromJson(
@@ -254,7 +267,7 @@ class PublicPartnerProfile {
 
     return PublicPartnerProfile(
       partnerId: partnerId.trim(),
-      companyName: sanitizePublicPartnerBrandName(
+      companyName: publicPartnerRealName(
         readText(profile, const <String>['company_name', 'companyName']),
       ),
       tagline: readText(profile, const <String>['tagline']),
@@ -286,6 +299,11 @@ class PublicPartnerProfile {
           trust['verified_partner'] == true || trust['verifiedPartner'] == true,
       bookable: isPublicPartnerBookable(profile),
       presentation: publicCompanyPresentationFrom(profile),
+      vehicles: <Map<String, dynamic>>[
+        if (profile['vehicles'] is List)
+          for (final item in profile['vehicles'] as List)
+            if (item is Map) asStringKeyedMap(item),
+      ],
     );
   }
 
@@ -305,6 +323,20 @@ class PublicPartnerProfile {
   final bool verifiedPartner;
   final bool bookable;
   final PublicCompanyPresentation presentation;
+
+  /// Raw published vehicles, used to name the availability offers.
+  final List<Map<String, dynamic>> vehicles;
+
+  /// Tenant and company parsed from a `company:<tenant>:<company>` partner id.
+  String get scopedTenantId {
+    final parts = partnerId.split(':');
+    return parts.length == 3 && parts[0] == 'company' ? parts[1].trim() : '';
+  }
+
+  String get scopedCompanyId {
+    final parts = partnerId.split(':');
+    return parts.length == 3 && parts[0] == 'company' ? parts[2].trim() : '';
+  }
 
   bool get hasContactDetails =>
       regionLabel.isNotEmpty ||

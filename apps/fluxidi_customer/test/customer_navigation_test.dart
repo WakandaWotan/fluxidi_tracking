@@ -124,6 +124,36 @@ void main() {
     expect(find.textContaining('geslaagd'), findsNothing);
   });
 
+  testWidgets('the return screen stays visible on top of a deeper flow', (
+    tester,
+  ) async {
+    // Regression: an imperative push from the link listener ended up on the
+    // navigator stack but never became visible on device. The screen is now
+    // rendered from app state, so it must show even when another screen was
+    // open, and closing it must land back on the start screen.
+    final source = _FakeDeepLinkSource();
+    addTearDown(source.controller.close);
+
+    await tester.pumpWidget(FluxidiCustomerApp(deepLinkSource: source));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Luchthaven'));
+    await tester.pumpAndSettle();
+    expect(find.text('Nog niet aangesloten'), findsOneWidget);
+
+    source.controller.add(Uri.parse('fluxidicustomerdev://pay/return'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Je bent terug in de app'), findsOneWidget);
+    expect(find.text('Nog niet aangesloten'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('payment_return_close')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Je bent terug in de app'), findsNothing);
+    expect(find.byType(CustomerHomeScreen), findsOneWidget);
+  });
+
   testWidgets('a cold-start own-scheme link opens the return screen', (
     tester,
   ) async {

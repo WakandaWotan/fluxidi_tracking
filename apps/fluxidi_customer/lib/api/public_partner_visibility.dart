@@ -31,17 +31,51 @@ bool isPlatformBrandPublicName(String raw) {
   }.contains(name);
 }
 
-String sanitizePublicPartnerBrandName(String raw) {
+/// Cleans a value that is only a *fallback* for a missing company name.
+///
+/// The platform brand may never stand in for a partner that did not supply a
+/// name. An explicitly published `company_name` is a real name and is kept by
+/// [publicPartnerRealName], even when that name happens to be "Fluxidi".
+String sanitizePublicPartnerFallbackName(String raw) {
   final name = raw.trim();
   if (name.isEmpty || isPlatformBrandPublicName(name)) return '';
+  if (looksLikeInternalPartnerIdentifier(name)) return '';
   return name;
 }
 
-/// Authoritative bookability from nearby/profile JSON. Never assumed true.
+/// An explicitly published company name. Only internal identifiers are refused.
+String publicPartnerRealName(String raw) {
+  final name = raw.trim();
+  if (name.isEmpty) return '';
+  if (looksLikeInternalPartnerIdentifier(name)) return '';
+  return name;
+}
+
+/// Tri-state truthiness for server booleans that may arrive as text.
+bool? publicPartnerFlag(Object? raw) {
+  if (raw is bool) return raw;
+  if (raw is num) {
+    if (raw == 1) return true;
+    if (raw == 0) return false;
+    return null;
+  }
+  final text = raw?.toString().trim().toLowerCase() ?? '';
+  if (text.isEmpty) return null;
+  if (text == 'true' || text == '1' || text == 'yes') return true;
+  if (text == 'false' || text == '0' || text == 'no') return false;
+  return null;
+}
+
+/// Authoritative bookability from nearby/profile JSON.
+///
+/// Fails closed: an explicit `bookable=false` wins over everything, and an
+/// availability status that is present but not understood never becomes
+/// bookable through the `is_active` fallback.
 bool isPublicPartnerBookable(Map<String, dynamic> partner) {
-  final bookable = partner['bookable'];
-  if (bookable == false || bookable == 'false') return false;
-  if (bookable == true || bookable == 'true') return true;
+  final bookable = publicPartnerFlag(
+    partner['bookable'] ?? partner['isBookable'],
+  );
+  if (bookable != null) return bookable;
 
   final availability =
       (partner['availability_status'] ?? partner['availabilityStatus'] ?? '')
@@ -50,8 +84,9 @@ bool isPublicPartnerBookable(Map<String, dynamic> partner) {
           .toLowerCase();
   if (availability == 'inactive') return false;
   if (availability == 'active') return true;
+  if (availability.isNotEmpty) return false;
 
-  return partner['is_active'] == true || partner['isActive'] == true;
+  return publicPartnerFlag(partner['is_active'] ?? partner['isActive']) ?? false;
 }
 
 /// Only remote https images are rendered; anything else falls back.

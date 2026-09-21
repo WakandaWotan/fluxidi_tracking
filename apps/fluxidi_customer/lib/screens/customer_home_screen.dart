@@ -25,7 +25,7 @@ const List<CustomerDestination> kCustomerDestinations = <CustomerDestination>[
     label: 'Taxi',
     icon: Icons.local_taxi_outlined,
     route: CustomerRoutes.taxi,
-    caption: 'Bedrijven zoeken',
+    caption: 'Zoeken en prijs opvragen',
   ),
   CustomerDestination(
     label: 'Luchthaven',
@@ -188,8 +188,8 @@ class _Header extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'Dit is de nieuwe zelfstandige klantenapp. De schermen hieronder '
-          'zijn nog niet aangesloten op boekingen, betalingen of een account.',
+          'Onder Taxi kun je echte taxibedrijven zoeken en een prijs opvragen. '
+          'Boeken, betalen en een klantaccount zijn nog niet aangesloten.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: config.brand.textSoft,
           ),
@@ -277,9 +277,18 @@ class _PhaseNotice extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Losstaand van de bestaande Fluxidi-app. Er is geen '
-            'serververbinding, geen aangemelde klant en geen betaalfunctie '
-            'in deze fase.',
+            'Losstaand van de bestaande Fluxidi-app, met een echte verbinding '
+            'naar de publieke zoek- en prijsdiensten. Nog niet aangesloten: '
+            'boeken, betalen, aanmelden en mijn boekingen.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: config.brand.textSoft,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Dit tegelscherm is tijdelijk. Het Fluxidi-ontwerp met fotokaarten, '
+            'paletknop, Regio Radar en Home, Boekingen en Profiel volgt in de '
+            'aparte UI-stap.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: config.brand.textSoft,
             ),
