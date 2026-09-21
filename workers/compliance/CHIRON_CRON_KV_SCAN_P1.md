@@ -313,12 +313,41 @@ remigration. **Do not use a percentage rollout.**
 - Overlapping ticks: duplicate markers are retired; the duplicate guard
   still blocks a second Chiron submit.
 
-## 7. What is still live
+## 7. Deployment record — 2026-09-21
 
-Production is still the P0 BOOKING_KV repair (`85f70b04` @ 100%).
-COMPLIANCE_KV still full-scans every five minutes until this branch is
-deployed. The other namespace graph (~4.35 M reads / 178 k lists) is
-BOOKING_KV and is out of this patch's scope.
+**Live:** `0823ecea-dfa4-4c91-8c0d-41472d0bba34` @ 100% since
+`2026-09-21T22:02:11Z`. Tag `chiron-compliance-due-index-p1`. Source
+`ef5236bc`. Rollback remains `85f70b04-adf9-474e-86bb-279ac6f35917`.
+
+Pre-flight: HEAD `ef5236bc`, clean tree, `node --test workers/compliance/*.test.mjs`
+**443/443**. Bindings unchanged (`COMPLIANCE_KV`, `BOOKING_KV`, ACC URL,
+`CHIRON_CRON_ENABLED` unset). Cron trigger left at `*/5`. Scoped migration
+lists the full company prefix; tests 10/17/18 already prove keys older than
+the recover watermark are examined before `!done`.
+
+First live ticks (tail, Fluxidi only; leftover August global `!done` did
+**not** hide the missing per-scope mig):
+
+| Cron (local CEST) | `mig_exam` | Fluxidi scanned | `due_listed` | `due_selected` | `event_reads` | `mig_done` | provider |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 00:05:22 | 80 | 80 | 660 | 17 | 97 | 0 | 0 |
+| 00:10:23 | 80 | 160 | 664 | 18 | 98 | 0 | 0 |
+
+Waiting arrivals were rechecked on both ticks. No Chiron POST from the cron.
+
+COMPLIANCE_KV GraphQL `datetimeFiveMinutes` (namespace
+`04313c4521454b909293208d738471a1`):
+
+| Window (UTC) | Reads | Writes | Lists | Deletes | Note |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 21:20–22:00 (last P0 ticks) | 1 593–1 736 | 39–44 | 5–10 | 0 | full-scan plateau |
+| 22:05 (first P1 5 min) | 859 | 76 | 6 | 20 | migration page + leftover due drain |
+
+Lasting idle after `!done` is **not** live-confirmed. Migration is still
+running (`completed=false`, cursor present, `marked=0` on synced history).
+Expect ~18 more Fluxidi pages at 80/tick. An August global mig doc
+(`scanned=1452`) and ~660 due-at-0 leftovers remain; they are drained by
+the due-index, not by deleting events.
 
 ## 8. Review-point closeout
 
