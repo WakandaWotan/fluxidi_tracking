@@ -52,7 +52,9 @@ LimousinePlaceLookup _lookup() {
       return LimousinePlaceLookupResult(
         suggestions: [
           LimousinePlaceSuggestion(
-            label: query.trim().isEmpty ? 'Koekamerstraat 48A, Schorisse' : query,
+            label: query.trim().isEmpty
+                ? 'Koekamerstraat 48A, Schorisse'
+                : query,
             lat: 50.80,
             lon: 3.63,
             placeType: 'address',
@@ -262,7 +264,8 @@ void main() {
     }
 
     await _pumpShot(tester, size: const Size(800, 1280), entry: airport);
-    expect(find.byKey(kCustomerBookingWideSplitKey), findsOneWidget);
+    expect(find.byKey(kCustomerBookingWideSplitKey), findsNothing);
+    expect(find.byKey(kCustomerBookingMapSheetShellKey), findsOneWidget);
     final crl = find.byKey(customerBookingAirportCardKey('CRL'));
     final formScroll = find.descendant(
       of: find.byKey(kCustomerBookingFormKey),
@@ -298,11 +301,7 @@ void main() {
     }
     await _writeShot(tester, '06_tablet_landscape_airport');
 
-    await _pumpShot(
-      tester,
-      size: const Size(390, 844),
-      entry: airport,
-    );
+    await _pumpShot(tester, size: const Size(390, 844), entry: airport);
     final crlPhone = find.byKey(customerBookingAirportCardKey('CRL'));
     if (crlPhone.evaluate().isNotEmpty) {
       await tester.tap(crlPhone);

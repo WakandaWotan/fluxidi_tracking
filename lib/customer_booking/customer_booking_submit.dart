@@ -288,6 +288,8 @@ String customerBookingBookIssueFromRaw(String? raw) {
   }
   if (lower.contains('checkout_url') ||
       lower.contains('checkout_start') ||
+      lower.contains('payment_checkout_unavailable') ||
+      lower.contains('could not be created') ||
       lower.contains('could not be started') ||
       lower.contains('kon niet worden gestart')) {
     return kCustomerBookingIssueCheckoutStart;

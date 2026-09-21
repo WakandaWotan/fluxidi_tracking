@@ -40,7 +40,9 @@ Set<String> reachableLibDartFromMain(Directory packageRoot) {
             : '';
         target = normalize(dir.isEmpty ? ref : '$dir/$ref');
       }
-      if (target == null || !target.startsWith('lib/') || !target.endsWith('.dart')) {
+      if (target == null ||
+          !target.startsWith('lib/') ||
+          !target.endsWith('.dart')) {
         continue;
       }
       if (seen.add(target)) queue.add(target);
@@ -63,11 +65,17 @@ void main() {
       'lib/customer_booking/customer_booking_addresses.dart',
       'lib/customer_booking/customer_booking_quote_wire.dart',
       'lib/customer_booking/customer_booking_submit.dart',
+      'lib/customer_booking/customer_booking_book_payload.dart',
+      'lib/customer_booking/customer_booking_map_sheet.dart',
       'lib/customer_booking/customer_booking_labels.dart',
       'lib/company/company_plan_quote.dart',
     ];
     for (final path in required) {
-      expect(reachable.contains(path), isTrue, reason: '$path is not imported from main.dart');
+      expect(
+        reachable.contains(path),
+        isTrue,
+        reason: '$path is not imported from main.dart',
+      );
     }
     expect(
       reachable.contains('lib/airport/airport_page.dart'),

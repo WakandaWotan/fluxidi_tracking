@@ -15,6 +15,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_route_map.dar
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 import 'package:fluxidi_tracking/company/company_ride_options.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_addresses.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_book_payload.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_book_result.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_billing.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_checkout.dart';
@@ -33,6 +34,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_home_notice.d
 import 'package:fluxidi_tracking/customer_booking/customer_booking_keys.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_labels.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_map_sheet.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_payment_page.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_price_block.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
@@ -908,6 +910,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   void _setAirportMode(bool airport) {
     setState(() {
       _airportMode = airport;
+      _entry = _entry.copyWith(
+        kind: airport
+            ? CustomerBookingKind.airport
+            : (_entry.kind == CustomerBookingKind.airport
+                  ? CustomerBookingKind.taxi
+                  : _entry.kind),
+      );
       if (airport) {
         if (_returnKind == CustomerBookingReturnKind.wait) {
           _returnKind = CustomerBookingReturnKind.noWait;
@@ -1652,7 +1661,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           defaultEmail: _emailCtrl.text,
           defaultPhone: _bookingPhone,
         ),
-        ...selection.toPayloadFields(),
+        ...customerBookingBookContractFields(
+          selection: selection,
+          kind: _airportMode
+              ? CustomerBookingKind.airport
+              : CustomerBookingKind.taxi,
+          quote: _quote,
+        ),
       };
       if (_airportMode) {
         companyRideOptionsStripWaitFields(body);
@@ -1958,20 +1973,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                         final media = MediaQuery.of(context);
                         final textScale = media.textScaler.scale(1);
                         final keyboardOpen = media.viewInsets.bottom > 80;
-                        final wide = customerBookingUseWideSplit(
-                          width: constraints.maxWidth,
-                          height: constraints.maxHeight,
-                          textScale: textScale,
-                        );
                         final short = constraints.maxHeight < 520;
-                        final pinConfirm = customerBookingPinConfirmBar(
-                          height: constraints.maxHeight,
-                          keyboardOpen: keyboardOpen,
-                          textScale: textScale,
-                        );
-                        final confirmReserve = pinConfirm
-                            ? 72.0 + media.padding.bottom
-                            : 16.0;
                         final sheet = customerBookingSheetSizes(
                           height: constraints.maxHeight,
                           keyboardOpen: keyboardOpen,
@@ -1981,17 +1983,16 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                           valueListenable: _sheetExtentNotifier,
                           builder: (context, extent, _) {
                             return _bookingMap(
-                              wide: wide,
+                              wide: false,
                               height: constraints.maxHeight,
-                              sheetExtent: wide
-                                  ? 0.0
-                                  : extent.clamp(sheet.min, sheet.max),
+                              sheetExtent: extent.clamp(sheet.min, sheet.max),
                             );
                           },
                         );
-                        final confirm = (!wide || pinConfirm)
-                            ? _confirmBar(compact: !wide, inlinePrice: !wide)
-                            : const SizedBox.shrink();
+                        final confirm = _confirmBar(
+                          compact: true,
+                          inlinePrice: true,
+                        );
                         final audience = Padding(
                           padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
                           child: Column(
@@ -2003,7 +2004,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                           ),
                         );
                         final planeHeight = customerBookingAirplaneHeight(
-                          wide: wide,
+                          wide: constraints.maxWidth >= 720,
                           short: short,
                         );
                         final airplane = _showAirplane && planeHeight > 0
@@ -2031,138 +2032,29 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                                 ),
                               )
                             : const SizedBox.shrink();
-                        if (wide) {
-                          _sheetScroll = null;
-                          return Column(
-                            children: [
-                              Expanded(
-                                key: kCustomerBookingWideSplitKey,
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Expanded(
-                                      child: ListView(
-                                        key: kCustomerBookingFormKey,
-                                        controller: _formScroll,
-                                        cacheExtent: 2400,
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          12,
-                                          16,
-                                          24,
-                                        ),
-                                        children: [
-                                          airplane,
-                                          audience,
-                                          if (_airportMode) airportChrome,
-                                          ..._bookingFormFields(
-                                            theme,
-                                            includeWhen: true,
-                                            confirmReserve: confirmReserve,
-                                            includeConfirm: !pinConfirm,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          0,
-                                          12,
-                                          16,
-                                          12,
-                                        ),
-                                        child: map,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              confirm,
-                            ],
-                          );
-                        }
-                        return Stack(
-                          key: kCustomerBookingNarrowStackKey,
-                          children: [
-                            Positioned.fill(child: map),
-                            Positioned.fill(
-                              child:
-                                  NotificationListener<
-                                    DraggableScrollableNotification
-                                  >(
-                                    onNotification: (notification) {
-                                      _sheetExtent = notification.extent;
-                                      _sheetExtentNotifier.value =
-                                          notification.extent;
-                                      return false;
-                                    },
-                                    child: DraggableScrollableSheet(
-                                      key: const ValueKey(
-                                        'customer_booking_phone_sheet',
-                                      ),
-                                      controller: _sheetController,
-                                      minChildSize: sheet.min,
-                                      maxChildSize: sheet.max,
-                                      initialChildSize: sheet.initial.clamp(
-                                        sheet.min,
-                                        sheet.max,
-                                      ),
-                                      snap: true,
-                                      snapSizes: sheet.snaps,
-                                      shouldCloseOnMinExtent: false,
-                                      builder: (context, scrollController) {
-                                        _sheetScroll = scrollController;
-                                        return Material(
-                                          key: kCustomerBookingSheetKey,
-                                          color: _palette.background,
-                                          elevation: 8,
-                                          borderRadius:
-                                              const BorderRadius.vertical(
-                                                top: Radius.circular(20),
-                                              ),
-                                          clipBehavior: Clip.antiAlias,
-                                          child: Column(
-                                            children: [
-                                              _sheetHandle(
-                                                parentHeight:
-                                                    constraints.maxHeight,
-                                                sizes: sheet,
-                                              ),
-                                              Expanded(
-                                                child: ListView(
-                                                  key: kCustomerBookingFormKey,
-                                                  controller: scrollController,
-                                                  keyboardDismissBehavior:
-                                                      ScrollViewKeyboardDismissBehavior
-                                                          .onDrag,
-                                                  cacheExtent: 2400,
-                                                  padding:
-                                                      const EdgeInsets.fromLTRB(
-                                                        16,
-                                                        0,
-                                                        16,
-                                                        16,
-                                                      ),
-                                                  children: _phoneBookingFields(
-                                                    theme,
-                                                    airplane: airplane,
-                                                    audience: audience,
-                                                    airportChrome:
-                                                        airportChrome,
-                                                  ),
-                                                ),
-                                              ),
-                                              confirm,
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                            ),
-                          ],
+                        return CustomerBookingMapSheetShell(
+                          palette: _palette,
+                          sizes: sheet,
+                          controller: _sheetController,
+                          map: map,
+                          handle: _sheetHandle(
+                            parentHeight: constraints.maxHeight,
+                            sizes: sheet,
+                          ),
+                          formChildren: _phoneBookingFields(
+                            theme,
+                            airplane: airplane,
+                            audience: audience,
+                            airportChrome: airportChrome,
+                          ),
+                          confirm: confirm,
+                          onExtent: (extent) {
+                            _sheetExtent = extent;
+                            _sheetExtentNotifier.value = extent;
+                          },
+                          onAssignScroll: (scrollController) {
+                            _sheetScroll = scrollController;
+                          },
                         );
                       },
                     ),
@@ -2200,7 +2092,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
           else
             _companyBanner(),
           audience,
-          if (_entry.showBusinessModeChoice) _modeToggle(),
+          if (_entry.showTaxiAirportToggle) _modeToggle(),
           if (_gpsFallback)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -2592,16 +2484,33 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
   }
 
   Widget _confirmBar({bool compact = false, bool inlinePrice = false}) {
-    final incl = _quote == null ? null : customerBookingQuoteInclVat(_quote!);
-    final excl = _quote == null ? null : customerBookingQuoteExVat(_quote!);
-    final price = incl == null
+    final quote = _quote;
+    final onRequest =
+        quote != null &&
+        !_pickupNeedsConfirm &&
+        customerBookingQuoteIsOnRequest(quote);
+    final incl = quote == null ? null : customerBookingQuoteInclVat(quote);
+    final excl = quote == null ? null : customerBookingQuoteExVat(quote);
+    final Widget? price = onRequest
+        ? Text(
+            _t(kCustomerBookingPriceOnRequest),
+            key: kCustomerBookingPriceKey,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _palette.textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: compact ? 14 : 16,
+            ),
+          )
+        : incl == null
         ? null
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                formatCompanyPlanQuoteMoney(incl, _quote!.currency),
+                formatCompanyPlanQuoteMoney(incl, quote!.currency),
                 key: kCustomerBookingPriceKey,
                 style: TextStyle(
                   color: _palette.textPrimary,
@@ -2621,7 +2530,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
               ),
               if (excl != null && !compact)
                 Text(
-                  '${formatCompanyPlanQuoteMoney(excl, _quote!.currency)} ${_t(kCustomerBookingTotalExVat)}',
+                  '${formatCompanyPlanQuoteMoney(excl, quote.currency)} ${_t(kCustomerBookingTotalExVat)}',
                   style: TextStyle(color: _palette.textMuted, fontSize: 11),
                 ),
             ],
@@ -2927,27 +2836,26 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
 
   List<Widget> _airportChromeFields(ThemeData theme) {
     final size = MediaQuery.sizeOf(context);
-    final wide = customerBookingUseWideSplit(
-      width: size.width,
-      height: size.height,
-    );
     final showPicker = _airport == null || _airportPickerOpen || _browseCatalog;
+    void expandSheetForCatalog() {
+      unawaited(
+        _animateSheetTo(
+          customerBookingSheetSizes(
+            height: size.height,
+            keyboardOpen: MediaQuery.viewInsetsOf(context).bottom > 80,
+            textScale: MediaQuery.textScalerOf(context).scale(1),
+          ).max,
+        ),
+      );
+    }
+
     return [
       _directionToggle(),
       const SizedBox(height: 12),
       if (!showPicker && _airport != null)
-        _selectedAirportCard(theme, _airport!, compact: !wide)
+        _selectedAirportCard(theme, _airport!, compact: true)
       else ...[
-        if (_airport != null && wide)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              customerBookingAirportSummary(_airport!),
-              key: kCustomerBookingAirportSummaryKey,
-              style: theme.textTheme.titleMedium,
-            ),
-          )
-        else if (_airport != null)
+        if (_airport != null)
           Offstage(
             offstage: true,
             child: Text(
@@ -2958,7 +2866,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
         CompanyPlanAirportDestinationCards(
           language: _language,
           selectedIata: _airport?.iata ?? '',
-          compact: !wide,
+          compact: true,
           cardKeyOf: customerBookingAirportCardKey,
           onSelectedIata: (iata) {
             final record = companyPlanAirportCatalogRecord(iata);
@@ -2971,17 +2879,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
               _browseCatalog = true;
               _airportPickerOpen = true;
             });
-            if (!wide) {
-              unawaited(
-                _animateSheetTo(
-                  customerBookingSheetSizes(
-                    height: size.height,
-                    keyboardOpen: MediaQuery.viewInsetsOf(context).bottom > 80,
-                    textScale: MediaQuery.textScalerOf(context).scale(1),
-                  ).max,
-                ),
-              );
-            }
+            expandSheetForCatalog();
           },
         ),
         Align(
@@ -2993,25 +2891,14 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
                 _browseCatalog = true;
                 _airportPickerOpen = true;
               });
-              if (!wide) {
-                unawaited(
-                  _animateSheetTo(
-                    customerBookingSheetSizes(
-                      height: size.height,
-                      keyboardOpen:
-                          MediaQuery.viewInsetsOf(context).bottom > 80,
-                      textScale: MediaQuery.textScalerOf(context).scale(1),
-                    ).max,
-                  ),
-                );
-              }
+              expandSheetForCatalog();
             },
             child: Text(_t(kCustomerBookingBrowseAllAirports)),
           ),
         ),
       ],
       if (_browseCatalog) _catalogPicker(),
-      _flightFields(phone: !wide),
+      _flightFields(phone: true),
     ];
   }
 
@@ -3162,7 +3049,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       else if (includeCompany)
         _companyBanner(),
       if (includeCompany) const SizedBox(height: 8),
-      if (_entry.showBusinessModeChoice) _modeToggle(),
+      if (_entry.showTaxiAirportToggle) _modeToggle(),
       if (_gpsFallback)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),

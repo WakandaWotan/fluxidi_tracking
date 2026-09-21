@@ -54,6 +54,10 @@ void main() {
       kCustomerBookingIssueCheckoutStart,
     );
     expect(
+      customerBookingBookIssueFromRaw('payment_checkout_unavailable'),
+      kCustomerBookingIssueCheckoutStart,
+    );
+    expect(
       customerBookingSubmitIssueText(
         kCustomerBookingIssueCheckoutStart,
         AppLanguage.en,

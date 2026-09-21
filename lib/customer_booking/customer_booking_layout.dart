@@ -3,15 +3,39 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.
 
 /// Layout rules for the customer booking sheet.
 ///
-/// Split form/map only when both width and text scale leave two usable panes.
+/// The two-column tablet split (form left / map right) is retired. Taxi,
+/// airport, phone and tablet all use the map + draggable sheet shell.
 bool customerBookingUseWideSplit({
   required double width,
   required double height,
   double textScale = 1,
 }) {
-  final scale = textScale.clamp(1.0, 2.0);
-  final neededWidth = 720 * (scale > 1.2 ? scale : 1.0);
-  return width >= neededWidth && height >= 420 && scale <= 1.55;
+  return false;
+}
+
+/// True for every booking surface: full-width map with a bottom sheet on top.
+bool customerBookingUsesMapSheet({
+  required double width,
+  required double height,
+  double textScale = 1,
+}) {
+  return !customerBookingUseWideSplit(
+    width: width,
+    height: height,
+    textScale: textScale,
+  );
+}
+
+/// Caps sheet content on wide tablets without switching to a side-by-side form.
+double customerBookingSheetContentMaxWidth(double width) {
+  if (width >= 1100) return 720;
+  if (width >= 800) return 640;
+  return width;
+}
+
+EdgeInsets customerBookingSheetFormPadding(double width) {
+  final horizontal = width >= 800 ? 24.0 : 16.0;
+  return EdgeInsets.fromLTRB(horizontal, 0, horizontal, 16);
 }
 
 /// Keep price + confirm on screen, including when the keyboard is open.

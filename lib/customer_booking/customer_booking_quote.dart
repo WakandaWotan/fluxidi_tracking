@@ -36,6 +36,7 @@ class CustomerBookingQuoteClient {
     String path,
     Map<String, dynamic> body, {
     Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 20),
   }) {
     final url = Uri.parse('$_base$path');
     final encoded = jsonEncode(body);
@@ -46,9 +47,7 @@ class CustomerBookingQuoteClient {
     if (httpPost != null) {
       return httpPost!(url, nextHeaders, encoded);
     }
-    return http
-        .post(url, headers: nextHeaders, body: encoded)
-        .timeout(const Duration(seconds: 20));
+    return http.post(url, headers: nextHeaders, body: encoded).timeout(timeout);
   }
 
   Map<String, dynamic> decorateBody(
@@ -128,6 +127,7 @@ class CustomerBookingQuoteClient {
       '/book',
       decorateBody(body, entry),
       headers: headers,
+      timeout: const Duration(seconds: 45),
     );
     final decoded = _decode(res.body) ?? <String, dynamic>{};
     final ok =

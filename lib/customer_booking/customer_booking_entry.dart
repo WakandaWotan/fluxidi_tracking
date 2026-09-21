@@ -121,6 +121,17 @@ class CustomerBookingEntryContext {
   bool get showBusinessModeChoice =>
       kind == CustomerBookingKind.business || allowModeToggle;
 
+  /// Taxi and airport share one phone sheet; the customer can switch there.
+  bool get showTaxiAirportToggle {
+    switch (kind) {
+      case CustomerBookingKind.event:
+      case CustomerBookingKind.stay:
+        return allowModeToggle;
+      default:
+        return true;
+    }
+  }
+
   CustomerBookingEntryContext copyWith({
     CustomerBookingKind? kind,
     CustomerBookingCompany? company,

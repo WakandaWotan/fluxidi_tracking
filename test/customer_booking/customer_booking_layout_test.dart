@@ -4,14 +4,36 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_route_camera.dart';
 
 void main() {
-  test('wide split needs leftover width after text scale', () {
-    expect(customerBookingUseWideSplit(width: 390, height: 844), isFalse);
-    expect(customerBookingUseWideSplit(width: 800, height: 1280), isTrue);
-    expect(
-      customerBookingUseWideSplit(width: 800, height: 1280, textScale: 1.6),
-      isFalse,
-    );
-    expect(customerBookingUseWideSplit(width: 1280, height: 800), isTrue);
+  test('every size uses the map sheet, never the two-column split', () {
+    for (final size in const <(double, double)>[
+      (390, 844),
+      (430, 932),
+      (800, 1280),
+      (1280, 800),
+    ]) {
+      expect(
+        customerBookingUseWideSplit(width: size.$1, height: size.$2),
+        isFalse,
+        reason: '${size.$1}x${size.$2}',
+      );
+      expect(
+        customerBookingUsesMapSheet(width: size.$1, height: size.$2),
+        isTrue,
+        reason: '${size.$1}x${size.$2}',
+      );
+    }
+    expect(customerBookingSheetContentMaxWidth(390), 390);
+    expect(customerBookingSheetContentMaxWidth(800), 640);
+    expect(customerBookingSheetContentMaxWidth(1280), 720);
+  });
+
+  test('taxi and airport use the same phone sheet snaps', () {
+    final taxi = customerBookingSheetSizes(height: 844, keyboardOpen: false);
+    final airport = customerBookingSheetSizes(height: 844, keyboardOpen: false);
+    expect(taxi.min, airport.min);
+    expect(taxi.half, airport.half);
+    expect(taxi.max, airport.max);
+    expect(taxi.snaps, airport.snaps);
   });
 
   test('phone sheet has min third, half initial and full-under-app-bar', () {

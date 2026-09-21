@@ -60,6 +60,9 @@ const Key kCustomerBookingMapKey = Key('customer_booking_map');
 const Key kCustomerBookingFormKey = Key('customer_booking_form');
 const Key kCustomerBookingWideSplitKey = Key('customer_booking_wide_split');
 const Key kCustomerBookingNarrowStackKey = Key('customer_booking_narrow_stack');
+const Key kCustomerBookingMapSheetShellKey = Key(
+  'customer_booking_map_sheet_shell',
+);
 const Key kCustomerBookingSheetKey = Key('customer_booking_sheet');
 const Key kCustomerBookingSheetHandleKey = Key('customer_booking_sheet_handle');
 const Key kCustomerBookingSheetToggleKey = Key('customer_booking_sheet_toggle');
