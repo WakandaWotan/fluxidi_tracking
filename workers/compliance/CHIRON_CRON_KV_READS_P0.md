@@ -1,8 +1,7 @@
 # CHIRON-CRON-KV-READS-P0 — repair of the Chiron cron KV read amplification
 
-Prepared 2026-09-21. **Nothing is deployed and no live setting is changed by this
-branch.** The Chiron cron keeps running exactly as it does today until someone
-deploys this deliberately.
+Prepared and **deployed to production on 2026-09-21**. See section 10 for the
+deployment record and the measured live result.
 
 ## 1. Provenance of the baseline
 
@@ -22,22 +21,33 @@ the checkout in the main workspace.
 
 ### Verification that `331ffa95` really is the live bundle
 
-Bundle and source were compared per function after removing only bundler
-artefacts (comments, `__name()` registrations, `undefined` → `void 0`, trailing
-commas, prettier line wrapping), applied identically to both sides:
+Comparing a bundle against unbundled source is unreliable: esbuild rewrites inner
+arrow functions into `__name(...)` wrappers, so normalisation can never be made
+watertight in that direction. The check is therefore **bundle against bundle**,
+same toolchain (wrangler 4.61.0, `deploy --dry-run`):
 
-- 11 of 11 reconcile/cron/leg-type functions **byte-identical**, including
-  `_chironCronReconcileAllScopesBestEffort`, `_chironAutoReconcileScopeBestEffort`,
-  `_chironBuildOfficialDraftForSingleEvent`, `_chironLoadBookingLegTypeMap`,
-  `_chironLoadScopedHydrationCache`, `_chironBuildBatchRitStatusIndex`,
-  `_chironBuildBatchTrustedRideHydrationIndex`.
-- 308 of 309 top-level function names present in both. The single absentee,
-  `_chironResolveAssignedVehicleId`, is defined and never called in `331ffa95`,
-  so esbuild tree-shakes it. No live function is missing from the source.
-- Marker counts equal on both sides: `CHIRON_CRON_MAX_SCOPES_PER_TICK` 3/3,
-  `CHIRON_AUTO_RECONCILE_MAX_PROCESS` 4/4, `CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS`
-  3/3, `CHIRON_EXPORT_LIST_SCAN_CAP` 2/2, `ch1211_assigned_vehicle_plate_invalid`
-  2/2, `[CHIRON_CRON_RECONCILE]` 2/2.
+| Artefact | Normalised SHA-256 (16) |
+| --- | --- |
+| live download of version 89 | `852a6f752c8c7e9e` |
+| local build of `331ffa95` | `852a6f752c8c7e9e` |
+
+Whole-body identical after removing bundler artefacts only, and 308 of 308
+functions identical with nothing present on only one side. The live worker is a
+build of `331ffa95`.
+
+The same comparison against the build of this branch is the pre-deploy surface:
+303 of 308 functions identical, **0 removed**, 4 added
+(`_chironBuildScopePreload`, `_chironPreloadForScope`,
+`_chironEnsureBookingLegTypeForEvent`, `chironCronEnabled`) and exactly 5 changed
+(`_chironLoadBookingLegTypeMap`, `_chironBuildOfficialDraftForSingleEvent`,
+`_chironAutoSubmitOneEvent`, `_chironAutoReconcileScopeBestEffort`,
+`_chironCronReconcileAllScopesBestEffort`).
+
+Note for anyone re-running this: a naive extractor that looks for the first `{`
+after a function name stops inside a default parameter such as
+`options = {}` and then only compares signatures, which silently hides real
+differences. The extractor must walk the parameter list to its matching `)`
+first.
 
 ### Why the main workspace must not be used as a release
 
@@ -244,5 +254,108 @@ since this analysis started (booking-api `v1159` on 21 Sept 07:34Z).
 
 ## 9. Out of scope
 
-The customer-app migration is untouched. No live setting, trigger, secret or KV
-value was modified while preparing this branch.
+The customer app is untouched. No trigger, secret or KV value was modified.
+
+## 10. Deployment record — 2026-09-21
+
+### Pre-flight
+
+| Check | Result |
+| --- | --- |
+| Newest version before deploy | `16d11eeb-9f81-48a5-adb7-d98dbd8dc50f` at 100%, unchanged since 19 Sept 20:16Z — no newer compliance fix existed, so nothing had to be rebased |
+| Live bundle == build of `331ffa95` | yes, same normalised SHA `852a6f752c8c7e9e`, 308/308 functions identical |
+| Deploy surface (live vs pending build) | 303/308 identical, 0 removed, 4 added, 5 changed |
+| Bindings in the dry run | `COMPLIANCE_KV`, `BOOKING_KV`, `CHIRON_EXPORT_MODE`, `CHIRON_EXPORT_BASE_URL` — identical to live, both secrets untouched |
+| `CHIRON_CRON_ENABLED` | deliberately NOT set, so the cron stays enabled |
+
+### Deploy
+
+```
+wrangler versions upload   -> 85f70b04-adf9-474e-86bb-279ac6f35917
+                              tag chiron-cron-kv-reads-p0, created 12:38:18Z
+wrangler versions deploy 85f70b04...@100
+                           -> deployment 12:38:44Z, "rollback 16d11eeb-..."
+```
+
+**Rollback target: `16d11eeb-9f81-48a5-adb7-d98dbd8dc50f`.** No KV migration is
+needed for a rollback; this version writes no new key shapes.
+
+### Post-deploy state
+
+- cron schedule still `*/5 * * * *`, `modified_on` still 2026-08-30T06:02:01Z —
+  untouched. `wrangler versions upload/deploy` does not manage triggers.
+- bindings unchanged: `BOOKING_KV`, `COMPLIANCE_KV`,
+  `CHIRON_CREDENTIALS_ENCRYPTION_KEY`, `COMPLIANCE_ADMIN_TOKEN`,
+  `CHIRON_EXPORT_BASE_URL`, `CHIRON_EXPORT_MODE`. Nothing added or dropped.
+- `observability.logs.enabled` remains `true` with `persist: true`. The deploy
+  output line `observability: enabled: false` refers to the separate top-level
+  traces switch, which was already false.
+- handlers still `scheduled` + `fetch`.
+
+### Measured live result — `fluxidi-bookings` reads per 5-minute cron cycle
+
+| 5-min bucket (UTC) | BOOKING_KV reads | COMPLIANCE_KV reads |
+| --- | ---: | ---: |
+| 12:00 | 6 588 | 1 670 |
+| 12:05 | 9 080 | 1 560 |
+| 12:10 | 8 076 | 1 533 |
+| 12:15 | 7 794 | 1 735 |
+| 12:20 | 8 375 | 1 580 |
+| 12:25 | 8 183 | 1 761 |
+| 12:30 | 8 397 | 1 560 |
+| 12:35 | 8 256 | 1 700 |
+| **deploy 12:38:44Z** | | |
+| 12:40 | **11** | 1 691 |
+| 12:45 | **0** | (tick had no draft build needing a booking) |
+| 12:50 | **11** | 1 733 |
+| 12:55 | **11** | 1 609 |
+| 13:00 | **11** | 1 492 |
+| 13:05 | **11** | 1 787 |
+
+Eight pre-deploy cycles average **8 094** reads; six post-deploy cycles sit at
+**11 or 0**. That is a **~736x** reduction, 99.86%. Projected over 288 cycles:
+**2.33M/day to ~3.2k/day**.
+
+`COMPLIANCE_KV` is deliberately unchanged at ~1 600 reads/cycle, which is also the
+proof that the event scan and candidate selection were not altered.
+
+### Processing correctness over consecutive cycles
+
+Identical on every observed tick (12:45:03, 12:50:03, 12:55:03 and on), all on
+version `85f70b04`:
+
+```
+[CHIRON_AUTO_RECONCILE] scanned=1552 considered=21 submitted=0 waiting=3 skipped=3 failed=0 source=cron
+[CHIRON_CRON_RECONCILE] scopes=4 ran=2 throttled=2 failed=1 source=cron
+```
+
+- `outcome: ok`, zero exceptions on every tick.
+- `scanned=1552` is consistent with the unchanged ~1 600 `COMPLIANCE_KV` reads
+  per cycle, so the full scan still happens and no candidate is skipped.
+- `submitted=0` with `[CHIRON_AUTO_SUBMIT][ALREADY_SYNCED_COUNTER_REPAIR]` per
+  already-synced ritnummer: the duplicate guard recognises every synced ride and
+  nothing is re-POSTed. **No duplicate submissions, and no submission was
+  triggered artificially.**
+- `[CHIRON_AUTO_SUBMIT][WAITING] ... paired_dep_state=failed` for three rides:
+  pre-existing state, arrivals correctly parked behind a failed departure.
+- `failed=1` at cron level is constant on every tick and the per-scope pass
+  reports `failed=0`. It is one of the four scopes bailing on its own routing
+  gate before the pass logs, which happens before any code this branch touches.
+
+### Evidence gap
+
+The wrangler OAuth token has no Workers Observability read scope
+(`/workers/observability/telemetry/query` returns 403), so pre-deploy log lines
+could not be retrieved for a log-to-log comparison. The before/after evidence is
+therefore the KV analytics (which do cover both periods) plus live `wrangler
+tail` on the new version. `scanned` / `considered` have no pre-deploy log
+counterpart; the unchanged `COMPLIANCE_KV` read rate stands in for it.
+
+## 11. Source line
+
+`release/compliance-worker-d03` is the line the live worker is built from
+(`origin/main` is a January baseline, 1 808 commits behind, and does not contain
+the deployed compliance state at all). The branch was fast-forwarded onto that
+release line and both were pushed, so every future release cut from it carries
+this fix. Advancing `origin/main` is a pre-existing, unrelated divergence and was
+deliberately not attempted here.
