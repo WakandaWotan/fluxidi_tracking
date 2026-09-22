@@ -5,19 +5,28 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 abstract class CustomerSecureSessionVault {
   Future<String?> readSessionJson();
 
-  Future<void> writeSessionJson(String json);
+  /// True only when a following read returns [json].
+  Future<bool> writeSessionJson(String json);
 
   Future<void> deleteSession();
 
   Future<bool> readUnlockEnabled();
 
-  Future<void> writeUnlockEnabled(bool enabled);
+  /// True only when a following read returns [enabled].
+  Future<bool> writeUnlockEnabled(bool enabled);
 }
 
 /// Platform keystore / keychain. Never logs the payload.
 class PlatformCustomerSecureSessionVault implements CustomerSecureSessionVault {
   PlatformCustomerSecureSessionVault({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            // A keystore read error must not wipe the session and the unlock
+            // flag. The plugin default does that, and the next launch then
+            // has nothing left to lock.
+            aOptions: AndroidOptions(resetOnError: false),
+          );
 
   static const String sessionKey = 'fluxidi.customer.session.v1';
   static const String enabledKey = 'fluxidi.customer.unlock.enabled.v1';
@@ -38,18 +47,19 @@ class PlatformCustomerSecureSessionVault implements CustomerSecureSessionVault {
   }
 
   @override
-  Future<void> writeSessionJson(String json) async {
+  Future<bool> writeSessionJson(String json) async {
     final payload = json.trim();
     if (payload.isEmpty) {
       await deleteSession();
-      return;
+      return (await readSessionJson()) == null;
     }
     try {
       await _storage.write(key: sessionKey, value: payload);
+      return await readSessionJson() == payload;
     } on MissingPluginException {
-      return;
+      return false;
     } on PlatformException {
-      return;
+      return false;
     }
   }
 
@@ -77,13 +87,14 @@ class PlatformCustomerSecureSessionVault implements CustomerSecureSessionVault {
   }
 
   @override
-  Future<void> writeUnlockEnabled(bool enabled) async {
+  Future<bool> writeUnlockEnabled(bool enabled) async {
     try {
       await _storage.write(key: enabledKey, value: enabled ? 'true' : 'false');
+      return await readUnlockEnabled() == enabled;
     } on MissingPluginException {
-      return;
+      return false;
     } on PlatformException {
-      return;
+      return false;
     }
   }
 }
@@ -97,8 +108,9 @@ class MemoryCustomerSecureSessionVault implements CustomerSecureSessionVault {
   Future<String?> readSessionJson() async => sessionJson;
 
   @override
-  Future<void> writeSessionJson(String json) async {
+  Future<bool> writeSessionJson(String json) async {
     sessionJson = json.trim().isEmpty ? null : json;
+    return true;
   }
 
   @override
@@ -110,7 +122,8 @@ class MemoryCustomerSecureSessionVault implements CustomerSecureSessionVault {
   Future<bool> readUnlockEnabled() async => unlockEnabled;
 
   @override
-  Future<void> writeUnlockEnabled(bool enabled) async {
+  Future<bool> writeUnlockEnabled(bool enabled) async {
     unlockEnabled = enabled;
+    return true;
   }
 }

@@ -143,7 +143,9 @@ class CustomerSessionLock extends ChangeNotifier {
       await _discardSessionSecrets();
       _pendingLock = false;
       _phase = CustomerSessionLockPhase.unlocked;
-      debugPrint('[CUSTOMER_LOCK] launch open reason=invalid enabled=$_enabled');
+      debugPrint(
+        '[CUSTOMER_LOCK] launch open reason=invalid enabled=$_enabled',
+      );
       notifyListeners();
       return;
     }
@@ -304,12 +306,12 @@ class CustomerSessionLock extends ChangeNotifier {
       await _surface.deletePlaintextFile();
       return;
     }
-    final wrote = await _vault.writeSessionJson(jsonEncode(fileSession.toJson()));
+    final wrote = await _vault.writeSessionJson(
+      jsonEncode(fileSession.toJson()),
+    );
     if (!wrote) {
       debugPrint('[CUSTOMER_LOCK] migrate vault write failed');
-      if (!_enabled) {
-        _surface.remember(fileSession);
-      }
+      _surface.remember(fileSession);
       return;
     }
     await _forgetProcessSession();
