@@ -343,11 +343,50 @@ COMPLIANCE_KV GraphQL `datetimeFiveMinutes` (namespace
 | 21:20–22:00 (last P0 ticks) | 1 593–1 736 | 39–44 | 5–10 | 0 | full-scan plateau |
 | 22:05 (first P1 5 min) | 859 | 76 | 6 | 20 | migration page + leftover due drain |
 
-Lasting idle after `!done` is **not** live-confirmed. Migration is still
-running (`completed=false`, cursor present, `marked=0` on synced history).
-Expect ~18 more Fluxidi pages at 80/tick. An August global mig doc
-(`scanned=1452`) and ~660 due-at-0 leftovers remain; they are drained by
-the due-index, not by deleting events.
+### Closeout — 2026-09-22 (migration finished)
+
+Live still `0823ecea` @ 100%. Fluxidi per-scope mig **completed**
+`2026-09-21T23:40:23Z`: scanned 1559, marked 21, `failed_reads=0`, cursor
+null. The August global `!done` / mig doc (1452/687) is leftover and is
+**not** the proof. Jouw Driver is `enabled=false`. Flex and Prometheus are
+gated (`never_tested` / auto-submit off); they have no per-scope mig key
+(404) and are not relevant armed scopes.
+
+Three tailed cron ticks after `mig_done=1` (CEST 07:05 / 07:10 / 07:15):
+
+| Cron | `due_listed` | `due_selected` | event-reads | `mig_exam` | `mig_done` | provider | waiting rechecks |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 07:05:23 | 678 | 20 | 20 | 0 | 1 | 0 | 3 Fluxidi |
+| 07:10:23 | 678 | 20 | 20 | 0 | 1 | 0 | same 3 |
+| 07:15:23 | 678 | 20 | 20 | 0 | 1 | 0 | same 3 |
+
+Due-index inventory (read-only list): 678 keys = 1 `!done` + 368 due-at-0
++ 309 future. Fluxidi 635; leftover Prometheus 29 due-at-0; a few test
+tenants. This is **due work**, not a history rescan. The same three
+waiting ritnummers return every five minutes; no cron Chiron POST.
+
+COMPLIANCE_KV GraphQL, same 5-minute units as the P0 baseline:
+
+| Window (UTC) | Reads | Writes | Lists | Deletes | Source |
+| --- | ---: | ---: | ---: | ---: | --- |
+| P0 20:00–22:00 avg (n=24) | **1 629** | 40.4 | 5.0 | 0 | analytics |
+| Night 23:00–05:00 avg (n=72) | 187 | 16.8 | 4.3 | 7.5 | analytics |
+| 04:55 | 153 | 17 | 4 | 6 | analytics |
+| 05:00 | 193 | 15 | 4 | 6 | analytics |
+| 05:10 (matches tailed 07:10) | 196 | 14 | 4 | 6 | analytics |
+| 05:05 | 224 | 16 | 8 | 6 | analytics; **+4 lists from this closeout KV list** |
+
+Hourly reads 20:00–21:00 UTC **19.5–19.6 k** → 00:00–04:00 UTC **2.0–2.1 k**
+(dashboard ~20 k → ~2 k). Per 5 min: **1 629 → ~180 reads (−89%)**. Lasting
+hermetic idle (3/0/4/0) is not the live shape: live ticks select 20 due
+events every cycle. Remaining ~160 non-event reads per tick are derived
+(connection, status, marker, recover cursor) — not a full-scope event list.
+
+BOOKING_KV overnight ~130 reads/hour (~11 per 5 min), no list storm.
+
+The cost assignment is closed on these measurements. No further code change;
+the leftover due-at-0 set is processed at the existing budget of 20 and is
+not a new scan.
 
 ## 8. Review-point closeout
 
