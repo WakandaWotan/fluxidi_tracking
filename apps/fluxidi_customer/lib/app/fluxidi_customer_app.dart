@@ -34,6 +34,7 @@ class FluxidiCustomerApp extends StatefulWidget {
     this.deepLinkSource,
     this.sessionLock,
     this.lockAfterBackground = const Duration(seconds: 1),
+    this.now,
   });
 
   final CustomerAppConfig config;
@@ -47,6 +48,9 @@ class FluxidiCustomerApp extends StatefulWidget {
   /// How long the app must stay in the background before a lock is requested.
   final Duration lockAfterBackground;
 
+  /// Clock for the background grace period. Tests advance this without waiting.
+  final DateTime Function()? now;
+
   @override
   State<FluxidiCustomerApp> createState() => _FluxidiCustomerAppState();
 }
@@ -57,7 +61,14 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp>
   late final _CustomerLockNavigatorObserver _lockObserver =
       _CustomerLockNavigatorObserver(_syncNavigationBusy);
   StreamSubscription<Uri>? _linkSub;
-  DateTime? _pausedAt;
+
+  /// First moment the app left the foreground. The return path also emits
+  /// [AppLifecycleState.hidden] before [AppLifecycleState.resumed]; that event
+  /// must not replace this timestamp or every reopen looks shorter than the
+  /// grace period and the lock is skipped.
+  DateTime? _backgroundSince;
+
+  DateTime _now() => widget.now?.call() ?? DateTime.now();
 
   CustomerSessionLock get _lock =>
       widget.sessionLock ?? CustomerSessionLock.instance;
@@ -100,19 +111,28 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      _pausedAt = DateTime.now();
+      _backgroundSince ??= _now();
       return;
     }
     if (state != AppLifecycleState.resumed) return;
-    final pausedAt = _pausedAt;
-    _pausedAt = null;
+    final backgroundSince = _backgroundSince;
+    _backgroundSince = null;
     _lock.paymentReturnActive = _paymentReturnVisible;
     _syncNavigationBusy();
-    if (pausedAt == null) return;
-    if (DateTime.now().difference(pausedAt) < widget.lockAfterBackground) {
+    if (backgroundSince == null) return;
+    final elapsed = _now().difference(backgroundSince);
+    if (elapsed < widget.lockAfterBackground) {
+      debugPrint(
+        '[CUSTOMER_LOCK] resume skipped elapsedMs=${elapsed.inMilliseconds} '
+        'graceMs=${widget.lockAfterBackground.inMilliseconds}',
+      );
       return;
     }
     _lock.markLockPending();
+    debugPrint(
+      '[CUSTOMER_LOCK] resume request elapsedMs=${elapsed.inMilliseconds} '
+      'defer=${_lock.shouldDeferLock} enabled=${_lock.isEnabled}',
+    );
     unawaited(_lock.applyPendingLockIfSafe());
   }
 

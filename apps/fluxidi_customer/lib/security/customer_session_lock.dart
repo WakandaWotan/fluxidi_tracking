@@ -131,9 +131,11 @@ class CustomerSessionLock extends ChangeNotifier {
     await _migratePlaintextIfNeeded();
     final stored = await _readStoredSession();
     if (stored == null) {
-      await _surface.deletePlaintextFile();
       _pendingLock = false;
       _phase = CustomerSessionLockPhase.unlocked;
+      debugPrint(
+        '[CUSTOMER_LOCK] launch open reason=no_session enabled=$_enabled',
+      );
       notifyListeners();
       return;
     }
@@ -141,31 +143,41 @@ class CustomerSessionLock extends ChangeNotifier {
       await _discardSessionSecrets();
       _pendingLock = false;
       _phase = CustomerSessionLockPhase.unlocked;
+      debugPrint('[CUSTOMER_LOCK] launch open reason=invalid enabled=$_enabled');
       notifyListeners();
       return;
     }
     await _surface.deletePlaintextFile();
     if (_enabled) {
       await _forgetProcessSession();
+      _pendingLock = false;
       _phase = CustomerSessionLockPhase.locked;
+      debugPrint('[CUSTOMER_LOCK] launch locked');
       notifyListeners();
       return;
     }
     _surface.remember(stored);
+    _pendingLock = false;
     _phase = CustomerSessionLockPhase.unlocked;
+    debugPrint('[CUSTOMER_LOCK] launch open enabled=false');
     notifyListeners();
   }
 
-  Future<void> persistCurrentSession() async {
+  Future<bool> persistCurrentSession() async {
     final session = _surface.peek() ?? await _surface.loadFromFile();
     if (session == null || !_surface.isValid(session)) {
       await _surface.deletePlaintextFile();
-      return;
+      return false;
     }
-    await _vault.writeSessionJson(jsonEncode(session.toJson()));
+    final wrote = await _vault.writeSessionJson(jsonEncode(session.toJson()));
+    if (!wrote) {
+      debugPrint('[CUSTOMER_LOCK] session vault write failed');
+      return false;
+    }
     await _forgetProcessSession();
     await _surface.deletePlaintextFile();
     _surface.remember(session);
+    return true;
   }
 
   Future<CustomerUnlockResult> enableAfterAuthentication({
@@ -174,8 +186,11 @@ class CustomerSessionLock extends ChangeNotifier {
     if (!await _unlock.canProtect()) return CustomerUnlockResult.unavailable;
     final result = await _unlock.authenticate(reason: reason);
     if (result != CustomerUnlockResult.success) return result;
-    await persistCurrentSession();
-    await _vault.writeUnlockEnabled(true);
+    if (!await persistCurrentSession()) return CustomerUnlockResult.failed;
+    if (!await _vault.writeUnlockEnabled(true)) {
+      debugPrint('[CUSTOMER_LOCK] unlock flag write failed');
+      return CustomerUnlockResult.failed;
+    }
     _enabled = true;
     _phase = CustomerSessionLockPhase.unlocked;
     notifyListeners();
@@ -188,7 +203,10 @@ class CustomerSessionLock extends ChangeNotifier {
     if (!await _unlock.canProtect()) return CustomerUnlockResult.unavailable;
     final result = await _unlock.authenticate(reason: reason);
     if (result != CustomerUnlockResult.success) return result;
-    await _vault.writeUnlockEnabled(false);
+    if (!await _vault.writeUnlockEnabled(false)) {
+      debugPrint('[CUSTOMER_LOCK] unlock flag clear failed');
+      return CustomerUnlockResult.failed;
+    }
     _enabled = false;
     _pendingLock = false;
     _phase = CustomerSessionLockPhase.unlocked;
@@ -286,7 +304,14 @@ class CustomerSessionLock extends ChangeNotifier {
       await _surface.deletePlaintextFile();
       return;
     }
-    await _vault.writeSessionJson(jsonEncode(fileSession.toJson()));
+    final wrote = await _vault.writeSessionJson(jsonEncode(fileSession.toJson()));
+    if (!wrote) {
+      debugPrint('[CUSTOMER_LOCK] migrate vault write failed');
+      if (!_enabled) {
+        _surface.remember(fileSession);
+      }
+      return;
+    }
     await _forgetProcessSession();
     await _surface.deletePlaintextFile();
     if (!_enabled) {
