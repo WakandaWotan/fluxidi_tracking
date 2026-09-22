@@ -116,6 +116,8 @@ void main() {
       expect(payload['billing_street'], '');
       expect(payload.containsKey('peppol_endpoint_id'), isTrue);
       expect(payload['peppol_endpoint_id'], '');
+      expect(payload.containsKey('home_address'), isFalse);
+      expect(payload.containsKey('homeAddress'), isFalse);
     });
 
     test('12. explicit full save includes complete supported schema', () {
@@ -241,6 +243,9 @@ void main() {
       ).readAsStringSync();
       expect(edit, contains('Synchronisatie met de server is mislukt'));
       expect(edit, contains('explicitProfileSave'));
+      expect(edit, contains('Mijn adres'));
+      expect(edit, contains('Gebruik mijn adres'));
+      expect(edit, contains('homeAddress: _homeAddress'));
       expect(edit, isNot(contains("nl: 'Gegevens opgeslagen.',")));
     });
 

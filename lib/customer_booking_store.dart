@@ -1,3 +1,5 @@
+import 'package:fluxidi_tracking/customer_booking/customer_booking_references.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_payment_display.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 
 class CustomerSavedBooking {
@@ -190,8 +192,22 @@ class CustomerBookingStore {
       'company_id': item.companyId,
       'companyId': item.companyId,
       'public_booking_id': item.publicBookingId,
-      'public_booking_reference': item.publicBookingId,
-      'publicBookingReference': item.publicBookingId,
+      'public_booking_reference': distinctPublicCustomerReference(
+        bookingId: item.bookingId,
+        candidates: <String>[
+          item.publicBookingId,
+          item.publicReference,
+          item.bookingReference,
+        ],
+      ),
+      'publicBookingReference': distinctPublicCustomerReference(
+        bookingId: item.bookingId,
+        candidates: <String>[
+          item.publicBookingId,
+          item.publicReference,
+          item.bookingReference,
+        ],
+      ),
       'planning_reference': item.planningReference,
       'planningReference': item.planningReference,
       'booking_reference': item.bookingReference,
@@ -202,10 +218,28 @@ class CustomerBookingStore {
       'receiptReference': item.receiptReference,
       'payment_booking_id': item.paymentBookingId,
       'payment_status': item.paymentStatus,
+      'payment_method': item.paymentMethod,
+      'paymentMethod': item.paymentMethod,
+      'payment_mode': item.paymentMode,
+      'paymentMode': item.paymentMode,
+      'payment_provider': item.paymentProvider,
+      'paymentProvider': item.paymentProvider,
       'status': item.status,
       'price': item.price,
       'currency': item.currency,
-      'quote': item.quote,
+      'customer_name': item.customerName,
+      'customer_phone': item.customerPhone,
+      'customer_email': item.customerEmail,
+      'pax': item.pax,
+      'bags': item.bags,
+      'quote': mergeCustomerPaymentChannelIntoQuote(
+        item.quote,
+        CustomerPaymentChannel(
+          method: item.paymentMethod,
+          mode: item.paymentMode,
+          provider: item.paymentProvider,
+        ),
+      ),
       'updated_at': item.updatedAt,
     };
     return CustomerSavedBooking(
@@ -221,13 +255,14 @@ class CustomerBookingStore {
       currency: item.currency,
       paymentStatus: item.paymentStatus,
       bookingStatus: item.status,
-      publicReference: [
-        item.publicBookingId,
-        item.receiptReference,
-        item.planningReference,
-        item.bookingReference,
-        item.publicReference,
-      ].firstWhere((value) => value.trim().isNotEmpty, orElse: () => ''),
+      publicReference: distinctPublicCustomerReference(
+        bookingId: item.bookingId,
+        candidates: <String>[
+          item.publicBookingId,
+          item.publicReference,
+          item.bookingReference,
+        ],
+      ),
       rawSnapshot: raw,
     );
   }
@@ -241,6 +276,9 @@ class CustomerBookingStore {
       return '';
     }
 
+    final paymentChannel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+      booking.rawSnapshot,
+    ]);
     return StoredCustomerBooking(
       bookingId: booking.bookingId,
       tenantId: firstNonEmpty([
@@ -253,28 +291,39 @@ class CustomerBookingStore {
         booking.rawSnapshot['company_id'],
         booking.rawSnapshot['companyId'],
       ]),
-      publicBookingId: firstNonEmpty([
-        booking.rawSnapshot['public_booking_id'],
-        booking.rawSnapshot['public_booking_reference'],
-        booking.rawSnapshot['publicBookingReference'],
-        booking.rawSnapshot['booking_reference'],
-        booking.rawSnapshot['bookingReference'],
-        booking.rawSnapshot['public_reference'],
-        booking.rawSnapshot['publicReference'],
-        booking.publicReference,
-      ]),
+      publicBookingId: distinctPublicCustomerReference(
+        bookingId: booking.bookingId,
+        candidates: <String?>[
+          booking.rawSnapshot['public_booking_id']?.toString(),
+          booking.rawSnapshot['public_booking_reference']?.toString(),
+          booking.rawSnapshot['publicBookingReference']?.toString(),
+          booking.rawSnapshot['booking_reference']?.toString(),
+          booking.rawSnapshot['bookingReference']?.toString(),
+          booking.rawSnapshot['public_reference']?.toString(),
+          booking.rawSnapshot['publicReference']?.toString(),
+          booking.publicReference,
+        ],
+      ),
       planningReference: firstNonEmpty([
         booking.rawSnapshot['planning_reference'],
         booking.rawSnapshot['planningReference'],
       ]),
-      bookingReference: firstNonEmpty([
-        booking.rawSnapshot['booking_reference'],
-        booking.rawSnapshot['bookingReference'],
-      ]),
-      publicReference: firstNonEmpty([
-        booking.rawSnapshot['public_reference'],
-        booking.rawSnapshot['publicReference'],
-      ]),
+      bookingReference: distinctPublicCustomerReference(
+        bookingId: booking.bookingId,
+        candidates: <String?>[
+          booking.rawSnapshot['booking_reference']?.toString(),
+          booking.rawSnapshot['bookingReference']?.toString(),
+          booking.publicReference,
+        ],
+      ),
+      publicReference: distinctPublicCustomerReference(
+        bookingId: booking.bookingId,
+        candidates: <String?>[
+          booking.rawSnapshot['public_reference']?.toString(),
+          booking.rawSnapshot['publicReference']?.toString(),
+          booking.publicReference,
+        ],
+      ),
       receiptReference: firstNonEmpty([
         booking.rawSnapshot['receipt_reference'],
         booking.rawSnapshot['receiptReference'],
@@ -296,13 +345,26 @@ class CustomerBookingStore {
       pickupIso: booking.pickupIso,
       price: booking.price,
       currency: booking.currency,
+      pax: firstNonEmpty([
+        booking.rawSnapshot['pax'],
+        booking.rawSnapshot['passengers'],
+      ]),
+      bags: firstNonEmpty([
+        booking.rawSnapshot['bags'],
+      ]),
       paymentStatus: booking.paymentStatus,
+      paymentMethod: paymentChannel.method,
+      paymentMode: paymentChannel.mode,
+      paymentProvider: paymentChannel.provider,
       status: booking.bookingStatus,
       createdAt: booking.createdAt,
       updatedAt: DateTime.now().toIso8601String(),
-      quote: booking.rawSnapshot['quote'] is Map
-          ? Map<String, dynamic>.from(booking.rawSnapshot['quote'] as Map)
-          : const <String, dynamic>{},
+      quote: mergeCustomerPaymentChannelIntoQuote(
+        booking.rawSnapshot['quote'] is Map
+            ? Map<String, dynamic>.from(booking.rawSnapshot['quote'] as Map)
+            : const <String, dynamic>{},
+        paymentChannel,
+      ),
     );
   }
 }

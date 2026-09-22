@@ -17,6 +17,11 @@ import 'package:fluxidi_tracking/main.dart'
         CustomerProfileEditPage,
         CustomerRegionRegistrationPage,
         CustomerSavedBookingsPage;
+
+import '../screens/customer_region_radar_screen.dart';
+import '../security/customer_booking_presence.dart';
+import '../security/customer_session_lock.dart';
+import '../security/customer_unlock_offer.dart';
 import 'package:fluxidi_tracking/nearby_partners_page.dart';
 import 'package:fluxidi_tracking/privacy/fluxidi_privacy_account.dart';
 import 'package:fluxidi_tracking/privacy/fluxidi_privacy_ui.dart';
@@ -147,15 +152,17 @@ Future<void> openTaxiFlow(
   DateTime? pickupAt,
   String sourceLabel = 'customer_home_taxi',
 }) {
-  return openCustomerBookingFlow(
-    context,
-    entry: customerTaxiEntry(
-      pickup: pickup,
-      destination: destination,
-      pickupAt: pickupAt,
-      sourceLabel: sourceLabel,
+  return CustomerBookingPresence.guard(
+    () => openCustomerBookingFlow(
+      context,
+      entry: customerTaxiEntry(
+        pickup: pickup,
+        destination: destination,
+        pickupAt: pickupAt,
+        sourceLabel: sourceLabel,
+      ),
+      onGoToStartPage: _startPage,
     ),
-    onGoToStartPage: _startPage,
   );
 }
 
@@ -170,15 +177,17 @@ Future<void> openAirportFlow(
   bool toAirport = true,
   String sourceLabel = 'airport_flow',
 }) {
-  return openCustomerBookingFlow(
-    context,
-    entry: CustomerBookingEntryContext(
-      kind: CustomerBookingKind.airport,
-      pickup: pickup?.hasAddress == true ? pickup!.toBookingPlace() : null,
-      toAirport: toAirport,
-      sourceLabel: sourceLabel,
+  return CustomerBookingPresence.guard(
+    () => openCustomerBookingFlow(
+      context,
+      entry: CustomerBookingEntryContext(
+        kind: CustomerBookingKind.airport,
+        pickup: pickup?.hasAddress == true ? pickup!.toBookingPlace() : null,
+        toAirport: toAirport,
+        sourceLabel: sourceLabel,
+      ),
+      onGoToStartPage: _startPage,
     ),
-    onGoToStartPage: _startPage,
   );
 }
 
@@ -188,6 +197,7 @@ Future<void> openHotelsFlow(BuildContext context) {
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       builder: (_) => HotelsPage(
+        compactCustomerLayout: true,
         onTaxiToStay: (stay) async {
           final address =
               stay.address.trim().isNotEmpty ? stay.address.trim() : stay.name;
@@ -237,16 +247,18 @@ Future<void> _openStayRide(
   required String sourceLabel,
 }) {
   if (!context.mounted) return Future<void>.value();
-  return openCustomerBookingFlow(
-    context,
-    entry: CustomerBookingEntryContext(
-      kind: CustomerBookingKind.stay,
-      destination: destination?.hasAddress == true
-          ? destination!.toBookingPlace()
-          : null,
-      sourceLabel: sourceLabel,
+  return CustomerBookingPresence.guard(
+    () => openCustomerBookingFlow(
+      context,
+      entry: CustomerBookingEntryContext(
+        kind: CustomerBookingKind.stay,
+        destination: destination?.hasAddress == true
+            ? destination!.toBookingPlace()
+            : null,
+        sourceLabel: sourceLabel,
+      ),
+      onGoToStartPage: _startPage,
     ),
-    onGoToStartPage: _startPage,
   );
 }
 
@@ -255,26 +267,72 @@ Future<void> openEventsFlow(BuildContext context) {
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       builder: (_) => EventsPage(
+        compactCustomerLayout: true,
         dataSource: buildDefaultEventLocatorDataSource(
           baseUrl: kBookingBaseUrl,
         ),
+        onOpenHotels: (event) {
+          final query = <String>[
+            if (event.city.trim().isNotEmpty) event.city.trim(),
+            if (event.locationName.trim().isNotEmpty) event.locationName.trim(),
+          ].join(' ');
+          unawaited(
+            Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => HotelsPage(
+                  compactCustomerLayout: true,
+                  initialSearchQuery: query,
+                  onTaxiToStay: (stay) async {
+                    final address = stay.address.trim().isNotEmpty
+                        ? stay.address.trim()
+                        : stay.name;
+                    await _openStayRide(
+                      context,
+                      destination: CustomerFlowPlace(
+                        address: address.trim(),
+                        name: stay.name.trim(),
+                        latitude: stay.lat,
+                        longitude: stay.lng,
+                      ),
+                      sourceLabel: 'event_hotels',
+                    );
+                  },
+                  onTaxiToDestination: (destination) async {
+                    await _openStayRide(
+                      context,
+                      destination: CustomerFlowPlace(
+                        address: destination.prefillDestinationText,
+                        name: destination.destinationName,
+                        latitude: destination.latitude,
+                        longitude: destination.longitude,
+                      ),
+                      sourceLabel: 'event_hotels',
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
         onBookEvent: (event) {
           final destination = eventTaxiDestination(event);
           if (!context.mounted) return;
           unawaited(
-            openCustomerBookingFlow(
-              context,
-              entry: CustomerBookingEntryContext(
-                kind: CustomerBookingKind.event,
-                destination: CustomerBookingPlace(
-                  address: destination.text,
-                  latitude: destination.lat,
-                  longitude: destination.lng,
-                  startsAt: event.startAtUtc,
+            CustomerBookingPresence.guard(
+              () => openCustomerBookingFlow(
+                context,
+                entry: CustomerBookingEntryContext(
+                  kind: CustomerBookingKind.event,
+                  destination: CustomerBookingPlace(
+                    address: destination.text,
+                    latitude: destination.lat,
+                    longitude: destination.lng,
+                    startsAt: event.startAtUtc,
+                  ),
+                  sourceLabel: 'event_flow',
                 ),
-                sourceLabel: 'event_flow',
+                onGoToStartPage: _startPage,
               ),
-              onGoToStartPage: _startPage,
             ),
           );
         },
@@ -299,11 +357,11 @@ Future<void> openMyBookings(BuildContext context) {
   );
 }
 
-/// Opens Regio Radar: the existing region registration page.
+/// Opens Regio Radar: the customer-app screen that shares the website data.
 Future<void> openRegionRadar(BuildContext context) {
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
-      builder: (_) => const CustomerRegionRegistrationPage(),
+      builder: (_) => const CustomerRegionRadarScreen(),
     ),
   );
 }
@@ -360,18 +418,28 @@ Future<CustomerSession?> signInCustomer(BuildContext context) async {
       builder: (_) => const CustomerPhoneRecoveryPage(),
     ),
   );
+  CustomerSession? session;
   if (result == CustomerPhoneRecoveryPage.newCustomerResult) {
     if (!context.mounted) return null;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => const CustomerOnboardingPage()),
     );
-    return CustomerSessionStore.instance.loadValidSession();
+    session = await CustomerSessionStore.instance.loadValidSession();
+  } else if (result is CustomerSession) {
+    session = result;
+  } else {
+    session = await CustomerSessionStore.instance.loadValidSession();
   }
-  if (result is CustomerSession) return result;
-  return CustomerSessionStore.instance.loadValidSession();
+  if (session != null) {
+    await CustomerSessionLock.instance.persistCurrentSession();
+    if (context.mounted) {
+      await offerCustomerDeviceUnlockAfterSignIn(context);
+    }
+  }
+  return session;
 }
 
 /// Signs the customer out of this device.
 Future<void> signOutCustomer() async {
-  await CustomerSessionStore.instance.clear();
+  await CustomerSessionLock.instance.signOut();
 }

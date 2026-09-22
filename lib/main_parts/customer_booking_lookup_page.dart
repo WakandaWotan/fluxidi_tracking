@@ -26,7 +26,8 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   @override
   void dispose() {
@@ -84,6 +85,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
             en: 'Booking not found. Please check your reference.',
             fr: 'Reservation introuvable. Verifiez votre reference.',
             es: 'Reserva no encontrada. Verifica tu referencia.',
+      de: 'Buchung nicht gefunden. Prüfen Sie Ihre Referenz.',
           );
         });
         return;
@@ -98,6 +100,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
             en: 'Booking not found. Please check your reference.',
             fr: 'Reservation introuvable. Verifiez votre reference.',
             es: 'Reserva no encontrada. Verifica tu referencia.',
+      de: 'Buchung nicht gefunden. Prüfen Sie Ihre Referenz.',
           );
         });
         return;
@@ -112,6 +115,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
             en: 'Details do not match this booking.',
             fr: 'Les coordonnees ne correspondent pas a cette reservation.',
             es: 'Los datos no coinciden con esta reserva.',
+      de: 'Die Angaben stimmen nicht mit dieser Buchung überein.',
           );
         });
         return;
@@ -150,6 +154,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
           en: 'Connection failed. Please try again.',
           fr: 'Connexion echouee. Veuillez reessayer.',
           es: 'Conexion fallida. Intentalo de nuevo.',
+      de: 'Verbindung fehlgeschlagen. Bitte erneut versuchen.',
         );
       });
     }
@@ -235,6 +240,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                   en: 'Check or follow your booking',
                   fr: 'Verifier ou suivre votre reservation',
                   es: 'Consulta o sigue tu reserva',
+      de: 'Buchung prüfen oder verfolgen',
                 ),
               ),
             ),
@@ -250,6 +256,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                         en: 'Enter your booking reference to look up your booking.',
                         fr: 'Entrez votre reference pour retrouver la reservation.',
                         es: 'Introduce tu referencia para encontrar tu reserva.',
+      de: 'Geben Sie Ihre Buchungsreferenz ein, um die Buchung zu suchen.',
                       ),
                       style: TextStyle(
                         color: palette.textMuted.withOpacity(0.94),
@@ -262,6 +269,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                         en: 'Booking reference',
                         fr: 'Reference de reservation',
                         es: 'Referencia de reserva',
+      de: 'Buchungsreferenz',
                       ),
                       controller: _bookingIdCtrl,
                       palette: palette,
@@ -274,6 +282,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                             en: 'Enter your booking reference',
                             fr: 'Entrez votre reference',
                             es: 'Introduce tu referencia',
+      de: 'Geben Sie Ihre Buchungsreferenz ein',
                           );
                         }
                         if (s.length < 4) {
@@ -282,6 +291,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                             en: 'Reference looks too short',
                             fr: 'Reference trop courte',
                             es: 'La referencia es muy corta',
+      de: 'Die Referenz scheint zu kurz',
                           );
                         }
                         return null;
@@ -294,6 +304,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                         en: 'Email or phone (optional)',
                         fr: 'E-mail ou telephone (optionnel)',
                         es: 'Email o telefono (opcional)',
+      de: 'E-Mail oder Telefon (optional)',
                       ),
                       controller: _contactCtrl,
                       palette: palette,
@@ -302,6 +313,7 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                         en: 'Extra check against your details',
                         fr: 'Verification supplementaire',
                         es: 'Verificacion adicional',
+      de: 'Zusätzliche Prüfung anhand Ihrer Daten',
                       ),
                       keyboardType: TextInputType.emailAddress,
                     ),
@@ -335,12 +347,14 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
                                 en: 'Searching...',
                                 fr: 'Recherche...',
                                 es: 'Buscando...',
+      de: 'Suche…',
                               )
                             : _t(
                                 nl: 'Zoek mijn boeking',
                                 en: 'Find my booking',
                                 fr: 'Trouver ma reservation',
                                 es: 'Buscar mi reserva',
+      de: 'Meine Buchung finden',
                               ),
                       ),
                       style: ElevatedButton.styleFrom(

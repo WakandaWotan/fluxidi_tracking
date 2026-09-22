@@ -15,6 +15,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_layout.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_quote.dart';
 import 'package:fluxidi_tracking/payment/booking_billing_identity_form.dart';
+import 'package:fluxidi_tracking/customer_profile/customer_stored_address.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
@@ -1171,9 +1172,20 @@ void main() {
           preferredPostcode: '9688',
           companyName: '',
           vatNumber: '',
-          billingStreet: 'Koekamerstraat 488A',
-          billingPostalCode: '9688',
-          billingCity: 'Maarkedal',
+          billingStreet: 'Factuurstraat 1',
+          billingPostalCode: '1000',
+          billingCity: 'Brussel',
+          homeAddress: CustomerStoredAddress(
+            street: 'Koekamerstraat',
+            houseNumber: '488',
+            houseAddition: 'A',
+            postalCode: '9688',
+            locality: 'Maarkedal',
+            country: 'BE',
+            lat: 50.77205,
+            lon: 3.66942,
+            placeType: 'address',
+          ),
           createdAt: '2026-01-01',
           updatedAt: '2026-01-01',
         ),
@@ -1804,10 +1816,51 @@ void main() {
       find.byKey(kCustomerBookingCompanyLogoImageKey),
     );
     expect(image.fit, BoxFit.contain);
-    expect(image.width, kCustomerBookingCompanyLogoWidth);
-    expect(image.height, kCustomerBookingCompanyLogoHeight);
-    expect(kCustomerBookingCompanyLogoWidth, inInclusiveRange(100, 120));
-    expect(kCustomerBookingCompanyLogoHeight, inInclusiveRange(40, 48));
+    expect(image.width, kCustomerBookingCompanyLogoPhoneWidth);
+    expect(image.height, kCustomerBookingCompanyLogoPhoneHeight);
+  });
+
+  testWidgets('tablet company banner splits logo and name evenly', (
+    tester,
+  ) async {
+    await _pumpFlow(
+      tester,
+      size: const Size(800, 1280),
+      entry: const CustomerBookingEntryContext(
+        kind: CustomerBookingKind.airport,
+        company: CustomerBookingCompany(
+          partnerId: 'partner_demo',
+          companyName: 'All-in Taxi Christophe Vanroeghem',
+        ),
+      ),
+      profileGet: (uri) async {
+        if (uri.path.contains('availability')) {
+          return _defaultProfileGet()(uri);
+        }
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'ok': true,
+            'company_name': 'All-in Taxi Christophe Vanroeghem',
+            'media': <String, dynamic>{
+              'logo_url': 'https://cdn.example/demo-logo.png',
+            },
+          }),
+          200,
+        );
+      },
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final image = tester.widget<Image>(
+      find.byKey(kCustomerBookingCompanyLogoImageKey),
+    );
+    expect(image.fit, BoxFit.contain);
+    expect(image.height, kCustomerBookingCompanyLogoTabletMaxHeight);
+    expect(image.width, greaterThan(kCustomerBookingCompanyLogoWidth * 1.5));
+    expect(
+      find.text('All-in Taxi Christophe Vanroeghem', skipOffstage: false),
+      findsWidgets,
+    );
   });
 
   testWidgets(
@@ -1964,9 +2017,20 @@ void main() {
         preferredPostcode: '9688',
         companyName: '',
         vatNumber: '',
-        billingStreet: 'Koekamerstraat 488A',
-        billingPostalCode: '9688',
-        billingCity: 'Maarkedal',
+        billingStreet: 'Factuurstraat 1',
+        billingPostalCode: '1000',
+        billingCity: 'Brussel',
+        homeAddress: CustomerStoredAddress(
+          street: 'Koekamerstraat',
+          houseNumber: '488',
+          houseAddition: 'A',
+          postalCode: '9688',
+          locality: 'Maarkedal',
+          country: 'BE',
+          lat: 50.77205,
+          lon: 3.66942,
+          placeType: 'address',
+        ),
         createdAt: '2026-01-01',
         updatedAt: '2026-01-01',
       ),

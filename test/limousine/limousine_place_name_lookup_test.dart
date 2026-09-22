@@ -16,12 +16,12 @@ void main() {
     expect(uri.queryParameters['types'], 'address,place,postcode');
   });
 
-  test('English UI keeps local Belgian place names in the search request', () {
+  test('English UI still matches Dutch place names but asks for English labels', () {
     for (final place in const <String>['Gent', 'Kortrijk', 'Ronse']) {
       expect(limousineAddressLooksLikePlaceName(place), isTrue);
       expect(
         limousineMapboxForwardLanguage(query: place, uiLanguage: 'en'),
-        isEmpty,
+        'en,nl',
       );
       final uri = limousineMapboxPlacesUri(
         query: place,
@@ -32,9 +32,26 @@ void main() {
         ),
         types: 'address,place,postcode',
       );
-      expect(uri.queryParameters.containsKey('language'), isFalse);
+      expect(uri.queryParameters['language'], 'en,nl');
       expect(uri.queryParameters['types'], 'address,place,postcode');
     }
+  });
+
+  test('Dutch UI sends language=nl for Ronse so labels stay Dutch', () {
+    expect(
+      limousineMapboxForwardLanguage(query: 'Ronse', uiLanguage: 'nl'),
+      'nl',
+    );
+    final uri = limousineMapboxPlacesUri(
+      query: 'Ronse',
+      token: 'test-token',
+      language: limousineMapboxForwardLanguage(
+        query: 'Ronse',
+        uiLanguage: 'nl',
+      ),
+      types: 'address,place,postcode',
+    );
+    expect(uri.queryParameters['language'], 'nl');
   });
 
   test('street queries still send the UI language', () {

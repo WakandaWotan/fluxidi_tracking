@@ -13,6 +13,11 @@
     <!-- Scanning a company's booking QR code. -->
     <uses-permission android:name="android.permission.CAMERA"/>
 
+    <!-- Official OS fingerprint / face dialog. Device PIN remains the
+         fallback the operating system already offers. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+
     <!-- Plugins in the shared source merge broad media-library permissions
          that a customer app does not need. Strip them so this build cannot ask
          for more than it uses. -->
@@ -33,7 +38,7 @@
         tools:node="remove"/>
 
     <application
-        android:label="Fluxidi Customer Dev"
+        android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
@@ -67,18 +72,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Own development payment-return link:
-                 fluxidicustomerdev://pay/return
-                 The existing app's fluxidi://pay scheme is deliberately NOT
-                 declared here, so both apps can be installed side by side
-                 without competing for the same link. Opening this link only
-                 shows a neutral screen; it never confirms a payment. -->
+            <!-- Own payment-return link. The scheme is a build placeholder so
+                 the Play identity (fluxidicustomer) and the local development
+                 identity (fluxidicustomerdev) stay apart. The existing app's
+                 fluxidi://pay scheme is deliberately NOT declared here. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data
-                    android:scheme="fluxidicustomerdev"
+                    android:scheme="${paymentReturnScheme}"
                     android:host="pay"
                     android:path="/return"/>
             </intent-filter>

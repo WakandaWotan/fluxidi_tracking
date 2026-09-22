@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
@@ -15,6 +16,8 @@ import '../deeplinks/customer_deep_link.dart';
 import '../deeplinks/customer_deep_link_source.dart';
 import '../screens/customer_payment_return_screen.dart';
 import '../screens/customer_shell_screen.dart';
+import '../security/customer_session_lock.dart';
+import '../security/customer_session_lock_gate.dart';
 import 'customer_app_config.dart';
 import 'customer_routes.dart';
 import 'customer_theme.dart';
@@ -29,6 +32,8 @@ class FluxidiCustomerApp extends StatefulWidget {
     super.key,
     this.config = kCustomerAppConfig,
     this.deepLinkSource,
+    this.sessionLock,
+    this.lockAfterBackground = const Duration(seconds: 1),
   });
 
   final CustomerAppConfig config;
@@ -36,13 +41,26 @@ class FluxidiCustomerApp extends StatefulWidget {
   /// When null, no link source is attached at all.
   final CustomerDeepLinkSource? deepLinkSource;
 
+  /// Test override. Production uses [CustomerSessionLock.instance].
+  final CustomerSessionLock? sessionLock;
+
+  /// How long the app must stay in the background before a lock is requested.
+  final Duration lockAfterBackground;
+
   @override
   State<FluxidiCustomerApp> createState() => _FluxidiCustomerAppState();
 }
 
-class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
+class _FluxidiCustomerAppState extends State<FluxidiCustomerApp>
+    with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  late final _CustomerLockNavigatorObserver _lockObserver =
+      _CustomerLockNavigatorObserver(_syncNavigationBusy);
   StreamSubscription<Uri>? _linkSub;
+  DateTime? _pausedAt;
+
+  CustomerSessionLock get _lock =>
+      widget.sessionLock ?? CustomerSessionLock.instance;
 
   /// Shown above the current screen after an own-scheme return link.
   ///
@@ -54,6 +72,8 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_lock.attach());
     // The bridged flows offer a "back to start" action. Point it at this app's
     // own start page instead of the combined app's customer home.
     registerCustomerStartPage(
@@ -71,8 +91,33 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _linkSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _pausedAt = DateTime.now();
+      return;
+    }
+    if (state != AppLifecycleState.resumed) return;
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    _lock.paymentReturnActive = _paymentReturnVisible;
+    _syncNavigationBusy();
+    if (pausedAt == null) return;
+    if (DateTime.now().difference(pausedAt) < widget.lockAfterBackground) {
+      return;
+    }
+    _lock.markLockPending();
+    unawaited(_lock.applyPendingLockIfSafe());
+  }
+
+  void _syncNavigationBusy() {
+    _lock.navigationBusy = _navigatorKey.currentState?.canPop() == true;
   }
 
   Future<void> _handleColdStartLink(CustomerDeepLinkSource source) async {
@@ -96,12 +141,14 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
     // Leave any deeper flow first, so closing the return screen lands on start.
     _navigatorKey.currentState?.popUntil((route) => route.isFirst);
     if (!mounted) return;
+    _lock.paymentReturnActive = true;
     setState(() => _paymentReturnVisible = true);
   }
 
   void _closePaymentReturn() {
     if (!_paymentReturnVisible) return;
     setState(() => _paymentReturnVisible = false);
+    _lock.paymentReturnActive = false;
   }
 
   @override
@@ -112,11 +159,20 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
         return ValueListenableBuilder<AppLanguage>(
           valueListenable: appLanguageNotifier,
           builder: (context, _, __) {
+            final palette = paletteForCustomerTheme(variant);
+            final theme = buildCustomerTheme(widget.config, variant: variant);
+            applyCustomerThemeSystemUiOverlay(palette);
             return MaterialApp(
               title: widget.config.appName,
               debugShowCheckedModeBanner: false,
               navigatorKey: _navigatorKey,
-              theme: buildCustomerTheme(widget.config, variant: variant),
+              navigatorObservers: <NavigatorObserver>[_lockObserver],
+              theme: theme,
+              darkTheme: theme,
+              // The palette already encodes light vs dark. Pinning the mode
+              // stops the OS dark setting from substituting a default dark
+              // Material 3 theme that would ignore the customer's choice.
+              themeMode: palette.isDark ? ThemeMode.dark : ThemeMode.light,
               // The chosen app language wins over the device locale, and the
               // framework delegates must cover every language in the list or
               // MaterialLocalizations.of() throws under nl/fr/es/de.
@@ -129,17 +185,33 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
               onGenerateRoute: (settings) =>
                   generateCustomerRoute(settings, config: widget.config),
               builder: (context, child) {
-                if (!_paymentReturnVisible) {
-                  return child ?? const SizedBox.shrink();
-                }
-                return Stack(
-                  children: <Widget>[
-                    child ?? const SizedBox.shrink(),
-                    CustomerPaymentReturnScreen(
-                      config: widget.config,
-                      onClose: _closePaymentReturn,
-                    ),
-                  ],
+                return ListenableBuilder(
+                  listenable: _lock,
+                  builder: (context, _) {
+                    final page = !_paymentReturnVisible
+                        ? (child ?? const SizedBox.shrink())
+                        : Stack(
+                            children: <Widget>[
+                              child ?? const SizedBox.shrink(),
+                              CustomerPaymentReturnScreen(
+                                config: widget.config,
+                                onClose: _closePaymentReturn,
+                              ),
+                            ],
+                          );
+                    final locked = _lock.isLocked
+                        ? Stack(
+                            children: <Widget>[
+                              page,
+                              CustomerSessionLockGate(lock: _lock),
+                            ],
+                          )
+                        : page;
+                    return AnnotatedRegion<SystemUiOverlayStyle>(
+                      value: systemUiOverlayStyleForCustomerTheme(palette),
+                      child: locked,
+                    );
+                  },
                 );
               },
             );
@@ -148,4 +220,26 @@ class _FluxidiCustomerAppState extends State<FluxidiCustomerApp> {
       },
     );
   }
+}
+
+class _CustomerLockNavigatorObserver extends NavigatorObserver {
+  _CustomerLockNavigatorObserver(this._onStackChanged);
+
+  final VoidCallback _onStackChanged;
+
+  void _notify() => _onStackChanged();
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) => _notify();
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => _notify();
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _notify();
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _notify();
 }

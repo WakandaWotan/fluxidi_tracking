@@ -10,9 +10,14 @@ class CustomerSavedBookingsPage extends StatefulWidget {
 
 class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   bool _loading = true;
+  bool _refreshing = false;
+  bool _showingLocalCache = false;
+  bool _emptyConfirmed = false;
   String? _error;
+  bool _needsCustomerSignIn = false;
   List<CustomerSavedBooking> _bookings = const <CustomerSavedBooking>[];
   Map<String, String> _paymentOverlayByBookingId = const <String, String>{};
+  final CustomerSavedListOpenGuard _openGuard = CustomerSavedListOpenGuard();
   // Dossier 02: see customer_bookings_page.dart. A return from checkout only
   // triggers a reload; the displayed status is never upgraded locally.
   CustomerThemePalette get _palette =>
@@ -24,7 +29,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   @override
   void initState() {
@@ -90,52 +96,186 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     bool showLoading = true,
     bool runBootstrap = true,
   }) async {
-    if (showLoading) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
+    if (runBootstrap) {
+      return _openGuard.runExclusiveNetwork(
+        () => _openSavedBookings(
+          showLoading: showLoading,
+          runBootstrap: true,
+        ),
+      );
     }
-    try {
-      if (runBootstrap) {
-        await _bootstrapCustomerSessionAndMergeBookings(
-          reason: 'customer_saved_bookings',
-        );
+    return _openSavedBookings(
+      showLoading: showLoading,
+      runBootstrap: false,
+    );
+  }
+
+  Future<void> _openSavedBookings({
+    required bool showLoading,
+    required bool runBootstrap,
+  }) async {
+    final total = Stopwatch()..start();
+    var networkRequests = 0;
+    if (!mounted) return;
+    setState(() {
+      _error = null;
+      if (_bookings.isEmpty && showLoading) {
+        _loading = true;
+      } else if (_bookings.isNotEmpty) {
+        _refreshing = true;
       }
-      // Roundtrip leg status projection: the bootstrap response carries the
-      // quote snapshot taken at booking creation time (operational_legs all
-      // PENDING). After a driver completes only the outbound leg, the worker
-      // /bookings/:id endpoint exposes the authoritative operational_legs
-      // array (outbound COMPLETED, return PENDING). Without this overlay the
-      // saved-bookings list keeps showing both legs as "Gepland".
-      await _overlayAuthoritativeSavedBookings(reason: 'load_local');
+    });
+    try {
+      final sessionWatch = Stopwatch()..start();
+      final session = await CustomerSessionStore.instance.loadValidSession();
+      sessionWatch.stop();
+      final customerKey = session?.customerId;
+      final previousCustomer = _openGuard.customerKey;
+      final generation = _openGuard.begin(customerKey);
+      if (previousCustomer != _openGuard.customerKey && mounted) {
+        setState(() {
+          _bookings = const <CustomerSavedBooking>[];
+          _paymentOverlayByBookingId = const <String, String>{};
+          _showingLocalCache = false;
+          _emptyConfirmed = false;
+        });
+      }
+
+      if (session == null) {
+        if (!_openGuard.accepts(generation, customerKey) || !mounted) return;
+        setState(() {
+          _bookings = const <CustomerSavedBooking>[];
+          _paymentOverlayByBookingId = const <String, String>{};
+          _needsCustomerSignIn = true;
+          _loading = false;
+          _refreshing = false;
+          _emptyConfirmed = true;
+          _showingLocalCache = false;
+        });
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][OPEN_TIMING] phase=signed_out first_visible_ms=${total.elapsedMilliseconds} session_ms=${sessionWatch.elapsedMilliseconds} network=$networkRequests',
+        );
+        return;
+      }
+
+      final localWatch = Stopwatch()..start();
       final items = await CustomerBookingStore.instance.loadAll();
       final visible = await _filterActiveNonHiddenSavedCustomerBookings(items);
-      if (!mounted) return;
-      final overlay = await _buildPaymentOverlayForBookings(
-        visible,
-        source: 'load_local',
-      );
-      if (!mounted) return;
-      setState(() {
-        _bookings = visible;
-        _paymentOverlayByBookingId = overlay;
-        if (showLoading) {
+      localWatch.stop();
+      if (!_openGuard.accepts(generation, customerKey) || !mounted) return;
+
+      if (visible.isNotEmpty) {
+        setState(() {
+          _bookings = visible;
           _loading = false;
-        }
-      });
+          _showingLocalCache = true;
+          _emptyConfirmed = false;
+          _needsCustomerSignIn = false;
+        });
+        debugPrint(
+          '[CUSTOMER_BOOKINGS][OPEN_TIMING] phase=first_visible source=local count=${visible.length} first_visible_ms=${total.elapsedMilliseconds} session_ms=${sessionWatch.elapsedMilliseconds} local_ms=${localWatch.elapsedMilliseconds} network=$networkRequests',
+        );
+      } else if (_bookings.isEmpty) {
+        setState(() {
+          _loading = true;
+          _emptyConfirmed = false;
+        });
+      }
+
+      if (!runBootstrap) {
+        setState(() {
+          _bookings = visible;
+          _loading = false;
+          _refreshing = false;
+          _emptyConfirmed = visible.isEmpty;
+          _showingLocalCache = visible.isNotEmpty;
+          _needsCustomerSignIn = false;
+        });
+        return;
+      }
+
+      final bootstrapWatch = Stopwatch()..start();
+      await _bootstrapCustomerSessionAndMergeBookings(
+        reason: 'customer_saved_bookings',
+      );
+      bootstrapWatch.stop();
+      networkRequests += 1;
+      if (!_openGuard.accepts(generation, customerKey) || !mounted) return;
+
+      final bootStatus = lastCustomerBootstrapHttpStatusCode;
+      final bootstrapOk = bootStatus == 200;
+      final signedOut =
+          bootStatus == 401 ||
+          bootStatus == 403 ||
+          await CustomerSessionStore.instance.loadValidSession() == null;
+
+      final afterItems = await CustomerBookingStore.instance.loadAll();
+      final afterVisible = await _filterActiveNonHiddenSavedCustomerBookings(
+        afterItems,
+      );
+      if (!_openGuard.accepts(generation, customerKey) || !mounted) return;
+
+      if (signedOut) {
+        setState(() {
+          if (visible.isEmpty) {
+            _bookings = const <CustomerSavedBooking>[];
+            _emptyConfirmed = true;
+          }
+          _needsCustomerSignIn = true;
+          _loading = false;
+          _refreshing = false;
+          _showingLocalCache = visible.isNotEmpty;
+        });
+      } else if (!bootstrapOk && visible.isNotEmpty) {
+        setState(() {
+          _needsCustomerSignIn = false;
+          _loading = false;
+          _refreshing = false;
+          _showingLocalCache = true;
+          _error = _t(
+            nl: 'Vernieuwen mislukt. De laatst bekende boekingen blijven zichtbaar.',
+            en: 'Refresh failed. The last known bookings stay visible.',
+            fr: 'Actualisation échouée. Les dernières réservations restent visibles.',
+            es: 'Error al actualizar. Las últimas reservas siguen visibles.',
+            de: 'Aktualisieren fehlgeschlagen. Die zuletzt bekannten Buchungen bleiben sichtbar.',
+          );
+        });
+      } else {
+        setState(() {
+          _bookings = afterVisible;
+          _needsCustomerSignIn = false;
+          _loading = false;
+          _refreshing = false;
+          _showingLocalCache = !bootstrapOk;
+          _emptyConfirmed = bootstrapOk && afterVisible.isEmpty;
+          if (!bootstrapOk && afterVisible.isEmpty) {
+            _error = _t(
+              nl: 'Laden mislukt.',
+              en: 'Loading failed.',
+              fr: 'Chargement echoue.',
+              es: 'Error al cargar.',
+              de: 'Laden fehlgeschlagen.',
+            );
+          }
+        });
+      }
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][OPEN_TIMING] phase=refresh_done refresh_ms=${total.elapsedMilliseconds} bootstrap_ms=${bootstrapWatch.elapsedMilliseconds} network=$networkRequests count=${_bookings.length} cache=$_showingLocalCache',
+      );
     } catch (err) {
       if (!mounted) return;
       setState(() {
-        if (showLoading) {
-          _loading = false;
+        _loading = false;
+        _refreshing = false;
+        if (_bookings.isEmpty) {
+          _emptyConfirmed = false;
         }
-        _paymentOverlayByBookingId = const <String, String>{};
         _error = _t(
           nl: 'Laden mislukt.',
           en: 'Loading failed.',
           fr: 'Chargement echoue.',
           es: 'Error al cargar.',
+          de: 'Laden fehlgeschlagen.',
         );
       });
     }
@@ -146,14 +286,25 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   // authoritative per-booking record carries the true per-leg lifecycle. Pull
   // it and overlay it into the canonical store so list cards, PDF/ritbon
   // projection, and detail view all read the current leg statuses.
-  Future<void> _overlayAuthoritativeSavedBookings({
+  // Kept for detail-level hydration callers and source-contract tests. The
+  // list open path no longer waits on this sequential GET-per-booking loop.
+  // ignore: unused_element
+  Future<({int attempted, int refreshed, int unauthorized})>
+  _overlayAuthoritativeSavedBookings({
     required String reason,
   }) async {
+    var attempted = 0;
+    var refreshed = 0;
+    var unauthorized = 0;
     try {
       final snapshot = await CustomerBookingsStore.instance.loadAll();
-      if (snapshot.isEmpty) return;
-      var attempted = 0;
-      var refreshed = 0;
+      if (snapshot.isEmpty) {
+        return (
+          attempted: attempted,
+          refreshed: refreshed,
+          unauthorized: unauthorized,
+        );
+      }
       for (final item in snapshot) {
         final id = item.canonicalBookingId.trim();
         if (id.isEmpty) continue;
@@ -170,7 +321,19 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           final res = await http
               .get(uri, headers: headers)
               .timeout(const Duration(seconds: 8));
-          if (res.statusCode != 200) continue;
+          if (res.statusCode == 401) {
+            unauthorized += 1;
+            debugPrint(
+              '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY] booking=${_safeRefPreview(id)} status=401',
+            );
+            continue;
+          }
+          if (res.statusCode != 200) {
+            debugPrint(
+              '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY] booking=${_safeRefPreview(id)} status=${res.statusCode}',
+            );
+            continue;
+          }
           final decoded = jsonDecode(utf8.decode(res.bodyBytes));
           if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
             continue;
@@ -179,8 +342,13 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             id,
             decoded,
           );
+          final stored = StoredCustomerBooking.fromAuthoritativeResponse(
+            bookingId: id,
+            response: decoded,
+            fallback: item,
+          );
           final hydrated = _hydrateStoredCustomerBookingFromView(
-            stored: item,
+            stored: stored,
             view: authoritativeView,
             source: 'customer_saved_list_overlay',
           );
@@ -204,13 +372,18 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         }
       }
       debugPrint(
-        '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY] reason=$reason attempted=$attempted refreshed=$refreshed total=${snapshot.length}',
+        '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY] reason=$reason attempted=$attempted refreshed=$refreshed unauthorized=$unauthorized total=${snapshot.length}',
       );
     } catch (err) {
       debugPrint(
         '[CUSTOMER_BOOKINGS][SAVED_LIST_OVERLAY_FAIL] reason=$reason error=$err',
       );
     }
+    return (
+      attempted: attempted,
+      refreshed: refreshed,
+      unauthorized: unauthorized,
+    );
   }
 
   void _applySavedBookingListRemoval({
@@ -324,6 +497,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Return cancelled',
         fr: 'Retour annule',
         es: 'Regreso cancelado',
+      de: 'Rückfahrt storniert',
       );
     }
     return _t(
@@ -331,6 +505,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
       en: 'Outbound cancelled',
       fr: 'Aller annule',
       es: 'Ida cancelada',
+      de: 'Hinfahrt storniert',
     );
   }
 
@@ -358,9 +533,11 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
 
   String _roundtripLegTitle(String legType) {
     if (legType == 'return') {
-      return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso');
+      return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso',
+      de: 'Rückfahrt');
     }
-    return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+    return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida',
+      de: 'Hinfahrt');
   }
 
   String _formatCardAmount(double? amount, String currency) {
@@ -396,6 +573,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Cancelled',
         fr: 'Annule',
         es: 'Cancelado',
+      de: 'Storniert',
       );
     } else if (leg.isCompleted) {
       chipLabel = _t(
@@ -403,6 +581,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Completed',
         fr: 'Terminee',
         es: 'Finalizada',
+      de: 'Abgeschlossen',
       );
     } else {
       chipLabel = _t(
@@ -410,6 +589,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Scheduled',
         fr: 'Planifie',
         es: 'Programado',
+      de: 'Geplant',
       );
     }
     final String viewActionLabel = showReceiptAction
@@ -418,12 +598,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'View receipt',
             fr: 'Voir le ticket',
             es: 'Ver recibo',
+      de: 'Beleg ansehen',
           )
         : _t(
             nl: 'Rit bekijken',
             en: 'View leg',
             fr: 'Voir trajet',
             es: 'Ver tramo',
+      de: 'Fahrt ansehen',
           );
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -507,6 +689,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                       en: 'Cancel leg',
                       fr: 'Annuler trajet',
                       es: 'Cancelar tramo',
+      de: 'Fahrt stornieren',
                     ),
                   ),
                 ),
@@ -590,6 +773,9 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     return aliases;
   }
 
+  // List cards now classify payment from stored fields. Overlay stays for
+  // any remaining caller; list open no longer waits on the trips history GET.
+  // ignore: unused_element
   Future<Map<String, String>> _buildPaymentOverlayForBookings(
     List<CustomerSavedBooking> bookings, {
     required String source,
@@ -725,40 +911,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
   }
 
   String _paymentLabel(CustomerSavedBooking booking) {
-    final p = _displayPaymentStatusToken(booking);
-    if (_isPaidCustomerPaymentDisplayToken(p)) {
-      return _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado');
-    }
-    if (_isPartialCustomerPaymentDisplayToken(p)) {
-      return _t(
-        nl: 'Deels betaald',
-        en: 'Partially paid',
-        fr: 'Partiellement payé',
-        es: 'Parcialmente pagado',
-      );
-    }
-    if (_isOnlinePendingCustomerPaymentDisplayToken(p)) {
-      return _t(
-        nl: 'Online betaling openstaand',
-        en: 'Online payment pending',
-        fr: 'Paiement en ligne en attente',
-        es: 'Pago online pendiente',
-      );
-    }
-    if (_isPayInCarCustomerPaymentDisplayToken(p) ||
-        p == 'pending' ||
-        p == 'unpaid' ||
-        p == 'pay_in_car') {
-      return _t(
-        nl: 'Te betalen in het voertuig',
-        en: 'To pay in the vehicle',
-        fr: 'À payer dans le véhicule',
-        es: 'A pagar en el vehículo',
-      );
-    }
-    return p.isEmpty
-        ? '-'
-        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+    final copy = customerPaymentStatusLabel(_displayPaymentStatusToken(booking));
+    return _t(
+      nl: copy.nl,
+      en: copy.en,
+      fr: copy.fr,
+      es: copy.es,
+      de: copy.de,
+    );
   }
 
   String _bookingStatusLabel(CustomerSavedBooking booking) {
@@ -769,6 +929,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Pending',
         fr: 'En cours',
         es: 'Pendiente',
+      de: 'In Bearbeitung',
       );
     }
     if (status == 'CONFIRMED') {
@@ -777,6 +938,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Confirmed',
         fr: 'Confirmee',
         es: 'Confirmada',
+      de: 'Bestätigt',
       );
     }
     if (status == 'COMPLETED') {
@@ -785,6 +947,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Completed',
         fr: 'Terminee',
         es: 'Finalizada',
+      de: 'Abgeschlossen',
       );
     }
     if (status == 'CANCELLED') {
@@ -793,11 +956,13 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         en: 'Cancelled',
         fr: 'Annulee',
         es: 'Cancelada',
+      de: 'Storniert',
       );
     }
     return status.isEmpty
         ? '-'
-        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido',
+      de: 'Unbekannt');
   }
 
   Color _savedStatusColor(CustomerSavedBooking booking) {
@@ -837,9 +1002,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final statusColor = _savedStatusColor(booking);
     final paid = _displayPaymentKnownPaid(booking);
     final isTerminal = _isCustomerBookingTerminalStatus(booking.bookingStatus);
-    final reference = booking.publicReference.trim().isNotEmpty
-        ? booking.publicReference.trim()
-        : booking.bookingId.trim();
+    final reference = customerFacingBookingReference(
+      bookingId: booking.bookingId,
+      publicCandidates: <String>[
+        booking.publicReference,
+        (booking.rawSnapshot['public_booking_reference'] ?? '').toString(),
+        (booking.rawSnapshot['publicBookingReference'] ?? '').toString(),
+        (booking.rawSnapshot['booking_reference'] ?? '').toString(),
+      ],
+    );
     final hasIdentity =
         reference.isNotEmpty || booking.bookingStatus.trim().isNotEmpty;
     final hasFrom = booking.from.trim().isNotEmpty;
@@ -921,7 +1092,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               ),
               const SizedBox(height: 10),
               Text(
-                '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
+                '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada',
+      de: 'Geplante Abholung')}: ${_formatPickup(booking.pickupIso)}',
                 style: TextStyle(
                   color: secondaryTextColor,
                   fontSize: 12.1,
@@ -937,6 +1109,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     en: 'Loading booking details...',
                     fr: 'Chargement des détails de réservation...',
                     es: 'Cargando detalles de la reserva...',
+      de: 'Buchungsdaten werden geladen…',
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1037,7 +1210,8 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     ),
                   ),
                   Text(
-                    '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: $reference',
+                    '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref',
+      de: 'Ref')}: $reference',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: tertiaryTextColor, fontSize: 10.8),
@@ -1078,6 +1252,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                           en: 'Remove',
                           fr: 'Supprimer',
                           es: 'Eliminar',
+      de: 'Entfernen',
                         ),
                       ),
                     )
@@ -1101,6 +1276,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                           en: 'Cancel booking',
                           fr: 'Annuler la reservation',
                           es: 'Cancelar reserva',
+      de: 'Buchung stornieren',
                         ),
                       ),
                     ),
@@ -1121,6 +1297,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                         en: 'View booking',
                         fr: 'Voir la reservation',
                         es: 'Ver reserva',
+      de: 'Buchung ansehen',
                       ),
                     ),
                   ),
@@ -1167,6 +1344,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'Remove booking?',
             fr: 'Supprimer la reservation ?',
             es: '¿Eliminar reserva?',
+      de: 'Buchung entfernen?',
           ),
         ),
         content: Text(
@@ -1175,13 +1353,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
             fr: 'Cette reservation sera supprimee uniquement de votre apercu local. L administration et l historique des trajets restent conserves.',
             es: 'Esta reserva solo se eliminara de tu vista local. La administracion de la empresa y el historial de viajes se conservan.',
+      de: 'Diese Buchung wird nur aus Ihrer lokalen Übersicht entfernt. Die Unternehmensverwaltung und der Fahrtverlauf bleiben gespeichert.',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar',
+      de: 'Abbrechen'),
             ),
           ),
           FilledButton(
@@ -1192,6 +1372,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 en: 'Remove',
                 fr: 'Supprimer',
                 es: 'Eliminar',
+      de: 'Entfernen',
               ),
             ),
           ),
@@ -1218,12 +1399,14 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'Booking removed from your local overview.',
             fr: 'Reservation supprimee de votre apercu local.',
             es: 'Reserva eliminada de tu vista local.',
+      de: 'Buchung aus Ihrer lokalen Übersicht entfernt.',
           )
         : _t(
             nl: 'Boeking niet gevonden in lokale opslag.',
             en: 'Booking not found in local storage.',
             fr: 'Reservation introuvable dans le stockage local.',
             es: 'Reserva no encontrada en el almacenamiento local.',
+      de: 'Buchung im lokalen Speicher nicht gefunden.',
           );
     ScaffoldMessenger.of(
       context,
@@ -1279,30 +1462,50 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
           return;
         }
       }
-    } catch (_) {
-      // fall back to local-safe minimal view
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][DETAIL_OPEN] booking=${_safeRefPreview(id)} status=${res.statusCode} fallback=local',
+      );
+    } catch (err) {
+      debugPrint(
+        '[CUSTOMER_BOOKINGS][DETAIL_OPEN] booking=${_safeRefPreview(id)} fallback=local error=$err',
+      );
     }
 
-    final fallback = StoredCustomerBooking(
-      bookingId: id,
-      tenantId: booking.tenantId,
-      companyId: booking.companyId,
-      publicBookingId: booking.publicReference.trim().isNotEmpty
-          ? booking.publicReference.trim()
-          : id,
-      customerName: '',
-      customerPhone: '',
-      customerEmail: '',
-      from: booking.from,
-      to: booking.to,
-      pickupIso: booking.pickupIso,
-      price: booking.price,
-      currency: booking.currency,
-      paymentStatus: booking.paymentStatus,
-      status: booking.bookingStatus,
-      createdAt: booking.createdAt,
-      updatedAt: booking.createdAt,
-    );
+    final stored = await CustomerBookingsStore.instance.findByAnyReference(id);
+    final raw = booking.rawSnapshot;
+    final channel = extractCustomerPaymentChannel(<Map<String, dynamic>>[raw]);
+    final fallback = stored ??
+        StoredCustomerBooking(
+          bookingId: id,
+          tenantId: booking.tenantId,
+          companyId: booking.companyId,
+          publicBookingId: booking.publicReference.trim().isNotEmpty
+              ? booking.publicReference.trim()
+              : id,
+          customerName: (raw['customer_name'] ?? '').toString().trim(),
+          customerPhone: (raw['customer_phone'] ?? '').toString().trim(),
+          customerEmail: (raw['customer_email'] ?? '').toString().trim(),
+          from: booking.from,
+          to: booking.to,
+          pickupIso: booking.pickupIso,
+          price: booking.price,
+          currency: booking.currency,
+          pax: (raw['pax'] ?? '').toString().trim(),
+          bags: (raw['bags'] ?? '').toString().trim(),
+          paymentStatus: booking.paymentStatus,
+          paymentMethod: channel.method,
+          paymentMode: channel.mode,
+          paymentProvider: channel.provider,
+          status: booking.bookingStatus,
+          createdAt: booking.createdAt,
+          updatedAt: booking.createdAt,
+          quote: mergeCustomerPaymentChannelIntoQuote(
+            raw['quote'] is Map
+                ? Map<String, dynamic>.from(raw['quote'] as Map)
+                : const <String, dynamic>{},
+            channel,
+          ),
+        );
     if (!mounted) return;
     final result = await Navigator.of(context).push<dynamic>(
       MaterialPageRoute(
@@ -1352,6 +1555,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'Remove all bookings?',
             fr: 'Supprimer toutes les réservations ?',
             es: '¿Eliminar todas las reservas?',
+      de: 'Alle Buchungen entfernen?',
           ),
         ),
         content: Text(
@@ -1360,13 +1564,15 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
             en: 'This only removes the bookings from your local overview on this device. Company records, ride history and payments remain stored.',
             fr: 'Cela supprime uniquement les réservations de votre aperçu local sur cet appareil. L’administration, l’historique des trajets et les paiements restent conservés.',
             es: 'Esto solo elimina las reservas de tu vista local en este dispositivo. La administración de la empresa, el historial de viajes y los pagos se conservan.',
+      de: 'Damit entfernen Sie die Buchungen nur aus der lokalen Übersicht auf diesem Gerät. Unternehmensdaten, Fahrtverlauf und Zahlungen bleiben gespeichert.',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar',
+      de: 'Abbrechen'),
             ),
           ),
           FilledButton(
@@ -1377,6 +1583,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                 en: 'Remove all',
                 fr: 'Tout supprimer',
                 es: 'Eliminar todo',
+      de: 'Alle entfernen',
               ),
             ),
           ),
@@ -1416,6 +1623,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
               en: 'All local bookings have been removed.',
               fr: 'Toutes les réservations locales ont été supprimées.',
               es: 'Todas las reservas locales han sido eliminadas.',
+      de: 'Alle lokalen Buchungen wurden entfernt.',
             ),
           ),
         ),
@@ -1423,6 +1631,63 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     } catch (err) {
       debugPrint('[CUSTOMER_BOOKINGS][CLEAR_ALL_ERROR] err=$err');
     }
+  }
+
+  Future<void> _signInAndReload() async {
+    if (!mounted) return;
+    await Navigator.of(context).push<Object>(
+      MaterialPageRoute<Object>(
+        builder: (_) => const CustomerPhoneRecoveryPage(),
+      ),
+    );
+    if (!mounted) return;
+    await _loadLocal();
+  }
+
+  Widget _savedSignInBanner(CustomerThemePalette palette) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: palette.gold.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.gold.withOpacity(0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Meld je aan om de laatste rit- en betaalstatus op te halen.',
+              en: 'Sign in to load the latest ride and payment status.',
+              fr: 'Connectez-vous pour charger le dernier statut.',
+              es: 'Inicia sesión para cargar el último estado.',
+      de: 'Melden Sie sich an, um den aktuellen Fahrt- und Zahlungsstatus zu laden.',
+            ),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 13.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: _signInAndReload,
+              child: Text(
+                _t(
+                  nl: 'Aanmelden',
+                  en: 'Sign in',
+                  fr: 'Connexion',
+                  es: 'Iniciar sesión',
+      de: 'Anmelden',
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1465,6 +1730,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                     en: 'My bookings',
                     fr: 'Mes reservations',
                     es: 'Mis reservas',
+      de: 'Meine Buchungen',
                   ),
                 ),
                 actions: [
@@ -1474,6 +1740,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                       en: 'Remove all',
                       fr: 'Tout supprimer',
                       es: 'Eliminar todo',
+      de: 'Alle entfernen',
                     ),
                     onPressed: _bookings.isEmpty
                         ? null
@@ -1486,8 +1753,10 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                       en: 'Refresh',
                       fr: 'Actualiser',
                       es: 'Actualizar',
+      de: 'Aktualisieren',
                     ),
-                    onPressed: _loadLocal,
+                    onPressed: () =>
+                        unawaited(_loadLocal(showLoading: _bookings.isEmpty)),
                     icon: const Icon(Icons.refresh),
                   ),
                 ],
@@ -1497,6 +1766,10 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     const LimousineCustomerRequestsSection(),
+                    if (_needsCustomerSignIn) ...[
+                      _savedSignInBanner(palette),
+                      const SizedBox(height: 12),
+                    ],
                     if (_error != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -1514,14 +1787,16 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                       ),
                       const SizedBox(height: 12),
                     ],
-                    if (_loading)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: CircularProgressIndicator(),
-                        ),
-                      )
-                    else if (_bookings.isEmpty)
+                    if (_refreshing && _bookings.isNotEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 10),
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                    if (_bookings.isNotEmpty)
+                      ..._bookings.map(_savedPremiumBookingCard)
+                    else if (_loading || !_emptyConfirmed)
+                      const SizedBox(height: 24)
+                    else
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -1535,12 +1810,11 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                             en: 'No bookings on this device yet.',
                             fr: 'Aucune réservation sur cet appareil pour le moment.',
                             es: 'Aún no hay reservas en este dispositivo.',
+                            de: 'Noch keine Buchungen auf diesem Gerät.',
                           ),
                           style: TextStyle(color: mutedTextColor),
                         ),
-                      )
-                    else
-                      ..._bookings.map(_savedPremiumBookingCard),
+                      ),
                     const SizedBox(height: 14),
                     SizedBox(
                       width: double.infinity,
@@ -1562,6 +1836,7 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
                             en: 'Find booking manually',
                             fr: 'Rechercher une réservation manuellement',
                             es: 'Buscar reserva manualmente',
+      de: 'Buchung manuell suchen',
                           ),
                         ),
                       ),

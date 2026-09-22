@@ -29,6 +29,13 @@ dependencies:
   # theme file the bridged store already writes.
   path_provider: ^2.1.4
 
+  # Session secrets stay in the platform keystore / keychain. Same major
+  # line as the bridged app so both share one proven plugin.
+  flutter_secure_storage: ^10.1.0
+
+  # Official OS fingerprint / face / device-code dialog. Customer app only.
+  local_auth: ^2.3.0
+
   # Same map plugin the bridged screens use. Declared directly because boot
   # installs the Mapbox access token before any map is built. The version is
   # decided by the dependency_overrides block below.
@@ -74,8 +81,16 @@ flutter:
     - assets/booking/modes/v1/
     - assets/booking/airports/v1/
     - assets/vehicles/fallback/v1/
-    - assets/events/categories/
-    - assets/payment/png/
+    - assets/events/categories/all.webp
+    - assets/events/categories/music.webp
+    - assets/events/categories/sports.webp
+    - assets/events/categories/theatre.webp
+    - assets/events/categories/comedy.webp
+    - assets/events/categories/family.webp
+    - assets/events/categories/food.webp
+    - assets/events/categories/business.webp
+    - assets/events/categories/culture.webp
+    - assets/events/categories/event_category_other.webp
     - assets/payment/logos/
     - assets/payment/badges/
     - assets/payment/providers/

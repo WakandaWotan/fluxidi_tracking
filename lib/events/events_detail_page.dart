@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
-import 'package:fluxidi_tracking/customer_profile_store.dart';
-import 'package:fluxidi_tracking/nearby_partners_page.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:fluxidi_tracking/discovery/customer_contained_photo.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
 
@@ -34,66 +33,18 @@ class EventDetailPage extends StatelessWidget {
     }
   }
 
-  String get _mobiliteitsvraag {
-    switch (event.category.toLowerCase()) {
-      case 'zakelijk':
-        return _t(
-          nl: 'Hoog in de piekuren, met nadruk op gedeelde ritten.',
-          en: 'High during peak hours, with focus on shared rides.',
-          fr: 'Elevee aux heures de pointe, avec accent sur les trajets partages.',
-          es: 'Alta en horas punta, con enfoque en viajes compartidos.',
-        );
-      case 'sport':
-        return _t(
-          nl: 'Middelmatig tot hoog rondom start- en eindmomenten.',
-          en: 'Medium to high around start and end times.',
-          fr: 'Moyenne a elevee autour des debuts et fins d evenement.',
-          es: 'Media a alta alrededor del inicio y cierre del evento.',
-        );
-      case 'muziek':
-        return _t(
-          nl: 'Hoog in de avond, met geconcentreerde uitstroom na afloop.',
-          en: 'High in the evening, with concentrated outflow afterwards.',
-          fr: 'Elevee en soiree, avec une sortie concentree apres la fin.',
-          es: 'Alta por la noche, con salida concentrada al finalizar.',
-        );
-      default:
-        return _t(
-          nl: 'Middelmatig, met gespreide vraag over de dag.',
-          en: 'Medium, with demand spread across the day.',
-          fr: 'Moyenne, avec une demande etalee sur la journee.',
-          es: 'Media, con demanda repartida durante el dia.',
-        );
-    }
-  }
-
-  String get _eventStartGuidance {
-    return _t(
-      nl: '${event.dateTimeLabel}. Plan je ophaaltijd op basis van je vertreklocatie en reistijd.',
-      en: '${event.dateTimeLabel}. Plan pickup time based on your departure location and travel time.',
-      fr: '${event.dateTimeLabel}. Planifiez l heure de prise en charge selon votre lieu de depart et le temps de trajet.',
-      es: '${event.dateTimeLabel}. Planifica la hora de recogida segun tu ubicacion de salida y el tiempo de viaje.',
-    );
-  }
-
   String? get _eventDescription {
     final text = (event.description ?? '').trim();
-    if (text.isEmpty) return null;
+    if (text.isEmpty || isCustomerTechnicalDiscoveryCopy(text)) return null;
     return text;
   }
 
-  String get _emptyDescriptionLabel {
-    return _t(
-      nl: 'Meer informatie vind je via de ticketaanbieder.',
-      en: 'More information can be found via the ticket provider.',
-      fr: 'Plus d informations sont disponibles via le fournisseur de billets.',
-      es: 'Encontraras mas informacion a traves del proveedor de entradas.',
-    );
-  }
-
   String get _heroImageUrl {
-    return (event.heroImageUrl ?? event.thumbnailUrl ?? event.imageUrl ?? '')
-        .trim();
+    return preferredCustomerDetailPhotoUrl(
+      hero: event.heroImageUrl,
+      image: event.imageUrl,
+      thumbnail: event.thumbnailUrl,
+    );
   }
 
   String? get _heroSecondaryChipLabel {
@@ -103,48 +54,6 @@ class EventDetailPage extends StatelessWidget {
         ? (event.distanceLabel ?? '').trim()
         : '';
     return distance.isNotEmpty ? distance : null;
-  }
-
-  bool _hasValidCoordinates(double latitude, double longitude) {
-    if (!latitude.isFinite || !longitude.isFinite) return false;
-    if (latitude < -90 || latitude > 90) return false;
-    if (longitude < -180 || longitude > 180) return false;
-    return true;
-  }
-
-  Future<Map<String, String>?> _selectTaxiPartnerForEventFlow(
-    BuildContext context,
-  ) async {
-    final selected = await Navigator.of(context).push<Map<String, String>>(
-      MaterialPageRoute(
-        builder: (_) => NearbyPartnersPage(
-          customerHomeBuilder: (_) => const SizedBox.shrink(),
-          regionRegistrationBuilder: (_) => const SizedBox.shrink(),
-          syncCustomerProfileFromBackend: ({required String reason}) async {
-            return CustomerProfileStore.instance.load();
-          },
-          selectionMode: true,
-        ),
-      ),
-    );
-    if (selected == null || !context.mounted) return null;
-    final partnerId = (selected['partner_id'] ?? '').trim();
-    if (partnerId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Kies eerst een taxipartner.',
-              en: 'Select a taxi partner first.',
-              fr: "Sélectionnez d'abord un partenaire taxi.",
-              es: 'Selecciona primero un socio de taxi.',
-            ),
-          ),
-        ),
-      );
-      return null;
-    }
-    return selected;
   }
 
   @override
@@ -172,10 +81,6 @@ class EventDetailPage extends StatelessWidget {
                       _buildHeroVisual(palette),
                       const SizedBox(height: 14),
                       _buildPrimaryContent(palette),
-                      const SizedBox(height: 13),
-                      _buildInfoPanel(palette),
-                      // TODO(H1-F): Add in-app nearby stay cards only when approved
-                      // provider/API hotel content is available.
                       const SizedBox(height: 15),
                       _buildCtaArea(context, palette),
                     ],
@@ -235,133 +140,24 @@ class EventDetailPage extends StatelessWidget {
   }
 
   Widget _buildHeroVisual(CustomerThemePalette palette) {
-    final heroImageUrl = _heroImageUrl;
-    final secondaryChipLabel = _heroSecondaryChipLabel;
-    return Container(
-      height: 236,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: palette.border.withOpacity(0.85)),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: event.gradient,
+    return CustomerContainedPhoto(
+      key: const Key('customer_event_detail_photo'),
+      imageUrl: _heroImageUrl,
+      backgroundColor: palette.surface,
+      borderColor: palette.border.withOpacity(0.85),
+      placeholder: Center(
+        child: Icon(
+          Icons.event_rounded,
+          color: palette.gold.withOpacity(0.95),
+          size: 64,
         ),
-      ),
-      child: Stack(
-        children: [
-          if (heroImageUrl.isNotEmpty)
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Image.network(
-                  heroImageUrl,
-                  fit: BoxFit.cover,
-                  cacheWidth: 1280,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
-              ),
-            ),
-          if (heroImageUrl.isNotEmpty)
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: <Color>[
-                      palette.shadow.withOpacity(0.25),
-                      palette.shadow.withOpacity(0.58),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          Positioned(
-            left: -14,
-            top: -14,
-            child: Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    palette.gold.withOpacity(0.30),
-                    palette.gold.withOpacity(0.08),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -8,
-            bottom: -10,
-            child: Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [palette.gold.withOpacity(0.20), Colors.transparent],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 16,
-            top: 14,
-            child: _buildChip(
-              palette: palette,
-              label: event.category,
-              icon: _categoryIcon(event.category),
-            ),
-          ),
-          if ((secondaryChipLabel ?? '').isNotEmpty)
-            Positioned(
-              left: 16,
-              top: 48,
-              child: _buildChip(
-                palette: palette,
-                label: secondaryChipLabel!,
-                icon: Icons.local_taxi_rounded,
-              ),
-            ),
-          Positioned(
-            right: 18,
-            top: 18,
-            child: Icon(
-              Icons.workspace_premium_rounded,
-              color: palette.gold.withOpacity(0.90),
-              size: 28,
-            ),
-          ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 18,
-            child: Text(
-              event.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: palette.isDark ? Colors.white : palette.textPrimary,
-                fontSize: 23,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
 
   Widget _buildPrimaryContent(CustomerThemePalette palette) {
     final description = _eventDescription;
+    final secondaryChipLabel = _heroSecondaryChipLabel;
     return Container(
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
@@ -372,6 +168,35 @@ class EventDetailPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            event.title,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: <Widget>[
+              if (event.category.trim().isNotEmpty)
+                _buildChip(
+                  palette: palette,
+                  label: event.category,
+                  icon: _categoryIcon(event.category),
+                ),
+              if ((secondaryChipLabel ?? '').isNotEmpty)
+                _buildChip(
+                  palette: palette,
+                  label: secondaryChipLabel!,
+                  icon: Icons.event_available_outlined,
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
           _buildMetaRow(
             Icons.calendar_today_outlined,
             event.dateTimeLabel,
@@ -380,105 +205,25 @@ class EventDetailPage extends StatelessWidget {
           const SizedBox(height: 8),
           _buildMetaRow(
             Icons.location_on_outlined,
-            event.locationName,
+            '${event.locationName}, ${event.city}',
             palette,
           ),
           const SizedBox(height: 8),
           _buildMetaRow(Icons.pin_drop_outlined, event.address, palette),
-          const SizedBox(height: 11),
-          Divider(color: palette.border.withOpacity(0.75), height: 1),
-          const SizedBox(height: 11),
-          Text(
-            _t(
-              nl: 'Evenementinformatie',
-              en: 'Event information',
-              fr: 'Informations sur l evenement',
-              es: 'Informacion del evento',
+          if (description != null) ...[
+            const SizedBox(height: 11),
+            Divider(color: palette.border.withOpacity(0.75), height: 1),
+            const SizedBox(height: 11),
+            Text(
+              description,
+              style: TextStyle(
+                color: palette.textMuted,
+                fontSize: 13,
+                height: 1.4,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 13.2,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            description ?? _emptyDescriptionLabel,
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 13,
-              height: 1.4,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoPanel(CustomerThemePalette palette) {
-    return Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.border.withOpacity(0.85)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildInfoRow(
-            _t(
-              nl: 'Evenementlocatie',
-              en: 'Event venue',
-              fr: 'Lieu de l evenement',
-              es: 'Lugar del evento',
-            ),
-            '${event.locationName}, ${event.city}',
-            palette,
-          ),
-          const SizedBox(height: 10),
-          _buildInfoRow(
-            _t(nl: 'Adres', en: 'Address', fr: 'Adresse', es: 'Direccion'),
-            event.address,
-            palette,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _t(
-              nl: 'Mobiliteitsadvies',
-              en: 'Mobility advice',
-              fr: 'Conseil de mobilite',
-              es: 'Consejo de movilidad',
-            ),
-            style: TextStyle(
-              color: palette.textPrimary,
-              fontSize: 13.2,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          _buildInfoRow(
-            _t(
-              nl: 'Verwachte mobiliteitsvraag',
-              en: 'Expected mobility demand',
-              fr: 'Demande de mobilite attendue',
-              es: 'Demanda de movilidad esperada',
-            ),
-            _mobiliteitsvraag,
-            palette,
-          ),
-          const SizedBox(height: 10),
-          _buildInfoRow(
-            _t(
-              nl: 'Start evenement',
-              en: 'Event start',
-              fr: 'Debut de l evenement',
-              es: 'Inicio del evento',
-            ),
-            _eventStartGuidance,
-            palette,
-          ),
+          ],
         ],
       ),
     );
@@ -508,52 +253,6 @@ class EventDetailPage extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: palette.textMuted, fontSize: 12.8),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildInfoRow(
-    String label,
-    String value,
-    CustomerThemePalette palette,
-  ) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 7,
-          height: 7,
-          margin: const EdgeInsets.only(top: 5),
-          decoration: BoxDecoration(
-            color: palette.gold,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 12.2,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                value,
-                style: TextStyle(
-                  color: palette.textMuted,
-                  fontSize: 12.2,
-                  height: 1.35,
-                ),
-              ),
-            ],
           ),
         ),
       ],
@@ -888,24 +587,6 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
                   es: 'Alojamientos cerca de este evento',
                 ),
                 style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              widget.t(
-                nl: 'Bekijk hotels en B&B’s rond de locatie. Beschikbaarheid en prijzen worden extern getoond.',
-                en: 'View hotels and stays around the venue. Availability and prices are shown externally.',
-                fr: 'Voir des hôtels et séjours autour du lieu. Les disponibilités et les prix sont affichés en externe.',
-                es: 'Consulta hoteles y alojamientos cerca del lugar. La disponibilidad y los precios se muestran externamente.',
-              ),
-              style: TextStyle(
-                color: widget.palette.textMuted.withOpacity(0.9),
-                fontSize: 11.6,
-                fontWeight: FontWeight.w600,
-                height: 1.3,
               ),
             ),
           ),

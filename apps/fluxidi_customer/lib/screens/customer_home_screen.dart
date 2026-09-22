@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_customer_core/fluxidi_customer_core.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
+
+import 'package:fluxidi_tracking/app_config.dart';
 
 import '../app/customer_app_config.dart';
 import '../app/customer_labels.dart';
-import '../app/customer_theme.dart';
 import '../bridge/customer_flows.dart';
 import '../widgets/customer_header_bar.dart';
 import '../widgets/customer_service_card.dart';
@@ -45,6 +47,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   List<FluxidiAddressSuggestion> _suggestions =
       const <FluxidiAddressSuggestion>[];
   FluxidiAddressValue _destination = const FluxidiAddressValue();
+  bool _suppressDestinationListener = false;
 
   @override
   void initState() {
@@ -53,18 +56,58 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
         widget.addressClient ??
         FluxidiAddressSearchClient(token: widget.config.mapboxToken);
     _destinationCtrl.addListener(_onDestinationChanged);
+    appLanguageNotifier.addListener(_onAppLanguageChanged);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _destinationCtrl.removeListener(_onDestinationChanged);
     _destinationCtrl.dispose();
     _destinationFocus.dispose();
     super.dispose();
   }
 
+  void _writeDestinationText(String text) {
+    _suppressDestinationListener = true;
+    _destinationCtrl.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _suppressDestinationListener = false;
+  }
+
+  void _onAppLanguageChanged() {
+    if (!mounted) return;
+    _requestId += 1;
+    if (_destination.isRouteReady) {
+      final source = _destination.canonicalLabel.trim().isNotEmpty
+          ? _destination.canonicalLabel
+          : _destination.displayText;
+      final localized = fluxidiLocalizeAddressLabel(
+        source,
+        currentLanguageCode,
+      );
+      if (localized == _destination.displayText &&
+          localized == _destinationCtrl.text) {
+        return;
+      }
+      setState(() {
+        _destination = _destination.copyWith(displayText: localized);
+        _writeDestinationText(localized);
+      });
+      return;
+    }
+    final raw = _destinationCtrl.text.trim();
+    if (raw.length >= kFluxidiAddressMinQueryLength &&
+        _destinationFocus.hasFocus) {
+      unawaited(_search(raw));
+    }
+  }
+
   void _onDestinationChanged() {
+    if (_suppressDestinationListener) return;
     final raw = _destinationCtrl.text;
     // Typing after a pick drops the picked coordinates on purpose: the ride may
     // never quote on a label the customer has since edited.
@@ -90,7 +133,10 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
 
   Future<void> _search(String query) async {
     final requestId = ++_requestId;
-    final results = await _addressClient.search(query);
+    final results = await _addressClient.search(
+      query,
+      language: currentLanguageCode,
+    );
     if (!mounted || requestId != _requestId) return;
     setState(() {
       _suggestions = results;
@@ -102,10 +148,7 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
   void _pickSuggestion(FluxidiAddressSuggestion suggestion) {
     setState(() {
       _destination = suggestion.toAddressValue();
-      _destinationCtrl.value = TextEditingValue(
-        text: suggestion.label,
-        selection: TextSelection.collapsed(offset: suggestion.label.length),
-      );
+      _writeDestinationText(suggestion.label);
       _suggestions = const <FluxidiAddressSuggestion>[];
       _searched = false;
     });
@@ -132,119 +175,326 @@ class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = activeCustomerPalette();
-    return Scaffold(
-      backgroundColor: palette.background,
-      body: SafeArea(
-        bottom: false,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final isTablet = width >= 600;
-            // Wide photo cards stacked on a phone and on a tablet in portrait;
-            // two columns only when a tablet turns landscape and the height
-            // can no longer carry four full-width cards.
-            final twoColumns = isTablet && width > constraints.maxHeight;
-            final horizontal = isTablet ? 24.0 : 16.0;
-            return ListView(
-              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 20),
-              children: <Widget>[
-                Center(
-                  child: ConstrainedBox(
-                    // A tablet reads better with a bounded measure than with a
-                    // field and a button stretched edge to edge.
-                    constraints: const BoxConstraints(maxWidth: 880),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        CustomerHeaderBar(config: widget.config),
-                        SizedBox(height: isTablet ? 28 : 20),
-                        Text(
-                          CustomerText.whereTo.current,
-                          style:
-                              (isTablet
-                                      ? Theme.of(
-                                          context,
-                                        ).textTheme.headlineMedium
-                                      : Theme.of(
-                                          context,
-                                        ).textTheme.headlineSmall)
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: palette.textPrimary,
-                                  ),
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, variant, _) {
+        return CustomerLanguageBuilder(
+          builder: (context, _) {
+        final palette = paletteForCustomerTheme(variant);
+        return ColoredBox(
+          color: palette.background,
+          child: SafeArea(
+            bottom: false,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final shortest = constraints.biggest.shortestSide;
+                final isTablet = shortest >= 600;
+                final isLandscape =
+                    constraints.maxWidth > constraints.maxHeight;
+                // Wide photo cards stacked on a phone and on a tablet in portrait;
+                // two columns only on a tablet in landscape.
+                final twoColumns = isTablet && isLandscape;
+                final horizontal = twoColumns ? 28.0 : (isTablet ? 24.0 : 16.0);
+                if (twoColumns) {
+                  // constraints.maxHeight is already the shell body above the
+                  // NavigationBar, minus the top SafeArea. Do not subtract the
+                  // bar or the system inset again.
+                  return _landscapeHome(
+                    context: context,
+                    palette: palette,
+                    horizontal: horizontal,
+                    viewportHeight: constraints.maxHeight,
+                  );
+                }
+                if (isTablet) {
+                  return _portraitTabletHome(
+                    context: context,
+                    palette: palette,
+                    horizontal: horizontal,
+                  );
+                }
+                return ListView(
+                  padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 16),
+                  children: <Widget>[
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 880),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            ..._homeIntro(
+                              context: context,
+                              palette: palette,
+                              isTablet: false,
+                              twoColumns: false,
+                            ),
+                            const _ServiceGrid(
+                              twoColumns: false,
+                              cardHeight: 140,
+                            ),
+                            const SizedBox(height: 16),
+                            _RegionRadarCard(palette: palette),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        _DestinationField(
-                          controller: _destinationCtrl,
-                          focusNode: _destinationFocus,
-                          palette: palette,
-                          searching: _searching,
-                          canSearch: _addressClient.canSearch,
-                          noResults: _searched && _suggestions.isEmpty,
-                          suggestions: _suggestions,
-                          onPick: _pickSuggestion,
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: isTablet ? 58 : 52,
-                          child: FilledButton.icon(
-                            key: const Key('customer_home_book_taxi'),
-                            onPressed: _bookTaxi,
-                            icon: const Icon(Icons.local_taxi_outlined),
-                            label: Text(CustomerText.bookTaxi.current),
-                          ),
-                        ),
-                        SizedBox(height: isTablet ? 32 : 28),
-                        Text(
-                          CustomerText.services.current,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: palette.textPrimary,
-                              ),
-                        ),
-                        const SizedBox(height: 12),
-                        _ServiceGrid(
-                          twoColumns: twoColumns,
-                          cardHeight: _serviceCardHeight(
-                            isTablet: isTablet,
-                            twoColumns: twoColumns,
-                          ),
-                        ),
-                        SizedBox(height: isTablet ? 24 : 20),
-                        _RegionRadarCard(palette: palette),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-              ],
-            );
+                  ],
+                );
+              },
+            ),
+          ),
+        );
           },
+        );
+      },
+    );
+  }
+
+  List<Widget> _homeIntro({
+    required BuildContext context,
+    required CustomerThemePalette palette,
+    required bool isTablet,
+    required bool twoColumns,
+  }) {
+    return <Widget>[
+      CustomerHeaderBar(config: widget.config),
+      SizedBox(height: twoColumns ? 12 : (isTablet ? 20 : 16)),
+      Text(
+        CustomerText.whereTo.current,
+        style:
+            (isTablet
+                    ? Theme.of(context).textTheme.headlineMedium
+                    : Theme.of(context).textTheme.headlineSmall)
+                ?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: palette.textPrimary,
+                ),
+      ),
+      SizedBox(height: twoColumns ? 10 : 12),
+      _DestinationField(
+        controller: _destinationCtrl,
+        focusNode: _destinationFocus,
+        palette: palette,
+        searching: _searching,
+        canSearch: _addressClient.canSearch,
+        noResults: _searched && _suggestions.isEmpty,
+        suggestions: _suggestions,
+        onPick: _pickSuggestion,
+        sideBySideCta: twoColumns,
+        onBookTaxi: _bookTaxi,
+      ),
+      SizedBox(height: twoColumns ? 14 : (isTablet ? 24 : 20)),
+      Text(
+        CustomerText.services.current,
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: palette.textPrimary,
+        ),
+      ),
+      const SizedBox(height: 10),
+    ];
+  }
+
+  /// Tablet portrait at normal text: Region Radar stays fully above the nav.
+  /// The gap above Radar shrinks first; leftover shortfall is shared across
+  /// the four photo cards. Large text or a keyboard keeps a scrolling list.
+  Widget _portraitTabletHome({
+    required BuildContext context,
+    required CustomerThemePalette palette,
+    required double horizontal,
+  }) {
+    const bottomGap = 16.0;
+    const radarGap = 10.0;
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) > 20;
+    if (largeText || keyboard > 80) {
+      return ListView(
+        padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, bottomGap),
+        children: <Widget>[
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 880),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  ..._homeIntro(
+                    context: context,
+                    palette: palette,
+                    isTablet: true,
+                    twoColumns: false,
+                  ),
+                  const _ServiceGrid(twoColumns: false, cardHeight: 200),
+                  const SizedBox(height: radarGap),
+                  _RegionRadarCard(palette: palette),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, bottomGap),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 880),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ..._homeIntro(
+                context: context,
+                palette: palette,
+                isTablet: true,
+                twoColumns: false,
+              ),
+              const Expanded(
+                child: _ServiceGrid(
+                  twoColumns: false,
+                  expandColumn: true,
+                  maxCardHeight: 200,
+                  minCardHeight: 176,
+                ),
+              ),
+              const SizedBox(height: radarGap),
+              _RegionRadarCard(palette: palette),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// Height of one service photo card.
-  ///
-  /// A full-width card carries a landscape photo, so it needs real height to
-  /// read as a photo rather than as a strip. Two columns halve the width, so
-  /// the same proportion needs less height.
-  static double _serviceCardHeight({
-    required bool isTablet,
-    required bool twoColumns,
+  /// Tablet landscape: leftover body height goes into the two photo rows.
+  /// Region Radar sits after them with a normal 16–24 px gap to the app bar.
+  Widget _landscapeHome({
+    required BuildContext context,
+    required CustomerThemePalette palette,
+    required double horizontal,
+    required double viewportHeight,
   }) {
-    if (twoColumns) return 190;
-    return isTablet ? 200 : 140;
+    const bottomGap = 20.0;
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) > 20;
+    if (largeText || keyboard > 80) {
+      return ListView(
+        padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, bottomGap),
+        children: <Widget>[
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1320),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  ..._homeIntro(
+                    context: context,
+                    palette: palette,
+                    isTablet: true,
+                    twoColumns: true,
+                  ),
+                  _ServiceGrid(
+                    twoColumns: true,
+                    cardHeight: _landscapeCardHeight(
+                      viewportHeight: viewportHeight,
+                      textScaler: MediaQuery.textScalerOf(context),
+                      textTheme: Theme.of(context).textTheme,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _RegionRadarCard(palette: palette),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, bottomGap),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1320),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              ..._homeIntro(
+                context: context,
+                palette: palette,
+                isTablet: true,
+                twoColumns: true,
+              ),
+              Expanded(
+                child: _ServiceGrid(twoColumns: true, expandRows: true),
+              ),
+              const SizedBox(height: 12),
+              _RegionRadarCard(palette: palette),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Gives leftover shell-body height to the two photo rows.
+  ///
+  /// [viewportHeight] is already above the NavigationBar and after the top
+  /// SafeArea. The 148 px ceiling that left a blank strip is gone; cards stop
+  /// at 260 so a very tall window does not turn them into full-page banners.
+  static double _landscapeCardHeight({
+    required double viewportHeight,
+    required TextScaler textScaler,
+    required TextTheme textTheme,
+  }) {
+    if (!viewportHeight.isFinite) return 180;
+    final title =
+        textScaler.scale(textTheme.headlineMedium?.fontSize ?? 28) * 1.15;
+    final services =
+        textScaler.scale(textTheme.titleMedium?.fontSize ?? 16) * 1.25;
+    final radarText =
+        textScaler.scale(textTheme.titleMedium?.fontSize ?? 16) * 1.2 +
+        2 +
+        textScaler.scale(textTheme.bodySmall?.fontSize ?? 12) * 1.25;
+    const header = 42.0;
+    const dest = 56.0;
+    const topPad = 8.0;
+    const bottomGap = 20.0;
+    final radar = 36 + (radarText < 28 ? 28.0 : radarText);
+    final chrome =
+        topPad +
+        header +
+        12 +
+        title +
+        10 +
+        dest +
+        14 +
+        services +
+        10 +
+        12 +
+        12 +
+        radar +
+        bottomGap +
+        24;
+    return ((viewportHeight - chrome) / 2).clamp(108.0, 220.0);
   }
 }
 
 class _ServiceGrid extends StatelessWidget {
-  const _ServiceGrid({required this.twoColumns, required this.cardHeight});
+  const _ServiceGrid({
+    required this.twoColumns,
+    this.cardHeight,
+    this.expandRows = false,
+    this.expandColumn = false,
+    this.maxCardHeight = 200,
+    this.minCardHeight = 176,
+  });
 
   final bool twoColumns;
-  final double cardHeight;
+  final double? cardHeight;
+  final bool expandRows;
+  final bool expandColumn;
+  final double maxCardHeight;
+  final double minCardHeight;
 
   static const List<_Service> _services = <_Service>[
     _Service(
@@ -288,46 +538,91 @@ class _ServiceGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return CustomerLanguageBuilder(
+      builder: (context, language) {
     final cards = <Widget>[
       for (final service in _services)
         CustomerServiceCard(
           cardKey: Key('customer_home_service_${service.key}'),
-          title: service.label.current,
+          title: service.label.of(language),
           asset: service.asset,
           icon: service.icon,
-          height: cardHeight,
+          height: expandRows ? null : cardHeight,
           onTap: () => _open(context, service.key),
         ),
     ];
 
     if (!twoColumns) {
+      if (expandColumn) {
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const spacing = 12.0;
+            final raw =
+                (constraints.maxHeight - spacing * (cards.length - 1)) /
+                cards.length;
+            final height = raw.clamp(minCardHeight, maxCardHeight);
+            if (raw < minCardHeight) {
+              return ListView(
+                children: _stackedCards(cards, height: minCardHeight),
+              );
+            }
+            return Column(
+              children: _stackedCards(cards, height: height),
+            );
+          },
+        );
+      }
+      return Column(children: _stackedCards(cards, height: cardHeight));
+    }
+
+    final rows = <Widget>[
+      for (var i = 0; i < cards.length; i += 2)
+        Row(
+          crossAxisAlignment: expandRows
+              ? CrossAxisAlignment.stretch
+              : CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(child: cards[i]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: i + 1 < cards.length
+                  ? cards[i + 1]
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+    ];
+
+    if (expandRows) {
       return Column(
         children: <Widget>[
-          for (final card in cards)
-            Padding(padding: const EdgeInsets.only(bottom: 12), child: card),
+          for (var i = 0; i < rows.length; i++) ...<Widget>[
+            if (i > 0) const SizedBox(height: 12),
+            Expanded(child: rows[i]),
+          ],
         ],
       );
     }
 
     return Column(
       children: <Widget>[
-        for (var i = 0; i < cards.length; i += 2)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Row(
-              children: <Widget>[
-                Expanded(child: cards[i]),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: i + 1 < cards.length
-                      ? cards[i + 1]
-                      : const SizedBox.shrink(),
-                ),
-              ],
-            ),
-          ),
+        for (var i = 0; i < rows.length; i++) ...<Widget>[
+          if (i > 0) const SizedBox(height: 12),
+          rows[i],
+        ],
       ],
     );
+      },
+    );
+  }
+
+  List<Widget> _stackedCards(List<Widget> cards, {double? height}) {
+    return <Widget>[
+      for (var i = 0; i < cards.length; i++) ...<Widget>[
+        if (i > 0) const SizedBox(height: 12),
+        if (height != null) SizedBox(height: height, child: cards[i]) else cards[i],
+      ],
+    ];
   }
 }
 
@@ -356,6 +651,8 @@ class _DestinationField extends StatelessWidget {
     required this.noResults,
     required this.suggestions,
     required this.onPick,
+    required this.sideBySideCta,
+    required this.onBookTaxi,
   });
 
   final TextEditingController controller;
@@ -366,46 +663,43 @@ class _DestinationField extends StatelessWidget {
   final bool noResults;
   final List<FluxidiAddressSuggestion> suggestions;
   final ValueChanged<FluxidiAddressSuggestion> onPick;
+  final bool sideBySideCta;
+  final VoidCallback onBookTaxi;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final field = _addressField();
+    final button = SizedBox(
+      height: 56,
+      child: FilledButton.icon(
+        key: const Key('customer_home_book_taxi'),
+        onPressed: onBookTaxi,
+        icon: const Icon(Icons.local_taxi_outlined),
+        label: Text(CustomerText.bookTaxi.current),
+      ),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        TextField(
-          key: const Key('customer_home_destination'),
-          controller: controller,
-          focusNode: focusNode,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: CustomerText.destinationHint.current,
-            prefixIcon: const Icon(Icons.place_outlined),
-            suffixIcon: searching
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : (controller.text.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: controller.clear,
-                        )),
-          ),
-        ),
+        if (sideBySideCta)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(child: field),
+              const SizedBox(width: 12),
+              SizedBox(width: 236, child: button),
+            ],
+          )
+        else ...<Widget>[field, const SizedBox(height: 12), button],
         if (!canSearch)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               CustomerText.noMapboxToken.current,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: palette.textMuted,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: palette.textMuted),
             ),
           ),
         if (suggestions.isNotEmpty)
@@ -442,12 +736,56 @@ class _DestinationField extends StatelessWidget {
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               CustomerText.noAddressFound.current,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: palette.textMuted,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: palette.textMuted),
             ),
           ),
       ],
+    );
+  }
+
+  Widget _addressField() {
+    return TextField(
+      key: const Key('customer_home_destination'),
+      controller: controller,
+      focusNode: focusNode,
+      textInputAction: TextInputAction.search,
+      style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.w600),
+      cursorColor: palette.gold,
+      decoration: InputDecoration(
+        hintText: CustomerText.destinationHint.current,
+        hintStyle: TextStyle(color: palette.textMuted),
+        filled: true,
+        fillColor: palette.surface,
+        prefixIcon: Icon(Icons.place_outlined, color: palette.textMuted),
+        suffixIcon: searching
+            ? Padding(
+                padding: const EdgeInsets.all(12),
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: palette.gold,
+                  ),
+                ),
+              )
+            : (controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: Icon(Icons.close, color: palette.textMuted),
+                      onPressed: controller.clear,
+                    )),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(28),
+          borderSide: BorderSide(color: palette.border, width: 1.2),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(28),
+          borderSide: BorderSide(color: palette.gold, width: 1.6),
+        ),
+      ),
     );
   }
 }

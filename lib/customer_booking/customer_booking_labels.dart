@@ -6,6 +6,7 @@ const LocalizedText kCustomerBookingTaxiTitle = LocalizedText(
   en: 'Book your ride',
   fr: 'Réservez votre trajet',
   es: 'Reserva tu viaje',
+  de: 'Fahrt buchen',
 );
 
 const LocalizedText kCustomerBookingAirportTitle = LocalizedText(
@@ -13,6 +14,7 @@ const LocalizedText kCustomerBookingAirportTitle = LocalizedText(
   en: 'Airport ride',
   fr: 'Trajet aéroport',
   es: 'Viaje al aeropuerto',
+  de: 'Flughafenfahrt',
 );
 
 const LocalizedText kCustomerBookingEventTitle = LocalizedText(
@@ -20,6 +22,7 @@ const LocalizedText kCustomerBookingEventTitle = LocalizedText(
   en: 'Taxi to this event',
   fr: 'Taxi vers cet événement',
   es: 'Taxi a este evento',
+      de: 'Taxi zu dieser Veranstaltung',
 );
 
 const LocalizedText kCustomerBookingStayTitle = LocalizedText(
@@ -27,6 +30,7 @@ const LocalizedText kCustomerBookingStayTitle = LocalizedText(
   en: 'Taxi to this stay',
   fr: 'Taxi vers cet hébergement',
   es: 'Taxi a este alojamiento',
+      de: 'Taxi zu dieser Unterkunft',
 );
 
 const LocalizedText kCustomerBookingBusinessTitle = LocalizedText(
@@ -34,6 +38,7 @@ const LocalizedText kCustomerBookingBusinessTitle = LocalizedText(
   en: 'Business ride',
   fr: 'Course professionnelle',
   es: 'Viaje de empresa',
+      de: 'Geschäftsfahrt',
 );
 
 const LocalizedText kCustomerBookingCompanyTitle = LocalizedText(
@@ -41,6 +46,7 @@ const LocalizedText kCustomerBookingCompanyTitle = LocalizedText(
   en: 'Taxi with this company',
   fr: 'Taxi avec cette entreprise',
   es: 'Taxi con esta empresa',
+      de: 'Taxi bei diesem Unternehmen',
 );
 
 const LocalizedText kCustomerBookingStreetMode = LocalizedText(
@@ -48,6 +54,7 @@ const LocalizedText kCustomerBookingStreetMode = LocalizedText(
   en: 'Regular transfer',
   fr: 'Trajet classique',
   es: 'Traslado normal',
+      de: 'Normaler Transfer',
 );
 
 const LocalizedText kCustomerBookingAirportMode = LocalizedText(
@@ -55,6 +62,7 @@ const LocalizedText kCustomerBookingAirportMode = LocalizedText(
   en: 'Airport ride',
   fr: 'Trajet aéroport',
   es: 'Viaje al aeropuerto',
+      de: 'Flughafenfahrt',
 );
 
 const LocalizedText kCustomerBookingToAirport = LocalizedText(
@@ -62,6 +70,7 @@ const LocalizedText kCustomerBookingToAirport = LocalizedText(
   en: 'To the airport',
   fr: 'Vers l’aéroport',
   es: 'Al aeropuerto',
+      de: 'Zum Flughafen',
 );
 
 const LocalizedText kCustomerBookingFromAirport = LocalizedText(
@@ -69,6 +78,7 @@ const LocalizedText kCustomerBookingFromAirport = LocalizedText(
   en: 'From the airport',
   fr: 'Depuis l’aéroport',
   es: 'Desde el aeropuerto',
+      de: 'Vom Flughafen',
 );
 
 const LocalizedText kCustomerBookingChooseCountry = LocalizedText(
@@ -76,6 +86,7 @@ const LocalizedText kCustomerBookingChooseCountry = LocalizedText(
   en: 'Choose your country',
   fr: 'Choisissez votre pays',
   es: 'Elige tu país',
+      de: 'Land wählen',
 );
 
 const LocalizedText kCustomerBookingChooseAirport = LocalizedText(
@@ -83,6 +94,7 @@ const LocalizedText kCustomerBookingChooseAirport = LocalizedText(
   en: 'Choose your airport',
   fr: 'Choisissez votre aéroport',
   es: 'Elige tu aeropuerto',
+      de: 'Flughafen wählen',
 );
 
 const LocalizedText kCustomerBookingBrowseAllAirports = LocalizedText(
@@ -90,6 +102,7 @@ const LocalizedText kCustomerBookingBrowseAllAirports = LocalizedText(
   en: 'Browse all airports',
   fr: 'Voir tous les aéroports',
   es: 'Ver todos los aeropuertos',
+      de: 'Alle Flughäfen anzeigen',
 );
 
 const LocalizedText kCustomerBookingPickup = LocalizedText(
@@ -97,6 +110,7 @@ const LocalizedText kCustomerBookingPickup = LocalizedText(
   en: 'Pickup',
   fr: 'Départ',
   es: 'Salida',
+      de: 'Abfahrt',
 );
 
 const LocalizedText kCustomerBookingDropoff = LocalizedText(
@@ -104,6 +118,7 @@ const LocalizedText kCustomerBookingDropoff = LocalizedText(
   en: 'Destination',
   fr: 'Destination',
   es: 'Destino',
+      de: 'Ziel',
 );
 
 const LocalizedText kCustomerBookingPickupAsk = LocalizedText(
@@ -111,6 +126,7 @@ const LocalizedText kCustomerBookingPickupAsk = LocalizedText(
   en: 'Where should we pick you up?',
   fr: 'Où vous prendre ?',
   es: '¿Dónde te recogemos?',
+      de: 'Wo sollen wir Sie abholen?',
 );
 
 const LocalizedText kCustomerBookingDropoffAsk = LocalizedText(
@@ -118,6 +134,7 @@ const LocalizedText kCustomerBookingDropoffAsk = LocalizedText(
   en: 'Where do you want to go?',
   fr: 'Où voulez-vous aller ?',
   es: '¿Adónde quieres ir?',
+      de: 'Wohin möchten Sie?',
 );
 
 const LocalizedText kCustomerBookingChooseDateTime = LocalizedText(
@@ -125,6 +142,7 @@ const LocalizedText kCustomerBookingChooseDateTime = LocalizedText(
   en: 'Choose date and time',
   fr: 'Choisir la date et l’heure',
   es: 'Elige fecha y hora',
+      de: 'Datum und Uhrzeit wählen',
 );
 
 const LocalizedText kCustomerBookingTaxiReadyAt = LocalizedText(
@@ -132,6 +150,7 @@ const LocalizedText kCustomerBookingTaxiReadyAt = LocalizedText(
   en: 'Taxi ready at',
   fr: 'Taxi prêt à',
   es: 'Taxi listo a las',
+      de: 'Taxi bereit um',
 );
 
 const LocalizedText kCustomerBookingAddReturn = LocalizedText(
@@ -139,6 +158,7 @@ const LocalizedText kCustomerBookingAddReturn = LocalizedText(
   en: 'Add return ride',
   fr: 'Ajouter le retour',
   es: 'Añadir vuelta',
+      de: 'Rückfahrt hinzufügen',
 );
 
 const LocalizedText kCustomerBookingRemoveReturn = LocalizedText(
@@ -146,6 +166,7 @@ const LocalizedText kCustomerBookingRemoveReturn = LocalizedText(
   en: 'Remove return ride',
   fr: 'Retirer le retour',
   es: 'Quitar vuelta',
+      de: 'Rückfahrt entfernen',
 );
 
 const LocalizedText kCustomerBookingWaitOption = LocalizedText(
@@ -153,6 +174,7 @@ const LocalizedText kCustomerBookingWaitOption = LocalizedText(
   en: 'Wait during the return',
   fr: 'Attendre pendant le retour',
   es: 'Esperar durante la vuelta',
+      de: 'Während der Rückfahrt warten',
 );
 
 const LocalizedText kCustomerBookingAddStop = LocalizedText(
@@ -160,6 +182,7 @@ const LocalizedText kCustomerBookingAddStop = LocalizedText(
   en: 'Add a stop',
   fr: 'Ajouter un arrêt',
   es: 'Añadir una parada',
+      de: 'Zwischenstopp hinzufügen',
 );
 
 const LocalizedText kCustomerBookingNow = LocalizedText(
@@ -167,6 +190,7 @@ const LocalizedText kCustomerBookingNow = LocalizedText(
   en: 'As soon as possible',
   fr: 'Dès que possible',
   es: 'Lo antes posible',
+      de: 'So schnell wie möglich',
 );
 
 const LocalizedText kCustomerBookingLater = LocalizedText(
@@ -174,6 +198,7 @@ const LocalizedText kCustomerBookingLater = LocalizedText(
   en: 'Later',
   fr: 'Plus tard',
   es: 'Más tarde',
+      de: 'Später',
 );
 
 const LocalizedText kCustomerBookingDate = LocalizedText(
@@ -181,6 +206,7 @@ const LocalizedText kCustomerBookingDate = LocalizedText(
   en: 'Date',
   fr: 'Date',
   es: 'Fecha',
+      de: 'Datum',
 );
 
 const LocalizedText kCustomerBookingTime = LocalizedText(
@@ -188,6 +214,7 @@ const LocalizedText kCustomerBookingTime = LocalizedText(
   en: 'Time',
   fr: 'Heure',
   es: 'Hora',
+      de: 'Uhrzeit',
 );
 
 const LocalizedText kCustomerBookingLaterInvalid = LocalizedText(
@@ -195,6 +222,7 @@ const LocalizedText kCustomerBookingLaterInvalid = LocalizedText(
   en: 'Choose a date and time that has not already passed.',
   fr: 'Choisissez une date et une heure qui ne sont pas déjà passées.',
   es: 'Elige una fecha y hora que aún no hayan pasado.',
+      de: 'Wählen Sie ein Datum und eine Uhrzeit, die noch nicht vorbei sind.',
 );
 
 const LocalizedText kCustomerBookingMinPrep = LocalizedText(
@@ -202,6 +230,7 @@ const LocalizedText kCustomerBookingMinPrep = LocalizedText(
   en: 'This ride needs {time} as the earliest pickup. That is the company’s configured preparation time.',
   fr: 'Cette course exige {time} comme heure de prise en charge la plus tôt. C’est le délai de préparation configuré par l’entreprise.',
   es: 'Este viaje necesita {time} como hora de recogida más temprana. Ese es el tiempo de preparación configurado por la empresa.',
+      de: 'Diese Fahrt braucht {time} als früheste Abholung. Das ist die hinterlegte Vorbereitungszeit des Unternehmens.',
 );
 
 const LocalizedText kCustomerBookingPickupNeedsPin = LocalizedText(
@@ -209,6 +238,7 @@ const LocalizedText kCustomerBookingPickupNeedsPin = LocalizedText(
   en: 'The pickup address is missing a map position. Confirm the pin on the map.',
   fr: 'L’adresse de départ n’a pas de position sur la carte. Confirmez l’épingle.',
   es: 'La dirección de recogida no tiene posición en el mapa. Confirma el pin.',
+      de: 'Der Abholadresse fehlt eine Kartenposition. Bestätigen Sie die Stecknadel auf der Karte.',
 );
 
 const LocalizedText kCustomerBookingDropoffNeedsPin = LocalizedText(
@@ -216,6 +246,7 @@ const LocalizedText kCustomerBookingDropoffNeedsPin = LocalizedText(
   en: 'The destination is missing a map position. Choose an address from the list or set the pin.',
   fr: 'La destination n’a pas de position sur la carte. Choisissez une adresse ou placez l’épingle.',
   es: 'El destino no tiene posición en el mapa. Elige una dirección o coloca el pin.',
+      de: 'Dem Ziel fehlt eine Kartenposition. Wählen Sie eine Adresse aus der Liste oder setzen Sie die Stecknadel.',
 );
 
 const LocalizedText kCustomerBookingDropoffNeedsStreet = LocalizedText(
@@ -223,6 +254,7 @@ const LocalizedText kCustomerBookingDropoffNeedsStreet = LocalizedText(
   en: 'The destination is too vague. Enter a street and house number or confirm the pin on the map.',
   fr: 'La destination est trop vague. Saisissez une rue et un numéro ou confirmez l’épingle.',
   es: 'El destino es demasiado vago. Introduce calle y número o confirma el pin.',
+      de: 'Das Ziel ist zu ungenau. Geben Sie Straße und Hausnummer ein oder bestätigen Sie die Stecknadel.',
 );
 
 const LocalizedText kCustomerBookingOfferExpired = LocalizedText(
@@ -230,6 +262,7 @@ const LocalizedText kCustomerBookingOfferExpired = LocalizedText(
   en: 'The offer expired. Price and availability are refreshed without clearing your input.',
   fr: 'L’offre a expiré. Prix et disponibilité sont actualisés sans effacer votre saisie.',
   es: 'La oferta caducó. Se actualizan precio y disponibilidad sin borrar tus datos.',
+      de: 'Das Angebot ist abgelaufen. Preis und Verfügbarkeit werden aktualisiert, ohne Ihre Eingaben zu löschen.',
 );
 
 const LocalizedText kCustomerBookingBookAlreadySent = LocalizedText(
@@ -237,6 +270,7 @@ const LocalizedText kCustomerBookingBookAlreadySent = LocalizedText(
   en: 'This booking was already sent. A second attempt will not start.',
   fr: 'Cette réservation a déjà été envoyée. Aucune seconde tentative ne sera lancée.',
   es: 'Esta reserva ya se envió. No se iniciará un segundo intento.',
+      de: 'Diese Buchung wurde bereits gesendet. Ein zweiter Versuch startet nicht.',
 );
 
 const LocalizedText kCustomerBookingUseSuggestedTime = LocalizedText(
@@ -244,6 +278,7 @@ const LocalizedText kCustomerBookingUseSuggestedTime = LocalizedText(
   en: 'Use {time}',
   fr: 'Utiliser {time}',
   es: 'Usar {time}',
+      de: '{time} verwenden',
 );
 
 const LocalizedText kCustomerBookingDriverPending = LocalizedText(
@@ -251,6 +286,7 @@ const LocalizedText kCustomerBookingDriverPending = LocalizedText(
   en: 'No driver assigned yet',
   fr: 'Aucun chauffeur attribué pour le moment',
   es: 'Todavía no hay conductor asignado',
+      de: 'Noch kein Fahrer zugewiesen',
 );
 
 const LocalizedText kCustomerBookingDriverFallback = LocalizedText(
@@ -258,6 +294,7 @@ const LocalizedText kCustomerBookingDriverFallback = LocalizedText(
   en: 'Driver',
   fr: 'Chauffeur',
   es: 'Conductor',
+      de: 'Fahrer',
 );
 
 const LocalizedText kCustomerBookingDriverNoReviews = LocalizedText(
@@ -265,6 +302,7 @@ const LocalizedText kCustomerBookingDriverNoReviews = LocalizedText(
   en: 'No reviews yet',
   fr: 'Pas encore d’avis',
   es: 'Aún no hay valoraciones',
+      de: 'Noch keine Bewertungen',
 );
 
 const LocalizedText kCustomerBookingDriverReviews = LocalizedText(
@@ -272,6 +310,7 @@ const LocalizedText kCustomerBookingDriverReviews = LocalizedText(
   en: 'View reviews',
   fr: 'Voir les avis',
   es: 'Ver valoraciones',
+      de: 'Bewertungen ansehen',
 );
 
 const LocalizedText kCustomerBookingVehicleUnavailable = LocalizedText(
@@ -279,6 +318,7 @@ const LocalizedText kCustomerBookingVehicleUnavailable = LocalizedText(
   en: 'This vehicle is not available at the chosen time.',
   fr: 'Ce véhicule n’est pas disponible à l’heure choisie.',
   es: 'Este vehículo no está disponible a la hora elegida.',
+      de: 'Dieses Fahrzeug ist zur gewählten Zeit nicht verfügbar.',
 );
 
 const LocalizedText kCustomerBookingAvailabilityChecking = LocalizedText(
@@ -286,6 +326,7 @@ const LocalizedText kCustomerBookingAvailabilityChecking = LocalizedText(
   en: 'Checking availability…',
   fr: 'Vérification de la disponibilité…',
   es: 'Comprobando disponibilidad…',
+      de: 'Verfügbarkeit wird geprüft…',
 );
 
 const LocalizedText kCustomerBookingAvailabilityRetry = LocalizedText(
@@ -293,6 +334,7 @@ const LocalizedText kCustomerBookingAvailabilityRetry = LocalizedText(
   en: 'Check availability again',
   fr: 'Vérifier à nouveau la disponibilité',
   es: 'Volver a comprobar la disponibilidad',
+      de: 'Verfügbarkeit erneut prüfen',
 );
 
 const LocalizedText kCustomerBookingConfirmPickup = LocalizedText(
@@ -300,6 +342,7 @@ const LocalizedText kCustomerBookingConfirmPickup = LocalizedText(
   en: 'Confirm your pickup point',
   fr: 'Confirmez votre point de départ',
   es: 'Confirma tu punto de salida',
+      de: 'Bestätigen Sie den Abholpunkt',
 );
 
 const LocalizedText kCustomerBookingConfirmDropoff = LocalizedText(
@@ -307,6 +350,7 @@ const LocalizedText kCustomerBookingConfirmDropoff = LocalizedText(
   en: 'Confirm your destination',
   fr: 'Confirmez votre destination',
   es: 'Confirma tu destino',
+      de: 'Bestätigen Sie Ihr Ziel',
 );
 
 const LocalizedText kCustomerBookingCheckPickup = LocalizedText(
@@ -314,6 +358,7 @@ const LocalizedText kCustomerBookingCheckPickup = LocalizedText(
   en: 'Check your pickup point',
   fr: 'Vérifiez votre point de départ',
   es: 'Comprueba tu punto de salida',
+      de: 'Prüfen Sie den Abholpunkt',
 );
 
 const LocalizedText kCustomerBookingContactChange = LocalizedText(
@@ -321,6 +366,7 @@ const LocalizedText kCustomerBookingContactChange = LocalizedText(
   en: 'Edit',
   fr: 'Modifier',
   es: 'Editar',
+      de: 'Bearbeiten',
 );
 
 const LocalizedText kCustomerBookingDriverProposed = LocalizedText(
@@ -328,6 +374,7 @@ const LocalizedText kCustomerBookingDriverProposed = LocalizedText(
   en: 'Proposed',
   fr: 'Proposition',
   es: 'Propuesta',
+      de: 'Vorschlag',
 );
 
 const LocalizedText kCustomerBookingBookWith = LocalizedText(
@@ -335,6 +382,7 @@ const LocalizedText kCustomerBookingBookWith = LocalizedText(
   en: 'You are booking with',
   fr: 'Vous réservez chez',
   es: 'Reservas con',
+      de: 'Sie buchen bei',
 );
 
 const LocalizedText kCustomerBookingChooseCompany = LocalizedText(
@@ -342,6 +390,7 @@ const LocalizedText kCustomerBookingChooseCompany = LocalizedText(
   en: 'Choose a taxi company',
   fr: 'Choisissez une compagnie de taxi',
   es: 'Elige una empresa de taxi',
+      de: 'Taxiunternehmen wählen',
 );
 
 const LocalizedText kCustomerBookingChangeCompany = LocalizedText(
@@ -349,6 +398,7 @@ const LocalizedText kCustomerBookingChangeCompany = LocalizedText(
   en: 'Change',
   fr: 'Modifier',
   es: 'Cambiar',
+      de: 'Ändern',
 );
 
 const LocalizedText kCustomerBookingNeedCompanyShortPick = LocalizedText(
@@ -356,6 +406,7 @@ const LocalizedText kCustomerBookingNeedCompanyShortPick = LocalizedText(
   en: 'Choose',
   fr: 'Choisir',
   es: 'Elegir',
+      de: 'Wählen',
 );
 
 const LocalizedText kCustomerBookingNeedCompany = LocalizedText(
@@ -363,6 +414,7 @@ const LocalizedText kCustomerBookingNeedCompany = LocalizedText(
   en: 'Choose a taxi company before confirming.',
   fr: 'Choisissez une compagnie de taxi avant de confirmer.',
   es: 'Elige una empresa de taxi antes de confirmar.',
+      de: 'Wählen Sie zuerst ein Taxiunternehmen, um zu bestätigen.',
 );
 
 const LocalizedText kCustomerBookingConfirmShort = LocalizedText(
@@ -370,6 +422,7 @@ const LocalizedText kCustomerBookingConfirmShort = LocalizedText(
   en: 'Confirm',
   fr: 'Confirmer',
   es: 'Confirmar',
+      de: 'Bestätigen',
 );
 
 const LocalizedText kCustomerBookingConfirm = LocalizedText(
@@ -377,6 +430,7 @@ const LocalizedText kCustomerBookingConfirm = LocalizedText(
   en: 'Confirm booking',
   fr: 'Confirmer la réservation',
   es: 'Confirmar reserva',
+      de: 'Buchung bestätigen',
 );
 
 const LocalizedText kCustomerBookingGpsFallback = LocalizedText(
@@ -384,6 +438,7 @@ const LocalizedText kCustomerBookingGpsFallback = LocalizedText(
   en: 'Location unavailable. Enter your pickup address.',
   fr: 'Position indisponible. Saisissez l’adresse de départ.',
   es: 'Ubicación no disponible. Introduce la dirección de salida.',
+      de: 'Standort nicht verfügbar. Geben Sie Ihre Abholadresse ein.',
 );
 
 const LocalizedText kCustomerBookingAddressNeedsConfirm = LocalizedText(
@@ -391,6 +446,7 @@ const LocalizedText kCustomerBookingAddressNeedsConfirm = LocalizedText(
   en: 'This address could not be placed to house-number accuracy. Check the street, house number and map pin before booking.',
   fr: 'Cette adresse n’a pas pu être placée au numéro de maison. Vérifiez la rue, le numéro et l’épingle de la carte avant de réserver.',
   es: 'Esta dirección no se pudo situar hasta el número de casa. Comprueba la calle, el número y el pin del mapa antes de reservar.',
+      de: 'Diese Adresse konnte nicht auf Hausnummer genau gesetzt werden. Prüfen Sie Straße, Hausnummer und Kartenstecknadel vor der Buchung.',
 );
 
 const LocalizedText kCustomerBookingAddressConfirmMap = LocalizedText(
@@ -398,6 +454,7 @@ const LocalizedText kCustomerBookingAddressConfirmMap = LocalizedText(
   en: 'Confirm',
   fr: 'Confirmer',
   es: 'Confirmar',
+      de: 'Bestätigen',
 );
 
 const LocalizedText kCustomerBookingInspectPickup = LocalizedText(
@@ -405,6 +462,7 @@ const LocalizedText kCustomerBookingInspectPickup = LocalizedText(
   en: 'Check location',
   fr: 'Vérifier l’emplacement',
   es: 'Comprobar ubicación',
+      de: 'Standort prüfen',
 );
 
 const LocalizedText kCustomerBookingLandingNotPickup = LocalizedText(
@@ -412,6 +470,7 @@ const LocalizedText kCustomerBookingLandingNotPickup = LocalizedText(
   en: 'Landing time is not pickup time.',
   fr: 'L’heure d’atterrissage n’est pas l’heure de prise en charge.',
   es: 'La hora de aterrizaje no es la hora de recogida.',
+      de: 'Die Landezeit ist keine Abholzeit.',
 );
 
 const LocalizedText kCustomerBookingPriceOnRequest = LocalizedText(
@@ -419,6 +478,7 @@ const LocalizedText kCustomerBookingPriceOnRequest = LocalizedText(
   en: 'Price on request',
   fr: 'Prix sur demande',
   es: 'Precio bajo petición',
+      de: 'Preis auf Anfrage',
 );
 
 const LocalizedText kCustomerBookingRetry = LocalizedText(
@@ -426,6 +486,7 @@ const LocalizedText kCustomerBookingRetry = LocalizedText(
   en: 'Recalculate',
   fr: 'Recalculer',
   es: 'Recalcular',
+      de: 'Neu berechnen',
 );
 
 const LocalizedText kCustomerBookingPassengers = LocalizedText(
@@ -433,6 +494,7 @@ const LocalizedText kCustomerBookingPassengers = LocalizedText(
   en: 'Passengers',
   fr: 'Passagers',
   es: 'Pasajeros',
+      de: 'Fahrgäste',
 );
 
 const LocalizedText kCustomerBookingBags = LocalizedText(
@@ -440,6 +502,7 @@ const LocalizedText kCustomerBookingBags = LocalizedText(
   en: 'Luggage',
   fr: 'Bagages',
   es: 'Equipaje',
+      de: 'Gepäck',
 );
 
 const LocalizedText kCustomerBookingFlightNumber = LocalizedText(
@@ -447,6 +510,7 @@ const LocalizedText kCustomerBookingFlightNumber = LocalizedText(
   en: 'Flight number',
   fr: 'Numéro de vol',
   es: 'Número de vuelo',
+      de: 'Flugnummer',
 );
 
 const LocalizedText kCustomerBookingFlightDepart = LocalizedText(
@@ -454,6 +518,7 @@ const LocalizedText kCustomerBookingFlightDepart = LocalizedText(
   en: 'Flight departure',
   fr: 'Départ du vol',
   es: 'Salida del vuelo',
+      de: 'Flugabflug',
 );
 
 const LocalizedText kCustomerBookingFlightArrive = LocalizedText(
@@ -461,6 +526,7 @@ const LocalizedText kCustomerBookingFlightArrive = LocalizedText(
   en: 'Flight arrival',
   fr: 'Arrivée du vol',
   es: 'Llegada del vuelo',
+      de: 'Flugankunft',
 );
 
 const LocalizedText kCustomerBookingFlightDate = LocalizedText(
@@ -468,6 +534,7 @@ const LocalizedText kCustomerBookingFlightDate = LocalizedText(
   en: 'Flight date',
   fr: 'Date du vol',
   es: 'Fecha del vuelo',
+      de: 'Flugdatum',
 );
 
 const LocalizedText kCustomerBookingFlightTime = LocalizedText(
@@ -475,6 +542,7 @@ const LocalizedText kCustomerBookingFlightTime = LocalizedText(
   en: 'Flight time',
   fr: 'Heure du vol',
   es: 'Hora del vuelo',
+      de: 'Flugzeit',
 );
 
 const LocalizedText kCustomerBookingTaxiPickup = LocalizedText(
@@ -482,6 +550,7 @@ const LocalizedText kCustomerBookingTaxiPickup = LocalizedText(
   en: 'Taxi pickup',
   fr: 'Prise en charge taxi',
   es: 'Recogida en taxi',
+      de: 'Taxiabholung',
 );
 
 const LocalizedText kCustomerBookingTaxiPickupDate = LocalizedText(
@@ -489,6 +558,7 @@ const LocalizedText kCustomerBookingTaxiPickupDate = LocalizedText(
   en: 'Taxi pickup date',
   fr: 'Date de prise en charge',
   es: 'Fecha de recogida',
+      de: 'Datum der Taxiabholung',
 );
 
 const LocalizedText kCustomerBookingTaxiPickupTime = LocalizedText(
@@ -496,6 +566,7 @@ const LocalizedText kCustomerBookingTaxiPickupTime = LocalizedText(
   en: 'Taxi pickup time',
   fr: 'Heure de prise en charge',
   es: 'Hora de recogida',
+      de: 'Uhrzeit der Taxiabholung',
 );
 
 const LocalizedText kCustomerBookingDeboardMinutes = LocalizedText(
@@ -503,6 +574,7 @@ const LocalizedText kCustomerBookingDeboardMinutes = LocalizedText(
   en: 'Deboard and baggage time (min)',
   fr: 'Temps de descente et bagages (min)',
   es: 'Tiempo de bajada y equipaje (min)',
+      de: 'Ausstiegs- und Gepäckzeit (Min.)',
 );
 
 const LocalizedText kCustomerBookingArrivalMargin = LocalizedText(
@@ -510,6 +582,7 @@ const LocalizedText kCustomerBookingArrivalMargin = LocalizedText(
   en: 'Arrival margin before the flight (min)',
   fr: 'Marge d’arrivée avant le vol (min)',
   es: 'Margen de llegada antes del vuelo (min)',
+      de: 'Ankunftspuffer vor dem Flug (Min.)',
 );
 
 const LocalizedText kCustomerBookingApplySuggestedPickup = LocalizedText(
@@ -517,6 +590,7 @@ const LocalizedText kCustomerBookingApplySuggestedPickup = LocalizedText(
   en: 'Use suggested pickup',
   fr: 'Utiliser l’heure suggérée',
   es: 'Usar la recogida sugerida',
+      de: 'Vorgeschlagene Abholung übernehmen',
 );
 
 const LocalizedText kCustomerBookingSuccess = LocalizedText(
@@ -524,6 +598,7 @@ const LocalizedText kCustomerBookingSuccess = LocalizedText(
   en: 'Booking confirmed.',
   fr: 'Réservation confirmée.',
   es: 'Reserva confirmada.',
+      de: 'Buchung bestätigt.',
 );
 
 const LocalizedText kCustomerBookingOneWay = LocalizedText(
@@ -531,6 +606,7 @@ const LocalizedText kCustomerBookingOneWay = LocalizedText(
   en: 'One way',
   fr: 'Aller simple',
   es: 'Solo ida',
+      de: 'Einfache Fahrt',
 );
 
 const LocalizedText kCustomerBookingReturnNoWait = LocalizedText(
@@ -538,6 +614,7 @@ const LocalizedText kCustomerBookingReturnNoWait = LocalizedText(
   en: 'Round trip',
   fr: 'Aller-retour',
   es: 'Ida y vuelta',
+      de: 'Hin und zurück',
 );
 
 const LocalizedText kCustomerBookingReturnWait = LocalizedText(
@@ -545,6 +622,7 @@ const LocalizedText kCustomerBookingReturnWait = LocalizedText(
   en: 'Round trip with waiting',
   fr: 'Aller-retour avec attente',
   es: 'Ida y vuelta con espera',
+      de: 'Hin und zurück mit Warten',
 );
 
 const LocalizedText kCustomerBookingReturnPickup = LocalizedText(
@@ -552,6 +630,7 @@ const LocalizedText kCustomerBookingReturnPickup = LocalizedText(
   en: 'Return pickup',
   fr: 'Départ du retour',
   es: 'Salida de vuelta',
+      de: 'Rückfahrt Abholung',
 );
 
 const LocalizedText kCustomerBookingReturnDropoff = LocalizedText(
@@ -559,6 +638,7 @@ const LocalizedText kCustomerBookingReturnDropoff = LocalizedText(
   en: 'Return destination',
   fr: 'Destination du retour',
   es: 'Destino de vuelta',
+      de: 'Rückfahrt Ziel',
 );
 
 const LocalizedText kCustomerBookingOutboundWhen = LocalizedText(
@@ -566,6 +646,7 @@ const LocalizedText kCustomerBookingOutboundWhen = LocalizedText(
   en: 'Outbound',
   fr: 'Aller',
   es: 'Ida',
+      de: 'Hinfahrt',
 );
 
 const LocalizedText kCustomerBookingReturnWhen = LocalizedText(
@@ -573,6 +654,7 @@ const LocalizedText kCustomerBookingReturnWhen = LocalizedText(
   en: 'Return',
   fr: 'Retour',
   es: 'Vuelta',
+      de: 'Rückfahrt',
 );
 
 const LocalizedText kCustomerBookingReturnDate = LocalizedText(
@@ -580,6 +662,7 @@ const LocalizedText kCustomerBookingReturnDate = LocalizedText(
   en: 'Return date',
   fr: 'Date du retour',
   es: 'Fecha de vuelta',
+      de: 'Rückfahrtdatum',
 );
 
 const LocalizedText kCustomerBookingReturnTime = LocalizedText(
@@ -587,6 +670,7 @@ const LocalizedText kCustomerBookingReturnTime = LocalizedText(
   en: 'Return time',
   fr: 'Heure du retour',
   es: 'Hora de vuelta',
+      de: 'Rückfahrtzeit',
 );
 
 const LocalizedText kCustomerBookingNoVehicleAtTime = LocalizedText(
@@ -594,6 +678,7 @@ const LocalizedText kCustomerBookingNoVehicleAtTime = LocalizedText(
   en: 'No vehicle available at this time',
   fr: 'Aucun véhicule disponible à cette heure',
   es: 'Ningún vehículo disponible a esta hora',
+      de: 'Kein Fahrzeug zu dieser Zeit verfügbar',
 );
 
 const LocalizedText kCustomerBookingChooseOtherTime = LocalizedText(
@@ -601,6 +686,7 @@ const LocalizedText kCustomerBookingChooseOtherTime = LocalizedText(
   en: 'Choose another time',
   fr: 'Choisir une autre heure',
   es: 'Elige otra hora',
+      de: 'Andere Uhrzeit wählen',
 );
 
 const LocalizedText kCustomerBookingPriceOutbound = LocalizedText(
@@ -608,6 +694,7 @@ const LocalizedText kCustomerBookingPriceOutbound = LocalizedText(
   en: 'Outbound',
   fr: 'Aller',
   es: 'Ida',
+      de: 'Hinfahrt',
 );
 
 const LocalizedText kCustomerBookingPriceReturn = LocalizedText(
@@ -615,6 +702,7 @@ const LocalizedText kCustomerBookingPriceReturn = LocalizedText(
   en: 'Return',
   fr: 'Retour',
   es: 'Vuelta',
+      de: 'Rückfahrt',
 );
 
 const LocalizedText kCustomerBookingWaitMinutes = LocalizedText(
@@ -622,6 +710,7 @@ const LocalizedText kCustomerBookingWaitMinutes = LocalizedText(
   en: 'Waiting time',
   fr: 'Temps d’attente',
   es: 'Tiempo de espera',
+      de: 'Wartezeit',
 );
 
 const LocalizedText kCustomerBookingVehicle = LocalizedText(
@@ -629,6 +718,7 @@ const LocalizedText kCustomerBookingVehicle = LocalizedText(
   en: 'Vehicle',
   fr: 'Véhicule',
   es: 'Vehículo',
+      de: 'Fahrzeug',
 );
 
 const LocalizedText kCustomerBookingSuggestLarger = LocalizedText(
@@ -636,6 +726,7 @@ const LocalizedText kCustomerBookingSuggestLarger = LocalizedText(
   en: 'A larger vehicle fits this better.',
   fr: 'Un véhicule plus grand convient mieux.',
   es: 'Un vehículo más grande encaja mejor.',
+      de: 'Ein größeres Fahrzeug passt besser.',
 );
 
 const LocalizedText kCustomerBookingAirportSummaryPrefix = LocalizedText(
@@ -643,6 +734,7 @@ const LocalizedText kCustomerBookingAirportSummaryPrefix = LocalizedText(
   en: 'Selected airport',
   fr: 'Aéroport choisi',
   es: 'Aeropuerto elegido',
+      de: 'Gewählter Flughafen',
 );
 
 const LocalizedText kCustomerBookingPickupAdvice = LocalizedText(
@@ -650,6 +742,7 @@ const LocalizedText kCustomerBookingPickupAdvice = LocalizedText(
   en: 'Suggested pickup based on travel time',
   fr: 'Heure de prise en charge suggérée selon la durée',
   es: 'Recogida sugerida según la duración',
+      de: 'Vorgeschlagene Abholung anhand der Fahrtdauer',
 );
 
 const LocalizedText kCustomerBookingTooLateForFlight = LocalizedText(
@@ -657,6 +750,7 @@ const LocalizedText kCustomerBookingTooLateForFlight = LocalizedText(
   en: 'This pickup is too late for the flight departure.',
   fr: 'Cette prise en charge est trop tardive pour le départ du vol.',
   es: 'Esta recogida es demasiado tarde para la salida del vuelo.',
+      de: 'Diese Abholung ist zu spät für den Flugabflug.',
 );
 
 const LocalizedText kCustomerBookingCompanyLocked = LocalizedText(
@@ -664,6 +758,7 @@ const LocalizedText kCustomerBookingCompanyLocked = LocalizedText(
   en: 'This company is already selected for this booking.',
   fr: 'Cette entreprise est déjà choisie pour cette réservation.',
   es: 'Esta empresa ya está elegida para esta reserva.',
+      de: 'Dieses Unternehmen ist für diese Buchung bereits gewählt.',
 );
 
 const LocalizedText kCustomerBookingInvalidContext = LocalizedText(
@@ -671,6 +766,7 @@ const LocalizedText kCustomerBookingInvalidContext = LocalizedText(
   en: 'This booking link is invalid or expired.',
   fr: 'Ce lien de réservation est invalide ou expiré.',
   es: 'Este enlace de reserva no es válido o ha caducado.',
+      de: 'Dieser Buchungslink ist ungültig oder abgelaufen.',
 );
 
 const LocalizedText kCustomerBookingRouteLoading = LocalizedText(
@@ -678,6 +774,7 @@ const LocalizedText kCustomerBookingRouteLoading = LocalizedText(
   en: 'Calculating route…',
   fr: 'Calcul de l’itinéraire…',
   es: 'Calculando la ruta…',
+      de: 'Route wird berechnet…',
 );
 
 const LocalizedText kCustomerBookingNeedRoute = LocalizedText(
@@ -685,6 +782,7 @@ const LocalizedText kCustomerBookingNeedRoute = LocalizedText(
   en: 'Enter pickup and destination to calculate the route.',
   fr: 'Saisissez le départ et la destination pour calculer l’itinéraire.',
   es: 'Introduce salida y destino para calcular la ruta.',
+      de: 'Geben Sie Abholung und Ziel ein, um die Route zu berechnen.',
 );
 
 const LocalizedText kCustomerBookingNeedAirport = LocalizedText(
@@ -692,6 +790,7 @@ const LocalizedText kCustomerBookingNeedAirport = LocalizedText(
   en: 'Select the airport again',
   fr: 'Sélectionnez à nouveau l’aéroport',
   es: 'Vuelve a seleccionar el aeropuerto',
+      de: 'Flughafen erneut wählen',
 );
 
 const LocalizedText kCustomerBookingNeedWhen = LocalizedText(
@@ -699,6 +798,7 @@ const LocalizedText kCustomerBookingNeedWhen = LocalizedText(
   en: 'Choose a pickup time to calculate the route.',
   fr: 'Choisissez une heure de prise en charge pour calculer l’itinéraire.',
   es: 'Elige una hora de recogida para calcular la ruta.',
+      de: 'Wählen Sie eine Abholzeit, um die Route zu berechnen.',
 );
 
 const LocalizedText kCustomerBookingRouteFailed = LocalizedText(
@@ -706,6 +806,7 @@ const LocalizedText kCustomerBookingRouteFailed = LocalizedText(
   en: 'The route could not be calculated. Check the addresses and try again.',
   fr: 'L’itinéraire n’a pas pu être calculé. Vérifiez les adresses et réessayez.',
   es: 'No se pudo calcular la ruta. Comprueba las direcciones e inténtalo de nuevo.',
+      de: 'Die Route konnte nicht berechnet werden. Prüfen Sie die Adressen und versuchen Sie es erneut.',
 );
 
 const LocalizedText kCustomerBookingFitRoute = LocalizedText(
@@ -713,6 +814,7 @@ const LocalizedText kCustomerBookingFitRoute = LocalizedText(
   en: 'Show full route',
   fr: 'Afficher tout l’itinéraire',
   es: 'Mostrar toda la ruta',
+      de: 'Gesamte Route anzeigen',
 );
 
 const LocalizedText kCustomerBookingName = LocalizedText(
@@ -720,6 +822,7 @@ const LocalizedText kCustomerBookingName = LocalizedText(
   en: 'Name',
   fr: 'Nom',
   es: 'Nombre',
+      de: 'Name',
 );
 
 const LocalizedText kCustomerBookingPhone = LocalizedText(
@@ -727,6 +830,7 @@ const LocalizedText kCustomerBookingPhone = LocalizedText(
   en: 'Phone',
   fr: 'Téléphone',
   es: 'Teléfono',
+      de: 'Telefon',
 );
 
 const LocalizedText kCustomerBookingPhoneNeedsCountry = LocalizedText(
@@ -734,6 +838,7 @@ const LocalizedText kCustomerBookingPhoneNeedsCountry = LocalizedText(
   en: 'Add the country code, for example +32 for Belgium.',
   fr: 'Ajoutez l’indicatif du pays, par exemple +32 pour la Belgique.',
   es: 'Añade el código de país, por ejemplo +32 para Bélgica.',
+      de: 'Geben Sie die Landesvorwahl ein, zum Beispiel +32 für Belgien.',
 );
 
 const LocalizedText kCustomerBookingPhoneInvalid = LocalizedText(
@@ -741,6 +846,7 @@ const LocalizedText kCustomerBookingPhoneInvalid = LocalizedText(
   en: 'This phone number does not look complete.',
   fr: 'Ce numéro de téléphone semble incomplet.',
   es: 'Este número de teléfono no parece completo.',
+      de: 'Diese Telefonnummer scheint unvollständig.',
 );
 
 const LocalizedText kCustomerBookingEmail = LocalizedText(
@@ -748,6 +854,7 @@ const LocalizedText kCustomerBookingEmail = LocalizedText(
   en: 'Email',
   fr: 'E-mail',
   es: 'Correo',
+      de: 'E-Mail',
 );
 
 const LocalizedText kCustomerBookingSearchAirport = LocalizedText(
@@ -755,6 +862,7 @@ const LocalizedText kCustomerBookingSearchAirport = LocalizedText(
   en: 'Search by name, city, IATA or ICAO',
   fr: 'Recherche par nom, ville, IATA ou OACI',
   es: 'Busca por nombre, ciudad, IATA o OACI',
+      de: 'Suche nach Name, Stadt, IATA oder ICAO',
 );
 
 const LocalizedText kCustomerBookingMyAddress = LocalizedText(
@@ -762,6 +870,7 @@ const LocalizedText kCustomerBookingMyAddress = LocalizedText(
   en: 'My address',
   fr: 'Mon adresse',
   es: 'Mi dirección',
+      de: 'Meine Adresse',
 );
 
 const LocalizedText kCustomerBookingCurrentLocation = LocalizedText(
@@ -769,6 +878,7 @@ const LocalizedText kCustomerBookingCurrentLocation = LocalizedText(
   en: 'Current location',
   fr: 'Position actuelle',
   es: 'Ubicación actual',
+      de: 'Aktueller Standort',
 );
 
 const LocalizedText kCustomerBookingNeedPickupField = LocalizedText(
@@ -776,6 +886,7 @@ const LocalizedText kCustomerBookingNeedPickupField = LocalizedText(
   en: 'Enter a pickup address. The field is above.',
   fr: 'Saisissez une adresse de départ. Le champ se trouve plus haut.',
   es: 'Introduce una dirección de salida. El campo está arriba.',
+      de: 'Geben Sie eine Abholadresse ein. Das Feld steht oben.',
 );
 
 const LocalizedText kCustomerBookingNeedDropoffField = LocalizedText(
@@ -783,6 +894,7 @@ const LocalizedText kCustomerBookingNeedDropoffField = LocalizedText(
   en: 'Enter a destination. The field is above.',
   fr: 'Saisissez une destination. Le champ se trouve plus haut.',
   es: 'Introduce un destino. El campo está arriba.',
+      de: 'Geben Sie ein Ziel ein. Das Feld steht oben.',
 );
 
 const LocalizedText kCustomerBookingNeedNameField = LocalizedText(
@@ -790,6 +902,7 @@ const LocalizedText kCustomerBookingNeedNameField = LocalizedText(
   en: 'Enter your name to confirm.',
   fr: 'Saisissez votre nom pour confirmer.',
   es: 'Introduce tu nombre para confirmar.',
+      de: 'Geben Sie Ihren Namen ein, um zu bestätigen.',
 );
 
 const LocalizedText kCustomerBookingNeedPhoneField = LocalizedText(
@@ -797,6 +910,7 @@ const LocalizedText kCustomerBookingNeedPhoneField = LocalizedText(
   en: 'Enter your phone number to confirm.',
   fr: 'Saisissez votre numéro de téléphone pour confirmer.',
   es: 'Introduce tu teléfono para confirmar.',
+      de: 'Geben Sie Ihre Telefonnummer ein, um zu bestätigen.',
 );
 
 const LocalizedText kCustomerBookingNeedQuote = LocalizedText(
@@ -804,6 +918,7 @@ const LocalizedText kCustomerBookingNeedQuote = LocalizedText(
   en: 'Wait until the route is ready or tap recalculate.',
   fr: 'Attendez l’itinéraire ou appuyez sur recalculer.',
   es: 'Espera la ruta o pulsa recalcular.',
+      de: 'Warten Sie, bis die Route fertig ist, oder tippen Sie auf Neu berechnen.',
 );
 
 const LocalizedText kCustomerBookingPriceFailed = LocalizedText(
@@ -811,6 +926,7 @@ const LocalizedText kCustomerBookingPriceFailed = LocalizedText(
   en: 'The price could not be calculated. Check the company and try again.',
   fr: 'Le prix n’a pas pu être calculé. Vérifiez l’entreprise et réessayez.',
   es: 'No se pudo calcular el precio. Comprueba la empresa e inténtalo de nuevo.',
+      de: 'Der Preis konnte nicht berechnet werden. Prüfen Sie das Unternehmen und versuchen Sie es erneut.',
 );
 
 const LocalizedText kCustomerBookingReturnFixedFareUnresolved = LocalizedText(
@@ -818,6 +934,7 @@ const LocalizedText kCustomerBookingReturnFixedFareUnresolved = LocalizedText(
   en: 'The fixed price for the return trip could not be determined. Adjust the return trip or request a custom price.',
   fr: 'Le prix fixe du trajet retour n’a pas pu être déterminé. Modifiez le retour ou demandez un prix sur mesure.',
   es: 'No se pudo determinar el precio fijo del viaje de vuelta. Ajusta la vuelta o solicita un precio personalizado.',
+      de: 'Der Festpreis der Rückfahrt konnte nicht ermittelt werden. Passen Sie die Rückfahrt an oder fragen Sie einen individuellen Preis an.',
 );
 
 const LocalizedText kCustomerBookingPriceInconsistent = LocalizedText(
@@ -825,6 +942,7 @@ const LocalizedText kCustomerBookingPriceInconsistent = LocalizedText(
   en: 'The total does not match the outbound and return prices. Request a new price; do not book this amount.',
   fr: 'Le total ne correspond pas aux prix aller et retour. Demandez un nouveau prix; ne réservez pas ce montant.',
   es: 'El total no coincide con los precios de ida y vuelta. Solicita un precio nuevo; no reserves este importe.',
+      de: 'Die Summe stimmt nicht mit Hin- und Rückfahrtpreis überein. Fragen Sie einen neuen Preis an; buchen Sie diesen Betrag nicht.',
 );
 
 const LocalizedText kCustomerBookingQuoteFailed = LocalizedText(
@@ -832,6 +950,7 @@ const LocalizedText kCustomerBookingQuoteFailed = LocalizedText(
   en: 'The quote could not be retrieved. Try again.',
   fr: 'Le devis n’a pas pu être obtenu. Réessayez.',
   es: 'No se pudo obtener el presupuesto. Inténtalo de nuevo.',
+      de: 'Das Angebot konnte nicht abgerufen werden. Versuchen Sie es erneut.',
 );
 
 const LocalizedText kCustomerBookingVehiclesLoading = LocalizedText(
@@ -839,6 +958,7 @@ const LocalizedText kCustomerBookingVehiclesLoading = LocalizedText(
   en: 'Loading vehicles…',
   fr: 'Chargement des véhicules…',
   es: 'Cargando vehículos…',
+      de: 'Fahrzeuge werden geladen…',
 );
 
 const LocalizedText kCustomerBookingVehiclesLoadFailed = LocalizedText(
@@ -846,6 +966,7 @@ const LocalizedText kCustomerBookingVehiclesLoadFailed = LocalizedText(
   en: 'Vehicles could not be loaded. Try again.',
   fr: 'Les véhicules n’ont pas pu être chargés. Réessayez.',
   es: 'No se pudieron cargar los vehículos. Inténtalo de nuevo.',
+      de: 'Fahrzeuge konnten nicht geladen werden. Versuchen Sie es erneut.',
 );
 
 const LocalizedText kCustomerBookingVehiclesNeedRide = LocalizedText(
@@ -853,6 +974,7 @@ const LocalizedText kCustomerBookingVehiclesNeedRide = LocalizedText(
   en: 'Choose pickup and destination first to see available vehicles.',
   fr: 'Choisissez d’abord le départ et la destination pour voir les véhicules disponibles.',
   es: 'Elige primero salida y destino para ver los vehículos disponibles.',
+      de: 'Wählen Sie zuerst Abholung und Ziel, um verfügbare Fahrzeuge zu sehen.',
 );
 
 const LocalizedText kCustomerBookingBookFailed = LocalizedText(
@@ -860,6 +982,7 @@ const LocalizedText kCustomerBookingBookFailed = LocalizedText(
   en: 'The booking was not confirmed. Check the fields and try again.',
   fr: 'La réservation n’a pas été confirmée. Vérifiez les champs et réessayez.',
   es: 'La reserva no se confirmó. Comprueba los campos e inténtalo de nuevo.',
+      de: 'Die Buchung wurde nicht bestätigt. Prüfen Sie die Felder und versuchen Sie es erneut.',
 );
 
 const LocalizedText kCustomerBookingBookUnavailable = LocalizedText(
@@ -867,6 +990,7 @@ const LocalizedText kCustomerBookingBookUnavailable = LocalizedText(
   en: 'No vehicle is available at this time.',
   fr: 'Aucun véhicule n’est disponible à cette heure.',
   es: 'No hay ningún vehículo disponible a esta hora.',
+      de: 'Zu dieser Zeit ist kein Fahrzeug verfügbar.',
 );
 
 const LocalizedText kCustomerBookingBookPayment = LocalizedText(
@@ -874,6 +998,7 @@ const LocalizedText kCustomerBookingBookPayment = LocalizedText(
   en: 'Payment could not be confirmed. Choose another payment method.',
   fr: 'Le paiement n’a pas pu être confirmé. Choisissez un autre moyen de paiement.',
   es: 'No se pudo confirmar el pago. Elige otro método de pago.',
+      de: 'Die Zahlung konnte nicht bestätigt werden. Wählen Sie eine andere Zahlungsart.',
 );
 
 const LocalizedText kCustomerBookingCheckoutStart = LocalizedText(
@@ -881,6 +1006,7 @@ const LocalizedText kCustomerBookingCheckoutStart = LocalizedText(
   en: 'Online payment could not be started. Please try again.',
   fr: 'Le paiement en ligne n’a pas pu être démarré. Réessayez.',
   es: 'No se pudo iniciar el pago online. Inténtalo de nuevo.',
+      de: 'Die Online-Zahlung konnte nicht gestartet werden. Bitte erneut versuchen.',
 );
 
 const LocalizedText kCustomerBookingCompletePayment = LocalizedText(
@@ -888,6 +1014,7 @@ const LocalizedText kCustomerBookingCompletePayment = LocalizedText(
   en: 'Booking created. Complete the online payment.',
   fr: 'Réservation créée. Finalisez le paiement en ligne.',
   es: 'Reserva creada. Completa el pago en línea.',
+      de: 'Buchung erstellt. Schließen Sie die Online-Zahlung ab.',
 );
 
 const LocalizedText kCustomerBookingBookNetwork = LocalizedText(
@@ -895,6 +1022,7 @@ const LocalizedText kCustomerBookingBookNetwork = LocalizedText(
   en: 'The booking was not confirmed because of a connection error. Check whether the ride was saved before booking again.',
   fr: 'La réservation n’a pas été confirmée à cause d’une erreur de connexion. Vérifiez si la course a été enregistrée avant de réserver à nouveau.',
   es: 'La reserva no se confirmó por un error de conexión. Comprueba si el viaje se guardó antes de volver a reservar.',
+      de: 'Die Buchung wurde wegen eines Verbindungsfehlers nicht bestätigt. Prüfen Sie, ob die Fahrt gespeichert wurde, bevor Sie erneut buchen.',
 );
 
 const LocalizedText kCustomerBookingAlreadyBooked = LocalizedText(
@@ -902,6 +1030,7 @@ const LocalizedText kCustomerBookingAlreadyBooked = LocalizedText(
   en: 'This booking is already confirmed.',
   fr: 'Cette réservation est déjà confirmée.',
   es: 'Esta reserva ya está confirmada.',
+      de: 'Diese Buchung ist bereits bestätigt.',
 );
 
 const LocalizedText kCustomerBookingSubmitting = LocalizedText(
@@ -909,6 +1038,7 @@ const LocalizedText kCustomerBookingSubmitting = LocalizedText(
   en: 'Confirming booking…',
   fr: 'Confirmation de la réservation…',
   es: 'Confirmando la reserva…',
+      de: 'Buchung wird bestätigt…',
 );
 
 const LocalizedText kCustomerBookingPickupSection = LocalizedText(
@@ -916,6 +1046,7 @@ const LocalizedText kCustomerBookingPickupSection = LocalizedText(
   en: 'Pickup',
   fr: 'Prise en charge',
   es: 'Recogida',
+      de: 'Abholung',
 );
 
 const LocalizedText kCustomerBookingFlightSection = LocalizedText(
@@ -923,6 +1054,7 @@ const LocalizedText kCustomerBookingFlightSection = LocalizedText(
   en: 'Flight',
   fr: 'Vol',
   es: 'Vuelo',
+      de: 'Flug',
 );
 
 const LocalizedText kCustomerBookingVehicleSampleHint = LocalizedText(
@@ -930,6 +1062,7 @@ const LocalizedText kCustomerBookingVehicleSampleHint = LocalizedText(
   en: 'Sample photo of this category, not a guaranteed assigned car.',
   fr: 'Photo d’exemple de cette catégorie, pas de voiture attribuée garantie.',
   es: 'Foto de ejemplo de esta categoría, no es el coche asignado.',
+      de: 'Beispielfoto dieser Kategorie, kein garantiertes zugewiesenes Auto.',
 );
 
 const LocalizedText kCustomerBookingNoCompanyVehicles = LocalizedText(
@@ -937,6 +1070,7 @@ const LocalizedText kCustomerBookingNoCompanyVehicles = LocalizedText(
   en: 'This company has no suitable vehicles for this ride.',
   fr: 'Cette entreprise n’a pas de véhicules adaptés pour cette course.',
   es: 'Esta empresa no tiene vehículos adecuados para este viaje.',
+      de: 'Dieses Unternehmen hat keine passenden Fahrzeuge für diese Fahrt.',
 );
 
 const LocalizedText kCustomerBookingArrivalDestination = LocalizedText(
@@ -944,6 +1078,7 @@ const LocalizedText kCustomerBookingArrivalDestination = LocalizedText(
   en: 'Arrival at destination',
   fr: 'Arrivée à destination',
   es: 'Llegada al destino',
+      de: 'Ankunft am Ziel',
 );
 
 const LocalizedText kCustomerBookingMissingAddresses = LocalizedText(
@@ -951,6 +1086,7 @@ const LocalizedText kCustomerBookingMissingAddresses = LocalizedText(
   en: 'Choose pickup and destination to see the route.',
   fr: 'Choisissez le départ et la destination pour voir l’itinéraire.',
   es: 'Elige salida y destino para ver la ruta.',
+      de: 'Wählen Sie Abholung und Ziel, um die Route zu sehen.',
 );
 
 const LocalizedText kCustomerBookingPrivateRide = LocalizedText(
@@ -958,6 +1094,7 @@ const LocalizedText kCustomerBookingPrivateRide = LocalizedText(
   en: 'Private ride',
   fr: 'Course particulière',
   es: 'Viaje particular',
+      de: 'Private Fahrt',
 );
 
 const LocalizedText kCustomerBookingBusinessRide = LocalizedText(
@@ -965,6 +1102,7 @@ const LocalizedText kCustomerBookingBusinessRide = LocalizedText(
   en: 'Business ride',
   fr: 'Course professionnelle',
   es: 'Viaje de empresa',
+      de: 'Geschäftsfahrt',
 );
 
 const LocalizedText kCustomerBookingPaymentTitle = LocalizedText(
@@ -972,6 +1110,7 @@ const LocalizedText kCustomerBookingPaymentTitle = LocalizedText(
   en: 'Payment options',
   fr: 'Options de paiement',
   es: 'Opciones de pago',
+      de: 'Zahlungsoptionen',
 );
 
 const LocalizedText kCustomerBookingPaymentHint = LocalizedText(
@@ -979,6 +1118,7 @@ const LocalizedText kCustomerBookingPaymentHint = LocalizedText(
   en: 'Choose how you want to pay for this ride.',
   fr: 'Choisissez comment payer ce trajet.',
   es: 'Elige cómo quieres pagar este viaje.',
+      de: 'Wählen Sie, wie Sie diese Fahrt bezahlen möchten.',
 );
 
 const LocalizedText kCustomerBookingPaymentConfirm = LocalizedText(
@@ -986,6 +1126,7 @@ const LocalizedText kCustomerBookingPaymentConfirm = LocalizedText(
   en: 'Confirm and continue',
   fr: 'Confirmer et continuer',
   es: 'Confirmar y continuar',
+      de: 'Bestätigen und weiter',
 );
 
 LocalizedText customerBookingTitleFor(CustomerBookingEntryContext entry) {

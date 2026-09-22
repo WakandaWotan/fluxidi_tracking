@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
+import 'limousine_address_label_language.dart';
 
 const int kLimousineAddressMinQueryLength = 3;
 const Duration kLimousineAddressDebounce = Duration(milliseconds: 220);
@@ -648,20 +649,21 @@ LimousineOwnedAddressResolution limousineResolveOwnedAddress({
   );
 }
 
-/// UI language must not hide local toponyms such as Gent, Kortrijk or Ronse.
-/// Place-name queries omit Mapbox `language=` so Dutch names stay findable
-/// when the app itself is English.
+/// App language is always sent so Mapbox returns official place/province/country
+/// text. Place-name queries keep Dutch as a secondary match language so Gent,
+/// Kortrijk and Ronse stay findable when the UI itself is English.
 String limousineMapboxForwardLanguage({
   required String query,
   required String uiLanguage,
 }) {
-  // Place-name queries omit Mapbox `language=` so Dutch names stay findable
-  // when the app itself is English (Gent, not only Ghent / Genthin).
-  if (limousineAddressLooksLikePlaceName(query) ||
-      limousineAddressLooksLikeLocalityOnly(query)) {
-    return '';
+  final ui = uiLanguage.trim();
+  if (ui.isEmpty) return 'nl';
+  if ((limousineAddressLooksLikePlaceName(query) ||
+          limousineAddressLooksLikeLocalityOnly(query)) &&
+      ui != 'nl') {
+    return '$ui,nl';
   }
-  return uiLanguage.trim();
+  return ui;
 }
 
 bool limousineFoldedStartsAsWord(String haystack, String needle) {
@@ -912,15 +914,19 @@ String limousineMapboxProximitySuffix({
 }
 
 List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
-  Object? rawFeatures,
-) {
+  Object? rawFeatures, {
+  String language = 'nl',
+}) {
   if (rawFeatures is! List) return const <LimousinePlaceSuggestion>[];
+  final lang = limousineNormalizeAddressLanguage(language);
   final out = <LimousinePlaceSuggestion>[];
   for (final feature in rawFeatures) {
     if (feature is! Map) continue;
     final map = feature.map((key, value) => MapEntry(key.toString(), value));
-    final label = (map['place_name'] ?? '').toString().trim();
-    if (label.isEmpty) continue;
+    final identity = limousineMapboxFeatureIdentityLabel(map);
+    final label = limousineMapboxFeatureDisplayLabel(map, lang);
+    if (label.isEmpty && identity.isEmpty) continue;
+    final displayLabel = label.isEmpty ? identity : label;
     final center = map['center'];
     double? lon;
     double? lat;
@@ -943,7 +949,7 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
         : placeId.contains('.')
             ? placeId.split('.').first
             : '';
-    final text = (map['text'] ?? '').toString().trim();
+    final text = limousineMapboxLocalizedField(map, 'text', lang);
     final matchingText = [
       (map['matching_text'] ?? '').toString().trim(),
       (map['matching_place_name'] ?? '').toString().trim(),
@@ -1000,7 +1006,7 @@ List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
     }
     out.add(
       LimousinePlaceSuggestion(
-        label: label,
+        label: displayLabel,
         lat: lat,
         lon: lon,
         placeId: placeId.isEmpty ? null : placeId,
@@ -1119,9 +1125,12 @@ class LimousinePlaceLookup {
       query: query,
       uiLanguage: language,
     );
+    final countryFallback = (contextCountry ?? '').trim().isNotEmpty
+        ? contextCountry!.trim().toLowerCase()
+        : country;
     final inferredCountry = limousineMapboxCountryForQuery(
       query,
-      fallback: country,
+      fallback: countryFallback,
     );
     final uri = limousineMapboxPlacesUri(
       query: query,
@@ -1145,7 +1154,10 @@ class LimousinePlaceLookup {
       return LimousinePlaceLookupResult(
         suggestions: limousineRankPlaceSuggestions(
           query,
-          parseLimousineMapboxPlaceFeatures(data['features']),
+          parseLimousineMapboxPlaceFeatures(
+            data['features'],
+            language: language,
+          ),
           contextCountry: contextCountry ?? inferredCountry,
         ),
       );
@@ -1197,7 +1209,10 @@ class LimousinePlaceLookup {
       if (data is! Map) {
         return const LimousinePlaceLookupResult(hadError: true);
       }
-      final suggestions = parseLimousineMapboxPlaceFeatures(data['features']);
+      final suggestions = parseLimousineMapboxPlaceFeatures(
+        data['features'],
+        language: language,
+      );
       if (suggestions.isEmpty) {
         return const LimousinePlaceLookupResult(hadError: true);
       }

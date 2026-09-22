@@ -337,6 +337,7 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     _returnPickup.addListener(_onDraftChanged);
     _returnDropoff.addListener(_onDraftChanged);
     _sheetController.addListener(_onSheetControllerTick);
+    appLanguageNotifier.addListener(_onAppLanguageChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_refreshQuote());
     });
@@ -533,18 +534,30 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     final label = address.displayText.trim().isNotEmpty
         ? address.displayText.trim()
         : address.canonicalLabel.trim();
+    final profile = _profile ?? widget.profile;
+    final needsConfirm =
+        profile != null && customerProfileAddressNeedsMapConfirm(profile);
     final next = customerBookingAddressFromText(
       label,
       latitude: address.lat,
       longitude: address.lon,
     );
-    _pickup.acceptCopy(next, userConfirmed: next.hasCoordinates);
+    _pickup.acceptCopy(
+      next,
+      userConfirmed: next.hasCoordinates && !needsConfirm,
+    );
+    if (needsConfirm) {
+      _pickup.locationNeedsConfirm = true;
+    }
     setState(() {
       _pickupOwned = true;
       _gpsFallback = false;
       _submitError = null;
     });
     _onDraftChanged();
+    if (next.hasCoordinates) {
+      return;
+    }
     unawaited(_resolveOwnedPickup(label));
   }
 
@@ -1911,8 +1924,13 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
     });
   }
 
+  void _onAppLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _quoteDebounce?.cancel();
     _sheetController.removeListener(_onSheetControllerTick);
     _sheetController.dispose();
@@ -2630,85 +2648,111 @@ class _CustomerBookingFlowState extends State<CustomerBookingFlow> {
       key: kCustomerBookingCompanyBannerKey,
       color: _palette.surface,
       borderRadius: BorderRadius.circular(12),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 40),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: [
-              _companyLogoMark(),
-              const SizedBox(width: 10),
-              Expanded(
-                child: chosen
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            key: kCustomerBookingCompanyLockKey,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: _palette.textPrimary,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          if (_presentation.hasBadge || _presentation.hasNotice)
-                            PublicCompanyPresentationBanner(
-                              presentation: _presentation,
-                              compact: true,
-                              onInfo: _presentation.hasNotice
-                                  ? () => _showExampleNotice()
-                                  : null,
-                            ),
-                        ],
-                      )
-                    : Text(
-                        _t(kCustomerBookingChooseCompany),
-                        key: kCustomerBookingCompanyChooseKey,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final layout = customerBookingCompanyBannerLayout(
+              innerWidth: constraints.maxWidth,
+              textScale: MediaQuery.textScalerOf(context).scale(1),
+            );
+            final logo = _companyLogoMark(
+              maxWidth: layout.logoMaxWidth,
+              maxHeight: layout.logoMaxHeight,
+            );
+            final text = chosen
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        key: kCustomerBookingCompanyLockKey,
                         style: TextStyle(
                           color: _palette.textPrimary,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-              ),
-            ],
-          ),
+                      if (_presentation.hasBadge || _presentation.hasNotice)
+                        PublicCompanyPresentationBanner(
+                          presentation: _presentation,
+                          compact: true,
+                          onInfo: _presentation.hasNotice
+                              ? () => _showExampleNotice()
+                              : null,
+                        ),
+                    ],
+                  )
+                : Text(
+                    _t(kCustomerBookingChooseCompany),
+                    key: kCustomerBookingCompanyChooseKey,
+                    style: TextStyle(
+                      color: _palette.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  );
+            if (layout.stack) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(alignment: Alignment.center, child: logo),
+                  SizedBox(height: layout.gap),
+                  text,
+                ],
+              );
+            }
+            if (layout.equalSplit) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: Align(alignment: Alignment.center, child: logo)),
+                  SizedBox(width: layout.gap),
+                  Expanded(child: text),
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                logo,
+                SizedBox(width: layout.gap),
+                Expanded(child: text),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _companyLogoMark() {
-    const width = kCustomerBookingCompanyLogoWidth;
-    const height = kCustomerBookingCompanyLogoHeight;
+  Widget _companyLogoMark({
+    required double maxWidth,
+    required double maxHeight,
+  }) {
+    final iconSize = maxHeight.clamp(22.0, 40.0);
     if (_companyLogoUrl.isNotEmpty) {
       return SizedBox(
-        width: width,
-        height: height,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.network(
-            _companyLogoUrl,
-            key: kCustomerBookingCompanyLogoImageKey,
-            width: width,
-            height: height,
-            fit: BoxFit.contain,
-            alignment: Alignment.centerLeft,
-            errorBuilder: (_, __, ___) => _neutralCompanyIcon(height),
-          ),
+        width: maxWidth,
+        height: maxHeight,
+        child: Image.network(
+          _companyLogoUrl,
+          key: kCustomerBookingCompanyLogoImageKey,
+          width: maxWidth,
+          height: maxHeight,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.medium,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) =>
+              Center(child: _neutralCompanyIcon(iconSize)),
         ),
       );
     }
     return SizedBox(
-      width: width,
-      height: height,
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: _neutralCompanyIcon(height),
-      ),
+      width: maxWidth,
+      height: maxHeight,
+      child: Center(child: _neutralCompanyIcon(iconSize)),
     );
   }
 

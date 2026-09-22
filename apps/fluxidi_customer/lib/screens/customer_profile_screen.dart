@@ -1,16 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 
 import '../app/customer_app_config.dart';
 import '../app/customer_labels.dart';
-import '../app/customer_theme.dart';
 import '../bridge/customer_flows.dart';
 import '../bridge/customer_language.dart';
 import '../bridge/customer_runtime.dart';
+import '../security/customer_device_unlock.dart';
+import '../security/customer_session_lock.dart';
 import '../widgets/customer_header_bar.dart';
 import '../widgets/customer_language_sheet.dart';
 
@@ -33,6 +35,18 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
   @override
   void initState() {
     super.initState();
+    CustomerSessionLock.instance.addListener(_onLockChanged);
+    unawaited(_refresh());
+  }
+
+  @override
+  void dispose() {
+    CustomerSessionLock.instance.removeListener(_onLockChanged);
+    super.dispose();
+  }
+
+  void _onLockChanged() {
+    if (!mounted || CustomerSessionLock.instance.isLocked) return;
     unawaited(_refresh());
   }
 
@@ -60,90 +74,103 @@ class _CustomerProfileScreenState extends State<CustomerProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = activeCustomerPalette();
-    final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: palette.background,
-      body: SafeArea(
-        bottom: false,
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            children: <Widget>[
-              CustomerHeaderBar(config: widget.config),
-              const SizedBox(height: 20),
-              Text(
-                CustomerText.profile.current,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: palette.textPrimary,
-                ),
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, variant, _) {
+        return CustomerLanguageBuilder(
+          builder: (context, language) {
+        final palette = paletteForCustomerTheme(variant);
+        final theme = Theme.of(context);
+        return ColoredBox(
+          color: palette.background,
+          child: SafeArea(
+            bottom: false,
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: <Widget>[
+                  CustomerHeaderBar(config: widget.config),
+                  const SizedBox(height: 20),
+                  Text(
+                    CustomerText.profile.of(language),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _AccountCard(
+                    palette: palette,
+                    loading: _loading,
+                    signedIn: _signedIn,
+                    profile: _profile,
+                    onSignIn: _signIn,
+                    onSignOut: _signOut,
+                  ),
+                  if (_signedIn && !_loading) ...<Widget>[
+                    const SizedBox(height: 10),
+                    _DeviceUnlockTile(palette: palette, language: language),
+                  ],
+                  const SizedBox(height: 18),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_my_details'),
+                    icon: Icons.badge_outlined,
+                    label: CustomerText.myDetails.of(language),
+                    onTap: () async {
+                      await openMyDetails(context);
+                      await _refresh();
+                    },
+                  ),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_my_bookings'),
+                    icon: Icons.receipt_long_outlined,
+                    label: CustomerText.myBookings.of(language),
+                    onTap: () => unawaited(openMyBookings(context)),
+                  ),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_companies'),
+                    icon: Icons.store_outlined,
+                    label: CustomerText.companies.of(language),
+                    onTap: () => unawaited(openCompanySearch(context)),
+                  ),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_language'),
+                    icon: Icons.translate_outlined,
+                    label: CustomerText.language.of(language),
+                    trailingText: kCustomerLanguageLabels[language],
+                    onTap: () async {
+                      await showCustomerLanguageSheet(context);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_theme'),
+                    icon: Icons.palette_outlined,
+                    label: CustomerText.chooseTheme.of(language),
+                    onTap: () => unawaited(openThemePicker(context)),
+                  ),
+                  const SizedBox(height: 10),
+                  _ProfileTile(
+                    palette: palette,
+                    tileKey: const Key('customer_profile_privacy'),
+                    icon: Icons.privacy_tip_outlined,
+                    label: CustomerText.dataAndAccount.of(language),
+                    onTap: () => openPrivacyAndAccount(context),
+                  ),
+                ],
               ),
-              const SizedBox(height: 14),
-              _AccountCard(
-                palette: palette,
-                loading: _loading,
-                signedIn: _signedIn,
-                profile: _profile,
-                onSignIn: _signIn,
-                onSignOut: _signOut,
-              ),
-              const SizedBox(height: 18),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_my_details'),
-                icon: Icons.badge_outlined,
-                label: CustomerText.myDetails.current,
-                onTap: () async {
-                  await openMyDetails(context);
-                  await _refresh();
-                },
-              ),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_my_bookings'),
-                icon: Icons.receipt_long_outlined,
-                label: CustomerText.myBookings.current,
-                onTap: () => unawaited(openMyBookings(context)),
-              ),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_companies'),
-                icon: Icons.store_outlined,
-                label: CustomerText.companies.current,
-                onTap: () => unawaited(openCompanySearch(context)),
-              ),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_language'),
-                icon: Icons.translate_outlined,
-                label: CustomerText.language.current,
-                trailingText: kCustomerLanguageLabels[appConfig.currentLanguage],
-                onTap: () async {
-                  await showCustomerLanguageSheet(context);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_theme'),
-                icon: Icons.palette_outlined,
-                label: CustomerText.chooseTheme.current,
-                onTap: () => unawaited(openThemePicker(context)),
-              ),
-              const SizedBox(height: 10),
-              _ProfileTile(
-                palette: palette,
-                tileKey: const Key('customer_profile_privacy'),
-                icon: Icons.privacy_tip_outlined,
-                label: CustomerText.dataAndAccount.current,
-                onTap: () => openPrivacyAndAccount(context),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+          },
+        );
+      },
     );
   }
 }
@@ -231,6 +258,95 @@ class _AccountCard extends StatelessWidget {
                   child: Text(CustomerText.signIn.current),
                 ),
         ],
+      ),
+    );
+  }
+}
+
+class _DeviceUnlockTile extends StatefulWidget {
+  const _DeviceUnlockTile({
+    required this.palette,
+    required this.language,
+  });
+
+  final CustomerThemePalette palette;
+  final AppLanguage language;
+
+  @override
+  State<_DeviceUnlockTile> createState() => _DeviceUnlockTileState();
+}
+
+class _DeviceUnlockTileState extends State<_DeviceUnlockTile> {
+  bool _ready = false;
+  bool _available = false;
+  bool _enabled = false;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final lock = CustomerSessionLock.instance;
+    final available = await lock.canProtectDevice();
+    if (!mounted) return;
+    setState(() {
+      _available = available;
+      _enabled = lock.isEnabled;
+      _ready = true;
+    });
+  }
+
+  Future<void> _toggle(bool value) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final lock = CustomerSessionLock.instance;
+    final language = widget.language;
+    final result = value
+        ? await lock.enableAfterAuthentication(
+            reason: CustomerText.unlockReasonEnable.of(language),
+          )
+        : await lock.disableAfterAuthentication(
+            reason: CustomerText.unlockReasonDisable.of(language),
+          );
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _enabled = lock.isEnabled;
+    });
+    if (result == CustomerUnlockResult.unavailable) {
+      setState(() => _available = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready || !_available) return const SizedBox.shrink();
+    return Container(
+      key: const Key('customer_profile_device_unlock'),
+      padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: widget.palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: widget.palette.border),
+      ),
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        value: _enabled,
+        onChanged: _busy ? null : (value) => unawaited(_toggle(value)),
+        title: Text(
+          CustomerText.unlockSwitchTitle.of(widget.language),
+          style: TextStyle(
+            color: widget.palette.textPrimary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        subtitle: Text(
+          CustomerText.unlockSwitchSubtitle.of(widget.language),
+          style: TextStyle(color: widget.palette.textMuted),
+        ),
       ),
     );
   }

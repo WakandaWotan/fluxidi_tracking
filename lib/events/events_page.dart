@@ -23,10 +23,18 @@ EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
 }
 
 class EventsPage extends StatefulWidget {
-  const EventsPage({this.onBookEvent, this.dataSource, super.key});
+  const EventsPage({
+    this.onBookEvent,
+    this.onOpenHotels,
+    this.dataSource,
+    this.compactCustomerLayout = false,
+    super.key,
+  });
 
   final EventBookCallback? onBookEvent;
+  final void Function(EventDetailData event)? onOpenHotels;
   final EventDataSource? dataSource;
+  final bool compactCustomerLayout;
 
   @override
   State<EventsPage> createState() => _EventsPageState();
@@ -121,6 +129,7 @@ class _EventsPageState extends State<EventsPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
+    appLanguageNotifier.addListener(_onThemeChanged);
     _selectedMarketKey = _marketKeys.first;
     _dataSource = widget.dataSource ?? const EmptyEventDataSource();
   }
@@ -139,6 +148,7 @@ class _EventsPageState extends State<EventsPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
+    appLanguageNotifier.removeListener(_onThemeChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -442,6 +452,8 @@ class _EventsPageState extends State<EventsPage> {
           searchQuery: searchQuery.trim(),
           sortMode: targetSortMode,
           onBookEvent: _handleBookEvent,
+          onOpenHotels: widget.onOpenHotels,
+          compactCustomerLayout: widget.compactCustomerLayout,
         ),
       ),
     );
@@ -1583,7 +1595,9 @@ class _EventsPageState extends State<EventsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildHeader(context, isTabletLayout: isTabletLayout),
+                  widget.compactCustomerLayout
+                      ? _buildCustomerHeader(context, isTabletLayout: isTabletLayout)
+                      : _buildHeader(context, isTabletLayout: isTabletLayout),
                   SizedBox(height: isTabletLayout ? 9 : 8),
                   _buildSearchField(isTabletLayout: isTabletLayout),
                   SizedBox(height: isTabletLayout ? 8 : 7),
@@ -1678,6 +1692,78 @@ class _EventsPageState extends State<EventsPage> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildCustomerHeader(
+    BuildContext context, {
+    required bool isTabletLayout,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 2),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: Icon(
+              Icons.arrow_back_rounded,
+              size: isTabletLayout ? 26 : 22,
+            ),
+            color: _gold,
+            tooltip: _t(
+              nl: 'Terug',
+              en: 'Back',
+              fr: 'Retour',
+              es: 'Volver',
+            ),
+          ),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Evenementen',
+                en: 'Events',
+                fr: 'Événements',
+                es: 'Eventos',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: isTabletLayout ? 20 : 18,
+              ),
+            ),
+          ),
+          isTabletLayout
+              ? OutlinedButton.icon(
+                  onPressed: _openSavedEventsPage,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _textPrimary,
+                    side: BorderSide(color: _border),
+                  ),
+                  icon: const Icon(Icons.favorite_border_rounded, size: 18),
+                  label: Text(
+                    _t(
+                      nl: 'Opgeslagen',
+                      en: 'Saved',
+                      fr: 'Enregistrés',
+                      es: 'Guardados',
+                    ),
+                  ),
+                )
+              : IconButton(
+                  onPressed: _openSavedEventsPage,
+                  color: _gold,
+                  tooltip: _t(
+                    nl: 'Opgeslagen',
+                    en: 'Saved',
+                    fr: 'Enregistrés',
+                    es: 'Guardados',
+                  ),
+                  icon: const Icon(Icons.favorite_border_rounded),
+                ),
+        ],
       ),
     );
   }
@@ -1861,16 +1947,18 @@ class _EventsPageState extends State<EventsPage> {
             ),
           ],
         ),
-        SizedBox(height: isTabletLayout ? 9 : 8),
-        Text(
-          fluxidiEventCatalogCoverageNote(appConfig.currentLanguage.name),
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: _softText,
-            fontSize: isTabletLayout ? 12.5 : 11.5,
-            height: 1.35,
+        if (!widget.compactCustomerLayout) ...[
+          SizedBox(height: isTabletLayout ? 9 : 8),
+          Text(
+            fluxidiEventCatalogCoverageNote(appConfig.currentLanguage.name),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _softText,
+              fontSize: isTabletLayout ? 12.5 : 11.5,
+              height: 1.35,
+            ),
           ),
-        ),
+        ],
         SizedBox(height: isTabletLayout ? 9 : 8),
         _buildActiveSummaryBar(isTabletLayout: isTabletLayout),
       ],

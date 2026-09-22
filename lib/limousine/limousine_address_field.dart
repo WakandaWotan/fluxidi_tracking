@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_strings.dart';
+import 'limousine_address_label_language.dart';
 import 'limousine_address_lookup.dart';
 import 'limousine_current_location.dart';
 import 'limousine_p2d4c1a_ux.dart';
@@ -141,8 +142,40 @@ class LimousineAddressFieldController extends ChangeNotifier {
   double? Function()? proximityLatitude;
   double? Function()? proximityLongitude;
   String? Function()? searchContextCountry;
+  String? Function()? searchContextHint;
 
   bool get isRouteReady => value.isRouteReady;
+
+  /// Updates the requested Mapbox language and the visible label only.
+  /// A selected location is not searched again as free text.
+  void setDisplayLanguage(String next) {
+    final incoming = next.trim();
+    if (incoming.isEmpty || incoming == language) return;
+    language = incoming;
+    _requestId += 1;
+    if (value.isRouteReady) {
+      final source = value.canonicalLabel.trim().isNotEmpty
+          ? value.canonicalLabel
+          : value.displayText;
+      final localized = limousineLocalizeAddressLabel(source, language);
+      if (localized != value.displayText || textController.text != localized) {
+        value = value.copyWith(displayText: localized);
+        textController.value = TextEditingValue(
+          text: localized,
+          selection: TextSelection.collapsed(offset: localized.length),
+        );
+      }
+      suggestions = const [];
+      searched = false;
+      loading = false;
+      notifyListeners();
+      return;
+    }
+    if (suggestions.isNotEmpty &&
+        textController.text.trim().length >= kLimousineAddressMinQueryLength) {
+      unawaited(_runSearch(textController.text, _requestId));
+    }
+  }
 
   void seedText(String raw, {bool acceptApprovedDraft = false}) {
     final text = raw.trim();
@@ -308,8 +341,16 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = true;
     searched = true;
     notifyListeners();
+    final hint = searchContextHint?.call()?.trim() ?? '';
+    final foldedRaw = limousineFoldAddressToken(raw);
+    final foldedHint = limousineFoldAddressToken(hint);
+    final query = hint.isEmpty ||
+            foldedHint.isEmpty ||
+            foldedRaw.contains(foldedHint)
+        ? raw
+        : '$raw $hint';
     final result = await lookup.search(
-      raw,
+      query,
       language: language,
       proximityLat: proximityLatitude?.call(),
       proximityLon: proximityLongitude?.call(),
@@ -482,7 +523,7 @@ class LimousineAddressField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    controller.language = language.name;
+    controller.setDisplayLanguage(language.name);
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {

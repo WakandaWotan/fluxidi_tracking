@@ -8,6 +8,8 @@ import 'package:fluxidi_customer/app/customer_app_config.dart';
 import 'package:fluxidi_customer/app/customer_theme.dart';
 import 'package:fluxidi_customer/screens/customer_ride_prepare_screen.dart';
 import 'package:fluxidi_customer/widgets/customer_route_map.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:http/http.dart' as http;
 
 const CustomerBrandColors _brand = CustomerBrandColors(
@@ -215,6 +217,9 @@ void main() {
     addTearDown(tester.view.reset);
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1000, 3200);
+    final previousLanguage = appLanguageNotifier.value;
+    appLanguageNotifier.value = AppLanguage.nl;
+    addTearDown(() => appLanguageNotifier.value = previousLanguage);
 
     final mapbox = _FakeMapbox();
     await tester.pumpWidget(
@@ -257,6 +262,12 @@ void main() {
 
     // Geocoding ran for both fields and the route was fetched once.
     expect(mapbox.geocodeUris.length, greaterThanOrEqualTo(2));
+    expect(
+      mapbox.geocodeUris.every(
+        (uri) => uri.queryParameters['language'] == 'nl',
+      ),
+      isTrue,
+    );
     expect(mapbox.routeUris, hasLength(1));
     expect(
       mapbox.routeUris.single.toString(),

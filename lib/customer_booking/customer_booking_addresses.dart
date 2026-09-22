@@ -78,7 +78,7 @@ LimousineAddressValue customerBookingReturnToAddress({
   return outboundPickup;
 }
 
-String customerProfileDefaultAddressLine(CustomerProfile profile) {
+String customerProfileBillingAddressLine(CustomerProfile profile) {
   final street = profile.billingStreet.trim();
   if (street.isEmpty) return '';
   final postal = profile.billingPostalCode.trim().isNotEmpty
@@ -92,10 +92,37 @@ String customerProfileDefaultAddressLine(CustomerProfile profile) {
   );
 }
 
-LimousineAddressValue? customerBookingAddressFromProfile(CustomerProfile profile) {
+String customerProfileDefaultAddressLine(CustomerProfile profile) {
+  if (!profile.homeAddress.isEmpty) {
+    return profile.homeAddress.displayLabel;
+  }
+  return '';
+}
+
+bool customerProfileHasPickupAddress(CustomerProfile profile) {
+  return customerProfileDefaultAddressLine(profile).isNotEmpty;
+}
+
+LimousineAddressValue? customerBookingAddressFromProfile(
+  CustomerProfile profile,
+) {
+  final home = profile.homeAddress;
   final line = customerProfileDefaultAddressLine(profile);
   if (line.isEmpty) return null;
-  return customerBookingAddressFromText(line);
+  final usableCoords =
+      home.hasValidCoordinates && !home.positionNeedsConfirm;
+  return customerBookingAddressFromText(
+    line,
+    latitude: usableCoords ? home.lat : null,
+    longitude: usableCoords ? home.lon : null,
+    selected: usableCoords,
+  );
+}
+
+bool customerProfileAddressNeedsMapConfirm(CustomerProfile profile) {
+  final home = profile.homeAddress;
+  if (home.isEmpty) return false;
+  return home.positionNeedsConfirm || !home.hasValidCoordinates;
 }
 
 typedef CustomerBookingOwnedAddressResolution = LimousineOwnedAddressResolution;

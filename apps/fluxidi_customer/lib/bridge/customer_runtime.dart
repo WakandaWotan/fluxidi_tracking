@@ -11,6 +11,8 @@ import 'package:fluxidi_tracking/payment_return.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import '../app/customer_app_config.dart';
+import '../app/customer_theme.dart';
+import '../security/customer_session_lock.dart';
 import 'customer_language.dart';
 
 /// Boots only what a customer needs.
@@ -34,6 +36,7 @@ Future<void> bootCustomerRuntime({
 
   await loadCustomerThemePreference();
   await loadCustomerLanguagePreference();
+  applyCustomerThemeSystemUiOverlay(activeCustomerPalette());
 
   final mapboxToken = config.mapboxToken.trim();
   if (mapboxToken.isEmpty) {
@@ -52,6 +55,8 @@ Future<void> bootCustomerRuntime({
     host: config.deepLinkHost,
     returnUrl: config.paymentReturnUrl,
   );
+
+  await CustomerSessionLock.instance.attach();
 
   debugPrint(
     '[CUSTOMER_BOOT] runtime=${fluxidiRuntimeKind.name} '
@@ -75,8 +80,10 @@ Future<CustomerProfile?> syncCustomerProfileFromBackend({
   try {
     final session = await CustomerSessionStore.instance.loadValidSession();
     if (session == null) {
-      debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
-          'stage=no_valid_session');
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
+        'stage=no_valid_session',
+      );
       return null;
     }
     await ActiveLocalCustomerStore.instance.setActiveCustomerId(
@@ -91,21 +98,25 @@ Future<CustomerProfile?> syncCustomerProfileFromBackend({
       if (status == 401 || status == 403) {
         await CustomerSessionStore.instance.clear();
       }
-      debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
-          'stage=fetch_failed status=$status');
+      debugPrint(
+        '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
+        'stage=fetch_failed status=$status',
+      );
       return null;
     }
     final merged = await CustomerProfileStore.instance
         .mergeBackendProfileForSession(
-      remote,
-      sessionCustomerId: session.customerId,
-      sessionPhoneE164: session.phoneE164,
-    );
+          remote,
+          sessionCustomerId: session.customerId,
+          sessionPhoneE164: session.phoneE164,
+        );
     debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=true reason=$reason');
     return merged;
   } catch (error) {
-    debugPrint('[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
-        'stage=error error=$error');
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PULL] ok=false reason=$reason '
+      'stage=error error=$error',
+    );
     return null;
   }
 }
@@ -121,9 +132,9 @@ const Duration kCustomerLocalReadTimeout = Duration(seconds: 5);
 Future<CustomerProfile?> loadLocalCustomerProfile() async {
   try {
     return await CustomerProfileStore.instance.load().timeout(
-          kCustomerLocalReadTimeout,
-          onTimeout: () => null,
-        );
+      kCustomerLocalReadTimeout,
+      onTimeout: () => null,
+    );
   } catch (error) {
     debugPrint('[CUSTOMER_PROFILE][LOAD] error=$error');
     return null;

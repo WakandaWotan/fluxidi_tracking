@@ -23,6 +23,9 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   final _billingCountryCtrl = TextEditingController();
   final _peppolEndpointIdCtrl = TextEditingController();
   final _peppolSchemeCtrl = TextEditingController();
+  final LimousinePlaceLookup _placeLookup = LimousinePlaceLookup(country: 'be');
+  CustomerStoredAddress _homeAddress = CustomerStoredAddress.empty;
+  CustomerStoredAddress _billingAddress = CustomerStoredAddress.empty;
   bool _saving = false;
   bool _peppolExpanded = false;
 
@@ -31,13 +34,15 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   String _pageTitle() => _t(
     nl: 'Mijn gegevens',
     en: 'My details',
     fr: 'Mes informations',
     es: 'Mis datos',
+      de: 'Meine Daten',
   );
 
   int _completedProfileFields() {
@@ -55,9 +60,36 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
   }
 
   bool _hasAnyBillingAddressInput() {
-    return _billingStreetCtrl.text.trim().isNotEmpty ||
+    return !_billingAddress.isEmpty ||
+        _billingStreetCtrl.text.trim().isNotEmpty ||
         _billingPostalCodeCtrl.text.trim().isNotEmpty ||
         _billingCityCtrl.text.trim().isNotEmpty;
+  }
+
+  void _applyBillingAddress(CustomerStoredAddress address) {
+    _billingAddress = address;
+    final street = customerStoredAddressStreetLine(address);
+    if (street.isNotEmpty) {
+      _billingStreetCtrl.text = street;
+    }
+    if (address.postalCode.trim().isNotEmpty) {
+      _billingPostalCodeCtrl.text = address.postalCode.trim();
+    }
+    if (address.locality.trim().isNotEmpty) {
+      _billingCityCtrl.text = address.locality.trim();
+    }
+    if (address.country.trim().isNotEmpty) {
+      _billingCountryCtrl.text = address.country.trim();
+    }
+  }
+
+  void _copyHomeAddressToBilling() {
+    if (_homeAddress.isEmpty) return;
+    setState(() {
+      _applyBillingAddress(
+        _homeAddress.copyWith(positionNeedsConfirm: false),
+      );
+    });
   }
 
   Widget _profileHeader(CustomerThemePalette palette) {
@@ -149,7 +181,8 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                         ),
                       ),
                       child: Text(
-                        '$completed/6 ${_t(nl: 'compleet', en: 'complete', fr: 'complet', es: 'completo')}',
+                        '$completed/6 ${_t(nl: 'compleet', en: 'complete', fr: 'complet', es: 'completo',
+      de: 'vollständig')}',
                         style: TextStyle(
                           color: isDarkTheme ? palette.gold : palette.bronze,
                           fontSize: 11,
@@ -166,6 +199,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                     en: 'We use these details for bookings, contact, and receipts.',
                     fr: 'Ces informations servent aux réservations, au contact et aux reçus.',
                     es: 'Usamos estos datos para reservas, contacto y recibos.',
+      de: 'Wir verwenden diese Daten für Buchungen, Kontakt und Belege.',
                   ),
                   style: TextStyle(
                     color: palette.textMuted,
@@ -308,10 +342,19 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
       _companyNameCtrl.text = profile.companyName;
       _vatNumberCtrl.text = profile.vatNumber;
       _invoiceEmailCtrl.text = profile.invoiceEmail;
+      _homeAddress = profile.homeAddress;
       _billingStreetCtrl.text = profile.billingStreet;
       _billingPostalCodeCtrl.text = profile.billingPostalCode;
       _billingCityCtrl.text = profile.billingCity;
       _billingCountryCtrl.text = profile.billingCountry;
+      _billingAddress = profile.billingStreet.trim().isEmpty
+          ? CustomerStoredAddress.empty
+          : customerStoredAddressFromBillingFields(
+              street: profile.billingStreet,
+              postalCode: profile.billingPostalCode,
+              city: profile.billingCity,
+              country: profile.billingCountry,
+            );
       _peppolEndpointIdCtrl.text = profile.peppolEndpointId;
       _peppolSchemeCtrl.text = profile.peppolScheme;
       _peppolExpanded =
@@ -330,20 +373,28 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     final billingCountryToSave = _billingCountryCtrl.text.trim().isNotEmpty
         ? _billingCountryCtrl.text.trim()
         : (_hasAnyBillingAddressInput() ? 'BE' : '');
+    final billingStreetToSave =
+        customerStoredAddressStreetLine(_billingAddress).isNotEmpty
+        ? customerStoredAddressStreetLine(_billingAddress)
+        : _billingStreetCtrl.text;
+    final preferredPostcode = _postcodeCtrl.text.trim().isNotEmpty
+        ? _postcodeCtrl.text
+        : _homeAddress.postalCode;
     final saved = await CustomerProfileStore.instance.save(
       name: _nameCtrl.text,
-      preferredPostcode: _postcodeCtrl.text,
+      preferredPostcode: preferredPostcode,
       phone: _phoneCtrl.text,
       email: _emailCtrl.text,
       companyName: _companyNameCtrl.text,
       vatNumber: _vatNumberCtrl.text,
       invoiceEmail: _invoiceEmailCtrl.text,
-      billingStreet: _billingStreetCtrl.text,
+      billingStreet: billingStreetToSave,
       billingPostalCode: _billingPostalCodeCtrl.text,
       billingCity: _billingCityCtrl.text,
       billingCountry: billingCountryToSave,
       peppolEndpointId: _peppolEndpointIdCtrl.text,
       peppolScheme: _peppolSchemeCtrl.text,
+      homeAddress: _homeAddress,
       sessionCustomerId: session?.customerId,
     );
     _setCachedCustomerProfile(saved);
@@ -368,6 +419,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                   en: 'Details saved locally.',
                   fr: 'Informations enregistrées localement.',
                   es: 'Datos guardados localmente.',
+      de: 'Daten lokal gespeichert.',
                 )
               : syncOk
               ? _t(
@@ -375,12 +427,14 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                   en: 'Details saved and synchronized.',
                   fr: 'Informations enregistrées et synchronisées.',
                   es: 'Datos guardados y sincronizados.',
+      de: 'Daten gespeichert und synchronisiert.',
                 )
               : _t(
                   nl: 'Gegevens lokaal opgeslagen. Synchronisatie met de server is mislukt — probeer opnieuw.',
                   en: 'Details saved locally. Server sync failed — please try again.',
                   fr: 'Informations enregistrées localement. La synchronisation a échoué — réessayez.',
                   es: 'Datos guardados localmente. Falló la sincronización — inténtalo de nuevo.',
+      de: 'Daten lokal gespeichert. Serversynchronisation fehlgeschlagen — bitte erneut versuchen.',
                 ),
         ),
       ),
@@ -467,7 +521,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
         final isDarkTheme = palette.isDark;
         return ValueListenableBuilder<AppLanguage>(
           valueListenable: appLanguageNotifier,
-          builder: (context, _, __) => Scaffold(
+          builder: (context, language, __) => Scaffold(
             backgroundColor: palette.background,
             appBar: AppBar(
               backgroundColor: palette.background,
@@ -524,12 +578,14 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                 en: 'Personal',
                                 fr: 'Personnel',
                                 es: 'Personal',
+      de: 'Persönlich',
                               ),
                               subtitle: _t(
                                 nl: 'Naam voor boekingen',
                                 en: 'Name for bookings',
                                 fr: 'Nom pour les réservations',
                                 es: 'Nombre para reservas',
+      de: 'Name für Buchungen',
                               ),
                               icon: Icons.badge_outlined,
                               children: [
@@ -547,6 +603,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                             en: 'Name',
                                             fr: 'Nom',
                                             es: 'Nombre',
+      de: 'Name',
                                           ),
                                           controller: _nameCtrl,
                                           validator: (v) {
@@ -557,6 +614,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                                 en: 'Enter your name',
                                                 fr: 'Saisissez votre nom',
                                                 es: 'Introduce tu nombre',
+      de: 'Geben Sie Ihren Namen ein',
                                               );
                                             }
                                             return null;
@@ -572,6 +630,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                             en: 'Postcode',
                                             fr: 'Code postal',
                                             es: 'Código postal',
+      de: 'Postleitzahl',
                                           ),
                                           controller: _postcodeCtrl,
                                           validator: (v) {
@@ -582,6 +641,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                                 en: 'Enter your postcode',
                                                 fr: 'Saisissez votre code postal',
                                                 es: 'Introduce tu código postal',
+      de: 'Geben Sie Ihre Postleitzahl ein',
                                               );
                                             }
                                             return null;
@@ -598,6 +658,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Name',
                                       fr: 'Nom',
                                       es: 'Nombre',
+      de: 'Name',
                                     ),
                                     controller: _nameCtrl,
                                     validator: (v) {
@@ -608,6 +669,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Enter your name',
                                           fr: 'Saisissez votre nom',
                                           es: 'Introduce tu nombre',
+      de: 'Geben Sie Ihren Namen ein',
                                         );
                                       }
                                       return null;
@@ -621,6 +683,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Postcode',
                                       fr: 'Code postal',
                                       es: 'Código postal',
+      de: 'Postleitzahl',
                                     ),
                                     controller: _postcodeCtrl,
                                     validator: (v) {
@@ -631,6 +694,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Enter your postcode',
                                           fr: 'Saisissez votre code postal',
                                           es: 'Introduce tu código postal',
+      de: 'Geben Sie Ihre Postleitzahl ein',
                                         );
                                       }
                                       return null;
@@ -647,12 +711,14 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                 en: 'Contact',
                                 fr: 'Contact',
                                 es: 'Contacto',
+      de: 'Kontakt',
                               ),
                               subtitle: _t(
                                 nl: 'Telefoon en e-mail',
                                 en: 'Phone and email',
                                 fr: 'Téléphone et e-mail',
                                 es: 'Teléfono y correo',
+      de: 'Telefon und E-Mail',
                               ),
                               icon: Icons.alternate_email_rounded,
                               children: [
@@ -669,6 +735,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                             en: 'Phone number',
                                             fr: 'Numéro de téléphone',
                                             es: 'Número de teléfono',
+      de: 'Telefonnummer',
                                           ),
                                           controller: _phoneCtrl,
                                           keyboardType: TextInputType.phone,
@@ -680,6 +747,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                                 en: 'Enter your phone number',
                                                 fr: 'Saisissez votre numéro de téléphone',
                                                 es: 'Introduce tu número de teléfono',
+      de: 'Geben Sie Ihre Telefonnummer ein',
                                               );
                                             }
                                             return null;
@@ -695,6 +763,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                             en: 'Email address',
                                             fr: 'Adresse e-mail',
                                             es: 'Correo electrónico',
+      de: 'E-Mail-Adresse',
                                           ),
                                           controller: _emailCtrl,
                                           keyboardType:
@@ -707,6 +776,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                                 en: 'Enter your email',
                                                 fr: 'Saisissez votre e-mail',
                                                 es: 'Introduce tu correo',
+      de: 'Geben Sie Ihre E-Mail ein',
                                               );
                                             }
                                             if (!text.contains('@') ||
@@ -716,6 +786,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                                 en: 'Enter a valid email address',
                                                 fr: 'Saisissez une adresse e-mail valide',
                                                 es: 'Introduce un correo electrónico válido',
+      de: 'Geben Sie eine gültige E-Mail-Adresse ein',
                                               );
                                             }
                                             return null;
@@ -732,6 +803,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Phone number',
                                       fr: 'Numéro de téléphone',
                                       es: 'Número de teléfono',
+      de: 'Telefonnummer',
                                     ),
                                     controller: _phoneCtrl,
                                     keyboardType: TextInputType.phone,
@@ -743,6 +815,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Enter your phone number',
                                           fr: 'Saisissez votre numéro de téléphone',
                                           es: 'Introduce tu número de teléfono',
+      de: 'Geben Sie Ihre Telefonnummer ein',
                                         );
                                       }
                                       return null;
@@ -756,6 +829,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Email address',
                                       fr: 'Adresse e-mail',
                                       es: 'Correo electrónico',
+      de: 'E-Mail-Adresse',
                                     ),
                                     controller: _emailCtrl,
                                     keyboardType: TextInputType.emailAddress,
@@ -767,6 +841,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Enter your email',
                                           fr: 'Saisissez votre e-mail',
                                           es: 'Introduce tu correo',
+      de: 'Geben Sie Ihre E-Mail ein',
                                         );
                                       }
                                       if (!text.contains('@') ||
@@ -776,6 +851,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Enter a valid email address',
                                           fr: 'Saisissez une adresse e-mail valide',
                                           es: 'Introduce un correo electrónico válido',
+      de: 'Geben Sie eine gültige E-Mail-Adresse ein',
                                         );
                                       }
                                       return null;
@@ -788,16 +864,57 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                             _sectionCard(
                               palette: palette,
                               title: _t(
+                                nl: 'Mijn adres',
+                                en: 'My address',
+                                fr: 'Mon adresse',
+                                es: 'Mi dirección',
+      de: 'Meine Adresse',
+                              ),
+                              subtitle: _t(
+                                nl: 'Vast ophaaladres voor ritten',
+                                en: 'Saved pickup address for rides',
+                                fr: 'Adresse de prise en charge enregistrée',
+                                es: 'Dirección de recogida guardada',
+      de: 'Gespeicherte Abholadresse für Fahrten',
+                              ),
+                              icon: Icons.home_outlined,
+                              children: [
+                                CustomerProfileAddressEditor(
+                                  key: kCustomerProfileHomeAddressFieldKey,
+                                  fieldId: 'home',
+                                  palette: palette,
+                                  language: language,
+                                  value: _homeAddress,
+                                  lookup: _placeLookup,
+                                  requireExactHouse: true,
+                                  contextCountry: 'BE',
+                                  contextPostalCode: _postcodeCtrl.text,
+                                  onChanged: (next) {
+                                    setState(() => _homeAddress = next);
+                                    if (next.postalCode.trim().isNotEmpty &&
+                                        _postcodeCtrl.text.trim().isEmpty) {
+                                      _postcodeCtrl.text = next.postalCode.trim();
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            _sectionCard(
+                              palette: palette,
+                              title: _t(
                                 nl: 'Facturatie optioneel',
                                 en: 'Optional billing',
                                 fr: 'Facturation facultative',
                                 es: 'Facturación opcional',
+      de: 'Optionale Rechnungsdaten',
                               ),
                               subtitle: _t(
                                 nl: 'Voor zakelijke ritbonnen',
                                 en: 'For business receipts',
                                 fr: 'Pour les reçus professionnels',
                                 es: 'Para recibos empresariales',
+      de: 'Für geschäftliche Belege',
                               ),
                               icon: Icons.receipt_long_outlined,
                               children: [
@@ -808,6 +925,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                     en: 'Company name (optional)',
                                     fr: 'Nom de l’entreprise (facultatif)',
                                     es: 'Nombre de la empresa (opcional)',
+      de: 'Firmenname (optional)',
                                   ),
                                   controller: _companyNameCtrl,
                                 ),
@@ -819,6 +937,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                     en: 'VAT number (optional)',
                                     fr: 'Numéro de TVA (facultatif)',
                                     es: 'Número de IVA (opcional)',
+      de: 'USt-IdNr. (optional)',
                                   ),
                                   controller: _vatNumberCtrl,
                                 ),
@@ -830,20 +949,57 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                     en: 'Invoice email (optional)',
                                     fr: 'E-mail de facturation (facultatif)',
                                     es: 'Correo de factura (opcional)',
+      de: 'Rechnungs-E-Mail (optional)',
                                   ),
                                   controller: _invoiceEmailCtrl,
                                   keyboardType: TextInputType.emailAddress,
                                 ),
                                 const SizedBox(height: 10),
-                                _field(
-                                  palette: palette,
-                                  label: _t(
-                                    nl: 'Straat en nummer (optioneel)',
-                                    en: 'Street and number (optional)',
-                                    fr: 'Rue et numéro (facultatif)',
-                                    es: 'Calle y número (opcional)',
+                                if (!_homeAddress.isEmpty)
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: TextButton.icon(
+                                      key: kCustomerProfileUseHomeForBillingKey,
+                                      onPressed: _copyHomeAddressToBilling,
+                                      icon: const Icon(
+                                        Icons.copy_all_outlined,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        _t(
+                                          nl: 'Gebruik mijn adres',
+                                          en: 'Use my address',
+                                          fr: 'Utiliser mon adresse',
+                                          es: 'Usar mi dirección',
+      de: 'Meine Adresse verwenden',
+                                        ),
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                  controller: _billingStreetCtrl,
+                                CustomerProfileAddressEditor(
+                                  key: kCustomerProfileBillingAddressFieldKey,
+                                  fieldId: 'billing',
+                                  palette: palette,
+                                  language: language,
+                                  value: _billingAddress,
+                                  lookup: _placeLookup,
+                                  requireExactHouse: false,
+                                  contextCountry:
+                                      _billingCountryCtrl.text.trim().isEmpty
+                                      ? 'BE'
+                                      : _billingCountryCtrl.text.trim(),
+                                  contextPostalCode:
+                                      _billingPostalCodeCtrl.text,
+                                  contextLocality: _billingCityCtrl.text,
+                                  onChanged: (next) {
+                                    setState(() => _applyBillingAddress(next));
+                                  },
                                 ),
                                 const SizedBox(height: 10),
                                 Row(
@@ -857,6 +1013,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Postal code (optional)',
                                           fr: 'Code postal (facultatif)',
                                           es: 'Código postal (opcional)',
+      de: 'Postleitzahl (optional)',
                                         ),
                                         controller: _billingPostalCodeCtrl,
                                       ),
@@ -871,6 +1028,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'City (optional)',
                                           fr: 'Ville (facultatif)',
                                           es: 'Ciudad (opcional)',
+      de: 'Ort (optional)',
                                         ),
                                         controller: _billingCityCtrl,
                                       ),
@@ -885,6 +1043,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                     en: 'Country (optional, e.g. BE)',
                                     fr: 'Pays (facultatif, ex. BE)',
                                     es: 'País (opcional, p. ej. BE)',
+      de: 'Land (optional, z. B. BE)',
                                   ),
                                   controller: _billingCountryCtrl,
                                 ),
@@ -909,6 +1068,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                           en: 'Advanced (Peppol) - optional',
                                           fr: 'Avancé (Peppol) - facultatif',
                                           es: 'Avanzado (Peppol) - opcional',
+      de: 'Erweitert (Peppol) – optional',
                                         ),
                                         style: TextStyle(
                                           color: palette.textMuted,
@@ -928,6 +1088,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Peppol endpoint ID (optional)',
                                       fr: 'ID de point d’accès Peppol (facultatif)',
                                       es: 'ID de endpoint Peppol (opcional)',
+      de: 'Peppol-Endpunkt-ID (optional)',
                                     ),
                                     controller: _peppolEndpointIdCtrl,
                                   ),
@@ -939,6 +1100,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                       en: 'Peppol scheme (optional)',
                                       fr: 'Schéma Peppol (facultatif)',
                                       es: 'Esquema Peppol (opcional)',
+      de: 'Peppol-Schema (optional)',
                                     ),
                                     controller: _peppolSchemeCtrl,
                                   ),
@@ -966,12 +1128,14 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
                                         en: 'Saving...',
                                         fr: 'Enregistrement...',
                                         es: 'Guardando...',
+      de: 'Wird gespeichert…',
                                       )
                                     : _t(
                                         nl: 'Opslaan',
                                         en: 'Save',
                                         fr: 'Enregistrer',
                                         es: 'Guardar',
+      de: 'Speichern',
                                       ),
                               ),
                             ),

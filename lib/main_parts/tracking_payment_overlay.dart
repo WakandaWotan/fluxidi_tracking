@@ -40,66 +40,41 @@ bool _isPaidTrackingPaymentToken(String? raw) {
 }
 
 String _normalizeCustomerPaymentDisplayToken(String? raw) {
-  return (raw ?? '')
-      .trim()
-      .toLowerCase()
-      .replaceAll('-', '_')
-      .replaceAll(' ', '_');
+  return normalizeCustomerPaymentDisplayToken(raw);
 }
 
 bool _isPaidCustomerPaymentDisplayToken(String token) {
   // Dossier 02: only a verified provider settlement shows as Paid. Ride
   // lifecycle tokens and settlement batches are not payments.
-  return token == 'paid';
+  return isPaidCustomerPaymentDisplayToken(token);
 }
 
 bool _isPartialCustomerPaymentDisplayToken(String token) {
-  return token == 'partially_paid' ||
-      token == 'partial_paid' ||
-      token == 'partial';
+  return isPartialCustomerPaymentDisplayToken(token);
 }
 
 bool _isOnlinePendingCustomerPaymentDisplayToken(String token) {
-  return _normalizeCustomerPaymentDisplayToken(token) == 'online_pending';
+  return isOnlinePendingCustomerPaymentDisplayToken(token);
 }
 
 bool _isPayInCarCustomerPaymentDisplayToken(String token) {
-  return _normalizeCustomerPaymentDisplayToken(token) == 'pay_in_car';
+  return isPayInCarCustomerPaymentDisplayToken(token);
+}
+
+bool _isQrChosenCustomerPaymentDisplayToken(String token) {
+  return isQrChosenCustomerPaymentDisplayToken(token);
 }
 
 bool _isPendingLikeCustomerPaymentStatus(String token) {
-  switch (_normalizeCustomerPaymentDisplayToken(token)) {
-    case 'pending':
-    case 'open':
-    case 'authorized':
-    case 'unpaid':
-      return true;
-    default:
-      return false;
-  }
+  return isPendingLikeCustomerPaymentStatus(token);
 }
 
 bool _isMollieCustomerPaymentChannel({String? provider, String? mode}) {
-  final providerToken = _normalizeCustomerPaymentDisplayToken(provider);
-  final modeToken = _normalizeCustomerPaymentDisplayToken(mode);
-  if (providerToken == 'mollie' || modeToken == 'mollie') return true;
-  const onlineTokens = <String>{
-    'online',
-    'online_payment',
-    'online_payments',
-    'online-payments',
-  };
-  return onlineTokens.contains(providerToken) ||
-      onlineTokens.contains(modeToken);
+  return isMollieCustomerPaymentChannel(provider: provider, mode: mode);
 }
 
 bool _isManualCustomerPaymentChannel({String? provider, String? mode}) {
-  final providerToken = _normalizeCustomerPaymentDisplayToken(provider);
-  final modeToken = _normalizeCustomerPaymentDisplayToken(mode);
-  if (providerToken.isEmpty && modeToken.isEmpty) return false;
-  const manualTokens = <String>{'manual', 'cash', 'invoice'};
-  return manualTokens.contains(providerToken) ||
-      manualTokens.contains(modeToken);
+  return isManualCustomerPaymentChannel(provider: provider, mode: mode);
 }
 
 String _resolveCustomerPaymentDisplayTokenFromFields({
@@ -108,30 +83,12 @@ String _resolveCustomerPaymentDisplayTokenFromFields({
   String? paymentMode,
   String? paymentMethod,
 }) {
-  final status = _normalizeCustomerPaymentDisplayToken(paymentStatus);
-  if (_isPaidCustomerPaymentDisplayToken(status)) return 'paid';
-  if (_isPartialCustomerPaymentDisplayToken(status)) {
-    return 'partially_paid';
-  }
-  if (status == 'online_pending') return 'online_pending';
-  if (status == 'pay_in_car') return 'pay_in_car';
-
-  if (_isPendingLikeCustomerPaymentStatus(status) || status.isEmpty) {
-    if (_isMollieCustomerPaymentChannel(
-      provider: paymentProvider,
-      mode: paymentMode,
-    )) {
-      return 'online_pending';
-    }
-    if (_isManualCustomerPaymentChannel(
-      provider: paymentProvider,
-      mode: paymentMode,
-    )) {
-      return 'pay_in_car';
-    }
-  }
-
-  return status.isEmpty ? 'unpaid' : status;
+  return resolveCustomerPaymentDisplayToken(
+    paymentStatus: paymentStatus,
+    paymentProvider: paymentProvider,
+    paymentMode: paymentMode,
+    paymentMethod: paymentMethod,
+  );
 }
 
 String _classifyCustomerPaymentDisplayToken({
@@ -172,69 +129,39 @@ String _firstCustomerPaymentFieldFromMaps(
   Iterable<Map<String, dynamic>> maps,
   List<String> keys,
 ) {
-  for (final map in maps) {
-    for (final key in keys) {
-      final value = map[key]?.toString().trim() ?? '';
-      if (value.isNotEmpty &&
-          value.toLowerCase() != 'null' &&
-          value.toLowerCase() != 'undefined') {
-        return value;
-      }
-    }
-  }
-  return '';
+  return firstCustomerPaymentFieldFromMaps(maps, keys);
 }
 
 ({String provider, String mode, String method})
 _customerPaymentChannelFieldsFromStoredBooking(StoredCustomerBooking booking) {
-  final quote = booking.quote;
-  final provider = _firstCustomerPaymentFieldFromMaps(
-    [quote],
-    ['payment_provider', 'paymentProvider'],
+  final channel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+    <String, dynamic>{
+      'payment_method': booking.paymentMethod,
+      'paymentMethod': booking.paymentMethod,
+      'payment_mode': booking.paymentMode,
+      'paymentMode': booking.paymentMode,
+      'payment_provider': booking.paymentProvider,
+      'paymentProvider': booking.paymentProvider,
+      'quote': booking.quote,
+    },
+  ]);
+  return (
+    provider: channel.provider,
+    mode: channel.mode,
+    method: channel.method,
   );
-  final mode = _firstCustomerPaymentFieldFromMaps(
-    [quote],
-    ['payment_mode', 'paymentMode'],
-  );
-  final method = _firstCustomerPaymentFieldFromMaps(
-    [quote],
-    ['payment_method', 'paymentMethod'],
-  );
-  if (provider.isEmpty &&
-      mode.isEmpty &&
-      booking.paymentBookingId.trim().isNotEmpty &&
-      _isPendingLikeCustomerPaymentStatus(booking.paymentStatus)) {
-    return (provider: 'mollie', mode: mode, method: method);
-  }
-  return (provider: provider, mode: mode, method: method);
 }
 
 ({String provider, String mode, String method})
 _customerPaymentChannelFieldsFromSavedBooking(CustomerSavedBooking booking) {
-  final raw = booking.rawSnapshot;
-  final provider = _firstCustomerPaymentFieldFromMaps(
-    [raw],
-    ['payment_provider', 'paymentProvider'],
+  final channel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+    booking.rawSnapshot,
+  ]);
+  return (
+    provider: channel.provider,
+    mode: channel.mode,
+    method: channel.method,
   );
-  final mode = _firstCustomerPaymentFieldFromMaps(
-    [raw],
-    ['payment_mode', 'paymentMode'],
-  );
-  final method = _firstCustomerPaymentFieldFromMaps(
-    [raw],
-    ['payment_method', 'paymentMethod'],
-  );
-  final paymentBookingId = _firstCustomerPaymentFieldFromMaps(
-    [raw],
-    ['payment_booking_id', 'paymentBookingId'],
-  );
-  if (provider.isEmpty &&
-      mode.isEmpty &&
-      paymentBookingId.isNotEmpty &&
-      _isPendingLikeCustomerPaymentStatus(booking.paymentStatus)) {
-    return (provider: 'mollie', mode: mode, method: method);
-  }
-  return (provider: provider, mode: mode, method: method);
 }
 
 String _trackingOverlayCompositeKey(String left, String right) {

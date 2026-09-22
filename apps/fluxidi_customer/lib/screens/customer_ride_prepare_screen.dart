@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_customer_core/fluxidi_customer_core.dart';
+import 'package:fluxidi_tracking/app_config.dart';
 
 import '../api/public_partner_api.dart';
 import '../api/ride_quote_api.dart';
@@ -111,14 +112,43 @@ class _CustomerRidePrepareScreenState extends State<CustomerRidePrepareScreen> {
     _routeGeometry =
         widget.routeGeometry ??
         FluxidiRouteGeometryClient(token: widget.config.mapboxToken);
+    appLanguageNotifier.addListener(_onAppLanguageChanged);
   }
 
   @override
   void dispose() {
     _suggestDebounce?.cancel();
+    appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _fromCtrl.dispose();
     _toCtrl.dispose();
     super.dispose();
+  }
+
+  void _onAppLanguageChanged() {
+    if (!mounted) return;
+    _suggestGeneration += 1;
+    final language = currentLanguageCode;
+    FluxidiAddressValue localize(FluxidiAddressValue value) {
+      if (!value.isRouteReady) return value;
+      final source = value.canonicalLabel.trim().isNotEmpty
+          ? value.canonicalLabel
+          : value.displayText;
+      return value.copyWith(
+        displayText: fluxidiLocalizeAddressLabel(source, language),
+      );
+    }
+
+    setState(() {
+      _from = localize(_from);
+      _to = localize(_to);
+      if (_fromCtrl.text != _from.displayText) {
+        _fromCtrl.text = _from.displayText;
+      }
+      if (_toCtrl.text != _to.displayText) {
+        _toCtrl.text = _to.displayText;
+      }
+      _suggestions = const <FluxidiAddressSuggestion>[];
+    });
   }
 
   /// Typed text keeps the ride usable without a lookup hit, but loses the
@@ -145,7 +175,10 @@ class _CustomerRidePrepareScreenState extends State<CustomerRidePrepareScreen> {
   Future<void> _searchSuggestions(String raw) async {
     if (!_addressSearch.canSearch) return;
     final generation = ++_suggestGeneration;
-    final found = await _addressSearch.search(raw);
+    final found = await _addressSearch.search(
+      raw,
+      language: currentLanguageCode,
+    );
     if (!mounted || generation != _suggestGeneration) return;
     setState(() => _suggestions = found);
   }

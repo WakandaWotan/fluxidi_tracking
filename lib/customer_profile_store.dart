@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/active_local_customer_store.dart';
+import 'package:fluxidi_tracking/customer_profile/customer_stored_address.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_runtime_env.dart';
 import 'package:path_provider/path_provider.dart';
@@ -26,6 +27,7 @@ class CustomerProfile {
     this.peppolEndpointId = '',
     this.peppolScheme = '',
     this.favoritePartnerIds = const <String>[],
+    this.homeAddress = CustomerStoredAddress.empty,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -55,6 +57,9 @@ class CustomerProfile {
   final String peppolEndpointId;
   final String peppolScheme;
   final List<String> favoritePartnerIds;
+
+  /// Personal pickup address. Separate from [billingStreet] on purpose.
+  final CustomerStoredAddress homeAddress;
   final String createdAt;
   final String updatedAt;
 
@@ -196,6 +201,15 @@ class CustomerProfile {
         'favourite_partner_ids',
         'favouritePartnerIds',
       ]),
+      homeAddress: json['home_address'] is Map
+          ? CustomerStoredAddress.fromJson(
+              Map<String, dynamic>.from(json['home_address'] as Map),
+            )
+          : (json['homeAddress'] is Map
+                ? CustomerStoredAddress.fromJson(
+                    Map<String, dynamic>.from(json['homeAddress'] as Map),
+                  )
+                : CustomerStoredAddress.empty),
       createdAt: read('createdAt'),
       updatedAt: read('updatedAt'),
     );
@@ -238,6 +252,8 @@ class CustomerProfile {
       },
       'favorite_partner_ids': favoritePartnerIds,
       'favoritePartnerIds': favoritePartnerIds,
+      'home_address': homeAddress.toJson(),
+      'homeAddress': homeAddress.toJson(),
       'createdAt': createdAt,
       'updatedAt': updatedAt,
     };
@@ -749,6 +765,7 @@ class CustomerProfileStore {
     String? billingCountry,
     String? peppolEndpointId,
     String? peppolScheme,
+    CustomerStoredAddress? homeAddress,
     String? sessionCustomerId,
     Set<String>? favoritePartnerIds,
   }) async {
@@ -814,6 +831,7 @@ class CustomerProfileStore {
       ),
       peppolScheme: resolveOptional(peppolScheme, existing?.peppolScheme ?? ''),
       favoritePartnerIds: resolvedFavoritePartnerIds.toList(growable: false),
+      homeAddress: homeAddress ?? existing?.homeAddress ?? CustomerStoredAddress.empty,
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
           : now,
@@ -1089,6 +1107,16 @@ class CustomerProfileStore {
         existing?.peppolScheme ?? '',
       ),
       favoritePartnerIds: resolvedFavoritePartnerIds,
+      homeAddress: () {
+        final raw = profile['home_address'] ?? profile['homeAddress'];
+        if (raw is Map) {
+          final parsed = CustomerStoredAddress.fromJson(
+            Map<String, dynamic>.from(raw),
+          );
+          if (!parsed.isEmpty) return parsed;
+        }
+        return existing?.homeAddress ?? CustomerStoredAddress.empty;
+      }(),
       createdAt: (existing?.createdAt.trim().isNotEmpty ?? false)
           ? existing!.createdAt
           : (backendCreatedAt.isNotEmpty ? backendCreatedAt : nowIso),
@@ -1132,6 +1160,7 @@ extension _CustomerProfileCopy on CustomerProfile {
       peppolEndpointId: peppolEndpointId,
       peppolScheme: peppolScheme,
       favoritePartnerIds: favoritePartnerIds,
+      homeAddress: homeAddress,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );

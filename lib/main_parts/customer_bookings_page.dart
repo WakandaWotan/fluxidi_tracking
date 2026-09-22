@@ -23,7 +23,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   void _applyCustomerBookingListRemoval({
     required Set<String> aliases,
@@ -153,6 +154,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           en: 'Loading failed.',
           fr: 'Chargement echoue.',
           es: 'Error al cargar.',
+      de: 'Laden fehlgeschlagen.',
         );
       });
       debugPrint('[CUSTOMER_BOOKINGS][LOAD_SCREEN_ERROR] $err');
@@ -431,6 +433,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Booking request pending',
         fr: 'Demande de réservation en cours',
         es: 'Solicitud de reserva pendiente',
+      de: 'Buchungsanfrage in Bearbeitung',
       );
     }
     if (status == 'PENDING') {
@@ -439,6 +442,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Pending',
         fr: 'En cours',
         es: 'Pendiente',
+      de: 'In Bearbeitung',
       );
     }
     if (status == 'CONFIRMED') {
@@ -447,6 +451,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Confirmed',
         fr: 'Confirmee',
         es: 'Confirmada',
+      de: 'Bestätigt',
       );
     }
     if (status == 'COMPLETED') {
@@ -455,6 +460,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Completed',
         fr: 'Terminee',
         es: 'Finalizada',
+      de: 'Abgeschlossen',
       );
     }
     if (status == 'CANCELLED') {
@@ -463,51 +469,18 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Cancelled',
         fr: 'Annulee',
         es: 'Cancelada',
+      de: 'Storniert',
       );
     }
     return status.isEmpty
         ? '-'
-        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+        : _t(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido',
+      de: 'Unbekannt');
   }
 
   String _paymentLabel(StoredCustomerBooking booking) {
-    final p = _displayPaymentStatusToken(booking);
-    if (_isPaidCustomerPaymentDisplayToken(p)) {
-      return _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado');
-    }
-    if (_isPartialCustomerPaymentDisplayToken(p)) {
-      return _t(
-        nl: 'Deels betaald',
-        en: 'Partially paid',
-        fr: 'Partiellement payé',
-        es: 'Parcialmente pagado',
-      );
-    }
-    if (_isOnlinePendingCustomerPaymentDisplayToken(p)) {
-      return _t(
-        nl: 'Online betaling openstaand',
-        en: 'Online payment pending',
-        fr: 'Paiement en ligne en attente',
-        es: 'Pago online pendiente',
-      );
-    }
-    if (_isPayInCarCustomerPaymentDisplayToken(p) ||
-        p == 'unpaid' ||
-        p == 'pending' ||
-        p == 'pay_in_car') {
-      return _t(
-        nl: 'Te betalen in het voertuig',
-        en: 'To pay in the vehicle',
-        fr: 'À payer dans le véhicule',
-        es: 'A pagar en el vehículo',
-      );
-    }
-    return _t(
-      nl: 'Te betalen in het voertuig',
-      en: 'To pay in the vehicle',
-      fr: 'À payer dans le véhicule',
-      es: 'A pagar en el vehículo',
-    );
+    final copy = customerPaymentStatusLabel(_displayPaymentStatusToken(booking));
+    return _t(nl: copy.nl, en: copy.en, fr: copy.fr, es: copy.es);
   }
 
   String _formatLastUpdated() {
@@ -540,6 +513,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Return cancelled',
         fr: 'Retour annule',
         es: 'Regreso cancelado',
+      de: 'Rückfahrt storniert',
       );
     }
     return _t(
@@ -547,6 +521,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
       en: 'Outbound cancelled',
       fr: 'Aller annule',
       es: 'Ida cancelada',
+      de: 'Hinfahrt storniert',
     );
   }
 
@@ -576,9 +551,11 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
 
   String _roundtripLegTitle(String legType) {
     if (legType == 'return') {
-      return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso');
+      return _t(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Regreso',
+      de: 'Rückfahrt');
     }
-    return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+    return _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida',
+      de: 'Hinfahrt');
   }
 
   Widget _roundtripLegCard({
@@ -605,6 +582,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Cancelled',
         fr: 'Annule',
         es: 'Cancelado',
+      de: 'Storniert',
       );
     } else if (leg.isCompleted) {
       chipLabel = _t(
@@ -612,6 +590,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Completed',
         fr: 'Terminee',
         es: 'Finalizada',
+      de: 'Abgeschlossen',
       );
     } else {
       chipLabel = _t(
@@ -619,6 +598,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
         en: 'Scheduled',
         fr: 'Planifie',
         es: 'Programado',
+      de: 'Geplant',
       );
     }
     final String viewActionLabel = showReceiptAction
@@ -627,12 +607,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'View receipt',
             fr: 'Voir le ticket',
             es: 'Ver recibo',
+      de: 'Beleg ansehen',
           )
         : _t(
             nl: 'Rit bekijken',
             en: 'View leg',
             fr: 'Voir trajet',
             es: 'Ver tramo',
+      de: 'Fahrt ansehen',
           );
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -718,6 +700,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                       en: 'Cancel leg',
                       fr: 'Annuler trajet',
                       es: 'Cancelar tramo',
+      de: 'Fahrt stornieren',
                     ),
                   ),
                 ),
@@ -816,7 +799,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           ),
           const SizedBox(height: 10),
           Text(
-            '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada')}: ${_formatPickup(booking.pickupIso)}',
+            '${_t(nl: 'Geplande ophaal', en: 'Scheduled pickup', fr: 'Prise en charge prevue', es: 'Recogida programada',
+      de: 'Geplante Abholung')}: ${_formatPickup(booking.pickupIso)}',
             style: TextStyle(
               color: Colors.white.withOpacity(0.86),
               fontSize: 12.1,
@@ -912,7 +896,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 ),
               ),
               Text(
-                '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref')}: ${booking.publicBookingReference.isEmpty ? booking.bookingId : booking.publicBookingReference}',
+                '${_t(nl: 'Ref', en: 'Ref', fr: 'Ref', es: 'Ref',
+      de: 'Ref')}: ${customerFacingBookingReference(bookingId: booking.bookingId, publicCandidates: <String>[booking.publicBookingReference, booking.publicReference, booking.bookingReference])}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -954,6 +939,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                       en: 'Remove',
                       fr: 'Supprimer',
                       es: 'Eliminar',
+      de: 'Entfernen',
                     ),
                   ),
                 )
@@ -977,6 +963,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                       en: 'Cancel booking',
                       fr: 'Annuler la reservation',
                       es: 'Cancelar reserva',
+      de: 'Buchung stornieren',
                     ),
                   ),
                 ),
@@ -997,6 +984,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                     en: 'View booking',
                     fr: 'Voir la reservation',
                     es: 'Ver reserva',
+      de: 'Buchung ansehen',
                   ),
                 ),
               ),
@@ -1065,6 +1053,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           en: 'Booking removed from your local overview.',
           fr: 'Réservation supprimée de votre aperçu local.',
           es: 'Reserva eliminada de tu vista local.',
+      de: 'Buchung aus Ihrer lokalen Übersicht entfernt.',
         );
         ScaffoldMessenger.of(
           context,
@@ -1090,6 +1079,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'Remove booking?',
             fr: 'Supprimer la réservation ?',
             es: '¿Eliminar reserva?',
+      de: 'Buchung entfernen?',
           ),
         ),
         content: Text(
@@ -1098,13 +1088,15 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'This booking will only be removed from your local overview. Company administration and ride history remain stored.',
             fr: 'Cette réservation sera supprimée uniquement de votre aperçu local. L’administration de l’entreprise et l’historique des trajets restent conservés.',
             es: 'Esta reserva solo se eliminará de tu vista local. La administración de la empresa y el historial del viaje se conservan.',
+      de: 'Diese Buchung wird nur aus Ihrer lokalen Übersicht entfernt. Die Unternehmensverwaltung und der Fahrtverlauf bleiben gespeichert.',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar',
+      de: 'Abbrechen'),
             ),
           ),
           FilledButton(
@@ -1115,6 +1107,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 en: 'Remove',
                 fr: 'Supprimer',
                 es: 'Eliminar',
+      de: 'Entfernen',
               ),
             ),
           ),
@@ -1152,12 +1145,14 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'Booking removed from your local overview.',
             fr: 'Réservation supprimée de votre aperçu local.',
             es: 'Reserva eliminada de tu vista local.',
+      de: 'Buchung aus Ihrer lokalen Übersicht entfernt.',
           )
         : _t(
             nl: 'Boeking niet gevonden in lokale opslag.',
             en: 'Booking not found in local storage.',
             fr: 'Réservation introuvable dans le stockage local.',
             es: 'Reserva no encontrada en el almacenamiento local.',
+      de: 'Buchung im lokalen Speicher nicht gefunden.',
           );
     ScaffoldMessenger.of(
       context,
@@ -1175,6 +1170,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'Remove all bookings?',
             fr: 'Supprimer toutes les réservations ?',
             es: '¿Eliminar todas las reservas?',
+      de: 'Alle Buchungen entfernen?',
           ),
         ),
         content: Text(
@@ -1183,13 +1179,15 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
             en: 'This only removes the bookings from your local overview on this device. Company records, ride history and payments remain stored.',
             fr: 'Cela supprime uniquement les réservations de votre aperçu local sur cet appareil. L’administration, l’historique des trajets et les paiements restent conservés.',
             es: 'Esto solo elimina las reservas de tu vista local en este dispositivo. La administración de la empresa, el historial de viajes y los pagos se conservan.',
+      de: 'Damit entfernen Sie die Buchungen nur aus der lokalen Übersicht auf diesem Gerät. Unternehmensdaten, Fahrtverlauf und Zahlungen bleiben gespeichert.',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar',
+      de: 'Abbrechen'),
             ),
           ),
           FilledButton(
@@ -1200,6 +1198,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 en: 'Remove all',
                 fr: 'Tout supprimer',
                 es: 'Eliminar todo',
+      de: 'Alle entfernen',
               ),
             ),
           ),
@@ -1237,6 +1236,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
               en: 'All local bookings have been removed.',
               fr: 'Toutes les réservations locales ont été supprimées.',
               es: 'Todas las reservas locales han sido eliminadas.',
+      de: 'Alle lokalen Buchungen wurden entfernt.',
             ),
           ),
         ),
@@ -1261,6 +1261,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
               en: 'My bookings',
               fr: 'Mes reservations',
               es: 'Mis reservas',
+      de: 'Meine Buchungen',
             ),
           ),
           actions: [
@@ -1275,6 +1276,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 en: 'Refresh',
                 fr: 'Actualiser',
                 es: 'Actualizar',
+      de: 'Aktualisieren',
               ),
               onPressed: _refreshing ? null : _refreshAuthoritative,
               icon: _refreshing
@@ -1297,6 +1299,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                 en: 'Remove all',
                 fr: 'Tout supprimer',
                 es: 'Eliminar todo',
+      de: 'Alle entfernen',
               ),
               onPressed: _bookings.isEmpty ? null : _removeAllFromMyBookings,
               icon: const Icon(Icons.delete_sweep_outlined),
@@ -1312,7 +1315,8 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
                 Text(
-                  '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Derniere mise a jour', es: 'Ultima actualizacion')}: ${_formatLastUpdated()}',
+                  '${_t(nl: 'Laatst bijgewerkt', en: 'Last updated', fr: 'Derniere mise a jour', es: 'Ultima actualizacion',
+      de: 'Zuletzt aktualisiert')}: ${_formatLastUpdated()}',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.62),
                     fontSize: 12,
@@ -1362,6 +1366,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                         en: 'No bookings found.',
                         fr: 'Aucune reservation trouvee.',
                         es: 'No se encontraron reservas.',
+      de: 'Keine Buchungen gefunden.',
                       ),
                       style: const TextStyle(color: Colors.white70),
                     ),
@@ -1396,6 +1401,7 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
                         en: 'Find booking manually',
                         fr: 'Rechercher une réservation manuellement',
                         es: 'Buscar reserva manualmente',
+      de: 'Buchung manuell suchen',
                       ),
                     ),
                   ),

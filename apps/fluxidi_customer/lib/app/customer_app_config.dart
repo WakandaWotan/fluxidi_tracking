@@ -133,12 +133,25 @@ class CustomerAppConfig {
   bool get hasMapboxToken => mapboxToken.trim().isNotEmpty;
 }
 
-/// Development identity for phase 1. Not a final Play identity.
+/// Default development identity. A Play build overrides these via dart-defines
+/// without changing the local `com.fluxidi.customer.dev` install.
 const CustomerAppConfig kCustomerAppConfig = CustomerAppConfig(
-  appName: 'Fluxidi Customer Dev',
-  environmentLabel: 'DEV',
-  androidApplicationId: 'com.fluxidi.customer.dev',
-  deepLinkScheme: 'fluxidicustomerdev',
+  appName: String.fromEnvironment(
+    'FLUXIDI_CUSTOMER_APP_NAME',
+    defaultValue: 'Fluxidi Customer Dev',
+  ),
+  environmentLabel: String.fromEnvironment(
+    'FLUXIDI_CUSTOMER_ENV_LABEL',
+    defaultValue: 'DEV',
+  ),
+  androidApplicationId: String.fromEnvironment(
+    'FLUXIDI_CUSTOMER_APPLICATION_ID',
+    defaultValue: 'com.fluxidi.customer.dev',
+  ),
+  deepLinkScheme: String.fromEnvironment(
+    'FLUXIDI_CUSTOMER_DEEP_LINK_SCHEME',
+    defaultValue: 'fluxidicustomerdev',
+  ),
   deepLinkHost: 'pay',
   deepLinkPath: '/return',
   variant: CustomerAppVariant.fluxidiMarketplace,

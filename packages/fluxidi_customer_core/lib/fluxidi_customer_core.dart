@@ -10,6 +10,7 @@ library;
 
 export 'src/address_value.dart';
 export 'src/address_search.dart';
+export 'src/address_label_language.dart';
 export 'src/availability.dart';
 export 'src/lon_lat.dart';
 export 'src/partner_scope.dart';

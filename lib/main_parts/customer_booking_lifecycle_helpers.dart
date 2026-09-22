@@ -400,11 +400,66 @@ StoredCustomerBooking _hydrateStoredCustomerBookingFromView({
     ),
   );
   // #endregion
+  final paymentChannel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+    view.source,
+    view.record,
+    view.booking,
+    <String, dynamic>{
+      'payment_method': view.paymentMethod,
+      'payment_mode': view.paymentMode,
+      'payment_provider': view.paymentProvider,
+      'quote': stored.quote,
+    },
+  ]);
+  final publicRef = distinctPublicCustomerReference(
+    bookingId: stored.canonicalBookingId,
+    candidates: <String>[
+      view.publicBookingReference,
+      stored.publicBookingId,
+      stored.publicReference,
+      stored.bookingReference,
+    ],
+  );
   return stored.copyWith(
+    publicBookingId: publicRef.isNotEmpty ? publicRef : stored.publicBookingId,
+    publicReference: publicRef.isNotEmpty ? publicRef : stored.publicReference,
+    bookingReference: publicRef.isNotEmpty ? publicRef : stored.bookingReference,
+    customerName: view.customerName.trim().isNotEmpty
+        ? view.customerName.trim()
+        : stored.customerName,
+    customerPhone: view.customerPhone.trim().isNotEmpty
+        ? view.customerPhone.trim()
+        : stored.customerPhone,
+    customerEmail: view.customerEmail.trim().isNotEmpty
+        ? view.customerEmail.trim()
+        : stored.customerEmail,
+    pax: view.pax.trim().isNotEmpty ? view.pax.trim() : stored.pax,
+    bags: view.bags.trim().isNotEmpty ? view.bags.trim() : stored.bags,
     status: normalizedStatus.isNotEmpty ? normalizedStatus : stored.status,
     paymentStatus: normalizedPayment.isNotEmpty
         ? normalizedPayment
         : stored.paymentStatus,
+    paymentMethod: paymentChannel.method.isNotEmpty
+        ? paymentChannel.method
+        : stored.paymentMethod,
+    paymentMode: paymentChannel.mode.isNotEmpty
+        ? paymentChannel.mode
+        : stored.paymentMode,
+    paymentProvider: paymentChannel.provider.isNotEmpty
+        ? paymentChannel.provider
+        : stored.paymentProvider,
+    quote: mergeCustomerPaymentChannelIntoQuote(
+      stored.quote,
+      paymentChannel.method.isNotEmpty ||
+              paymentChannel.mode.isNotEmpty ||
+              paymentChannel.provider.isNotEmpty
+          ? paymentChannel
+          : CustomerPaymentChannel(
+              method: stored.paymentMethod,
+              mode: stored.paymentMode,
+              provider: stored.paymentProvider,
+            ),
+    ),
     businessDetected: mergedBusinessDetected,
     invoiceRequested: mergedInvoiceRequested,
     companyName: mergedCompanyName,
@@ -592,6 +647,7 @@ String localizedCustomerRefundPriceLabel(
         en: 'Refunded to customer',
         fr: 'Rembourse au client',
         es: 'Reembolsado al cliente',
+      de: 'An Kunden zurückerstattet',
       );
     case CustomerRefundDisplayPhase.refundPending:
       return _tr(
@@ -599,6 +655,7 @@ String localizedCustomerRefundPriceLabel(
         en: 'Refund in progress',
         fr: 'Remboursement en cours',
         es: 'Reembolso en curso',
+      de: 'Rückerstattung läuft',
       );
     case CustomerRefundDisplayPhase.refundFailed:
       return _tr(
@@ -606,6 +663,7 @@ String localizedCustomerRefundPriceLabel(
         en: 'Refund failed',
         fr: 'Remboursement echoue',
         es: 'Reembolso fallido',
+      de: 'Rückerstattung fehlgeschlagen',
       );
     case CustomerRefundDisplayPhase.noRefundNeeded:
       if (manualHandled) {
@@ -614,6 +672,7 @@ String localizedCustomerRefundPriceLabel(
           en: 'Handled manually',
           fr: 'Traite manuellement',
           es: 'Gestionado manualmente',
+      de: 'Manuell bearbeitet',
         );
       }
       return _tr(
@@ -621,6 +680,7 @@ String localizedCustomerRefundPriceLabel(
         en: 'No refund',
         fr: 'Pas de remboursement',
         es: 'Sin reembolso',
+      de: 'Keine Rückerstattung',
       );
     case CustomerRefundDisplayPhase.creditDue:
     case CustomerRefundDisplayPhase.unknown:
@@ -629,6 +689,7 @@ String localizedCustomerRefundPriceLabel(
         en: 'Credit due',
         fr: 'A crediter',
         es: 'A acreditar',
+      de: 'Gutschrift ausstehend',
       );
   }
 }

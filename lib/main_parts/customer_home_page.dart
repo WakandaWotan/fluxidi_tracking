@@ -74,13 +74,15 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   String _comingSoonMessage() => _t(
     nl: 'Deze functie komt binnenkort.',
     en: 'This feature is coming soon.',
     fr: 'Cette fonction arrive bientôt.',
     es: 'Esta función estará disponible pronto.',
+      de: 'Diese Funktion kommt bald.',
   );
 
   void _comingSoon(BuildContext context) {
@@ -235,6 +237,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               en: 'Scheduled ride currently opens the booking flow (scheduled intent pending).',
               fr: 'La course planifiee ouvre actuellement le flux de reservation (option planifiee a venir).',
               es: 'El viaje programado abre actualmente el flujo de reserva (intencion programada pendiente).',
+      de: 'Geplante Fahrt öffnet jetzt den Buchungsablauf (geplante Option folgt).',
             ),
           ),
         ),
@@ -550,6 +553,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                     en: 'Welcome!',
                     fr: 'Bienvenue !',
                     es: '¡Bienvenido!',
+      de: 'Willkommen!',
                   ),
                   style: TextStyle(
                     color: _premiumBronze,
@@ -737,6 +741,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
       en: 'My data & delete account',
       fr: 'Mes données & supprimer le compte',
       es: 'Mis datos y eliminar la cuenta',
+      de: 'Meine Daten & Konto löschen',
     );
     return SizedBox(
       width: double.infinity,
@@ -834,6 +839,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'My bookings',
           fr: 'Mes réservations',
           es: 'Mis reservas',
+      de: 'Meine Buchungen',
         ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const CustomerSavedBookingsPage()),
@@ -846,6 +852,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'My details',
           fr: 'Mes données',
           es: 'Mis datos',
+      de: 'Meine Daten',
         ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()),
@@ -865,6 +872,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Taxi nearby',
           fr: 'Taxi à proximité',
           es: 'Taxi cerca',
+      de: 'Taxi in der Nähe',
         ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(
@@ -885,6 +893,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Region Radar',
           fr: 'Radar régional',
           es: 'Radar regional',
+      de: 'Region Radar',
         ),
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(
@@ -902,6 +911,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             en: 'Airport rides',
             fr: 'Trajets aéroport',
             es: 'Traslados aeropuerto',
+      de: 'Flughafenfahrten',
           ),
           onTap: () => _openAirportFlow(context),
         ),
@@ -912,6 +922,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             en: 'Hotels & B&B',
             fr: 'Hôtels & B&B',
             es: 'Hoteles & B&B',
+      de: 'Hotels & B&B',
           ),
           onTap: () => _openHotelsPage(context),
         ),
@@ -1152,11 +1163,16 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   Widget _customerBottomNav(BuildContext context) {
     const navIconSize = 25.0;
     final items = <String>[
-      _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
-      _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis'),
-      _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas'),
-      _t(nl: 'Start', en: 'Start', fr: 'Accueil', es: 'Inicio'),
-      _t(nl: 'Thema', en: 'Theme', fr: 'Thème', es: 'Tema'),
+      _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio',
+      de: 'Start'),
+      _t(nl: 'Taxi’s', en: 'Taxis', fr: 'Taxis', es: 'Taxis',
+      de: 'Taxis'),
+      _t(nl: 'Boekingen', en: 'Bookings', fr: 'Réservations', es: 'Reservas',
+      de: 'Buchungen'),
+      _t(nl: 'Start', en: 'Start', fr: 'Accueil', es: 'Inicio',
+      de: 'Start'),
+      _t(nl: 'Thema', en: 'Theme', fr: 'Thème', es: 'Tema',
+      de: 'Design'),
     ];
     return Container(
       decoration: BoxDecoration(
@@ -1339,7 +1355,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
   String _formatHomeWhen(DateTime? value) {
     if (value == null) {
-      return _t(nl: 'Later', en: 'Later', fr: 'Plus tard', es: 'Más tarde');
+      return _t(nl: 'Later', en: 'Later', fr: 'Plus tard', es: 'Más tarde',
+      de: 'Später');
     }
     final local = value.toLocal();
     final month = local.month.toString().padLeft(2, '0');
@@ -1355,12 +1372,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   }) {
     final name = _customerDisplayName();
     final greeting = name.isEmpty
-        ? _t(nl: 'Welkom', en: 'Welcome', fr: 'Bienvenue', es: 'Bienvenido')
+        ? _t(nl: 'Welkom', en: 'Welcome', fr: 'Bienvenue', es: 'Bienvenido',
+      de: 'Willkommen')
         : _t(
             nl: 'Welkom, $name',
             en: 'Welcome, $name',
             fr: 'Bienvenue, $name',
             es: 'Bienvenido, $name',
+      de: 'Willkommen, $name',
           );
     final tokens = LimousineUxTokens.fromCustomer(_themePalette);
     return Row(
@@ -1410,6 +1429,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                   en: 'Discover Fluxidi',
                                   fr: 'Découvrir Fluxidi',
                                   es: 'Descubre Fluxidi',
+      de: 'Fluxidi entdecken',
                                 ),
                                 style: TextStyle(
                                   color: _premiumText,
@@ -1461,7 +1481,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               CustomerHomeSidebarItem(
                 key: kCustomerHomeNavHomeKey,
                 icon: Icons.home_outlined,
-                label: _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
+                label: _t(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio',
+      de: 'Start'),
                 selected: true,
                 palette: _themePalette,
                 onTap: () {},
@@ -1474,6 +1495,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'Book a taxi',
                   fr: 'Réserver un taxi',
                   es: 'Reservar un taxi',
+      de: 'Taxi buchen',
                 ),
                 palette: _themePalette,
                 onTap: _openTaxiFromHomePanel,
@@ -1486,6 +1508,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'My bookings',
                   fr: 'Mes réservations',
                   es: 'Mis reservas',
+      de: 'Meine Buchungen',
                 ),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).push(
@@ -1502,6 +1525,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'My profile',
                   fr: 'Mon profil',
                   es: 'Mi perfil',
+      de: 'Mein Profil',
                 ),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).push(
@@ -1518,6 +1542,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'Taxi nearby',
                   fr: 'Taxi à proximité',
                   es: 'Taxi cerca',
+      de: 'Taxi in der Nähe',
                 ),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).push(
@@ -1540,6 +1565,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'Region Radar',
                   fr: 'Radar régional',
                   es: 'Radar regional',
+      de: 'Region Radar',
                 ),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).push(
@@ -1556,6 +1582,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'My data & delete account',
                   fr: 'Mes données & compte',
                   es: 'Mis datos y cuenta',
+      de: 'Meine Daten & Konto',
                 ),
                 palette: _themePalette,
                 onTap: () => openFluxidiPrivacyAccountPage(
@@ -1569,7 +1596,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               CustomerHomeSidebarItem(
                 key: kCustomerHomeNavThemeKey,
                 icon: Icons.palette_outlined,
-                label: _t(nl: 'Thema', en: 'Theme', fr: 'Thème', es: 'Tema'),
+                label: _t(nl: 'Thema', en: 'Theme', fr: 'Thème', es: 'Tema',
+      de: 'Design'),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const CustomerThemePage()),
@@ -1583,6 +1611,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'Back to start',
                   fr: 'Retour à l’accueil',
                   es: 'Volver al inicio',
+      de: 'Zurück zum Start',
                 ),
                 palette: _themePalette,
                 onTap: () => Navigator.of(context).pushAndRemoveUntil(
@@ -1624,6 +1653,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   en: 'Where is your day taking you?',
                   fr: 'Où votre journée vous emmène-t-elle ?',
                   es: '¿Adónde te lleva el día?',
+      de: 'Wohin führt Sie Ihr Tag?',
                 ),
                 key: kCustomerHomeTaglineKey,
                 style: TextStyle(
@@ -1713,6 +1743,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                         en: 'Where do you want to go?',
                         fr: 'Où voulez-vous aller ?',
                         es: '¿Adónde quieres ir?',
+      de: 'Wohin möchten Sie?',
                       ),
                       style: TextStyle(
                         color: _premiumText,
@@ -1728,6 +1759,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                         en: 'Current location',
                         fr: 'Position actuelle',
                         es: 'Ubicación actual',
+      de: 'Aktueller Standort',
                       ),
                       tokens: tokens,
                       language: appConfig.currentLanguage,
@@ -1741,6 +1773,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                           en: 'Current location',
                           fr: 'Position actuelle',
                           es: 'Ubicación actual',
+      de: 'Aktueller Standort',
                         ),
                         icon: Icons.place_outlined,
                       ),
@@ -1752,6 +1785,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                         en: 'Enter destination',
                         fr: 'Saisir la destination',
                         es: 'Introducir destino',
+      de: 'Ziel eingeben',
                       ),
                       tokens: tokens,
                       language: appConfig.currentLanguage,
@@ -1764,6 +1798,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                           en: 'Enter destination',
                           fr: 'Saisir la destination',
                           es: 'Introducir destino',
+      de: 'Ziel eingeben',
                         ),
                         icon: Icons.crop_square_rounded,
                       ),
@@ -1802,6 +1837,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                 en: 'Find my ride',
                                 fr: 'Trouver ma course',
                                 es: 'Buscar mi viaje',
+      de: 'Meine Fahrt finden',
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1851,7 +1887,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     })>[
       (
         key: const ValueKey<String>('customer_home_discover_taxi'),
-        title: _t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi'),
+        title: _t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi',
+      de: 'Taxi'),
         asset: 'assets/fluxidi/customer_home_hero_light.webp',
         icon: Icons.local_taxi_outlined,
         alignment: const Alignment(0.4, 0.0),
@@ -1864,6 +1901,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Airport',
           fr: 'Aéroport',
           es: 'Aeropuerto',
+      de: 'Flughafen',
         ),
         asset: 'assets/fluxidi/customer_home_airport_banner.webp',
         icon: Icons.flight_takeoff_rounded,
@@ -1877,6 +1915,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Hotels & B&B',
           fr: 'Hôtels & B&B',
           es: 'Hoteles & B&B',
+      de: 'Hotels & B&B',
         ),
         asset: 'assets/fluxidi/customer_home_hotel_bb_banner.webp',
         icon: Icons.hotel_rounded,
@@ -1890,6 +1929,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Events',
           fr: 'Événements',
           es: 'Eventos',
+      de: 'Veranstaltungen',
         ),
         asset: 'assets/fluxidi/customer_home_events_banner.webp',
         icon: Icons.celebration_outlined,
@@ -1903,6 +1943,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Business',
           fr: 'Professionnel',
           es: 'Empresas',
+      de: 'Geschäftlich',
         ),
         asset: _themePalette.isDark
             ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.webp'
@@ -1918,6 +1959,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           en: 'Limousine',
           fr: 'Limousine',
           es: 'Limusina',
+      de: 'Limousine',
         ),
         asset: LimousineCustomerEntryContract.visualAsset,
         icon: Icons.airport_shuttle_outlined,
@@ -2018,6 +2060,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             en: 'Leave now',
             fr: 'Partir maintenant',
             es: 'Salir ahora',
+      de: 'Jetzt fahren',
           )
         : _formatHomeWhen(_homePickupAt);
     return MenuAnchor(
@@ -2077,6 +2120,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               en: 'Leave now',
               fr: 'Partir maintenant',
               es: 'Salir ahora',
+      de: 'Jetzt fahren',
             ),
             key: kCustomerHomeWhenNowKey,
           ),
@@ -2084,7 +2128,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
         MenuItemButton(
           onPressed: () => unawaited(_pickHomeLaterWhen()),
           child: Text(
-            _t(nl: 'Later', en: 'Later', fr: 'Plus tard', es: 'Más tarde'),
+            _t(nl: 'Later', en: 'Later', fr: 'Plus tard', es: 'Más tarde',
+      de: 'Später'),
             key: kCustomerHomeWhenLaterKey,
           ),
         ),
@@ -2124,12 +2169,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                   Expanded(
                     child: Text(
                       chosen
-                          ? '${_t(nl: 'Je boekt bij', en: 'You are booking with', fr: 'Vous réservez chez', es: 'Reservas con')}: $name'
+                          ? '${_t(nl: 'Je boekt bij', en: 'You are booking with', fr: 'Vous réservez chez', es: 'Reservas con',
+      de: 'Sie buchen bei')}: $name'
                           : _t(
                               nl: 'Kies een taxibedrijf',
                               en: 'Choose a taxi company',
                               fr: 'Choisissez une compagnie de taxi',
                               es: 'Elige una empresa de taxi',
+      de: 'Wählen Sie ein Taxiunternehmen',
                             ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -2147,12 +2194,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             en: 'Change',
                             fr: 'Modifier',
                             es: 'Cambiar',
+      de: 'Ändern',
                           )
                         : _t(
                             nl: 'Kiezen',
                             en: 'Choose',
                             fr: 'Choisir',
                             es: 'Elegir',
+      de: 'Wählen',
                           ),
                     style: TextStyle(
                       color: customerHomeDesktopAccent(_themePalette),
@@ -2265,6 +2314,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                   en: 'Airport rides',
                                   fr: 'Trajets aéroport',
                                   es: 'Traslados aeropuerto',
+      de: 'Flughafenfahrten',
                                 ),
                                 subtitle: '',
                                 visualAsset:
@@ -2281,6 +2331,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                   en: 'Hotels & B&B',
                                   fr: 'Hôtels & B&B',
                                   es: 'Hoteles & B&B',
+      de: 'Hotels & B&B',
                                 ),
                                 subtitle: '',
                                 visualAsset:
@@ -2297,6 +2348,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                   en: 'Events',
                                   fr: 'Événements',
                                   es: 'Eventos',
+      de: 'Veranstaltungen',
                                 ),
                                 subtitle: '',
                                 visualAsset: eventsAsset,
@@ -2312,6 +2364,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                   en: 'Business',
                                   fr: 'Pro',
                                   es: 'Empresas',
+      de: 'Geschäftlich',
                                 ),
                                 subtitle: '',
                                 visualAsset: businessAsset,
@@ -2347,6 +2400,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                               en: 'Airport rides',
                               fr: 'Trajets aéroport',
                               es: 'Traslados aeropuerto',
+      de: 'Flughafenfahrten',
                             ),
                             subtitle: '',
                             visualAsset:
@@ -2366,6 +2420,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                               en: 'Hotels & B&B',
                               fr: 'Hôtels & B&B',
                               es: 'Hoteles & B&B',
+      de: 'Hotels & B&B',
                             ),
                             subtitle: '',
                             visualAsset:
@@ -2384,6 +2439,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             en: 'Events',
                             fr: 'Événements',
                             es: 'Eventos',
+      de: 'Veranstaltungen',
                           ),
                           subtitle: '',
                           visualAsset: eventsAsset,
@@ -2400,6 +2456,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             en: 'Business',
                             fr: 'Pro',
                             es: 'Empresas',
+      de: 'Geschäftlich',
                           ),
                           subtitle: '',
                           visualAsset: businessAsset,
@@ -2426,6 +2483,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             en: 'My Fluxidi',
                             fr: 'Mon Fluxidi',
                             es: 'Mi Fluxidi',
+      de: 'Mein Fluxidi',
                           ),
                           style: TextStyle(
                             color: _premiumText,

@@ -33,9 +33,28 @@ bool _bodyHasWait(Map<String, dynamic> body) {
 }
 
 void main() {
-  test('logo box stays between 100-120 by 40-48 and uses contain', () {
-    expect(kCustomerBookingCompanyLogoWidth, inInclusiveRange(100, 120));
-    expect(kCustomerBookingCompanyLogoHeight, inInclusiveRange(40, 48));
+  test('company banner logo grows on tablet and stays compact on phone', () {
+    final tablet = customerBookingCompanyBannerLayout(innerWidth: 640);
+    expect(tablet.equalSplit, isTrue);
+    expect(tablet.stack, isFalse);
+    expect(tablet.logoMaxHeight, kCustomerBookingCompanyLogoTabletMaxHeight);
+    expect(tablet.logoMaxWidth, closeTo((640 - 12) / 2, 0.1));
+    expect(
+      tablet.logoMaxHeight,
+      closeTo(kCustomerBookingCompanyLogoHeight * 2, 0.1),
+    );
+
+    final phone = customerBookingCompanyBannerLayout(innerWidth: 360);
+    expect(phone.equalSplit, isFalse);
+    expect(phone.stack, isFalse);
+    expect(phone.logoMaxWidth, kCustomerBookingCompanyLogoPhoneWidth);
+    expect(phone.logoMaxHeight, kCustomerBookingCompanyLogoPhoneHeight);
+
+    final stacked = customerBookingCompanyBannerLayout(
+      innerWidth: 260,
+      textScale: 1.6,
+    );
+    expect(stacked.stack, isTrue);
   });
 
   test('listed 401 with two 200 legs is reported, not masked as 400', () {

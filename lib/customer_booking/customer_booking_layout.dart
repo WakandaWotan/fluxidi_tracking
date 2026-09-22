@@ -197,6 +197,64 @@ bool customerBookingSheetIsSnapped(
 
 const double kCustomerBookingCompanyLogoWidth = 112;
 const double kCustomerBookingCompanyLogoHeight = 44;
+const double kCustomerBookingCompanyLogoTabletMaxHeight = 88;
+const double kCustomerBookingCompanyLogoPhoneWidth = 80;
+const double kCustomerBookingCompanyLogoPhoneHeight = 36;
+const double kCustomerBookingCompanyBannerGap = 12;
+const double kCustomerBookingCompanyBannerTabletMinWidth = 520;
+
+class CustomerBookingCompanyBannerLayout {
+  const CustomerBookingCompanyBannerLayout({
+    required this.stack,
+    required this.equalSplit,
+    required this.logoMaxWidth,
+    required this.logoMaxHeight,
+    required this.gap,
+  });
+
+  final bool stack;
+  final bool equalSplit;
+  final double logoMaxWidth;
+  final double logoMaxHeight;
+  final double gap;
+}
+
+/// Logo + name layout for the shared company card in taxi and airport booking.
+CustomerBookingCompanyBannerLayout customerBookingCompanyBannerLayout({
+  required double innerWidth,
+  double textScale = 1,
+}) {
+  final width = innerWidth.isFinite && innerWidth > 0 ? innerWidth : 400.0;
+  final scale = textScale.clamp(1.0, 2.4).toDouble();
+  final stack = width < 280 || scale >= 1.45;
+  if (stack) {
+    return CustomerBookingCompanyBannerLayout(
+      stack: true,
+      equalSplit: false,
+      logoMaxWidth: width,
+      logoMaxHeight: kCustomerBookingCompanyLogoPhoneHeight * 1.4,
+      gap: 8,
+    );
+  }
+  if (width >= kCustomerBookingCompanyBannerTabletMinWidth && scale < 1.35) {
+    final gap = kCustomerBookingCompanyBannerGap;
+    final half = ((width - gap) / 2).clamp(160.0, 360.0).toDouble();
+    return CustomerBookingCompanyBannerLayout(
+      stack: false,
+      equalSplit: true,
+      logoMaxWidth: half,
+      logoMaxHeight: kCustomerBookingCompanyLogoTabletMaxHeight,
+      gap: gap,
+    );
+  }
+  return const CustomerBookingCompanyBannerLayout(
+    stack: false,
+    equalSplit: false,
+    logoMaxWidth: kCustomerBookingCompanyLogoPhoneWidth,
+    logoMaxHeight: kCustomerBookingCompanyLogoPhoneHeight,
+    gap: 10,
+  );
+}
 const double kCustomerBookingMetricsBadgeMargin = 8.0;
 const double kCustomerBookingMetricsBadgeAttributionReserve = 16.0;
 const double kCustomerBookingMetricsBadgeMinHole = 56.0;

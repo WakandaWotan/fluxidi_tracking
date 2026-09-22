@@ -36,7 +36,8 @@ class _CustomerRegionRegistrationPageState
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   @override
   void initState() {
@@ -129,6 +130,7 @@ class _CustomerRegionRegistrationPageState
           en: 'Complete your profile details first so we can notify you.',
           fr: 'Complétez d’abord votre profil afin que nous puissions vous informer.',
           es: 'Completa primero tu perfil para que podamos avisarte.',
+      de: 'Vervollständigen Sie zuerst Ihr Profil, damit wir Sie benachrichtigen können.',
         ),
       );
       await _openProfileForCompletion();
@@ -145,6 +147,7 @@ class _CustomerRegionRegistrationPageState
         en: '$postcode · your area',
         fr: '$postcode · votre région',
         es: '$postcode · tu zona',
+      de: '$postcode · Ihre Region',
       );
     }
     return _t(
@@ -152,6 +155,7 @@ class _CustomerRegionRegistrationPageState
       en: 'Your area',
       fr: 'Votre région',
       es: 'Tu zona',
+      de: 'Ihre Region',
     );
   }
 
@@ -287,6 +291,7 @@ class _CustomerRegionRegistrationPageState
         en: 'I am following Region Radar on Fluxidi. Join in so we can get Fluxidi in our area sooner.',
         fr: 'Je suis Radar régional sur Fluxidi. Rejoins-nous pour activer Fluxidi plus vite dans notre région.',
         es: 'Estoy siguiendo Radar regional en Fluxidi. Únete para que Fluxidi llegue antes a nuestra zona.',
+      de: 'Ich folge Region Radar auf Fluxidi. Machen Sie mit, damit Fluxidi schneller in unsere Region kommt.',
       ),
     );
   }
@@ -381,12 +386,14 @@ class _CustomerRegionRegistrationPageState
               en: 'Your area is registered. We’ll keep you updated.',
               fr: 'Votre région est enregistrée. Nous vous tiendrons informé.',
               es: 'Tu zona está registrada. Te mantendremos informado.',
+      de: 'Ihre Region ist registriert. Wir halten Sie auf dem Laufenden.',
             )
           : _t(
               nl: 'Je interesse is lokaal bewaard. We proberen later opnieuw te synchroniseren.',
               en: 'Your interest was saved locally. We’ll try to sync it later.',
               fr: 'Votre intérêt a été enregistré localement. Nous réessaierons plus tard.',
               es: 'Tu interés se guardó localmente. Intentaremos sincronizarlo más tarde.',
+      de: 'Ihr Interesse wurde lokal gespeichert. Wir versuchen später zu synchronisieren.',
             ),
     );
     Navigator.pop(context);
@@ -416,6 +423,7 @@ class _CustomerRegionRegistrationPageState
               en: 'Region Radar',
               fr: 'Radar régional',
               es: 'Radar regional',
+      de: 'Region Radar',
             ),
             style: TextStyle(
               color: _textPrimary,
@@ -436,6 +444,7 @@ class _CustomerRegionRegistrationPageState
                   en: 'You are not alone. More people are asking for Fluxidi in their area.',
                   fr: 'Vous n’êtes pas seul. De plus en plus de personnes demandent Fluxidi dans leur région.',
                   es: 'No estás solo. Cada vez más personas piden Fluxidi en su zona.',
+      de: 'Sie sind nicht allein. Immer mehr Menschen fragen Fluxidi in ihrer Region nach.',
                 ),
                 style: TextStyle(
                   color: _textMuted.withOpacity(0.92),
@@ -484,6 +493,7 @@ class _CustomerRegionRegistrationPageState
                       en: 'Customer interest',
                       fr: 'Intérêt clients',
                       es: 'Interés de clientes',
+      de: 'Kundeninteresse',
                     ),
                   ),
                   _legendDotLabel(
@@ -493,6 +503,7 @@ class _CustomerRegionRegistrationPageState
                       en: 'Partners',
                       fr: 'Partenaires',
                       es: 'Socios',
+      de: 'Partner',
                     ),
                   ),
                   _statusLegendChip(
@@ -502,12 +513,14 @@ class _CustomerRegionRegistrationPageState
                             en: 'Partners active',
                             fr: 'Partenaires actifs',
                             es: 'Socios activos',
+      de: 'Partner aktiv',
                           )
                         : _t(
                             nl: 'Partners gezocht in jouw regio',
                             en: 'Partners wanted in your area',
                             fr: 'Partenaires recherchés dans votre région',
                             es: 'Se buscan socios en tu zona',
+      de: 'Partner in Ihrer Region gesucht',
                           ),
                     color: hasActivePartnerSignals
                         ? partnerColor
@@ -578,6 +591,7 @@ class _CustomerRegionRegistrationPageState
                             en: 'Anonymous interest in your region',
                             fr: 'Intérêt anonyme dans votre région',
                             es: 'Interés anónimo en tu zona',
+      de: 'Anonymes Interesse in Ihrer Region',
                           ),
                           style: TextStyle(
                             color: _textPrimary.withOpacity(0.92),
@@ -633,6 +647,7 @@ class _CustomerRegionRegistrationPageState
                         en: 'Interested people',
                         fr: 'Personnes intéressées',
                         es: 'Personas interesadas',
+      de: 'Interessierte',
                       ),
                     ),
                   ),
@@ -646,6 +661,7 @@ class _CustomerRegionRegistrationPageState
                               en: 'Your area',
                               fr: 'Votre région',
                               es: 'Tu zona',
+      de: 'Ihre Region',
                             ),
                       icon: Icons.location_on_rounded,
                       tooltip: _t(
@@ -653,6 +669,7 @@ class _CustomerRegionRegistrationPageState
                         en: 'Your area',
                         fr: 'Votre région',
                         es: 'Tu zona',
+      de: 'Ihre Region',
                       ),
                     ),
                   ),
@@ -664,6 +681,7 @@ class _CustomerRegionRegistrationPageState
                         en: 'Update',
                         fr: 'Info',
                         es: 'Aviso',
+      de: 'Update',
                       ),
                       icon: Icons.notifications_active_rounded,
                       tooltip: _t(
@@ -671,6 +689,7 @@ class _CustomerRegionRegistrationPageState
                         en: 'When active',
                         fr: 'Dès activation',
                         es: 'Cuando esté activo',
+      de: 'Sobald aktiv',
                       ),
                     ),
                   ),
@@ -695,12 +714,14 @@ class _CustomerRegionRegistrationPageState
                           en: 'Sending...',
                           fr: 'Envoi...',
                           es: 'Enviando...',
+      de: 'Wird gesendet...',
                         )
                       : _t(
                           nl: 'Hou mij op de hoogte',
                           en: 'Keep me updated',
                           fr: 'Me tenir informé',
                           es: 'Mantenerme informado',
+      de: 'Halten Sie mich auf dem Laufenden',
                         ),
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
@@ -712,6 +733,7 @@ class _CustomerRegionRegistrationPageState
                   en: 'We only use your details to keep you updated. No spam, only important news.',
                   fr: 'Nous utilisons vos données uniquement pour vous tenir informé. Pas de spam, seulement les nouvelles importantes.',
                   es: 'Solo usamos tus datos para mantenerte informado. Sin spam, solo noticias importantes.',
+      de: 'Wir nutzen Ihre Daten nur, um Sie auf dem Laufenden zu halten. Kein Spam, nur wichtige Nachrichten.',
                 ),
                 style: TextStyle(
                   color: _textMuted.withOpacity(0.86),
@@ -744,6 +766,7 @@ class _CustomerRegionRegistrationPageState
                     en: 'Share with friends',
                     fr: 'Partager avec des amis',
                     es: 'Compartir con amigos',
+      de: 'Mit Freunden teilen',
                   ),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),

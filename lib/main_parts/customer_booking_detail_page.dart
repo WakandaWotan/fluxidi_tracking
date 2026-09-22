@@ -59,6 +59,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   bool _ratingSessionChecked = false;
   bool _hasValidRatingSession = false;
   String? _refreshError;
+  int? _refreshStatusCode;
   late bool _usingLocalCache = widget.startsFromLocalCache;
   // Dossier 02: a paid/confirmed notifier value for this booking only
   // schedules one authoritative refresh. The last handled payment id keeps
@@ -72,7 +73,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
@@ -185,6 +187,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     setState(() {
       _refreshing = true;
       _refreshError = null;
+      _refreshStatusCode = null;
     });
     try {
       final uri = _customerCanonicalBookingGetUri(widget.bookingId);
@@ -210,7 +213,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           final view = authoritativeView.mergedWithExisting(_view);
           final localFallback = StoredCustomerBooking(
             bookingId: _view.bookingId,
-            publicBookingId: _view.bookingId,
+            publicBookingId: distinctPublicCustomerReference(
+              bookingId: _view.bookingId,
+              candidates: <String>[
+                _view.publicBookingReference,
+              ],
+            ),
             customerName: _view.customerName,
             customerPhone: _view.customerPhone,
             customerEmail: _view.customerEmail,
@@ -224,9 +232,22 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             pax: _view.pax,
             bags: _view.bags,
             paymentStatus: _view.rawPaymentStatus,
+            paymentMethod: _view.paymentMethod,
+            paymentMode: _view.paymentMode,
+            paymentProvider: _view.paymentProvider,
             status: _view.lifecycleStatus,
             createdAt: DateTime.now().toIso8601String(),
             updatedAt: DateTime.now().toIso8601String(),
+            quote: mergeCustomerPaymentChannelIntoQuote(
+              _view.source['quote'] is Map
+                  ? Map<String, dynamic>.from(_view.source['quote'] as Map)
+                  : const <String, dynamic>{},
+              CustomerPaymentChannel(
+                method: _view.paymentMethod,
+                mode: _view.paymentMode,
+                provider: _view.paymentProvider,
+              ),
+            ),
           );
           final stored = StoredCustomerBooking.fromAuthoritativeResponse(
             bookingId: widget.bookingId,
@@ -252,37 +273,74 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             _derivedPaymentDisplayToken = derivedPaymentToken;
             _usingLocalCache = false;
             _refreshing = false;
+            _refreshStatusCode = null;
           });
           return;
         }
       }
+      debugPrint(
+        '[CUSTOMER_DETAIL][REFRESH] booking=${_safeRefPreview(widget.bookingId)} status=${res.statusCode} authed=${refreshHeaders.containsKey('Authorization')}',
+      );
       if (!mounted) return;
-      setState(() {
-        _refreshing = false;
-        _usingLocalCache = true;
-        _refreshError = _t(
-          nl: 'Vernieuwen mislukt.',
-          en: 'Refresh failed.',
-          fr: "Echec de l'actualisation.",
-          es: 'Error al actualizar.',
-        );
-      });
+      await _applyLocalRefreshFallback(
+        statusCode: res.statusCode,
+        connectionFailed: false,
+      );
     } catch (err) {
       if (!mounted) return;
       debugPrint(
         '[CUSTOMER_DETAIL][REFRESH_ERROR] bookingId=${widget.bookingId} error=$err',
       );
-      setState(() {
-        _refreshing = false;
-        _usingLocalCache = true;
-        _refreshError = _t(
-          nl: 'Verbinding mislukt. Probeer het opnieuw.',
-          en: 'Connection failed. Please try again.',
-          fr: 'Connexion echouee. Veuillez reessayer.',
-          es: 'Conexion fallida. Intentalo de nuevo.',
-        );
-      });
+      await _applyLocalRefreshFallback(
+        statusCode: null,
+        connectionFailed: true,
+      );
     }
+  }
+
+  Future<void> _applyLocalRefreshFallback({
+    required int? statusCode,
+    required bool connectionFailed,
+  }) async {
+    final stored = await CustomerBookingsStore.instance.findByAnyReference(
+      widget.bookingId,
+    );
+    if (!mounted) return;
+    final nextView = stored == null
+        ? _view
+        : CustomerBookingView.fromStored(stored).mergedWithExisting(_view);
+    final derivedPaymentToken = await _derivePaymentDisplayToken(view: nextView);
+    if (!mounted) return;
+    final refreshError = connectionFailed
+        ? _t(
+            nl: 'Verbinding mislukt. Probeer het opnieuw.',
+            en: 'Connection failed. Please try again.',
+            fr: 'Connexion echouee. Veuillez reessayer.',
+            es: 'Conexion fallida. Intentalo de nuevo.',
+      de: 'Verbindung fehlgeschlagen. Bitte erneut versuchen.',
+          )
+        : (statusCode == 401
+              ? _t(
+                  nl: 'Vernieuwen mislukt. Meld je aan voor de laatste status.',
+                  en: 'Refresh failed. Sign in for the latest status.',
+                  fr: 'Actualisation échouée. Connectez-vous pour le dernier statut.',
+                  es: 'Error al actualizar. Inicia sesión para el último estado.',
+      de: 'Aktualisieren fehlgeschlagen. Melden Sie sich für den aktuellen Status an.',
+                )
+              : _t(
+                  nl: 'Vernieuwen mislukt.',
+                  en: 'Refresh failed.',
+                  fr: "Echec de l'actualisation.",
+                  es: 'Error al actualizar.',
+                ));
+    setState(() {
+      _view = nextView;
+      _derivedPaymentDisplayToken = derivedPaymentToken;
+      _refreshing = false;
+      _usingLocalCache = true;
+      _refreshError = refreshError;
+      _refreshStatusCode = statusCode;
+    });
   }
 
   static Set<String> _paymentAliasesForView(CustomerBookingView view) {
@@ -496,7 +554,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }) {
     final base = _formatPrice(amount, currency);
     if (!cancelled) return base;
-    return '$base — ${_t(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annule', es: 'Cancelado')}';
+    return '$base — ${_t(nl: 'Geannuleerd', en: 'Cancelled', fr: 'Annule', es: 'Cancelado',
+      de: 'Storniert')}';
   }
 
   String _formatNegativePrice(double? amount, String currency) {
@@ -511,6 +570,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     en: 'Cancelled — not charged',
     fr: 'Annule — non facture',
     es: 'Cancelado — no cobrado',
+      de: 'Storniert — nicht berechnet',
   );
 
   String _roundtripLegTitleLabel(String legType, {required bool includeVat}) {
@@ -521,8 +581,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               en: 'Return price incl. VAT',
               fr: 'Prix retour TVAC',
               es: 'Precio regreso con IVA',
+      de: 'Rückfahrtpreis inkl. MwSt.',
             )
-          : _t(nl: 'Terugrit', en: 'Return trip', fr: 'Retour', es: 'Regreso');
+          : _t(nl: 'Terugrit', en: 'Return trip', fr: 'Retour', es: 'Regreso',
+      de: 'Rückfahrt');
     }
     return includeVat
         ? _t(
@@ -531,7 +593,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             fr: "Prix aller TVAC",
             es: 'Precio ida con IVA',
           )
-        : _t(nl: 'Heenrit', en: 'Outbound trip', fr: 'Aller', es: 'Ida');
+        : _t(nl: 'Heenrit', en: 'Outbound trip', fr: 'Aller', es: 'Ida',
+      de: 'Hinfahrt');
   }
 
   String _notFilled() => _t(
@@ -539,20 +602,32 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     en: 'Not filled in yet',
     fr: 'Pas encore renseigne',
     es: 'Aún no completado',
+      de: 'Noch nicht ausgefüllt',
   );
 
   ({String label, String value, String? internalSecondary})
   _customerBookingReferenceDisplay(CustomerBookingView view) {
-    final publicRef = view.publicBookingReference.trim();
+    final internalRef = view.internalBookingId.trim();
+    final publicRef = distinctPublicCustomerReference(
+      bookingId: internalRef,
+      candidates: <String>[view.publicBookingReference],
+    );
     final planningRef = view.planningReference.trim();
     final receiptRef = view.receiptReference.trim();
-    final internalRef = view.internalBookingId.trim();
 
     final selectedValue = publicRef.isNotEmpty
         ? publicRef
-        : (receiptRef.isNotEmpty
+        : (receiptRef.isNotEmpty &&
+                  isDistinctPublicCustomerReference(
+                    bookingId: internalRef,
+                    candidate: receiptRef,
+                  )
               ? receiptRef
-              : (planningRef.isNotEmpty
+              : (planningRef.isNotEmpty &&
+                        isDistinctPublicCustomerReference(
+                          bookingId: internalRef,
+                          candidate: planningRef,
+                        )
                     ? planningRef
                     : (internalRef.isNotEmpty ? internalRef : '-')));
     final selectedLabel = publicRef.isNotEmpty
@@ -561,6 +636,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Booking no.',
             fr: 'N° de réservation',
             es: 'N.º de reserva',
+      de: 'Buchungsnr.',
           )
         : (receiptRef.isNotEmpty
               ? _t(
@@ -568,6 +644,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Receipt no.',
                   fr: 'N° de reçu',
                   es: 'N.º de recibo',
+      de: 'Belegnr.',
                 )
               : (planningRef.isNotEmpty
                     ? _t(
@@ -575,12 +652,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         en: 'Planning no.',
                         fr: 'N° de planning',
                         es: 'N.º de planificación',
+      de: 'Planungsnr.',
                       )
                     : _t(
                         nl: 'Interne boeking',
                         en: 'Internal booking',
                         fr: 'Réservation interne',
                         es: 'Reserva interna',
+      de: 'Interne Buchung',
                       )));
     final internalSecondary =
         internalRef.isNotEmpty && internalRef != selectedValue
@@ -720,6 +799,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Could not resume the online payment. Try again or contact the taxi company.',
             fr: 'Impossible de reprendre le paiement en ligne. Reessayez ou contactez la societe de taxi.',
             es: 'No se pudo reanudar el pago online. Intentalo de nuevo o contacta con la empresa de taxi.',
+      de: 'Die Online-Zahlung konnte nicht fortgesetzt werden. Versuchen Sie es erneut oder kontaktieren Sie das Taxiunternehmen.',
           ),
         ),
       ),
@@ -918,6 +998,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Verify your customer profile to rate this ride.',
           fr: 'Reconnectez-vous pour évaluer votre course.',
           es: 'Vuelve a iniciar sesión para valorar tu viaje.',
+      de: 'Bestätigen Sie Ihr Kundenprofil, um diese Fahrt zu bewerten.',
         );
       case 'booking_not_completed':
         return _t(
@@ -925,6 +1006,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'You can only rate a completed ride.',
           fr: 'Vous pouvez uniquement évaluer une course terminée.',
           es: 'Solo puedes valorar un viaje completado.',
+      de: 'Sie können nur eine abgeschlossene Fahrt bewerten.',
         );
       case 'forbidden':
         return _t(
@@ -932,6 +1014,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'This ride does not belong to the active customer profile. Verify your booking again.',
           fr: 'Vous pouvez uniquement évaluer votre propre course.',
           es: 'Solo puedes valorar tu propio viaje.',
+      de: 'Diese Fahrt gehört nicht zum aktiven Kundenprofil. Bestätigen Sie Ihre Buchung erneut.',
         );
       case 'invalid_rating':
         return _t(
@@ -939,6 +1022,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Choose a rating between 1 and 5 stars.',
           fr: 'Choisissez une note entre 1 et 5 étoiles.',
           es: 'Elige una valoración entre 1 y 5 estrellas.',
+      de: 'Wählen Sie eine Bewertung zwischen 1 und 5 Sternen.',
         );
       default:
         return _t(
@@ -997,6 +1081,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         en: 'Rate ride',
                         fr: 'Évaluer la course',
                         es: 'Valorar viaje',
+      de: 'Fahrt bewerten',
                       ),
                       style: TextStyle(
                         color: textColor,
@@ -1037,6 +1122,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Comment (optional)',
                           fr: 'Commentaire (optionnel)',
                           es: 'Comentario (opcional)',
+      de: 'Kommentar (optional)',
                         ),
                         hintStyle: TextStyle(
                           color: mutedText.withOpacity(
@@ -1171,6 +1257,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               en: 'Thanks for your rating.',
               fr: 'Merci pour votre évaluation.',
               es: 'Gracias por tu valoración.',
+      de: 'Danke für Ihre Bewertung.',
             ),
           ),
         ),
@@ -1424,6 +1511,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Remove from my list?',
             fr: 'Supprimer de ma liste ?',
             es: '¿Eliminar de mi lista?',
+      de: 'Aus meiner Liste entfernen?',
           ),
         ),
         content: Text(
@@ -1432,13 +1520,15 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'This booking will only be removed from your list.',
             fr: 'Cette réservation sera uniquement supprimée de votre liste.',
             es: 'Esta reserva solo se eliminará de tu lista.',
+      de: 'Diese Buchung wird nur aus Ihrer Liste entfernt.',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(
-              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar',
+      de: 'Abbrechen'),
             ),
           ),
           FilledButton(
@@ -1449,6 +1539,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 en: 'Remove from my list',
                 fr: 'Supprimer de ma liste',
                 es: 'Eliminar de mi lista',
+      de: 'Aus meiner Liste entfernen',
               ),
             ),
           ),
@@ -1501,6 +1592,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Booking not found in local storage.',
             fr: 'Réservation introuvable dans le stockage local.',
             es: 'Reserva no encontrada en el almacenamiento local.',
+      de: 'Buchung im lokalen Speicher nicht gefunden.',
           ),
         ),
       ),
@@ -1960,12 +2052,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Online cancellation not available',
             fr: 'Annulation en ligne impossible',
             es: 'Cancelacion online no disponible',
+      de: 'Online-Stornierung nicht möglich',
           ),
           message: _t(
             nl: 'Deze rit is al online betaald. Neem contact op met het bedrijf voor annulatie of terugbetaling.',
             en: 'This ride has already been paid online. Please contact the company for cancellation or refund.',
             fr: 'Ce trajet a déjà été payé en ligne. Contactez l’entreprise pour l’annulation ou le remboursement.',
             es: 'Este viaje ya se ha pagado online. Contacta con la empresa para la cancelación o el reembolso.',
+      de: 'Diese Fahrt wurde bereits online bezahlt. Kontaktieren Sie das Unternehmen für Stornierung oder Rückerstattung.',
           ),
           allowRefresh: false,
           accent: _themePalette.gold,
@@ -1978,12 +2072,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Cancellation no longer possible',
             fr: 'Annulation impossible',
             es: 'Cancelacion no disponible',
+      de: 'Stornierung nicht mehr möglich',
           ),
           message: _t(
             nl: 'Deze boeking kan niet meer online geannuleerd worden omdat de annulatietermijn verlopen is. Neem contact op met het taxibedrijf als je hulp nodig hebt.',
             en: 'This booking can no longer be cancelled online because the cancellation window has passed. Please contact the taxi company if you need help.',
             fr: 'Cette reservation ne peut plus etre annulee en ligne car le delai d annulation est depasse. Contactez la compagnie de taxi si vous avez besoin d aide.',
             es: 'Esta reserva ya no puede cancelarse en linea porque el plazo de cancelacion ha vencido. Contacta con la empresa de taxi si necesitas ayuda.',
+      de: 'Diese Buchung kann nicht mehr online storniert werden, weil die Stornofrist abgelaufen ist. Kontaktieren Sie das Taxiunternehmen, wenn Sie Hilfe brauchen.',
           ),
           allowRefresh: false,
           accent: _themePalette.danger,
@@ -1996,12 +2092,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Driver already en route',
             fr: 'Le chauffeur est deja en route',
             es: 'El conductor ya esta en camino',
+      de: 'Fahrer ist bereits unterwegs',
           ),
           message: _t(
             nl: 'De chauffeur is al onderweg naar het ophaaladres. Online annuleren is daarom niet meer mogelijk. Neem contact op met het taxibedrijf als je hulp nodig hebt.',
             en: 'The driver is already on the way to the pickup address, so online cancellation is no longer possible. Please contact the taxi company if you need help.',
             fr: 'Le chauffeur est deja en route vers l adresse de prise en charge. L annulation en ligne n est donc plus possible. Contactez la compagnie de taxi si vous avez besoin d aide.',
             es: 'El conductor ya esta en camino al punto de recogida. Por eso la cancelacion en linea ya no es posible. Contacta con la empresa de taxi si necesitas ayuda.',
+      de: 'Der Fahrer ist bereits auf dem Weg zur Abholadresse. Eine Online-Stornierung ist daher nicht mehr möglich. Kontaktieren Sie das Taxiunternehmen, wenn Sie Hilfe brauchen.',
           ),
           allowRefresh: false,
           accent: _themePalette.danger,
@@ -2014,12 +2112,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Online cancellation not available',
             fr: 'Annulation en ligne impossible',
             es: 'Cancelacion online no disponible',
+      de: 'Online-Stornierung nicht möglich',
           ),
           message: _t(
             nl: 'Dit taxibedrijf staat online annuleren momenteel niet toe. Neem contact op met het taxibedrijf om je boeking te annuleren.',
             en: 'This taxi company does not currently allow online cancellation. Please contact the taxi company to cancel your booking.',
             fr: 'Cette compagnie de taxi n autorise pas l annulation en ligne pour le moment. Contactez la compagnie pour annuler votre reservation.',
             es: 'Esta empresa de taxi no permite actualmente la cancelacion en linea. Contacta con la empresa para cancelar tu reserva.',
+      de: 'Dieses Taxiunternehmen erlaubt derzeit keine Online-Stornierung. Kontaktieren Sie das Unternehmen, um Ihre Buchung zu stornieren.',
           ),
           allowRefresh: false,
           accent: _themePalette.gold,
@@ -2032,12 +2132,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Booking not found',
             fr: 'Reservation introuvable',
             es: 'Reserva no encontrada',
+      de: 'Buchung nicht gefunden',
           ),
           message: _t(
             nl: 'We konden deze boeking niet opnieuw ophalen. Vernieuw de lijst en probeer opnieuw.',
             en: 'We could not reload this booking. Refresh the list and try again.',
             fr: 'Nous n avons pas pu recharger cette reservation. Actualisez la liste et reessayez.',
             es: 'No pudimos volver a cargar esta reserva. Actualiza la lista e intentalo de nuevo.',
+      de: 'Diese Buchung konnte nicht erneut geladen werden. Aktualisieren Sie die Liste und versuchen Sie es erneut.',
           ),
           allowRefresh: true,
           accent: _themePalette.gold,
@@ -2050,12 +2152,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'No connection',
             fr: 'Pas de connexion',
             es: 'Sin conexion',
+      de: 'Keine Verbindung',
           ),
           message: _t(
             nl: 'Controleer je internetverbinding en probeer opnieuw.',
             en: 'Check your internet connection and try again.',
             fr: 'Verifiez votre connexion internet et reessayez.',
             es: 'Comprueba tu conexion a internet e intentalo de nuevo.',
+      de: 'Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.',
           ),
           allowRefresh: true,
           accent: _themePalette.gold,
@@ -2068,12 +2172,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Cancellation failed',
             fr: 'Echec de l annulation',
             es: 'No se pudo cancelar',
+      de: 'Stornierung fehlgeschlagen',
           ),
           message: _t(
             nl: 'We konden deze boeking niet annuleren. Probeer later opnieuw.',
             en: 'We could not cancel this booking. Please try again later.',
             fr: 'Nous n avons pas pu annuler cette reservation. Reessayez plus tard.',
             es: 'No pudimos cancelar esta reserva. Intentalo de nuevo mas tarde.',
+      de: 'Diese Buchung konnte nicht storniert werden. Bitte später erneut versuchen.',
           ),
           allowRefresh: false,
           accent: _themePalette.danger,
@@ -2164,6 +2270,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             en: 'Refresh',
                             fr: 'Actualiser',
                             es: 'Actualizar',
+      de: 'Aktualisieren',
                           ),
                           style: TextStyle(
                             color: palette.gold.withValues(alpha: 0.95),
@@ -2188,6 +2295,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Understood',
                           fr: 'Compris',
                           es: 'Entendido',
+      de: 'Verstanden',
                         ),
                       ),
                     ),
@@ -2252,6 +2360,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'What would you like to cancel?',
             fr: 'Que souhaitez-vous annuler ?',
             es: '¿Qué deseas cancelar?',
+      de: 'Was möchten Sie stornieren?',
           ),
         ),
         content: Text(
@@ -2260,6 +2369,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             en: 'Choose whether to cancel only the outbound leg, only the return leg, or the full roundtrip booking.',
             fr: 'Choisissez d’annuler uniquement l’aller, uniquement le retour ou l’aller-retour complet.',
             es: 'Elige si cancelar solo la ida, solo la vuelta o la reserva completa de ida y vuelta.',
+      de: 'Wählen Sie, ob nur die Hinfahrt, nur die Rückfahrt oder die gesamte Hin-und-Rück-Buchung storniert werden soll.',
           ),
         ),
         actions: [
@@ -2267,7 +2377,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             onPressed: () =>
                 Navigator.of(ctx).pop(_CustomerRoundtripCancelChoice.keep),
             child: Text(
-              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar',
+      de: 'Schließen'),
             ),
           ),
           if (outboundActive)
@@ -2281,6 +2392,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Cancel outbound only',
                   fr: 'Annuler uniquement l’aller',
                   es: 'Cancelar solo ida',
+      de: 'Nur Hinfahrt stornieren',
                 ),
               ),
             ),
@@ -2295,6 +2407,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Cancel return only',
                   fr: 'Annuler uniquement le retour',
                   es: 'Cancelar solo vuelta',
+      de: 'Nur Rückfahrt stornieren',
                 ),
               ),
             ),
@@ -2308,6 +2421,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 en: 'Cancel full roundtrip',
                 fr: 'Annuler l’aller-retour complet',
                 es: 'Cancelar ida y vuelta completa',
+      de: 'Gesamte Hin-und-Rückfahrt stornieren',
               ),
             ),
           ),
@@ -2329,6 +2443,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'This booking will be cancelled. The driver and calendar will be updated.',
           fr: 'Cette réservation sera annulée. Le chauffeur et l’agenda seront mis à jour.',
           es: 'Esta reserva se cancelará. El conductor y el calendario se actualizarán.',
+      de: 'Diese Buchung wird storniert. Fahrer und Kalender werden aktualisiert.',
         ),
       );
     }
@@ -2388,6 +2503,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               en: 'Cancel booking',
               fr: 'Annuler la réservation',
               es: 'Cancelar reserva',
+      de: 'Buchung stornieren',
             ),
           ),
           content: _customerCancelDialogContent(),
@@ -2401,6 +2517,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Keep booking',
                   fr: 'Garder',
                   es: 'Mantener',
+      de: 'Buchung behalten',
                 ),
               ),
             ),
@@ -2413,6 +2530,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Cancel booking',
                   fr: 'Annuler',
                   es: 'Cancelar',
+      de: 'Stornieren',
                 ),
               ),
             ),
@@ -2447,6 +2565,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 en: 'This leg cannot be cancelled separately right now. Try again or contact the taxi company.',
                 fr: 'Ce trajet ne peut pas être annulé séparément pour l’instant. Réessayez ou contactez la société.',
                 es: 'Este tramo no puede cancelarse por separado ahora. Vuelve a intentarlo o contacta con la empresa.',
+      de: 'Diese Teilstrecke kann gerade nicht separat storniert werden. Versuchen Sie es erneut oder kontaktieren Sie das Taxiunternehmen.',
               ),
             ),
           ),
@@ -2463,6 +2582,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 en: 'This leg is already cancelled or completed.',
                 fr: 'Ce trajet est déjà annulé ou terminé.',
                 es: 'Este tramo ya está cancelado o completado.',
+      de: 'Diese Teilstrecke ist bereits storniert oder abgeschlossen.',
               ),
             ),
           ),
@@ -2625,6 +2745,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                 en: 'This leg was cancelled. The other leg remains scheduled.',
                 fr: 'Ce trajet a été annulé. L’autre trajet reste planifié.',
                 es: 'Este tramo se canceló. El otro tramo sigue programado.',
+      de: 'Diese Teilstrecke wurde storniert. Die andere bleibt geplant.',
               ),
             ),
           ),
@@ -2665,6 +2786,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               en: 'Booking cancelled.',
               fr: 'Réservation annulée.',
               es: 'Reserva cancelada.',
+      de: 'Buchung storniert.',
             ),
           ),
         ),
@@ -2712,6 +2834,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                   en: 'Booking cancelled.',
                   fr: 'Réservation annulée.',
                   es: 'Reserva cancelada.',
+      de: 'Buchung storniert.',
                 ),
               ),
             ),
@@ -2752,6 +2875,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Completed',
           fr: 'Terminee',
           es: 'Finalizada',
+      de: 'Abgeschlossen',
         );
       case 'CANCELLED':
         return _t(
@@ -2759,6 +2883,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Cancelled',
           fr: 'Annulee',
           es: 'Cancelada',
+      de: 'Storniert',
         );
       case 'PENDING':
         return _t(
@@ -2766,6 +2891,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Pending',
           fr: 'En cours',
           es: 'Pendiente',
+      de: 'In Bearbeitung',
         );
       case 'CONFIRMED':
         return _t(
@@ -2773,6 +2899,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           en: 'Confirmed',
           fr: 'Confirmee',
           es: 'Confirmada',
+      de: 'Bestätigt',
         );
       default:
         return normalized.isEmpty ? '-' : normalized;
@@ -2804,6 +2931,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         en: 'Passenger transport',
         fr: 'Transport de passagers',
         es: 'Transporte de pasajeros',
+      de: 'Personentransport',
       );
     }
     if (value == 'business' || value == 'zakelijk') {
@@ -2820,6 +2948,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         en: 'Airport transfer',
         fr: 'Transfert aeroport',
         es: 'Traslado al aeropuerto',
+      de: 'Flughafentransfer',
       );
     }
     if (value.startsWith('airport') ||
@@ -2832,6 +2961,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         en: 'Airport transfer',
         fr: 'Transfert aeroport',
         es: 'Traslado al aeropuerto',
+      de: 'Flughafentransfer',
       );
     }
     return _tokenLabel(raw);
@@ -2841,11 +2971,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     final value = raw.trim().toLowerCase();
     if (value.isEmpty) return '-';
     if (value == 'comfort')
-      return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
+      return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort',
+      de: 'Comfort');
     if (value == 'private')
-      return _t(nl: 'Private', en: 'Private', fr: 'Prive', es: 'Privado');
+      return _t(nl: 'Private', en: 'Private', fr: 'Prive', es: 'Privado',
+      de: 'Private');
     if (value == 'premium')
-      return _t(nl: 'Premium', en: 'Premium', fr: 'Premium', es: 'Premium');
+      return _t(nl: 'Premium', en: 'Premium', fr: 'Premium', es: 'Premium',
+      de: 'Premium');
     return _tokenLabel(raw);
   }
 
@@ -2999,55 +3132,23 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
               onlinePending: onlinePending,
               view: v,
             );
-            final paymentStatusLabel = paid
-                ? _t(nl: 'Betaald', en: 'Paid', fr: 'Paye', es: 'Pagado')
-                : (partiallyPaid
-                      ? _t(
-                          nl: 'Deels betaald',
-                          en: 'Partially paid',
-                          fr: 'Partiellement paye',
-                          es: 'Parcialmente pagado',
-                        )
-                      : (onlinePending
-                            ? _t(
-                                nl: 'Online betaling openstaand',
-                                en: 'Online payment pending',
-                                fr: 'Paiement en ligne en attente',
-                                es: 'Pago online pendiente',
-                              )
-                            : _t(
-                                nl: 'Te betalen in het voertuig',
-                                en: 'To pay in the vehicle',
-                                fr: 'À payer dans le véhicule',
-                                es: 'A pagar en el vehículo',
-                              )));
-            final paymentStatusDescription = paid
-                ? _t(
-                    nl: 'Je betaling is bevestigd.',
-                    en: 'Your payment has been confirmed.',
-                    fr: 'Votre paiement est confirme.',
-                    es: 'Tu pago esta confirmado.',
-                  )
-                : (partiallyPaid
-                      ? _t(
-                          nl: 'Een deel is betaald, resterend bedrag staat nog open.',
-                          en: 'Part of this booking is paid, remaining amount is still open.',
-                          fr: 'Une partie est payee, le montant restant est encore ouvert.',
-                          es: 'Una parte esta pagada, el monto restante sigue abierto.',
-                        )
-                      : (onlinePending
-                            ? _t(
-                                nl: 'Rond de online betaling af of annuleer de aanvraag indien toegestaan.',
-                                en: 'Complete the online payment or cancel the request if allowed.',
-                                fr: 'Finalisez le paiement en ligne ou annulez la demande si autorise.',
-                                es: 'Completa el pago online o cancela la solicitud si esta permitido.',
-                              )
-                            : _t(
-                                nl: 'Voldoe het bedrag bij de chauffeur. In het voertuig kan dit contant, via QR of met kaart zijn, afhankelijk van wat het bedrijf heeft ingeschakeld.',
-                                en: 'Pay the driver during your ride. In the vehicle this may be cash, QR or card, depending on what the company has enabled.',
-                                fr: 'Réglez le chauffeur pendant la course. Dans le véhicule, cela peut être espèces, QR ou carte, selon ce que l’entreprise a activé.',
-                                es: 'Paga al conductor durante el viaje. En el vehículo puede ser efectivo, QR o tarjeta, según lo que la empresa haya activado.',
-                              )));
+            final paymentStatusCopy = customerPaymentStatusLabel(paymentToken);
+            final paymentStatusLabel = _t(
+              nl: paymentStatusCopy.nl,
+              en: paymentStatusCopy.en,
+              fr: paymentStatusCopy.fr,
+              es: paymentStatusCopy.es,
+              de: paymentStatusCopy.de,
+            );
+            final paymentDescriptionCopy =
+                customerPaymentStatusDescription(paymentToken);
+            final paymentStatusDescription = _t(
+              nl: paymentDescriptionCopy.nl,
+              en: paymentDescriptionCopy.en,
+              fr: paymentDescriptionCopy.fr,
+              es: paymentDescriptionCopy.es,
+              de: paymentDescriptionCopy.de,
+            );
             final business = v.businessCustomer;
             final isRoundtrip = v.isRoundtrip;
             final focusedLegType = _focusedRoundtripLegType;
@@ -3064,12 +3165,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                     en: 'Cancel booking',
                     fr: 'Annuler la réservation',
                     es: 'Cancelar reserva',
+      de: 'Buchung stornieren',
                   )
                 : _t(
                     nl: 'Rit annuleren',
                     en: 'Cancel ride',
                     fr: 'Annuler le trajet',
                     es: 'Cancelar viaje',
+      de: 'Fahrt stornieren',
                   );
             final displayAsRoundtrip = isRoundtrip && focusedLegType == null;
             final effectiveFrom =
@@ -3125,6 +3228,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                     en: 'Booking detail',
                     fr: 'Detail de reservation',
                     es: 'Detalle de reserva',
+      de: 'Buchungsdetail',
                   ),
                 ),
                 actions: [
@@ -3159,6 +3263,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                         en: 'Remove from my list',
                         fr: 'Supprimer de ma liste',
                         es: 'Eliminar de mi lista',
+      de: 'Aus meiner Liste entfernen',
                       ),
                       onPressed: _removeFromMyBookings,
                       icon: const Icon(Icons.delete_outline),
@@ -3174,6 +3279,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                       en: 'Refresh',
                       fr: 'Actualiser',
                       es: 'Actualizar',
+      de: 'Aktualisieren',
                     ),
                     onPressed: _refreshing ? null : _refresh,
                     icon: _refreshing
@@ -3205,11 +3311,40 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               color: palette.danger.withOpacity(0.4),
                             ),
                           ),
-                          child: Text(
-                            _refreshError!,
-                            style: TextStyle(
-                              color: palette.danger.withOpacity(0.86),
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _refreshError!,
+                                style: TextStyle(
+                                  color: palette.danger.withOpacity(0.86),
+                                ),
+                              ),
+                              if (_refreshStatusCode == 401) ...[
+                                const SizedBox(height: 10),
+                                FilledButton(
+                                  onPressed: () async {
+                                    await Navigator.of(context).push<Object>(
+                                      MaterialPageRoute<Object>(
+                                        builder: (_) =>
+                                            const CustomerPhoneRecoveryPage(),
+                                      ),
+                                    );
+                                    if (!mounted) return;
+                                    await _refresh();
+                                  },
+                                  child: Text(
+                                    _t(
+                                      nl: 'Aanmelden',
+                                      en: 'Sign in',
+                                      fr: 'Connexion',
+                                      es: 'Iniciar sesión',
+      de: 'Anmelden',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       if (_usingLocalCache)
@@ -3231,6 +3366,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Showing local data. Refresh for the latest status.\nCancel is temporarily unavailable because the booking could not be confirmed with the server.',
                               fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.\nL\'annulation est temporairement indisponible car la reservation n\'a pas pu etre confirmee avec le serveur.',
                               es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.\nCancelar no esta disponible temporalmente porque no se pudo confirmar la reserva con el servidor.',
+      de: 'Sie sehen lokale Daten. Aktualisieren Sie für den neuesten Status.\\nStornieren ist vorübergehend nicht möglich, weil die Buchung nicht mit dem Server bestätigt werden konnte.',
                             ),
                             style: TextStyle(color: palette.textPrimary),
                           ),
@@ -3270,12 +3406,14 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Preparing payment...',
                                       fr: 'Preparation du paiement...',
                                       es: 'Preparando pago...',
+      de: 'Zahlung wird vorbereitet…',
                                     )
                                   : _t(
                                       nl: 'Online betaling hervatten',
                                       en: 'Resume online payment',
                                       fr: 'Reprendre le paiement en ligne',
                                       es: 'Reanudar pago online',
+      de: 'Online-Zahlung fortsetzen',
                                     ),
                             ),
                           ),
@@ -3329,6 +3467,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Your rating: ${_existingCustomerRatingValue()}/5',
                                     fr: 'Votre évaluation : ${_existingCustomerRatingValue()}/5',
                                     es: 'Tu valoración: ${_existingCustomerRatingValue()}/5',
+      de: 'Ihre Bewertung: ${_existingCustomerRatingValue()}/5',
                                   ),
                                   style: TextStyle(
                                     color: palette.textPrimary.withOpacity(
@@ -3384,6 +3523,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Rate ride',
                                       fr: 'Évaluer la course',
                                       es: 'Valorar viaje',
+      de: 'Fahrt bewerten',
                                     ),
                                   ),
                                 ),
@@ -3397,6 +3537,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Verify your customer profile to rate this ride.',
                                     fr: 'Vérifiez votre profil client pour évaluer cette course.',
                                     es: 'Verifica tu perfil de cliente para valorar este viaje.',
+      de: 'Bestätigen Sie Ihr Kundenprofil, um diese Fahrt zu bewerten.',
                                   ),
                                   style: TextStyle(
                                     color: palette.textMuted.withOpacity(0.9),
@@ -3464,6 +3605,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Payment status',
                                       fr: 'Statut de paiement',
                                       es: 'Estado de pago',
+      de: 'Zahlungsstatus',
                                     ),
                                     style: TextStyle(
                                       color: palette.textMuted.withOpacity(0.9),
@@ -3489,6 +3631,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       ),
                                     ),
                                   ),
+                                  if (v.paymentMethod.trim().isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${_t(nl: 'Gekozen methode', en: 'Chosen method', fr: 'Méthode choisie', es: 'Método elegido',
+      de: 'Gewählte Methode')}: ${v.paymentMethod}',
+                                      style: TextStyle(
+                                        color: palette.textMuted.withOpacity(
+                                          0.9,
+                                        ),
+                                        fontSize: 12.2,
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -3517,6 +3672,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Roundtrip airport ride',
                               fr: 'Trajet aeroport aller-retour',
                               es: 'Traslado de aeropuerto ida y vuelta',
+      de: 'Flughafen-Hin-und-Rückfahrt',
                             ),
                             style: TextStyle(
                               color: palette.gold.withOpacity(0.98),
@@ -3531,6 +3687,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Booking',
                           fr: 'Reservation',
                           es: 'Reserva',
+      de: 'Buchung',
                         ),
                         children: [
                           (() {
@@ -3547,6 +3704,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Internal booking',
                                       fr: 'Réservation interne',
                                       es: 'Reserva interna',
+      de: 'Interne Buchung',
                                     ),
                                     bookingRef.internalSecondary!,
                                   ),
@@ -3559,6 +3717,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Status',
                               fr: 'Statut',
                               es: 'Estado',
+      de: 'Status',
                             ),
                             _lifecycleLabel(v.lifecycleStatus),
                           ),
@@ -3568,6 +3727,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Payment status',
                               fr: 'Statut de paiement',
                               es: 'Estado de pago',
+      de: 'Zahlungsstatus',
                             ),
                             paymentStatusLabel,
                           ),
@@ -3579,6 +3739,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Route',
                           fr: 'Itineraire',
                           es: 'Ruta',
+      de: 'Route',
                         ),
                         children: [
                           if (!displayAsRoundtrip) ...[
@@ -3619,6 +3780,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                           en: 'Pickup',
                                           fr: 'Prise en charge',
                                           es: 'Recogida',
+      de: 'Abholadresse',
                                         ),
                                         style: TextStyle(
                                           color: palette.textMuted.withOpacity(
@@ -3646,6 +3808,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                           en: 'Destination',
                                           fr: 'Destination',
                                           es: 'Destino',
+      de: 'Ziel',
                                         ),
                                         style: TextStyle(
                                           color: palette.textMuted.withOpacity(
@@ -3678,6 +3841,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Scheduled pickup',
                                 fr: 'Prise en charge prevue',
                                 es: 'Recogida programada',
+      de: 'Geplante Abholung',
                               ),
                               _formatPickup(effectivePickup),
                             ),
@@ -3718,6 +3882,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Outbound from',
                                 fr: 'Aller depuis',
                                 es: 'Ida desde',
+      de: 'Hinfahrt von',
                               ),
                               v.fromAddress.trim().isEmpty
                                   ? _notFilled()
@@ -3730,6 +3895,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Outbound to',
                                 fr: 'Aller vers',
                                 es: 'Ida hacia',
+      de: 'Hinfahrt nach',
                               ),
                               v.toAddress.trim().isEmpty
                                   ? _notFilled()
@@ -3752,6 +3918,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Return from',
                                 fr: 'Retour depuis',
                                 es: 'Regreso desde',
+      de: 'Rückfahrt von',
                               ),
                               v.returnFrom.trim().isEmpty
                                   ? _notFilled()
@@ -3764,6 +3931,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Return to',
                                 fr: 'Retour vers',
                                 es: 'Regreso hacia',
+      de: 'Rückfahrt nach',
                               ),
                               v.returnTo.trim().isEmpty
                                   ? _notFilled()
@@ -3776,6 +3944,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Return date and time',
                                 fr: 'Date et heure du retour',
                                 es: 'Fecha y hora de regreso',
+      de: 'Rückfahrtdatum und -zeit',
                               ),
                               _formatPickup(v.returnPickupIso),
                               stacked: true,
@@ -3789,10 +3958,12 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Customer',
                           fr: 'Client',
                           es: 'Cliente',
+      de: 'Kunde',
                         ),
                         children: [
                           _kv(
-                            _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre'),
+                            _t(nl: 'Naam', en: 'Name', fr: 'Nom', es: 'Nombre',
+      de: 'Name'),
                             v.customerName,
                           ),
                           _kv(
@@ -3801,6 +3972,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Phone',
                               fr: 'Téléphone',
                               es: 'Teléfono',
+      de: 'Telefon',
                             ),
                             v.customerPhone,
                           ),
@@ -3810,6 +3982,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Email',
                               fr: 'E-mail',
                               es: 'Email',
+      de: 'E-Mail',
                             ),
                             v.customerEmail,
                             stacked: true,
@@ -3822,6 +3995,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Ride details',
                           fr: 'Details de course',
                           es: 'Detalles del viaje',
+      de: 'Fahrtdetails',
                         ),
                         children: [
                           if (hasServiceText)
@@ -3831,6 +4005,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Service',
                                 fr: 'Service',
                                 es: 'Servicio',
+      de: 'Leistung',
                               ),
                               serviceText,
                             ),
@@ -3841,6 +4016,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Tier',
                                 fr: 'Categorie',
                                 es: 'Categoria',
+      de: 'Kategorie',
                               ),
                               tierText,
                             ),
@@ -3850,6 +4026,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Passengers',
                               fr: 'Passagers',
                               es: 'Pasajeros',
+      de: 'Fahrgäste',
                             ),
                             v.pax,
                           ),
@@ -3859,6 +4036,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Bags',
                               fr: 'Bagages',
                               es: 'Equipaje',
+      de: 'Gepäck',
                             ),
                             v.bags,
                           ),
@@ -3868,6 +4046,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                               en: 'Extra options',
                               fr: 'Options supplementaires',
                               es: 'Opciones extra',
+      de: 'Zusatzoptionen',
                             ),
                             v.extraOptions.isEmpty
                                 ? _t(
@@ -3875,6 +4054,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'No extra options',
                                     fr: 'Aucune option supplementaire',
                                     es: 'Sin opciones extra',
+      de: 'Keine Zusatzoptionen',
                                   )
                                 : _tokenLabel(v.extraOptions),
                           ),
@@ -3886,6 +4066,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           en: 'Price',
                           fr: 'Prix',
                           es: 'Precio',
+      de: 'Preis',
                         ),
                         children: [
                           if (focusedLegType != null) ...[
@@ -3925,6 +4106,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Total',
                                 fr: 'Total',
                                 es: 'Total',
+      de: 'Gesamt',
                               ),
                               _formatPrice(v.totalAmount, v.currency),
                             ),
@@ -3962,6 +4144,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Amount due',
                                     fr: 'A payer dans le vehicule',
                                     es: 'A pagar en el vehiculo',
+      de: 'Offener Betrag',
                                   ),
                                   _formatPrice(
                                     roundtripProjection.payableTotal,
@@ -3996,6 +4179,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Return price incl. VAT',
                                     fr: 'Prix retour TVAC',
                                     es: 'Precio regreso con IVA',
+      de: 'Rückfahrtpreis inkl. MwSt.',
                                   ),
                                   _formatRoundtripLegPrice(
                                     amount:
@@ -4016,6 +4200,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Original total',
                                     fr: 'Total original',
                                     es: 'Total original',
+      de: 'Ursprünglicher Gesamtbetrag',
                                   ),
                                   _formatPrice(
                                     roundtripProjection.originalTotal,
@@ -4029,6 +4214,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                     en: 'Cancelled amount',
                                     fr: 'Montant annule',
                                     es: 'Importe cancelado',
+      de: 'Stornierter Betrag',
                                   ),
                                   _formatNegativePrice(
                                     roundtripProjection.cancelledTotal,
@@ -4071,6 +4257,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Remaining ride value',
                                       fr: 'Valeur restante du trajet',
                                       es: 'Valor restante del viaje',
+      de: 'Verbleibender Fahrtwert',
                                     ),
                                     _formatPrice(
                                       roundtripProjection.activeTotal,
@@ -4096,6 +4283,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                   en: 'Return price incl. VAT',
                                   fr: 'Prix retour TVAC',
                                   es: 'Precio regreso con IVA',
+      de: 'Rückfahrtpreis inkl. MwSt.',
                                 ),
                                 _formatPrice(v.priceInclVatReturn, v.currency),
                                 stacked: true,
@@ -4106,6 +4294,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                   en: 'Roundtrip total incl. VAT',
                                   fr: 'Total aller-retour TVAC',
                                   es: 'Total ida y vuelta con IVA',
+      de: 'Hin-und-Rückfahrt gesamt inkl. MwSt.',
                                 ),
                                 _formatPrice(
                                   v.priceInclVatTotal ?? v.totalAmount,
@@ -4156,6 +4345,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                             en: 'Business / Invoice',
                             fr: 'Professionnel / Facture',
                             es: 'Empresa / Factura',
+      de: 'Geschäft / Rechnung',
                           ),
                           children: [
                             _kv(
@@ -4164,14 +4354,17 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Business customer',
                                 fr: 'Client professionnel',
                                 es: 'Cliente empresa',
+      de: 'Geschäftskunde',
                               ),
                               business
-                                  ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si')
+                                  ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Si',
+      de: 'Ja')
                                   : _t(
                                       nl: 'Nee',
                                       en: 'No',
                                       fr: 'Non',
                                       es: 'No',
+      de: 'Nein',
                                     ),
                             ),
                             _kv(
@@ -4190,6 +4383,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'VAT number',
                                 fr: 'Numero de TVA',
                                 es: 'NIF/IVA',
+      de: 'USt-IdNr.',
                               ),
                               v.vatNumber,
                               stacked: true,
@@ -4200,6 +4394,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Invoice email',
                                 fr: 'E-mail facture',
                                 es: 'Email de factura',
+      de: 'Rechnungs-E-Mail',
                               ),
                               invoiceEmail,
                               stacked: true,
@@ -4211,6 +4406,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                 en: 'Invoice address',
                                 fr: 'Adresse de facturation',
                                 es: 'Dirección de factura',
+      de: 'Rechnungsadresse',
                               ),
                               invoiceAddress,
                               stacked: true,
@@ -4242,6 +4438,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'View PDF',
                                       fr: 'Voir PDF',
                                       es: 'Ver PDF',
+      de: 'PDF ansehen',
                                     ),
                                   ),
                                 ),
@@ -4265,6 +4462,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                                       en: 'Share PDF',
                                       fr: 'Partager PDF',
                                       es: 'Compartir PDF',
+      de: 'PDF teilen',
                                     ),
                                   ),
                                 ),

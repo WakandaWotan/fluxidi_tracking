@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 
@@ -43,10 +45,9 @@ Future<void> showCustomerLanguageSheet(BuildContext context) async {
                 trailing: language == current
                     ? Icon(Icons.check, color: palette.gold)
                     : null,
-                onTap: () async {
-                  await saveCustomerLanguagePreference(language);
-                  if (!sheetContext.mounted) return;
+                onTap: () {
                   Navigator.of(sheetContext).pop();
+                  unawaited(saveCustomerLanguagePreference(language));
                 },
               ),
             const SizedBox(height: 8),

@@ -352,7 +352,10 @@ class LimousineEventLookup {
       if (res.statusCode != 200) return fallback;
       final data = jsonDecode(res.body);
       if (data is! Map) return fallback;
-      final suggestions = parseLimousineMapboxPlaceFeatures(data['features']);
+      final suggestions = parseLimousineMapboxPlaceFeatures(
+        data['features'],
+        language: language,
+      );
       if (suggestions.isEmpty) return fallback;
       final hit = suggestions.first;
       return fallback.copyWith(

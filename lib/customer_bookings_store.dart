@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:fluxidi_tracking/active_local_customer_store.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_references.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_payment_display.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
@@ -72,6 +74,9 @@ class StoredCustomerBooking {
     this.pax = '',
     this.bags = '',
     this.paymentStatus = '',
+    this.paymentMethod = '',
+    this.paymentMode = '',
+    this.paymentProvider = '',
     this.status = '',
     this.createdAt = '',
     this.businessDetected = false,
@@ -106,6 +111,9 @@ class StoredCustomerBooking {
   final String pax;
   final String bags;
   final String paymentStatus;
+  final String paymentMethod;
+  final String paymentMode;
+  final String paymentProvider;
   final String status;
   final String createdAt;
   final bool businessDetected;
@@ -151,6 +159,9 @@ class StoredCustomerBooking {
     String? pax,
     String? bags,
     String? paymentStatus,
+    String? paymentMethod,
+    String? paymentMode,
+    String? paymentProvider,
     String? status,
     String? createdAt,
     bool? businessDetected,
@@ -185,6 +196,9 @@ class StoredCustomerBooking {
       pax: pax ?? this.pax,
       bags: bags ?? this.bags,
       paymentStatus: paymentStatus ?? this.paymentStatus,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      paymentMode: paymentMode ?? this.paymentMode,
+      paymentProvider: paymentProvider ?? this.paymentProvider,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       businessDetected: businessDetected ?? this.businessDetected,
@@ -392,26 +406,41 @@ class StoredCustomerBooking {
         businessDetected ? 'true' : 'false',
       ]),
     );
+    final paymentChannel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+      payloadMap,
+      bookingMap,
+      response,
+      quoteMap,
+    ]);
     return StoredCustomerBooking(
       bookingId: bookingId,
       tenantId: tenantId,
       companyId: companyId,
-      publicBookingId: _firstNonEmpty([publicBookingReference, bookingId]),
+      publicBookingId: distinctPublicCustomerReference(
+        bookingId: bookingId,
+        candidates: <String>[publicBookingReference],
+      ),
       planningReference: planningReference,
-      bookingReference: _firstNonEmpty([
-        response['booking_reference'],
-        response['bookingReference'],
-        bookingMap['booking_reference'],
-        bookingMap['bookingReference'],
-        publicBookingReference,
-      ]),
-      publicReference: _firstNonEmpty([
-        response['public_reference'],
-        response['publicReference'],
-        bookingMap['public_reference'],
-        bookingMap['publicReference'],
-        publicBookingReference,
-      ]),
+      bookingReference: distinctPublicCustomerReference(
+        bookingId: bookingId,
+        candidates: <String?>[
+          response['booking_reference']?.toString(),
+          response['bookingReference']?.toString(),
+          bookingMap['booking_reference']?.toString(),
+          bookingMap['bookingReference']?.toString(),
+          publicBookingReference,
+        ],
+      ),
+      publicReference: distinctPublicCustomerReference(
+        bookingId: bookingId,
+        candidates: <String?>[
+          response['public_reference']?.toString(),
+          response['publicReference']?.toString(),
+          bookingMap['public_reference']?.toString(),
+          bookingMap['publicReference']?.toString(),
+          publicBookingReference,
+        ],
+      ),
       receiptReference: receiptReference,
       paymentBookingId: paymentBookingId,
       customerName: customerName.trim(),
@@ -522,7 +551,10 @@ class StoredCustomerBooking {
         requestPayload['invoice_address'],
         bookingMap['invoice_address'],
       ]),
-      quote: quoteMap,
+      paymentMethod: paymentChannel.method,
+      paymentMode: paymentChannel.mode,
+      paymentProvider: paymentChannel.provider,
+      quote: mergeCustomerPaymentChannelIntoQuote(quoteMap, paymentChannel),
       updatedAt: DateTime.now().toIso8601String(),
     );
   }
@@ -593,6 +625,21 @@ class StoredCustomerBooking {
         '[CUSTOMER_BOOKINGS][ID_RESOLVE] input=$bookingId internal=$authoritativeInternalBookingId public=$authoritativePublicBookingId final=$resolvedBookingId',
       );
     }
+    final paymentChannel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+      response,
+      rec,
+      booking,
+      bookingDetails,
+      payload,
+      quote,
+      if (fallback != null)
+        <String, dynamic>{
+          'payment_method': fallback.paymentMethod,
+          'payment_mode': fallback.paymentMode,
+          'payment_provider': fallback.paymentProvider,
+          'quote': fallback.quote,
+        },
+    ]);
     return StoredCustomerBooking(
       bookingId: resolvedBookingId,
       tenantId: _firstNonEmpty([
@@ -619,29 +666,26 @@ class StoredCustomerBooking {
         fallback?.companyId,
         activeScope?.companyId,
       ]),
-      publicBookingId: _firstNonEmpty([
-        response['public_booking_reference'],
-        response['publicBookingReference'],
-        response['booking_reference'],
-        response['bookingReference'],
-        response['public_reference'],
-        response['publicReference'],
-        rec['public_booking_reference'],
-        rec['publicBookingReference'],
-        rec['booking_reference'],
-        rec['bookingReference'],
-        rec['public_reference'],
-        rec['publicReference'],
-        booking['public_booking_reference'],
-        booking['publicBookingReference'],
-        booking['booking_reference'],
-        booking['bookingReference'],
-        booking['public_reference'],
-        booking['publicReference'],
-        response['booking_id'],
-        response['public_booking_id'],
-        resolvedBookingId,
-      ]),
+      publicBookingId: distinctPublicCustomerReference(
+        bookingId: resolvedBookingId,
+        candidates: <String?>[
+          response['public_booking_reference']?.toString(),
+          response['publicBookingReference']?.toString(),
+          response['booking_reference']?.toString(),
+          response['bookingReference']?.toString(),
+          rec['public_booking_reference']?.toString(),
+          rec['publicBookingReference']?.toString(),
+          rec['booking_reference']?.toString(),
+          rec['bookingReference']?.toString(),
+          booking['public_booking_reference']?.toString(),
+          booking['publicBookingReference']?.toString(),
+          booking['booking_reference']?.toString(),
+          booking['bookingReference']?.toString(),
+          fallback?.publicBookingId,
+          fallback?.publicReference,
+          fallback?.bookingReference,
+        ],
+      ),
       planningReference: _firstNonEmpty([
         response['planning_reference'],
         response['planningReference'],
@@ -660,15 +704,19 @@ class StoredCustomerBooking {
         booking['bookingReference'],
         fallback?.bookingReference,
       ]),
-      publicReference: _firstNonEmpty([
-        response['public_reference'],
-        response['publicReference'],
-        rec['public_reference'],
-        rec['publicReference'],
-        booking['public_reference'],
-        booking['publicReference'],
-        fallback?.publicReference,
-      ]),
+      publicReference: distinctPublicCustomerReference(
+        bookingId: resolvedBookingId,
+        candidates: <String?>[
+          response['public_reference']?.toString(),
+          response['publicReference']?.toString(),
+          rec['public_reference']?.toString(),
+          rec['publicReference']?.toString(),
+          booking['public_reference']?.toString(),
+          booking['publicReference']?.toString(),
+          fallback?.publicReference,
+          fallback?.publicBookingId,
+        ],
+      ),
       receiptReference: _firstNonEmpty([
         response['receipt_reference'],
         response['receiptReference'],
@@ -688,16 +736,29 @@ class StoredCustomerBooking {
       customerName: _firstNonEmpty([
         booking['customer_name'],
         booking['name'],
+        _map(booking['customer'])['name'],
+        rec['customer_name'],
+        rec['name'],
+        _map(rec['customer'])['name'],
         fallback?.customerName,
       ]),
       customerPhone: _firstNonEmpty([
         booking['customer_phone'],
         booking['phone'],
+        booking['customer_phone_e164'],
+        _map(booking['customer'])['phone'],
+        rec['customer_phone'],
+        rec['phone'],
+        _map(rec['customer'])['phone'],
         fallback?.customerPhone,
       ]),
       customerEmail: _firstNonEmpty([
         booking['customer_email'],
         booking['email'],
+        _map(booking['customer'])['email'],
+        rec['customer_email'],
+        rec['email'],
+        _map(rec['customer'])['email'],
         fallback?.customerEmail,
       ]).toLowerCase(),
       from: _preferNonEmpty(
@@ -868,6 +929,9 @@ class StoredCustomerBooking {
         booking['paymentStatus'],
         fallback?.paymentStatus,
       ]).toLowerCase(),
+      paymentMethod: paymentChannel.method,
+      paymentMode: paymentChannel.mode,
+      paymentProvider: paymentChannel.provider,
       status: _firstNonEmpty([
         response['status'],
         rec['status'],
@@ -933,29 +997,45 @@ class StoredCustomerBooking {
         if (serviceType.toLowerCase() == 'limousine') {
           next['service_type'] = 'limousine';
         }
-        return next;
+        return mergeCustomerPaymentChannelIntoQuote(next, paymentChannel);
       }(),
       updatedAt: DateTime.now().toIso8601String(),
     );
   }
 
   factory StoredCustomerBooking.fromJson(Map<String, dynamic> json) {
+    final quote = _map(json['quote']);
+    final paymentChannel = extractCustomerPaymentChannel(<Map<String, dynamic>>[
+      json,
+      quote,
+    ]);
     return StoredCustomerBooking(
       bookingId: _string(json['booking_id']),
       tenantId: _firstNonEmpty([json['tenant_id'], json['tenantId']]),
       companyId: _firstNonEmpty([json['company_id'], json['companyId']]),
-      publicBookingId: _firstNonEmpty([
-        json['public_booking_id'],
-        json['public_booking_reference'],
-        json['publicBookingReference'],
-        json['booking_reference'],
-        json['bookingReference'],
-        json['public_reference'],
-        json['publicReference'],
-      ]),
+      publicBookingId: distinctPublicCustomerReference(
+        bookingId: _string(json['booking_id']),
+        candidates: <String?>[
+          json['public_booking_id']?.toString(),
+          json['public_booking_reference']?.toString(),
+          json['publicBookingReference']?.toString(),
+          json['booking_reference']?.toString(),
+          json['bookingReference']?.toString(),
+          json['public_reference']?.toString(),
+          json['publicReference']?.toString(),
+        ],
+      ),
       planningReference: _string(json['planning_reference']),
       bookingReference: _string(json['booking_reference']),
-      publicReference: _string(json['public_reference']),
+      publicReference: distinctPublicCustomerReference(
+        bookingId: _string(json['booking_id']),
+        candidates: <String?>[
+          json['public_reference']?.toString(),
+          json['publicReference']?.toString(),
+          json['public_booking_reference']?.toString(),
+          json['public_booking_id']?.toString(),
+        ],
+      ),
       receiptReference: _string(json['receipt_reference']),
       paymentBookingId: _string(json['payment_booking_id']),
       customerName: _string(json['customer_name']),
@@ -971,6 +1051,9 @@ class StoredCustomerBooking {
       pax: _string(json['pax']),
       bags: _string(json['bags']),
       paymentStatus: _string(json['payment_status']).toLowerCase(),
+      paymentMethod: paymentChannel.method,
+      paymentMode: paymentChannel.mode,
+      paymentProvider: paymentChannel.provider,
       status: _string(json['status']).toUpperCase(),
       createdAt: _string(json['created_at']),
       businessDetected: _bool(json['business_detected']),
@@ -979,12 +1062,17 @@ class StoredCustomerBooking {
       vatNumber: _string(json['vat_number']),
       invoiceEmail: _string(json['invoice_email']),
       invoiceAddress: _string(json['invoice_address']),
-      quote: _map(json['quote']),
+      quote: mergeCustomerPaymentChannelIntoQuote(quote, paymentChannel),
       updatedAt: _string(json['updated_at']),
     );
   }
 
   Map<String, dynamic> toJson() {
+    final channel = CustomerPaymentChannel(
+      method: paymentMethod,
+      mode: paymentMode,
+      provider: paymentProvider,
+    );
     return <String, dynamic>{
       'booking_id': bookingId,
       'tenant_id': tenantId,
@@ -1016,6 +1104,9 @@ class StoredCustomerBooking {
       'pax': pax,
       'bags': bags,
       'payment_status': paymentStatus,
+      'payment_method': paymentMethod,
+      'payment_mode': paymentMode,
+      'payment_provider': paymentProvider,
       'status': status,
       'created_at': createdAt,
       'business_detected': businessDetected,
@@ -1024,7 +1115,7 @@ class StoredCustomerBooking {
       'vat_number': vatNumber,
       'invoice_email': invoiceEmail,
       'invoice_address': invoiceAddress,
-      'quote': quote,
+      'quote': mergeCustomerPaymentChannelIntoQuote(quote, channel),
       'updated_at': updatedAt,
     };
   }
@@ -1398,8 +1489,19 @@ class CustomerBookingsStore {
 
   Future<List<StoredCustomerBooking>> loadAll() async {
     await _migrateLegacyBookingsOnceIfNeeded();
-    final customerId = (await _resolveActiveCustomerId()).trim();
-    if (customerId.isEmpty) {
+    final deviceLocalId =
+        (await ActiveLocalCustomerStore.instance.getActiveCustomerId()).trim();
+    final sessionId = (await _activeValidCustomerSessionId()).trim();
+    if (sessionId.isNotEmpty) {
+      await ActiveLocalCustomerStore.instance.setActiveCustomerId(sessionId);
+      await _importDeviceLocalBookingsIntoSession(
+        sessionCustomerId: sessionId,
+        deviceLocalCustomerId: deviceLocalId,
+      );
+      debugPrint('[CUSTOMER_BOOKINGS][SCOPE] source=customer_session');
+      return _loadAllForCustomerSessionScope(sessionId);
+    }
+    if (deviceLocalId.isEmpty) {
       _cache = <StoredCustomerBooking>[];
       _cacheScopeKey = '';
       debugPrint(
@@ -1407,12 +1509,71 @@ class CustomerBookingsStore {
       );
       return <StoredCustomerBooking>[];
     }
-    if (await _usesCustomerSessionStorage()) {
-      debugPrint('[CUSTOMER_BOOKINGS][SCOPE] source=customer_session');
-      return _loadAllForCustomerSessionScope(customerId);
-    }
     debugPrint('[CUSTOMER_BOOKINGS][SCOPE] source=device_local');
-    return _loadAllForDeviceLocalCustomerScope(customerId);
+    return _loadAllForDeviceLocalCustomerScope(deviceLocalId);
+  }
+
+  Future<void> _importDeviceLocalBookingsIntoSession({
+    required String sessionCustomerId,
+    required String deviceLocalCustomerId,
+  }) async {
+    final sessionId = sessionCustomerId.trim();
+    if (sessionId.isEmpty) return;
+    final sourceIds = <String>{
+      if (deviceLocalCustomerId.trim().isNotEmpty) deviceLocalCustomerId.trim(),
+      sessionId,
+    };
+    final extras = <StoredCustomerBooking>[];
+    for (final sourceId in sourceIds) {
+      final file = await _deviceLocalCustomerScopedFile(customerId: sourceId);
+      extras.addAll(await _readFileItems(file));
+    }
+    if (extras.isEmpty) return;
+    final sessionItems = await _loadAllForCustomerSessionScope(sessionId);
+    final byId = <String, StoredCustomerBooking>{};
+    for (final item in sessionItems) {
+      final key = item.canonicalBookingId.trim();
+      if (key.isEmpty) continue;
+      byId[key] = item;
+    }
+    var added = 0;
+    for (final extra in extras) {
+      final key = extra.canonicalBookingId.trim();
+      if (key.isEmpty || byId.containsKey(key)) continue;
+      byId[key] = extra;
+      added += 1;
+    }
+    if (added == 0) return;
+    _cache = null;
+    _cacheScopeKey = '';
+    await _saveAllForCustomerSessionScope(
+      byId.values.toList(growable: false),
+      customerId: sessionId,
+    );
+    debugPrint(
+      '[CUSTOMER_BOOKINGS][SCOPE_IMPORT] added=$added session=${_maskScopeId(sessionId)}',
+    );
+  }
+
+  Future<StoredCustomerBooking?> findByAnyReference(String bookingId) async {
+    final needle = bookingId.trim().toLowerCase();
+    if (needle.isEmpty) return null;
+    for (final item in await loadAll()) {
+      final candidates = <String>[
+        item.bookingId,
+        item.canonicalBookingId,
+        item.publicBookingId,
+        item.publicReference,
+        item.bookingReference,
+        item.planningReference,
+        item.receiptReference,
+        item.paymentBookingId,
+      ];
+      for (final candidate in candidates) {
+        if (candidate.trim().toLowerCase() == needle) return item;
+      }
+    }
+    return null;
   }
 
   Future<List<StoredCustomerBooking>> _loadAllForDeviceLocalCustomerScope(
@@ -1912,18 +2073,42 @@ class CustomerBookingsStore {
         companyId: incoming.companyId.isNotEmpty
             ? incoming.companyId
             : existing.companyId,
-        publicBookingId: incoming.publicBookingId.isNotEmpty
-            ? incoming.publicBookingId
-            : existing.publicBookingId,
+        publicBookingId: distinctPublicCustomerReference(
+          bookingId: incoming.bookingId.isNotEmpty
+              ? incoming.bookingId
+              : existing.bookingId,
+          candidates: <String>[
+            incoming.publicBookingId,
+            existing.publicBookingId,
+            incoming.publicReference,
+            existing.publicReference,
+          ],
+        ),
         planningReference: incoming.planningReference.isNotEmpty
             ? incoming.planningReference
             : existing.planningReference,
-        bookingReference: incoming.bookingReference.isNotEmpty
-            ? incoming.bookingReference
-            : existing.bookingReference,
-        publicReference: incoming.publicReference.isNotEmpty
-            ? incoming.publicReference
-            : existing.publicReference,
+        bookingReference: distinctPublicCustomerReference(
+          bookingId: incoming.bookingId.isNotEmpty
+              ? incoming.bookingId
+              : existing.bookingId,
+          candidates: <String>[
+            incoming.bookingReference,
+            existing.bookingReference,
+            incoming.publicBookingId,
+            existing.publicBookingId,
+          ],
+        ),
+        publicReference: distinctPublicCustomerReference(
+          bookingId: incoming.bookingId.isNotEmpty
+              ? incoming.bookingId
+              : existing.bookingId,
+          candidates: <String>[
+            incoming.publicReference,
+            incoming.publicBookingId,
+            existing.publicReference,
+            existing.publicBookingId,
+          ],
+        ),
         receiptReference: incoming.receiptReference.isNotEmpty
             ? incoming.receiptReference
             : existing.receiptReference,
@@ -1957,6 +2142,15 @@ class CustomerBookingsStore {
         paymentStatus: incoming.paymentStatus.isNotEmpty
             ? incoming.paymentStatus
             : existing.paymentStatus,
+        paymentMethod: incoming.paymentMethod.isNotEmpty
+            ? incoming.paymentMethod
+            : existing.paymentMethod,
+        paymentMode: incoming.paymentMode.isNotEmpty
+            ? incoming.paymentMode
+            : existing.paymentMode,
+        paymentProvider: incoming.paymentProvider.isNotEmpty
+            ? incoming.paymentProvider
+            : existing.paymentProvider,
         status: incoming.status.isNotEmpty ? incoming.status : existing.status,
         createdAt: existing.createdAt.isNotEmpty
             ? existing.createdAt
@@ -1977,7 +2171,20 @@ class CustomerBookingsStore {
         invoiceAddress: incoming.invoiceAddress.isNotEmpty
             ? incoming.invoiceAddress
             : existing.invoiceAddress,
-        quote: incoming.quote.isNotEmpty ? incoming.quote : existing.quote,
+        quote: mergeCustomerPaymentChannelIntoQuote(
+          incoming.quote.isNotEmpty ? incoming.quote : existing.quote,
+          CustomerPaymentChannel(
+            method: incoming.paymentMethod.isNotEmpty
+                ? incoming.paymentMethod
+                : existing.paymentMethod,
+            mode: incoming.paymentMode.isNotEmpty
+                ? incoming.paymentMode
+                : existing.paymentMode,
+            provider: incoming.paymentProvider.isNotEmpty
+                ? incoming.paymentProvider
+                : existing.paymentProvider,
+          ),
+        ),
         updatedAt: now,
       );
     } else {

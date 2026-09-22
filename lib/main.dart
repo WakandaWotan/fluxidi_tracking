@@ -33,14 +33,20 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fluxidi_tracking/calculator_page.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_booking_references.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_payment_display.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:fluxidi_tracking/active_local_customer_store.dart';
 import 'package:fluxidi_tracking/customer_booking_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
+import 'package:fluxidi_tracking/customer_profile/customer_profile_address_editor.dart';
+import 'package:fluxidi_tracking/customer_profile/customer_stored_address.dart';
 import 'package:fluxidi_tracking/customer/customer_home_desktop.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_pick.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_assigned_driver.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_home_notice.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_saved_list_open.dart';
+import 'package:fluxidi_tracking/customer_booking/customer_bootstrap_record.dart';
 import 'package:fluxidi_tracking/customer/local_qa_customer_session.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_field.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
@@ -2552,11 +2558,13 @@ String _tr({
   required String en,
   required String fr,
   required String es,
+  String? de,
 }) {
   final lang = appConfig.currentLanguage;
   if (lang == AppLanguage.en) return en;
   if (lang == AppLanguage.fr) return fr;
   if (lang == AppLanguage.es) return es;
+  if (lang == AppLanguage.de) return de ?? en;
   return nl;
 }
 

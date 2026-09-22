@@ -156,6 +156,16 @@ class CustomerBookingView {
       'pax': stored.pax,
       'bags': stored.bags,
       'payment_status': stored.paymentStatus,
+      'public_booking_reference': stored.publicBookingId,
+      'publicBookingReference': stored.publicBookingId,
+      'booking_reference': stored.bookingReference,
+      'public_reference': stored.publicReference,
+      'payment_method': stored.paymentMethod,
+      'paymentMethod': stored.paymentMethod,
+      'payment_mode': stored.paymentMode,
+      'paymentMode': stored.paymentMode,
+      'payment_provider': stored.paymentProvider,
+      'paymentProvider': stored.paymentProvider,
       'company_name': stored.companyName,
       'vat_number': stored.vatNumber,
       'invoice_email': stored.invoiceEmail,
@@ -181,7 +191,17 @@ class CustomerBookingView {
       'company_id': stored.companyId,
       'companyId': stored.companyId,
       'status': stored.status,
+      'public_booking_reference': stored.publicBookingId,
+      'publicBookingReference': stored.publicBookingId,
+      'booking_reference': stored.bookingReference,
+      'public_reference': stored.publicReference,
       'payment_status': stored.paymentStatus,
+      'payment_method': stored.paymentMethod,
+      'paymentMethod': stored.paymentMethod,
+      'payment_mode': stored.paymentMode,
+      'paymentMode': stored.paymentMode,
+      'payment_provider': stored.paymentProvider,
+      'paymentProvider': stored.paymentProvider,
       'booking': booking,
       'payload': <String, dynamic>{
         'tenant_id': stored.tenantId,
@@ -195,6 +215,9 @@ class CustomerBookingView {
         'tier': stored.tier,
         'pax': stored.pax,
         'bags': stored.bags,
+        'payment_method': stored.paymentMethod,
+        'payment_mode': stored.paymentMode,
+        'payment_provider': stored.paymentProvider,
         ...businessPayload,
       },
       ...businessPayload,
@@ -1295,6 +1318,10 @@ class CustomerBookingView {
         'record.booking.paymentMethod',
         'record.booking_details.payment_method',
         'record.booking_details.paymentMethod',
+        'quote.payment_method',
+        'quote.paymentMethod',
+        'payload.payment_method',
+        'payload.paymentMethod',
       ]),
     ]).toLowerCase();
   }
@@ -1329,6 +1356,10 @@ class CustomerBookingView {
         'record.booking.paymentProvider',
         'record.booking_details.payment_provider',
         'record.booking_details.paymentProvider',
+        'quote.payment_provider',
+        'quote.paymentProvider',
+        'payload.payment_provider',
+        'payload.paymentProvider',
       ]),
     ]).toLowerCase();
   }
@@ -1346,6 +1377,10 @@ class CustomerBookingView {
         'record.booking.paymentMode',
         'record.booking_details.payment_mode',
         'record.booking_details.paymentMode',
+        'quote.payment_mode',
+        'quote.paymentMode',
+        'payload.payment_mode',
+        'payload.paymentMode',
       ]),
     ]).toLowerCase();
   }
@@ -1438,7 +1473,10 @@ class CustomerBookingView {
     'payload.references.planningReference',
   ]);
 
-  String get publicBookingReference => _firstPathValue(const <String>[
+  String get publicBookingReference => distinctPublicCustomerReference(
+    bookingId: bookingId,
+    candidates: <String>[
+      _firstPathValue(const <String>[
     'public_booking_reference',
     'publicBookingReference',
     'booking_reference',
@@ -1487,7 +1525,9 @@ class CustomerBookingView {
     'payload.references.bookingReference',
     'payload.references.public_reference',
     'payload.references.publicReference',
-  ]);
+      ]),
+    ],
+  );
 
   String get internalBookingId => _firstNonEmpty([
     bookingId,

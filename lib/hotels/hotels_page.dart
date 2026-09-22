@@ -17,6 +17,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_entry.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../discovery/customer_contained_photo.dart';
 import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
@@ -60,6 +61,8 @@ class HotelsPage extends StatefulWidget {
     this.hotelDataSource,
     this.ratehawkSearchSubmitEnabled,
     this.initialCountryCode,
+    this.initialSearchQuery,
+    this.compactCustomerLayout = false,
     super.key,
   });
 
@@ -83,6 +86,10 @@ class HotelsPage extends StatefulWidget {
   final HotelDataSource? hotelDataSource;
   final bool? ratehawkSearchSubmitEnabled;
   final String? initialCountryCode;
+  final String? initialSearchQuery;
+
+  /// Customer-app presentation. The combined app keeps the classic layout.
+  final bool compactCustomerLayout;
 
   @override
   State<HotelsPage> createState() => HotelsPageState();
@@ -118,6 +125,7 @@ class HotelsPageState extends State<HotelsPage> {
   String _selectedRegionKey = _allKey;
   String _selectedType = _allKey;
   bool _showSavedOnly = false;
+  bool _staySearchExpanded = false;
   Timer? _googlePlacesRefreshDebounce;
   Timer? _page2ActivationTimer;
   final GooglePlacesRefreshGate _googlePlacesGate = GooglePlacesRefreshGate();
@@ -151,6 +159,7 @@ class HotelsPageState extends State<HotelsPage> {
   void initState() {
     super.initState();
     customerThemeNotifier.addListener(_onThemeChanged);
+    appLanguageNotifier.addListener(_onThemeChanged);
     final initialCountry = (widget.initialCountryCode ?? '')
         .trim()
         .toUpperCase();
@@ -158,6 +167,10 @@ class HotelsPageState extends State<HotelsPage> {
       _selectedCountryCode = initialCountry;
     }
     _allStays = List<HotelStay>.from(widget.stays ?? const <HotelStay>[]);
+    final initialQuery = (widget.initialSearchQuery ?? '').trim();
+    if (initialQuery.isNotEmpty) {
+      _searchController.text = initialQuery;
+    }
     _searchController.addListener(_onSearchChanged);
     _ratehawkSearch = RatehawkSearchController(
       client: widget.ratehawkSearchClient,
@@ -386,6 +399,7 @@ class HotelsPageState extends State<HotelsPage> {
   @override
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
+    appLanguageNotifier.removeListener(_onThemeChanged);
     _googlePlacesRefreshDebounce?.cancel();
     _page2ActivationTimer?.cancel();
     _ratehawkSearch
@@ -1621,11 +1635,19 @@ class HotelsPageState extends State<HotelsPage> {
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(context),
+            widget.compactCustomerLayout
+                ? _buildCustomerHeader(context)
+                : _buildHeader(context),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(14, 5, 14, 18),
-                children: [
+                children: widget.compactCustomerLayout
+                    ? _customerCompactChildren(
+                        displayCards: displayCards,
+                        resultCount: resultCount,
+                        showingDiscoveryRegions: showingDiscoveryRegions,
+                      )
+                    : [
                   _buildSearchField(),
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
@@ -1669,6 +1691,363 @@ class HotelsPageState extends State<HotelsPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  int get _activeFilterCount {
+    var count = 0;
+    if (_selectedCountryCode != _allKey) count++;
+    if (_selectedRegionKey != _allKey) count++;
+    if (_selectedSettlementKey != _allKey) count++;
+    if (_selectedType != _allKey) count++;
+    return count;
+  }
+
+  Widget _buildCustomerHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded, size: 22),
+            color: _gold,
+            visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
+          ),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Hotels & B&B',
+                en: 'Hotels & B&B',
+                fr: 'Hôtels & B&B',
+                es: 'Hoteles y B&B',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+              ),
+            ),
+          ),
+          _buildSavedStaysHeaderShortcut(showLabel: MediaQuery.sizeOf(context).width >= 600),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _customerCompactChildren({
+    required List<HotelStay> displayCards,
+    required int resultCount,
+    required bool showingDiscoveryRegions,
+  }) {
+    return <Widget>[
+      _buildSearchField(),
+      const SizedBox(height: 8),
+      _buildCustomerToolbar(),
+      if (_staySearchExpanded) ...<Widget>[
+        const SizedBox(height: 8),
+        RatehawkSearchStrip(
+          controller: _ratehawkSearch,
+          languageCode: _languageCode,
+          palette: _themePalette,
+          showSubmitButton: _ratehawkSearchSubmitEnabled,
+          destinationGuidance: _showCitySelector
+              ? stay22MajorCitiesFieldGuidance(_languageCode)
+              : stay22CityRegionGuidance(_languageCode),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _t(
+            nl: 'Boeken van het verblijf gebeurt bij de aanbieder.',
+            en: 'The stay is booked with the provider.',
+            fr: 'La réservation du séjour se fait chez le prestataire.',
+            es: 'La reserva del alojamiento se hace con el proveedor.',
+          ),
+          style: TextStyle(color: _softText, height: 1.35),
+        ),
+      ],
+      const SizedBox(height: 8),
+      _buildCustomerSecondaryActions(),
+      RatehawkSearchStatusPanel(
+        controller: _ratehawkSearch,
+        languageCode: _languageCode,
+        palette: _themePalette,
+      ),
+      const SizedBox(height: 8),
+      _buildResultSummary(
+        resultCount,
+        showingDiscoveryRegions: showingDiscoveryRegions,
+      ),
+      if (!showingDiscoveryRegions) _buildMoreFeaturedStaysAction(),
+      const SizedBox(height: 8),
+      if (displayCards.isEmpty)
+        _buildSafeDiscoveryPanel()
+      else
+        _buildCustomerStayList(displayCards),
+    ];
+  }
+
+  Widget _buildCustomerToolbar() {
+    final filters = _activeFilterCount;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: <Widget>[
+        OutlinedButton.icon(
+          key: const Key('customer_hotels_filters'),
+          onPressed: _openFiltersSheet,
+          icon: const Icon(Icons.tune_rounded, size: 18),
+          label: Text(
+            filters == 0
+                ? _t(nl: 'Filters', en: 'Filters', fr: 'Filtres', es: 'Filtros')
+                : '${_t(nl: 'Filters', en: 'Filters', fr: 'Filtres', es: 'Filtros')} ($filters)',
+          ),
+        ),
+        OutlinedButton.icon(
+          key: const Key('customer_hotels_stay_search'),
+          onPressed: () =>
+              setState(() => _staySearchExpanded = !_staySearchExpanded),
+          icon: Icon(
+            _staySearchExpanded
+                ? Icons.expand_less_rounded
+                : Icons.expand_more_rounded,
+            size: 18,
+          ),
+          label: Text(
+            _t(
+              nl: 'Verblijf zoeken',
+              en: 'Search stay',
+              fr: 'Rechercher un séjour',
+              es: 'Buscar estancia',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCustomerSecondaryActions() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: <Widget>[
+        TextButton(
+          key: const Key('customer_hotels_manual_address'),
+          onPressed: () {
+            final callback = widget.onManualHotelTaxi;
+            if (callback != null) {
+              unawaited(callback());
+              return;
+            }
+            unawaited(_onReturnFlowEnterAddressTap());
+          },
+          child: Text(
+            _t(
+              nl: 'Adres invullen',
+              en: 'Enter address',
+              fr: 'Saisir une adresse',
+              es: 'Introducir dirección',
+            ),
+          ),
+        ),
+        TextButton(
+          key: const Key('customer_hotels_airport'),
+          onPressed: () {
+            final callback = widget.onOpenAirportReturnFlow;
+            if (callback != null) {
+              unawaited(callback());
+              return;
+            }
+            unawaited(_onReturnFlowAirportTap());
+          },
+          child: Text(
+            _t(
+              nl: 'Luchthaven naar verblijf',
+              en: 'Airport to stay',
+              fr: 'Aéroport vers le séjour',
+              es: 'Aeropuerto al alojamiento',
+            ),
+          ),
+        ),
+        TextButton(
+          key: const Key('customer_hotels_live_stay'),
+          onPressed: () => unawaited(_openExternalHotelSearch()),
+          child: Text(
+            _t(
+              nl: 'Live verblijf zoeken',
+              en: 'Search live stays',
+              fr: 'Rechercher des séjours en direct',
+              es: 'Buscar estancias en vivo',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCustomerStayList(List<HotelStay> stays) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = MediaQuery.sizeOf(context);
+        final tablet = size.shortestSide >= 600;
+        final landscape = size.width > size.height;
+        final sideBySide = landscape || (tablet && size.width >= 720);
+        return Column(
+          children: <Widget>[
+            for (var i = 0; i < stays.length; i++) ...<Widget>[
+              if (i > 0) const SizedBox(height: 12),
+              _buildCustomerStayCard(stays[i], sideBySide: sideBySide),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCustomerStayCard(HotelStay stay, {required bool sideBySide}) {
+    final imageUrl = (stay.imageUrl ?? '').trim();
+    final approvedAssetPath = _approvedAssetPath(stay);
+    final canShowTaxi = _canShowStayTaxiCta(stay);
+    final rating = stay.rating;
+    final location = <String>[
+      if (stay.address.trim().isNotEmpty) stay.address.trim(),
+      if (stay.city.trim().isNotEmpty) stay.city.trim(),
+    ].join(', ');
+    final photo = AspectRatio(
+      aspectRatio: 16 / 9,
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          ColoredBox(color: _panelBlack),
+          if (imageUrl.isNotEmpty)
+            Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => approvedAssetPath.isNotEmpty
+                  ? Image.asset(approvedAssetPath, fit: BoxFit.cover)
+                  : Icon(Icons.hotel_rounded, color: _gold, size: 36),
+            )
+          else if (approvedAssetPath.isNotEmpty)
+            Image.asset(approvedAssetPath, fit: BoxFit.cover)
+          else
+            Icon(Icons.hotel_rounded, color: _gold, size: 36),
+          Positioned(
+            right: 8,
+            top: 8,
+            child: Material(
+              color: Colors.black54,
+              shape: const CircleBorder(),
+              child: IconButton(
+                onPressed: () => unawaited(_toggleSaved(stay)),
+                icon: Icon(
+                  _isSaved(stay)
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  color: _gold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          stay.name,
+          key: Key('customer_hotels_stay_name_${stay.id}'),
+          style: TextStyle(
+            color: _textPrimary,
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            height: 1.2,
+          ),
+        ),
+        if (rating != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            '★ ${rating.toStringAsFixed(1)}',
+            style: TextStyle(
+              color: _textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+        if (location.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 4),
+          Text(
+            location,
+            style: TextStyle(color: _softText, height: 1.35),
+          ),
+        ],
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            if (canShowTaxi)
+              FilledButton.icon(
+                key: Key('customer_hotels_taxi_${stay.id}'),
+                onPressed: () => _onTaxiCtaTap(stay),
+                icon: const Icon(Icons.local_taxi_rounded, size: 18),
+                label: Text(_t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi')),
+              ),
+            FilledButton.tonalIcon(
+              key: Key('customer_hotels_transfer_${stay.id}'),
+              onPressed: () => unawaited(_onAirportTransferTap(stay)),
+              icon: const Icon(Icons.flight_takeoff_rounded, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Transfer',
+                  en: 'Transfer',
+                  fr: 'Transfert',
+                  es: 'Traslado',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+    return Material(
+      color: _panelBlack,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: Key('customer_hotels_stay_${stay.id}'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openStayDetail(stay),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: sideBySide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Expanded(flex: 5, child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: photo,
+                    )),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 7, child: details),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: photo,
+                    ),
+                    const SizedBox(height: 10),
+                    details,
+                  ],
+                ),
         ),
       ),
     );
@@ -3889,10 +4268,6 @@ class HotelStayDetailPage extends StatelessWidget {
     return _t(nl: 'Vanaf', en: 'From', fr: 'À partir de', es: 'Desde');
   }
 
-  String get _externalAvailabilityHint {
-    return stay22FeaturedExplanation(_languageCode);
-  }
-
   String get _discoveryRegionBadgeLabel {
     return _t(
       nl: 'Ritplanning regio',
@@ -3918,10 +4293,6 @@ class HotelStayDetailPage extends StatelessWidget {
       fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités en externe pour cette région.',
       es: 'Sin inventario de precios — consulta precios y disponibilidad en externo para esta región.',
     );
-  }
-
-  String get _stay22AvailabilitySubtitle {
-    return stay22FeaturedExplanation(_languageCode);
   }
 
   String get _taxiLabel {
@@ -4337,17 +4708,23 @@ class HotelStayDetailPage extends StatelessWidget {
     final hasAnyNearbyEvents = _nearbyEventsForRadiusMode(
       _HotelNearbyEventRadiusMode.wider,
     ).isNotEmpty;
+    final stayDescription = stay.description.trim();
+    final showStayDescription =
+        stayDescription.isNotEmpty &&
+        !isCustomerTechnicalDiscoveryCopy(stayDescription);
+    final providerLabel = stay.displayProviderLabel(_languageCode).trim();
+    final showProviderLabel =
+        !isRatehawkStay(stay) &&
+        providerLabel.isNotEmpty &&
+        !isCustomerTechnicalDiscoveryCopy(providerLabel);
     return ValueListenableBuilder<CustomerThemeVariant>(
       valueListenable: customerThemeNotifier,
       builder: (_, __, ___) => Scaffold(
         backgroundColor: _bgBlack,
         body: SafeArea(
-          child: Column(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
             children: [
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
-                  children: [
                     Row(
                       children: [
                         IconButton(
@@ -4363,144 +4740,22 @@ class HotelStayDetailPage extends StatelessWidget {
                         ),
                       ],
                     ),
-                    Container(
-                      height: 248,
-                      width: double.infinity,
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        color: _panelBlack,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: _border.withOpacity(
-                            _isDarkTheme ? 0.35 : 0.95,
-                          ),
-                        ),
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: <Color>[Color(0xFF22314C), Color(0xFF101828)],
-                        ),
+                    CustomerContainedPhoto(
+                      key: const Key('customer_hotel_detail_photo'),
+                      imageUrl: imageUrl,
+                      assetFallback: approvedAssetPath,
+                      backgroundColor: _panelBlack,
+                      borderColor: _border.withOpacity(
+                        _isDarkTheme ? 0.35 : 0.95,
                       ),
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: imageUrl.isNotEmpty
-                                ? Image.network(
-                                    imageUrl,
-                                    fit: BoxFit.cover,
-                                    loadingBuilder: (context, child, progress) {
-                                      if (progress == null) return child;
-                                      return Center(
-                                        child: SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.2,
-                                            color: _gold.withOpacity(0.9),
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    errorBuilder: (_, __, ___) =>
-                                        approvedAssetPath.isNotEmpty
-                                        ? Image.asset(
-                                            approvedAssetPath,
-                                            fit: BoxFit.cover,
-                                          )
-                                        : Center(
-                                            child: Icon(
-                                              isDiscoveryCard
-                                                  ? Icons.map_rounded
-                                                  : Icons.hotel_rounded,
-                                              color: _gold.withOpacity(0.95),
-                                              size: 64,
-                                            ),
-                                          ),
-                                  )
-                                : (approvedAssetPath.isNotEmpty
-                                      ? Image.asset(
-                                          approvedAssetPath,
-                                          fit: BoxFit.cover,
-                                        )
-                                      : Center(
-                                          child: Icon(
-                                            isDiscoveryCard
-                                                ? Icons.map_rounded
-                                                : Icons.hotel_rounded,
-                                            color: _gold.withOpacity(0.95),
-                                            size: 64,
-                                          ),
-                                        )),
-                          ),
-                          Positioned.fill(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: <Color>[
-                                    Colors.black.withOpacity(0.16),
-                                    Colors.black.withOpacity(0.34),
-                                    Colors.black.withOpacity(0.66),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: 12,
-                            top: 10,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 9,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.34),
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: _gold.withOpacity(0.44),
-                                ),
-                              ),
-                              child: Text(
-                                isDiscoveryCard
-                                    ? _discoveryRegionBadgeLabel
-                                    : _typeLabel(stay.type),
-                                style: TextStyle(
-                                  color: _gold,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (stay.rating != null)
-                            Positioned(
-                              right: 12,
-                              top: 10,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 9,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.36),
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: _gold.withOpacity(0.44),
-                                  ),
-                                ),
-                                child: Text(
-                                  '★ ${stay.rating!.toStringAsFixed(1)}',
-                                  style: TextStyle(
-                                    color: _gold,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
+                      placeholder: Center(
+                        child: Icon(
+                          isDiscoveryCard
+                              ? Icons.map_rounded
+                              : Icons.hotel_rounded,
+                          color: _gold.withOpacity(0.95),
+                          size: 64,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -4557,6 +4812,32 @@ class HotelStayDetailPage extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: <Widget>[
+                              Text(
+                                isDiscoveryCard
+                                    ? _discoveryRegionBadgeLabel
+                                    : _typeLabel(stay.type),
+                                style: TextStyle(
+                                  color: _gold.withOpacity(0.92),
+                                  fontSize: 12.4,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              if (stay.rating != null)
+                                Text(
+                                  '★ ${stay.rating!.toStringAsFixed(1)}',
+                                  style: TextStyle(
+                                    color: _gold.withOpacity(0.92),
+                                    fontSize: 12.4,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
                           Text(
                             hotelStayLocationLabel(stay, _languageCode),
                             style: TextStyle(
@@ -4587,17 +4868,27 @@ class HotelStayDetailPage extends StatelessWidget {
                               ),
                             ),
                           ],
-                          const SizedBox(height: 10),
-                          Text(
-                            isDiscoveryCard
-                                ? _discoveryRegionCardDescription
-                                : stay.description,
-                            style: TextStyle(
-                              color: _softText,
-                              fontSize: 13.2,
-                              height: 1.3,
+                          if (isDiscoveryCard) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              _discoveryRegionCardDescription,
+                              style: TextStyle(
+                                color: _softText,
+                                fontSize: 13.2,
+                                height: 1.3,
+                              ),
                             ),
-                          ),
+                          ] else if (showStayDescription) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              stayDescription,
+                              style: TextStyle(
+                                color: _softText,
+                                fontSize: 13.2,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
                           if (highlights.isNotEmpty) ...[
                             const SizedBox(height: 12),
                             Text(
@@ -4643,10 +4934,10 @@ class HotelStayDetailPage extends StatelessWidget {
                                   .toList(),
                             ),
                           ],
-                          if (!isRatehawkStay(stay)) ...[
+                          if (showProviderLabel) ...[
                             const SizedBox(height: 12),
                             Text(
-                              stay.displayProviderLabel(_languageCode),
+                              providerLabel,
                               style: TextStyle(
                                 color: _softText.withOpacity(0.95),
                                 fontSize: 11.7,
@@ -4711,13 +5002,7 @@ class HotelStayDetailPage extends StatelessWidget {
                         ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: Column(
-                  children: [
+                    const SizedBox(height: 12),
                     if (canShowTaxiCta) ...[
                       SizedBox(
                         width: double.infinity,
@@ -4772,19 +5057,6 @@ class HotelStayDetailPage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      externalAvailabilityHint ??
-                          (isDiscoveryCard
-                              ? _stay22AvailabilitySubtitle
-                              : _externalAvailabilityHint),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: _softText.withOpacity(0.9),
-                        fontSize: 11.2,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
                     if (canShowAirportTransferCta) ...[
                       const SizedBox(height: 8),
                       SizedBox(
@@ -4816,9 +5088,6 @@ class HotelStayDetailPage extends StatelessWidget {
                         ),
                       ),
                     ],
-                  ],
-                ),
-              ),
             ],
           ),
         ),

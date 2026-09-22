@@ -21,7 +21,8 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
     required String en,
     required String fr,
     required String es,
-  }) => _tr(nl: nl, en: en, fr: fr, es: es);
+    String? de,
+  }) => _tr(nl: nl, en: en, fr: fr, es: es, de: de);
 
   @override
   void dispose() {
@@ -155,6 +156,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Make your rides easier',
                             fr: 'Simplifiez vos trajets',
                             es: 'Haz tus viajes más fáciles',
+      de: 'Machen Sie Ihre Fahrten einfacher',
                           ),
                           style: const TextStyle(
                             color: Colors.white,
@@ -169,6 +171,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Enter your details once, so you do not have to type them again for your next booking.',
                             fr: 'Saisissez vos informations une seule fois pour ne plus devoir les retaper lors de votre prochaine réservation.',
                             es: 'Introduce tus datos una vez para no tener que escribirlos de nuevo en tu próxima reserva.',
+      de: 'Geben Sie Ihre Daten einmal ein, damit Sie sie bei der nächsten Buchung nicht erneut tippen müssen.',
                           ),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.82),
@@ -182,6 +185,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Name',
                             fr: 'Nom',
                             es: 'Nombre',
+      de: 'Name',
                           ),
                           controller: _nameCtrl,
                           validator: (v) {
@@ -192,6 +196,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                                 en: 'Enter your name',
                                 fr: 'Saisissez votre nom',
                                 es: 'Introduce tu nombre',
+      de: 'Geben Sie Ihren Namen ein',
                               );
                             }
                             return null;
@@ -204,6 +209,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Phone number',
                             fr: 'Numéro de téléphone',
                             es: 'Número de teléfono',
+      de: 'Telefonnummer',
                           ),
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
@@ -215,6 +221,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                                 en: 'Enter your phone number',
                                 fr: 'Saisissez votre numéro de téléphone',
                                 es: 'Introduce tu número de teléfono',
+      de: 'Geben Sie Ihre Telefonnummer ein',
                               );
                             }
                             return null;
@@ -227,6 +234,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Email address',
                             fr: 'Adresse e-mail',
                             es: 'Correo electrónico',
+      de: 'E-Mail-Adresse',
                           ),
                           controller: _emailCtrl,
                           keyboardType: TextInputType.emailAddress,
@@ -238,6 +246,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                                 en: 'Enter your email',
                                 fr: 'Saisissez votre e-mail',
                                 es: 'Introduce tu correo',
+      de: 'Geben Sie Ihre E-Mail ein',
                               );
                             }
                             if (!text.contains('@') || !text.contains('.')) {
@@ -246,6 +255,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                                 en: 'Enter a valid email address',
                                 fr: 'Saisissez une adresse e-mail valide',
                                 es: 'Introduce un correo electrónico válido',
+      de: 'Geben Sie eine gültige E-Mail-Adresse ein',
                               );
                             }
                             return null;
@@ -258,6 +268,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'Company name (optional)',
                             fr: 'Nom de l’entreprise (facultatif)',
                             es: 'Nombre de la empresa (opcional)',
+      de: 'Firmenname (optional)',
                           ),
                           controller: _companyNameCtrl,
                         ),
@@ -268,6 +279,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                             en: 'VAT number (optional)',
                             fr: 'Numéro de TVA (facultatif)',
                             es: 'Número de IVA (opcional)',
+      de: 'USt-IdNr. (optional)',
                           ),
                           controller: _vatNumberCtrl,
                         ),
@@ -289,12 +301,14 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                                     en: 'Saving...',
                                     fr: 'Enregistrement...',
                                     es: 'Guardando...',
+      de: 'Wird gespeichert…',
                                   )
                                 : _t(
                                     nl: 'Opslaan en doorgaan',
                                     en: 'Save and continue',
                                     fr: 'Enregistrer et continuer',
                                     es: 'Guardar y continuar',
+      de: 'Speichern und weiter',
                                   ),
                           ),
                         ),
@@ -319,6 +333,7 @@ class _CustomerOnboardingPageState extends State<CustomerOnboardingPage> {
                               en: 'Fill in later',
                               fr: 'Compléter plus tard',
                               es: 'Completar más tarde',
+      de: 'Später ausfüllen',
                             ),
                           ),
                         ),

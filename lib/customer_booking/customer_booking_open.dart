@@ -35,7 +35,7 @@ Future<T?> openCustomerBookingFlow<T>(
       builder: (_) => CustomerBookingFlow(
         entry: entry,
         bookingBaseUrl: bookingBaseUrl ?? kBookingBaseUrl,
-        language: language ?? appConfig.currentLanguage,
+        language: language,
         onGoToStartPage: onGoToStartPage,
         hostedCheckout: customerBookingOpenHostedCheckout,
       ),

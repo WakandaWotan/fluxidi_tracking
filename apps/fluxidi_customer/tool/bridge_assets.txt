@@ -19,10 +19,18 @@ dir  assets/vehicles/fallback/v1
 dir  assets/payment/logos
 dir  assets/payment/badges
 dir  assets/payment/providers
-dir  assets/payment/png
 
-# Event category artwork used by the events pages.
-dir  assets/events/categories
+# Event category artwork the events pages resolve by name.
+file assets/events/categories/all.webp
+file assets/events/categories/music.webp
+file assets/events/categories/sports.webp
+file assets/events/categories/theatre.webp
+file assets/events/categories/comedy.webp
+file assets/events/categories/family.webp
+file assets/events/categories/food.webp
+file assets/events/categories/business.webp
+file assets/events/categories/culture.webp
+file assets/events/categories/event_category_other.webp
 
 # Customer-facing photography and logos. Driver, company and role-entry
 # backgrounds are deliberately left out: this app never shows them.

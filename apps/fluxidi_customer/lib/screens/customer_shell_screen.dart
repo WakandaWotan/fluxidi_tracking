@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/main.dart' show CustomerSavedBookingsPage;
 
 import '../app/customer_app_config.dart';
 import '../app/customer_labels.dart';
-import '../app/customer_theme.dart';
 import 'customer_home_screen.dart';
 import 'customer_profile_screen.dart';
 
@@ -30,43 +31,59 @@ class _CustomerShellScreenState extends State<CustomerShellScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = activeCustomerPalette();
-    return Scaffold(
-      backgroundColor: palette.background,
-      body: IndexedStack(
-        index: _index,
-        children: <Widget>[
-          CustomerHomeScreen(config: widget.config),
-          // Keyed on the tab index so leaving and returning reloads the list
-          // instead of showing a stale one.
-          _index == 1
-              ? const CustomerSavedBookingsPage()
-              : const SizedBox.shrink(),
-          CustomerProfileScreen(config: widget.config),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        key: const Key('customer_bottom_nav'),
-        selectedIndex: _index,
-        onDestinationSelected: (next) => setState(() => _index = next),
-        destinations: <NavigationDestination>[
-          NavigationDestination(
-            icon: const Icon(Icons.home_outlined),
-            selectedIcon: const Icon(Icons.home),
-            label: CustomerText.home.current,
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, variant, _) {
+        return CustomerLanguageBuilder(
+          builder: (context, language) {
+        final palette = paletteForCustomerTheme(variant);
+        return Scaffold(
+          backgroundColor: palette.background,
+          body: IndexedStack(
+            index: _index,
+            children: <Widget>[
+              CustomerHomeScreen(config: widget.config),
+              // Keep the list mounted. Remounting on every tab visit restarted
+              // session bootstrap plus a GET per booking before any card
+              // appeared.
+              const CustomerSavedBookingsPage(),
+              CustomerProfileScreen(config: widget.config),
+            ],
           ),
-          NavigationDestination(
-            icon: const Icon(Icons.receipt_long_outlined),
-            selectedIcon: const Icon(Icons.receipt_long),
-            label: CustomerText.bookings.current,
+          bottomNavigationBar: NavigationBar(
+            key: const Key('customer_bottom_nav'),
+            selectedIndex: _index,
+            backgroundColor: palette.surface,
+            surfaceTintColor: Colors.transparent,
+            indicatorColor: palette.gold.withValues(
+              alpha: palette.isDark ? 0.32 : 0.22,
+            ),
+            onDestinationSelected: (next) => setState(() => _index = next),
+            destinations: <NavigationDestination>[
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined, color: palette.textMuted),
+                selectedIcon: Icon(Icons.home, color: palette.gold),
+                label: CustomerText.home.of(language),
+              ),
+              NavigationDestination(
+                icon: Icon(
+                  Icons.receipt_long_outlined,
+                  color: palette.textMuted,
+                ),
+                selectedIcon: Icon(Icons.receipt_long, color: palette.gold),
+                label: CustomerText.bookings.of(language),
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline, color: palette.textMuted),
+                selectedIcon: Icon(Icons.person, color: palette.gold),
+                label: CustomerText.profile.of(language),
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: const Icon(Icons.person_outline),
-            selectedIcon: const Icon(Icons.person),
-            label: CustomerText.profile.current,
-          ),
-        ],
-      ),
+        );
+          },
+        );
+      },
     );
   }
 }

@@ -11,6 +11,7 @@ const LocalizedText kCustomerBookingTotalInclVat = LocalizedText(
   en: 'Total incl. VAT',
   fr: 'Total TTC',
   es: 'Total IVA incl.',
+      de: 'Gesamt inkl. MwSt.',
 );
 
 const LocalizedText kCustomerBookingTotalExVat = LocalizedText(
@@ -18,6 +19,7 @@ const LocalizedText kCustomerBookingTotalExVat = LocalizedText(
   en: 'Excl. VAT',
   fr: 'Hors TVA',
   es: 'Sin IVA',
+      de: 'Ohne MwSt.',
 );
 
 const LocalizedText kCustomerBookingPriceDetails = LocalizedText(
@@ -25,6 +27,7 @@ const LocalizedText kCustomerBookingPriceDetails = LocalizedText(
   en: 'Price details',
   fr: 'Détail du prix',
   es: 'Detalle del precio',
+      de: 'Preisdetails',
 );
 
 const LocalizedText kCustomerBookingPriceCalculating = LocalizedText(
@@ -32,6 +35,7 @@ const LocalizedText kCustomerBookingPriceCalculating = LocalizedText(
   en: 'Calculating price…',
   fr: 'Calcul du prix…',
   es: 'Calculando el precio…',
+      de: 'Preis wird berechnet…',
 );
 
 const LocalizedText kCustomerBookingRouteReadyPricePending = LocalizedText(
@@ -39,6 +43,7 @@ const LocalizedText kCustomerBookingRouteReadyPricePending = LocalizedText(
   en: 'Route ready. Price is still being calculated.',
   fr: 'Itinéraire prêt. Le prix est encore en cours de calcul.',
   es: 'Ruta lista. El precio se está calculando.',
+      de: 'Route bekannt. Der Preis wird noch berechnet.',
 );
 
 const LocalizedText kCustomerBookingPriceRetry = LocalizedText(
@@ -46,6 +51,7 @@ const LocalizedText kCustomerBookingPriceRetry = LocalizedText(
   en: 'Recalculate price',
   fr: 'Recalculer le prix',
   es: 'Recalcular el precio',
+      de: 'Preis neu berechnen',
 );
 
 num? customerBookingQuoteExVat(CompanyPlanQuoteResult quote) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
@@ -5,6 +7,7 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'event_data_source.dart';
 import 'event_markets.dart';
@@ -23,6 +26,8 @@ class EventCategoryResultsPage extends StatefulWidget {
     this.monthStartUtc,
     this.monthEndUtc,
     this.onBookEvent,
+    this.onOpenHotels,
+    this.compactCustomerLayout = false,
     super.key,
   });
 
@@ -36,6 +41,8 @@ class EventCategoryResultsPage extends StatefulWidget {
   final String sortMode;
   final String searchQuery;
   final EventBookCallback? onBookEvent;
+  final void Function(EventDetailData event)? onOpenHotels;
+  final bool compactCustomerLayout;
 
   @override
   State<EventCategoryResultsPage> createState() =>
@@ -751,6 +758,61 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     _loadSavedEvents();
   }
 
+  Future<void> _openTickets(EventDetailData event) async {
+    final rawUrl = (event.sourceUrl ?? '').trim();
+    final uri = Uri.tryParse(rawUrl);
+    final isHttp =
+        uri != null &&
+        uri.hasScheme &&
+        (uri.scheme == 'https' || uri.scheme == 'http');
+    if (!isHttp) {
+      _showInfoSnackBar(
+        _t(
+          nl: 'Geen ticketlink beschikbaar voor dit evenement.',
+          en: 'No ticket link is available for this event.',
+          fr: 'Aucun lien de billet disponible pour cet evenement.',
+          es: 'No hay enlace de entradas disponible para este evento.',
+        ),
+      );
+      return;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!mounted) return;
+    if (!launched) {
+      _showInfoSnackBar(
+        _t(
+          nl: 'Kon de ticketaanbieder niet openen.',
+          en: 'Could not open the ticket provider.',
+          fr: 'Impossible d ouvrir le fournisseur de billets.',
+          es: 'No se pudo abrir el proveedor de entradas.',
+        ),
+      );
+    }
+  }
+
+  void _openHotels(EventDetailData event) {
+    if (widget.onOpenHotels != null) {
+      widget.onOpenHotels!(event);
+      return;
+    }
+    _showInfoSnackBar(
+      _t(
+        nl: 'Hotelzoeken voor dit evenement is niet beschikbaar.',
+        en: 'Hotel search for this event is not available.',
+        fr: 'La recherche d’hôtel n’est pas disponible pour cet événement.',
+        es: 'La búsqueda de hotel no está disponible para este evento.',
+      ),
+    );
+  }
+
+  bool _hasTicketLink(EventDetailData event) {
+    final rawUrl = (event.sourceUrl ?? '').trim();
+    final uri = Uri.tryParse(rawUrl);
+    return uri != null &&
+        uri.hasScheme &&
+        (uri.scheme == 'https' || uri.scheme == 'http');
+  }
+
   void _bookEvent(EventDetailData event) {
     if (widget.onBookEvent != null) {
       widget.onBookEvent!.call(event);
@@ -947,7 +1009,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     return Column(
       children: [
         for (var i = 0; i < events.length; i++) ...[
-          _buildEventCard(events[i]),
+          widget.compactCustomerLayout
+              ? _buildCustomerEventCard(events[i])
+              : _buildEventCard(events[i]),
           if (i != events.length - 1) const SizedBox(height: 10),
         ],
       ],
@@ -960,6 +1024,133 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     }
     return eventCategoryMetaByKey(event.resolvedCategoryKey)?.icon ??
         Icons.event_rounded;
+  }
+
+  Widget _buildCustomerEventCard(EventDetailData event) {
+    final cardImageUrl = _cardImageUrl(event);
+    final size = MediaQuery.sizeOf(context);
+    final tablet = size.shortestSide >= 600;
+    final landscape = size.width > size.height;
+    final sideBySide = landscape || (tablet && size.width >= 720);
+    final venue = <String>[
+      if (event.locationName.trim().isNotEmpty) event.locationName.trim(),
+      if (event.city.trim().isNotEmpty) event.city.trim(),
+    ].join(', ');
+    final photo = AspectRatio(
+      aspectRatio: 16 / 9,
+      child: ColoredBox(
+        color: event.gradient.isNotEmpty
+            ? event.gradient.first
+            : _panelBlack,
+        child: cardImageUrl.isEmpty
+            ? Icon(Icons.event_rounded, color: _gold, size: 36)
+            : Image.network(
+                cardImageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    Icon(Icons.event_rounded, color: _gold, size: 36),
+              ),
+      ),
+    );
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          event.title,
+          key: Key('customer_events_title_${event.id}'),
+          style: TextStyle(
+            color: _textPrimary,
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            height: 1.2,
+          ),
+        ),
+        if (event.dateTimeLabel.trim().isNotEmpty) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(event.dateTimeLabel, style: TextStyle(color: _softText)),
+        ],
+        if (venue.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 4),
+          Text(venue, style: TextStyle(color: _softText, height: 1.35)),
+        ],
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            FilledButton.icon(
+              key: Key('customer_events_taxi_${event.id}'),
+              onPressed: () => _bookEvent(event),
+              icon: const Icon(Icons.local_taxi_rounded, size: 18),
+              label: Text(_t(nl: 'Taxi', en: 'Taxi', fr: 'Taxi', es: 'Taxi')),
+            ),
+            FilledButton.tonalIcon(
+              key: Key('customer_events_hotels_${event.id}'),
+              onPressed: widget.onOpenHotels == null
+                  ? null
+                  : () => _openHotels(event),
+              icon: const Icon(Icons.hotel_rounded, size: 18),
+              label: Text(
+                _t(nl: 'Hotels', en: 'Hotels', fr: 'Hôtels', es: 'Hoteles'),
+              ),
+            ),
+            FilledButton.tonalIcon(
+              key: Key('customer_events_tickets_${event.id}'),
+              onPressed: _hasTicketLink(event)
+                  ? () => unawaited(_openTickets(event))
+                  : null,
+              icon: const Icon(Icons.confirmation_number_outlined, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Tickets',
+                  en: 'Tickets',
+                  fr: 'Billets',
+                  es: 'Entradas',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+    return Material(
+      color: _panelBlack,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: Key('customer_events_card_${event.id}'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => unawaited(_openEventDetails(event)),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: sideBySide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Expanded(
+                      flex: 5,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: photo,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 7, child: details),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: photo,
+                    ),
+                    const SizedBox(height: 10),
+                    details,
+                  ],
+                ),
+        ),
+      ),
+    );
   }
 
   Widget _buildEventCard(EventDetailData event) {

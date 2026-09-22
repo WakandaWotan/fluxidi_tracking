@@ -3,6 +3,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_plan_vehicle_type.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_addresses.dart';
 import 'package:fluxidi_tracking/customer_booking/customer_booking_company_vehicles.dart';
+import 'package:fluxidi_tracking/customer_profile/customer_stored_address.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
 import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
 
@@ -25,7 +26,10 @@ void main() {
     expect(categories, isNot(contains(CompanyPlanVehicleCategory.minivan)));
   });
 
-  test('profile default address uses street, postcode and city', () {
+  test('profile default address uses the personal home address', () {
+    final previousLanguage = appLanguageNotifier.value;
+    appLanguageNotifier.value = AppLanguage.nl;
+    addTearDown(() => appLanguageNotifier.value = previousLanguage);
     const profile = CustomerProfile(
       customerId: 'cus_1',
       name: 'Christophe',
@@ -34,16 +38,25 @@ void main() {
       preferredPostcode: '9688',
       companyName: '',
       vatNumber: '',
-      billingStreet: 'Koekamerstraat 488A',
-      billingPostalCode: '9688',
-      billingCity: 'Maarkedal',
+      billingStreet: 'Factuurstraat 1',
+      billingPostalCode: '1000',
+      billingCity: 'Brussel',
+      homeAddress: CustomerStoredAddress(
+        street: 'Koekamerstraat',
+        houseNumber: '488',
+        houseAddition: 'A',
+        postalCode: '9688',
+        locality: 'Maarkedal',
+        country: 'BE',
+      ),
       createdAt: '',
       updatedAt: '',
     );
     expect(
       customerProfileDefaultAddressLine(profile),
-      'Koekamerstraat 488A, 9688 Maarkedal',
+      'Koekamerstraat 488A, 9688 Maarkedal, België',
     );
+    expect(customerProfileBillingAddressLine(profile), contains('Factuurstraat'));
   });
 
   test('missing passenger seats stay unknown instead of a sedan default', () {
