@@ -23,6 +23,41 @@ void main() {
     expect(gate.shouldApply(stale), isFalse);
   });
 
+  test('coordinate centres produce distinct places query keys', () {
+    final spirit = googlePlacesQueryKey(
+      const HotelStayQuery(
+        source: 'google-places',
+        countryCode: 'BE',
+        country: 'Belgium',
+        lat: 50.59353,
+        lng: 5.86109,
+        radiusKm: 15,
+      ),
+    );
+    final brussels = googlePlacesQueryKey(
+      const HotelStayQuery(
+        source: 'google-places',
+        countryCode: 'BE',
+        country: 'Belgium',
+        lat: 50.847232,
+        lng: 4.348831,
+        radiusKm: 15,
+      ),
+    );
+    final countrywide = googlePlacesQueryKey(
+      const HotelStayQuery(
+        source: 'google-places',
+        countryCode: 'BE',
+        country: 'Belgium',
+      ),
+    );
+    expect(spirit, isNot(brussels));
+    expect(spirit, isNot(countrywide));
+    expect(spirit, contains('50.593530'));
+    expect(spirit, contains('15.00'));
+    expect(countrywide, isNot(contains('50.593530')));
+  });
+
   test('unchanged query keys are not restarted', () {
     final gate = GooglePlacesRefreshGate();
     final key = googlePlacesQueryKey(

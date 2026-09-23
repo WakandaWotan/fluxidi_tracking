@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/customer_theme_page.dart';
 import 'package:fluxidi_tracking/events/event_taxi_availability.dart';
 import 'package:fluxidi_tracking/events/events_page.dart';
+import 'package:fluxidi_tracking/hotels/event_stay_search.dart';
 import 'package:fluxidi_tracking/hotels/hotels_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_page.dart';
 import 'package:fluxidi_tracking/main.dart'
@@ -272,16 +273,14 @@ Future<void> openEventsFlow(BuildContext context) {
           baseUrl: kBookingBaseUrl,
         ),
         onOpenHotels: (event) {
-          final query = <String>[
-            if (event.city.trim().isNotEmpty) event.city.trim(),
-            if (event.locationName.trim().isNotEmpty) event.locationName.trim(),
-          ].join(' ');
+          final search = EventStaySearch.fromEvent(event);
           unawaited(
             Navigator.of(context).push<void>(
               MaterialPageRoute<void>(
                 builder: (_) => HotelsPage(
+                  key: ValueKey<String>('event-hotels-${event.id}'),
                   compactCustomerLayout: true,
-                  initialSearchQuery: query,
+                  eventStay: search,
                   onTaxiToStay: (stay) async {
                     final address = stay.address.trim().isNotEmpty
                         ? stay.address.trim()

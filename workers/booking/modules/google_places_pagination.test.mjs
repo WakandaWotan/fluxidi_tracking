@@ -13,6 +13,7 @@ import {
   HOTEL_PLACES_MAX_PAGES,
   consumeHotelPlacesCursor,
   hotelPlacesCursorKey,
+  googlePlacesSearchCenter,
   hotelPlacesQueryFingerprint,
   isHotelPlacesCursorKey,
   isUsableProviderToken,
@@ -23,7 +24,11 @@ import {
   storeHotelPlacesCursor,
   validateHotelPlacesCursorRecord,
 } from "./google_places_pagination.mjs";
-import { resolveGooglePlacesHotelsSearch } from "./google_places_hotels_page.mjs";
+import { buildGooglePlacesTextQuery } from "./google_places_country.mjs";
+import {
+  fetchGooglePlacesTextSearchPage,
+  resolveGooglePlacesHotelsSearch,
+} from "./google_places_hotels_page.mjs";
 
 function memoryKv() {
   const store = new Map();
@@ -64,23 +69,44 @@ function lodging(id, name) {
   };
 }
 
+function httpError(status) {
+  return { __httpError: status };
+}
+
 function mockFetch(sequence) {
   const calls = [];
-  const fetchImpl = async (url) => {
+  const requests = [];
+  const fetchImpl = async (url, init) => {
     calls.push(String(url));
+    requests.push({
+      url: String(url),
+      method: String(init?.method || "GET"),
+      headers: init?.headers || {},
+      body: String(init?.body || ""),
+    });
     const next = sequence.shift();
     if (!next) {
       return {
         ok: true,
+        status: 200,
         json: async () => googlePayload([]),
+      };
+    }
+    if (next.__httpError) {
+      return {
+        ok: false,
+        status: next.__httpError,
+        json: async () => ({ error: { code: next.__httpError } }),
       };
     }
     return {
       ok: true,
+      status: 200,
       json: async () => next,
     };
   };
   fetchImpl.calls = calls;
+  fetchImpl.requests = requests;
   return fetchImpl;
 }
 
@@ -466,4 +492,143 @@ test("a dropped cursor is reported instead of looking like no page 2", async () 
   });
   assert.equal(absent.pagination.has_more, false);
   assert.ok(absent.warnings.includes("google_places_no_next_page_token"));
+});
+
+test("coordinates use nearby search; text search ignores lat and radius", async () => {
+  const textOnly = mockFetch([googlePayload([lodging("a", "Lisbon Hotel")])]);
+  await resolveGooglePlacesHotelsSearch({
+    query: firstPageQuery(),
+    env: { GOOGLE_PLACES_API_KEY: "test-key-not-for-production" },
+    fetchImpl: textOnly,
+  });
+  const textUrl = new URL(textOnly.calls[0]);
+  assert.equal(textUrl.pathname, "/maps/api/place/textsearch/json");
+  assert.equal(textUrl.searchParams.get("query"), buildGooglePlacesTextQuery(firstPageQuery()));
+  assert.equal(textUrl.searchParams.has("location"), false);
+  assert.equal(textUrl.searchParams.has("radius"), false);
+  assert.equal(textUrl.searchParams.get("type"), "lodging");
+
+  const zeroFetch = mockFetch([googlePayload([lodging("z", "Zero")])]);
+  await resolveGooglePlacesHotelsSearch({
+    query: { ...firstPageQuery(), latitude: 0, longitude: 0, radiusKm: 15 },
+    env: { GOOGLE_PLACES_API_KEY: "test-key-not-for-production" },
+    fetchImpl: zeroFetch,
+  });
+  assert.equal(new URL(zeroFetch.calls[0]).pathname, "/maps/api/place/textsearch/json");
+
+  const spirit = {
+    source: "google-places",
+    countryCode: "BE",
+    country: "Belgium",
+    destination: "Place du Martyr, 16, Verviers, Belgium",
+    searchText: "Spirit of 66",
+    latitude: 50.59353,
+    longitude: 5.86109,
+    radiusKm: 15,
+  };
+  const nearbyFetch = mockFetch([
+    {
+      places: [
+        {
+          id: "v",
+          displayName: { text: "Van der Valk Hotel Verviers" },
+          formattedAddress: "Rue de la Station 4, Verviers",
+          location: { latitude: 50.5918, longitude: 5.8634 },
+          rating: 4.2,
+          userRatingCount: 80,
+          primaryType: "hotel",
+          types: ["lodging", "hotel"],
+          photos: [
+            {
+              name: "places/v/photos/Abcdefghijklmnop",
+              authorAttributions: [{ displayName: "A Google user" }],
+            },
+          ],
+        },
+      ],
+    },
+  ]);
+  const kv = memoryKv();
+  const first = await resolveGooglePlacesHotelsSearch({
+    query: spirit,
+    env: { GOOGLE_PLACES_API_KEY: "test-key-not-for-production", BOOKING_KV: kv },
+    fetchImpl: nearbyFetch,
+    nowMs: 50_000,
+  });
+  const nearbyRequest = nearbyFetch.requests[0];
+  const nearbyUrl = new URL(nearbyRequest.url);
+  assert.equal(nearbyUrl.hostname, "places.googleapis.com");
+  assert.equal(nearbyUrl.pathname, "/v1/places:searchNearby");
+  assert.equal(nearbyUrl.search, "");
+  assert.equal(nearbyRequest.method, "POST");
+  assert.equal(nearbyRequest.headers["X-Goog-Api-Key"], "test-key-not-for-production");
+  assert.equal(nearbyRequest.headers["X-Goog-FieldMask"].includes("places.photos"), true);
+  const nearbyBody = JSON.parse(nearbyRequest.body);
+  assert.deepEqual(nearbyBody.includedTypes, ["lodging"]);
+  assert.equal(nearbyBody.locationRestriction.circle.center.latitude, 50.59353);
+  assert.equal(nearbyBody.locationRestriction.circle.center.longitude, 5.86109);
+  assert.equal(nearbyBody.locationRestriction.circle.radius, 15000);
+  assert.equal(nearbyRequest.body.includes("Spirit of 66"), false);
+  assert.equal(nearbyRequest.body.includes("Place du Martyr"), false);
+  assert.equal(nearbyFetch.calls.length, 1);
+  assert.equal(first.places[0].displayName.text, "Van der Valk Hotel Verviers");
+  assert.equal(first.places[0].photos[0].name, "places/v/photos/Abcdefghijklmnop");
+  assert.equal(googlePlacesSearchCenter(spirit).radiusMeters, 15000);
+  assert.equal(googlePlacesSearchCenter({ latitude: 50.59, longitude: 5.86, radiusKm: 80 }).radiusMeters, 50000);
+  assert.equal(googlePlacesSearchCenter({ latitude: 50.59, longitude: 5.86, radiusKm: 0.1 }).radiusMeters, 1000);
+  assert.equal(googlePlacesSearchCenter({ lat: 50.847232, lng: 4.348831 }).radiusMeters, 15000);
+
+  const brussels = { ...spirit, latitude: 50.847232, longitude: 4.348831, destination: "", searchText: "" };
+  assert.notEqual(
+    hotelPlacesQueryFingerprint(spirit),
+    hotelPlacesQueryFingerprint(brussels),
+  );
+  assert.notEqual(
+    hotelPlacesQueryFingerprint(spirit),
+    hotelPlacesQueryFingerprint(firstPageQuery()),
+  );
+
+  const fallback = mockFetch([
+    httpError(403),
+    googlePayload([lodging("v", "Van der Valk Hotel Verviers")]),
+    {
+      status: "OK",
+      result: {
+        photos: [
+          {
+            photo_reference: "Abcdefghijklmnop",
+            html_attributions: ["<a href=\"https://example.test\">A Google user</a>"],
+          },
+        ],
+      },
+    },
+  ]);
+  const fellBack = await resolveGooglePlacesHotelsSearch({
+    query: spirit,
+    env: { GOOGLE_PLACES_API_KEY: "test-key-not-for-production" },
+    fetchImpl: fallback,
+  });
+  assert.equal(fellBack.places[0].name, "Van der Valk Hotel Verviers");
+  assert.equal(fellBack.places[0].photos[0].photo_reference, "Abcdefghijklmnop");
+  assert.equal(new URL(fallback.calls[1]).pathname, "/maps/api/place/nearbysearch/json");
+  const detailsUrl = new URL(fallback.calls[2]);
+  assert.equal(detailsUrl.pathname, "/maps/api/place/details/json");
+  assert.equal(detailsUrl.searchParams.get("place_id"), "v");
+  assert.equal(detailsUrl.searchParams.get("fields"), "photo");
+  assert.equal(detailsUrl.searchParams.get("key"), "test-key-not-for-production");
+  assert.equal(JSON.stringify(fellBack).includes("test-key-not-for-production"), false);
+
+  const page2 = mockFetch([googlePayload([lodging("v2", "Hotel des Ardennes")])]);
+  await fetchGooglePlacesTextSearchPage({
+    query: spirit,
+    apiKey: "test-key-not-for-production",
+    pageToken: "provider_token_page2_secret",
+    fetchImpl: page2,
+  });
+  const page2Url = new URL(page2.calls[0]);
+  assert.equal(page2Url.pathname, "/maps/api/place/nearbysearch/json");
+  assert.equal(page2Url.searchParams.get("location"), "50.59353,5.86109");
+  assert.equal(page2Url.searchParams.get("radius"), "15000");
+  assert.equal(page2Url.searchParams.get("pagetoken"), "provider_token_page2_secret");
+  assert.equal(String(page2Url).includes("Spirit of 66"), false);
 });

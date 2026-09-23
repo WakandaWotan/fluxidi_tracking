@@ -49,6 +49,9 @@ String googlePlacesQueryKey(HotelStayQuery query) {
     (query.city ?? '').trim().toLowerCase(),
     (query.region ?? '').trim().toLowerCase(),
     (query.searchText ?? '').trim().toLowerCase(),
+    query.lat?.toStringAsFixed(6) ?? '',
+    query.lng?.toStringAsFixed(6) ?? '',
+    query.radiusKm?.toStringAsFixed(2) ?? '',
   ].join('|');
 }
 

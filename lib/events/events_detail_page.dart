@@ -6,12 +6,19 @@ import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/discovery/customer_contained_photo.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'event_models.dart';
+import '../hotels/event_stay_search.dart';
 
 class EventDetailPage extends StatelessWidget {
-  const EventDetailPage({required this.event, this.onBookEvent, super.key});
+  const EventDetailPage({
+    required this.event,
+    this.onBookEvent,
+    this.onOpenHotels,
+    super.key,
+  });
 
   final EventDetailData event;
   final EventBookCallback? onBookEvent;
+  final void Function(EventDetailData event)? onOpenHotels;
 
   String _t({
     required String nl,
@@ -233,6 +240,7 @@ class EventDetailPage extends StatelessWidget {
     return _EventDetailActionPanel(
       event: event,
       onBookEvent: onBookEvent,
+      onOpenHotels: onOpenHotels,
       palette: palette,
       t: _t,
     );
@@ -309,12 +317,14 @@ class _EventDetailActionPanel extends StatefulWidget {
   const _EventDetailActionPanel({
     required this.event,
     required this.onBookEvent,
+    required this.onOpenHotels,
     required this.palette,
     required this.t,
   });
 
   final EventDetailData event;
   final EventBookCallback? onBookEvent;
+  final void Function(EventDetailData event)? onOpenHotels;
   final CustomerThemePalette palette;
   final String Function({
     required String nl,
@@ -426,70 +436,29 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
     }
   }
 
-  bool _hasValidCoordinates(double latitude, double longitude) {
-    if (!latitude.isFinite || !longitude.isFinite) return false;
-    if (latitude < -90 || latitude > 90) return false;
-    if (longitude < -180 || longitude > 180) return false;
-    if (latitude == 0.0 && longitude == 0.0) return false;
-    return true;
-  }
-
-  String _eventMapSearchQuery() {
-    final title = widget.event.title.trim();
-    final location = widget.event.locationName.trim();
-    final address = widget.event.address.trim();
-    final city = widget.event.city.trim();
-    final country = (widget.event.countryCode ?? '').trim();
-    final query = <String>[
-      if (title.isNotEmpty) title,
-      if (location.isNotEmpty) location,
-      if (address.isNotEmpty) address,
-      if (city.isNotEmpty) city,
-      if (country.isNotEmpty) country,
-    ].join(', ');
-    return query;
-  }
-
-  Uri _stay22EventMapUri({
-    required String eventTitle,
-    String? address,
-    String? city,
-    String? country,
-    double? lat,
-    double? lng,
-    DateTime? date,
-    String? campaign,
-  }) {
-    final effectiveCampaign = (campaign ?? '').trim().isEmpty
-        ? 'fluxidi_events_event_detail'
-        : campaign!.trim();
-    final query = <String>[
-      eventTitle.trim(),
-      (address ?? '').trim(),
-      (city ?? '').trim(),
-      (country ?? '').trim(),
-    ].where((segment) => segment.isNotEmpty).join(', ');
-    final hasCoords =
-        lat != null && lng != null && _hasValidCoordinates(lat, lng);
+  Uri _stay22EventMapUri(EventStaySearch search) {
     final params = <String, String>{
       'aid': _stay22Aid,
-      'campaign': effectiveCampaign,
+      'campaign': 'fluxidi_events_event_detail',
       'product_medium': 'apps',
-      if (query.isNotEmpty) 'address': query,
-      if (hasCoords) 'lat': lat.toStringAsFixed(6),
-      if (hasCoords) 'lng': lng.toStringAsFixed(6),
+      if (search.stay22Address.trim().isNotEmpty)
+        'address': search.stay22Address.trim(),
+      if (search.hasCoordinates) 'lat': search.latitude!.toStringAsFixed(6),
+      if (search.hasCoordinates) 'lng': search.longitude!.toStringAsFixed(6),
+      if (search.checkinYmd != null) 'checkin': search.checkinYmd!,
+      if (search.checkoutYmd != null) 'checkout': search.checkoutYmd!,
     };
-    // TODO(H1-F): Verify exact Stay22 Hub AID and final customer-facing map params.
-    // TODO(H1-F): Add date/check-in parameter when the canonical Stay22 key is confirmed.
-    // ignore: unused_local_variable
-    final ignoredDate = date;
     return Uri.https('www.stay22.com', '/embed/gm', params);
   }
 
   Future<void> _openStay22EventMap() async {
-    final hasCoords = _hasValidCoordinates(widget.event.lat, widget.event.lng);
-    final query = _eventMapSearchQuery();
-    if (!hasCoords && query.isEmpty) {
+    final openHotels = widget.onOpenHotels;
+    if (openHotels != null) {
+      openHotels(widget.event);
+      return;
+    }
+    final search = EventStaySearch.fromEvent(widget.event);
+    if (!search.hasCoordinates && search.stay22Address.trim().isEmpty) {
       _showInfoSnackBar(
         widget.t(
           nl: 'Locatie voor verblijven rond dit event is niet beschikbaar.',
@@ -500,16 +469,7 @@ class _EventDetailActionPanelState extends State<_EventDetailActionPanel> {
       );
       return;
     }
-    final uri = _stay22EventMapUri(
-      eventTitle: widget.event.title,
-      address: widget.event.address,
-      city: widget.event.city,
-      country: widget.event.countryCode,
-      lat: hasCoords ? widget.event.lat : null,
-      lng: hasCoords ? widget.event.lng : null,
-      date: widget.event.startAtUtc,
-      campaign: 'fluxidi_events_event_detail',
-    );
+    final uri = _stay22EventMapUri(search);
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!mounted || launched) return;
     _showInfoSnackBar(

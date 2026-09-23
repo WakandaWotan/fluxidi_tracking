@@ -10,6 +10,7 @@ class RatehawkSearchStrip extends StatelessWidget {
     required this.palette,
     this.showSubmitButton = true,
     this.destinationGuidance,
+    this.datesOnly = false,
     super.key,
   });
 
@@ -18,6 +19,7 @@ class RatehawkSearchStrip extends StatelessWidget {
   final CustomerThemePalette palette;
   final bool showSubmitButton;
   final String? destinationGuidance;
+  final bool datesOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +27,51 @@ class RatehawkSearchStrip extends StatelessWidget {
     final gold = palette.gold;
     final text = palette.textPrimary;
     final muted = palette.textMuted;
+    if (datesOnly) {
+      return Row(
+        children: [
+          Expanded(
+            child: _dateButton(
+              context: context,
+              buttonKey: const Key('hotel_stay_checkin'),
+              label: ratehawkSearchLabel(
+                languageCode,
+                nl: 'Check-in',
+                en: 'Check-in',
+                fr: 'Arrivée',
+                es: 'Entrada',
+              ),
+              value: controller.criteria.checkinYmd,
+              onPicked: (date) {
+                controller.setCriteria(
+                  controller.criteria.copyWith(checkin: date),
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _dateButton(
+              context: context,
+              buttonKey: const Key('hotel_stay_checkout'),
+              label: ratehawkSearchLabel(
+                languageCode,
+                nl: 'Check-out',
+                en: 'Check-out',
+                fr: 'Départ',
+                es: 'Salida',
+              ),
+              value: controller.criteria.checkoutYmd,
+              onPicked: (date) {
+                controller.setCriteria(
+                  controller.criteria.copyWith(checkout: date),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    }
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -97,6 +144,7 @@ class RatehawkSearchStrip extends StatelessWidget {
               Expanded(
                 child: _dateButton(
                   context: context,
+                  buttonKey: const Key('hotel_stay_checkin'),
                   label: ratehawkSearchLabel(
                     languageCode,
                     nl: 'Check-in',
@@ -116,6 +164,7 @@ class RatehawkSearchStrip extends StatelessWidget {
               Expanded(
                 child: _dateButton(
                   context: context,
+                  buttonKey: const Key('hotel_stay_checkout'),
                   label: ratehawkSearchLabel(
                     languageCode,
                     nl: 'Check-out',
@@ -290,20 +339,44 @@ class RatehawkSearchStrip extends StatelessWidget {
     );
   }
 
+  DateTime? _dateFromYmd(String value) {
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value.trim());
+    if (match == null) return null;
+    final year = int.parse(match.group(1)!);
+    final month = int.parse(match.group(2)!);
+    final day = int.parse(match.group(3)!);
+    final date = DateTime(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
+  }
+
   Widget _dateButton({
     required BuildContext context,
     required String label,
     required String value,
     required ValueChanged<DateTime> onPicked,
+    Key? buttonKey,
   }) {
     return OutlinedButton(
+      key: buttonKey,
       onPressed: () async {
         final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final last = today.add(const Duration(days: 365));
+        var initial = today.add(const Duration(days: 14));
+        final current = _dateFromYmd(value);
+        if (current != null &&
+            !current.isBefore(today) &&
+            !current.isAfter(last)) {
+          initial = current;
+        }
         final picked = await showDatePicker(
           context: context,
-          initialDate: now.add(const Duration(days: 14)),
-          firstDate: now,
-          lastDate: now.add(const Duration(days: 365)),
+          initialDate: initial,
+          firstDate: today,
+          lastDate: last,
         );
         if (picked != null) onPicked(picked);
       },

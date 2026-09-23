@@ -63,7 +63,28 @@ function toUrlSafe(bytes) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+/**
+ * Verified search centre for Google Places Nearby Search.
+ * Text Search never reads these fields. Null means "keep the text query".
+ * Radius is metres, clamped to the legacy Nearby Search bounds (1–50 km).
+ */
+export function googlePlacesSearchCenter(query = {}) {
+  const lat = Number(query?.latitude ?? query?.lat);
+  const lng = Number(query?.longitude ?? query?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  if (lat === 0 && lng === 0) return null;
+  let radiusKm = Number(query?.radiusKm ?? query?.radius_km);
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0) radiusKm = 15;
+  const radiusMeters = Math.max(
+    1000,
+    Math.min(50000, Math.round(radiusKm * 1000)),
+  );
+  return { lat, lng, radiusMeters };
+}
+
 export function hotelPlacesQueryFingerprint(query = {}) {
+  const center = googlePlacesSearchCenter(query);
   const parts = [
     String(query.source ?? "google-places").trim().toLowerCase(),
     String(query.countryCode || query.country_code || "").trim().toUpperCase(),
@@ -72,6 +93,9 @@ export function hotelPlacesQueryFingerprint(query = {}) {
     String(query.region ?? "").trim().toLowerCase(),
     String(query.destination ?? "").trim().toLowerCase(),
     String(query.searchText ?? query.q ?? "").trim().toLowerCase(),
+    center ? center.lat.toFixed(5) : "",
+    center ? center.lng.toFixed(5) : "",
+    center ? String(center.radiusMeters) : "",
   ];
   return parts.join("|");
 }

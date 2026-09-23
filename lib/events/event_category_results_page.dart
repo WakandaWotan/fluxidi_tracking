@@ -750,8 +750,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   Future<void> _openEventDetails(EventDetailData event) async {
     await Navigator.of(context).push(
       MaterialPageRoute<EventDetailPage>(
-        builder: (_) =>
-            EventDetailPage(event: event, onBookEvent: widget.onBookEvent),
+        builder: (_) => EventDetailPage(
+          event: event,
+          onBookEvent: widget.onBookEvent,
+          onOpenHotels: widget.onOpenHotels,
+        ),
       ),
     );
     if (!mounted) return;

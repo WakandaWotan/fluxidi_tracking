@@ -22,6 +22,7 @@ import '../discovery/discovery_geo.dart';
 import '../discovery/discovery_nearby.dart';
 import '../customer_profile_store.dart';
 import '../nearby_partners_page.dart';
+import 'event_stay_search.dart';
 import 'google_places_refresh.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
@@ -62,6 +63,7 @@ class HotelsPage extends StatefulWidget {
     this.ratehawkSearchSubmitEnabled,
     this.initialCountryCode,
     this.initialSearchQuery,
+    this.eventStay,
     this.compactCustomerLayout = false,
     super.key,
   });
@@ -87,6 +89,9 @@ class HotelsPage extends StatefulWidget {
   final bool? ratehawkSearchSubmitEnabled;
   final String? initialCountryCode;
   final String? initialSearchQuery;
+
+  /// Event that opened this page. The venue name is not a hotel-list filter.
+  final EventStaySearch? eventStay;
 
   /// Customer-app presentation. The combined app keeps the classic layout.
   final bool compactCustomerLayout;
@@ -126,6 +131,7 @@ class HotelsPageState extends State<HotelsPage> {
   String _selectedType = _allKey;
   bool _showSavedOnly = false;
   bool _staySearchExpanded = false;
+  final Set<String> _failedStayPhotoIds = <String>{};
   Timer? _googlePlacesRefreshDebounce;
   Timer? _page2ActivationTimer;
   final GooglePlacesRefreshGate _googlePlacesGate = GooglePlacesRefreshGate();
@@ -167,11 +173,6 @@ class HotelsPageState extends State<HotelsPage> {
       _selectedCountryCode = initialCountry;
     }
     _allStays = List<HotelStay>.from(widget.stays ?? const <HotelStay>[]);
-    final initialQuery = (widget.initialSearchQuery ?? '').trim();
-    if (initialQuery.isNotEmpty) {
-      _searchController.text = initialQuery;
-    }
-    _searchController.addListener(_onSearchChanged);
     _ratehawkSearch = RatehawkSearchController(
       client: widget.ratehawkSearchClient,
       reduceMotion: false,
@@ -179,6 +180,17 @@ class HotelsPageState extends State<HotelsPage> {
     if (widget.initialRatehawkCriteria != null) {
       _ratehawkSearch.setCriteria(widget.initialRatehawkCriteria!);
     }
+    final eventStay = widget.eventStay;
+    if (eventStay != null) {
+      _staySearchExpanded = true;
+      _ratehawkSearch.setCriteria(_criteriaForEventStay(eventStay));
+    } else {
+      final initialQuery = (widget.initialSearchQuery ?? '').trim();
+      if (initialQuery.isNotEmpty) {
+        _searchController.text = initialQuery;
+      }
+    }
+    _searchController.addListener(_onSearchChanged);
     _lastDestinationForPlaces = _ratehawkSearch.criteria.destination.trim();
     _ratehawkSearch.addListener(_onRatehawkSearchChanged);
     _syncRatehawkDestinationHint(notify: false);
@@ -186,6 +198,50 @@ class HotelsPageState extends State<HotelsPage> {
     if (widget.stays == null) {
       unawaited(_fetchGooglePlacesStays());
     }
+  }
+
+  @override
+  void didUpdateWidget(HotelsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = widget.eventStay;
+    final previous = oldWidget.eventStay;
+    if (next == null) return;
+    if (previous != null &&
+        previous.eventId == next.eventId &&
+        previous.latitude == next.latitude &&
+        previous.longitude == next.longitude &&
+        previous.stay22Address == next.stay22Address &&
+        previous.arrivalDate == next.arrivalDate) {
+      return;
+    }
+    _searchController.removeListener(_onSearchChanged);
+    _ratehawkSearch.removeListener(_onRatehawkSearchChanged);
+    _staySearchExpanded = true;
+    _searchController.text = '';
+    _ratehawkSearch.setCriteria(_criteriaForEventStay(next));
+    _lastDestinationForPlaces = _ratehawkSearch.criteria.destination.trim();
+    _searchController.addListener(_onSearchChanged);
+    _ratehawkSearch.addListener(_onRatehawkSearchChanged);
+    _scheduleGooglePlacesRefresh();
+  }
+
+  RatehawkSearchCriteria _criteriaForEventStay(EventStaySearch stay) {
+    return _ratehawkSearch.criteria.copyWith(
+      destination: stay.stay22Address,
+      checkin: stay.arrivalDate,
+      checkout: stay.departureDate,
+      clearCheckin: stay.arrivalDate == null,
+      clearCheckout: stay.departureDate == null,
+    );
+  }
+
+  bool get _sendEventCoordinates {
+    final event = widget.eventStay;
+    if (event == null) return false;
+    return eventStayCoordinatesStillApply(
+      search: event,
+      destinationText: _ratehawkSearch.criteria.destination,
+    );
   }
 
   bool get _ratehawkSearchSubmitEnabled =>
@@ -250,20 +306,33 @@ class HotelsPageState extends State<HotelsPage> {
   HotelStayQuery _buildGooglePlacesQuery({String? pageCursor}) {
     final searchText = _searchController.text.trim();
     final destination = _ratehawkSearch.criteria.destination.trim();
+    final event = widget.eventStay;
+    final sendCoordinates =
+        event != null &&
+        eventStayCoordinatesStillApply(
+          search: event,
+          destinationText: destination,
+        );
+    // Same source as the general hotels page. A venue name or street is not
+    // the Places query: Text Search ignores lat/lng/radius, so a coordinate
+    // centre must omit free text and let Nearby Search use the centre.
     final resolved = stay22ResolveDestinationQuery(
       countryCode: _selectedCountryCode,
       regionKey: _selectedRegionKey == _allKey ? '' : _selectedRegionKey,
       cityKey: _selectedSettlementKey == _allKey ? '' : _selectedSettlementKey,
-      freeText: destination,
+      freeText: sendCoordinates ? '' : destination,
     );
     return HotelStayQuery(
       source: 'google-places',
-      city: resolved.city,
+      city: sendCoordinates ? null : resolved.city,
       country: resolved.countryEnglish,
       countryCode: resolved.countryCode,
-      destination: resolved.destination,
-      region: resolved.region,
-      searchText: searchText.isEmpty ? null : searchText,
+      destination: sendCoordinates ? null : resolved.destination,
+      region: sendCoordinates ? null : resolved.region,
+      searchText: sendCoordinates || searchText.isEmpty ? null : searchText,
+      lat: sendCoordinates ? event?.latitude : null,
+      lng: sendCoordinates ? event?.longitude : null,
+      radiusKm: sendCoordinates ? kEventStayNearbyRadiusKm : null,
       pageCursor: pageCursor,
     );
   }
@@ -523,7 +592,16 @@ class HotelsPageState extends State<HotelsPage> {
         .toList(growable: false);
   }
 
-  List<HotelStay> get _visibleStays => _filterStays(_allStays);
+  List<HotelStay> get _visibleStays {
+    final filtered = _filterStays(_allStays);
+    final event = widget.eventStay;
+    if (event == null || !event.hasCoordinates) return filtered;
+    return sortHotelStaysByEventDistance(
+      stays: filtered,
+      latitude: event.latitude!,
+      longitude: event.longitude!,
+    );
+  }
 
   List<HotelStay> get _discoveryRegionStays => _filterStays(const <HotelStay>[
     HotelStay(
@@ -1053,6 +1131,14 @@ class HotelsPageState extends State<HotelsPage> {
   String _stay22GeneralAddress({String? query}) {
     final preferred = (query ?? '').trim();
     final destination = _ratehawkSearch.criteria.destination.trim();
+    final event = widget.eventStay;
+    if (event != null && preferred.isEmpty) {
+      final eventAddress = event.stay22Address.trim();
+      if (eventAddress.isNotEmpty &&
+          (destination.isEmpty || destination == eventAddress)) {
+        return eventAddress;
+      }
+    }
     final resolved = stay22ResolveDestinationQuery(
       countryCode: _selectedCountryCode,
       regionKey: _selectedRegionKey == _allKey ? '' : _selectedRegionKey,
@@ -1139,8 +1225,12 @@ class HotelsPageState extends State<HotelsPage> {
             : stay22CampaignFor(_stay22KindFor(stay)),
         checkin: checkin,
         checkout: checkout,
-        latitude: stay == null ? null : (stay.latitude ?? stay.lat),
-        longitude: stay == null ? null : (stay.longitude ?? stay.lng),
+        latitude: stay == null
+            ? (_sendEventCoordinates ? widget.eventStay!.latitude : null)
+            : (stay.latitude ?? stay.lat),
+        longitude: stay == null
+            ? (_sendEventCoordinates ? widget.eventStay!.longitude : null)
+            : (stay.longitude ?? stay.lng),
       ),
     );
   }
@@ -1720,13 +1810,8 @@ class HotelsPageState extends State<HotelsPage> {
           ),
           Expanded(
             child: Text(
-              _t(
-                nl: 'Hotels & B&B',
-                en: 'Hotels & B&B',
-                fr: 'Hôtels & B&B',
-                es: 'Hoteles y B&B',
-              ),
-              maxLines: 1,
+              _customerHotelsTitle,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: _textPrimary,
@@ -1741,26 +1826,167 @@ class HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  String get _customerHotelsTitle {
+    final venue = (widget.eventStay?.venueLabel ?? '').trim();
+    if (venue.isEmpty) {
+      return _t(
+        nl: 'Hotels & B&B',
+        en: 'Hotels & B&B',
+        fr: 'Hôtels & B&B',
+        es: 'Hoteles y B&B',
+      );
+    }
+    return _t(
+      nl: 'Hotels nabij $venue',
+      en: 'Hotels near $venue',
+      fr: 'Hôtels près de $venue',
+      es: 'Hoteles cerca de $venue',
+    );
+  }
+
+  String? _eventStayDistanceLabel(HotelStay stay) {
+    final event = widget.eventStay;
+    if (event == null || !event.hasCoordinates) return null;
+    final kilometers = hotelStayDistanceKmFrom(
+      stay: stay,
+      latitude: event.latitude!,
+      longitude: event.longitude!,
+    );
+    if (kilometers == null) return null;
+    final label = formatEventStayDistanceKm(kilometers);
+    if (label.isEmpty) return null;
+    return _t(
+      nl: '$label van de evenementlocatie',
+      en: '$label from the event location',
+      fr: '$label du lieu de l’événement',
+      es: '$label del lugar del evento',
+    );
+  }
+
+  String _eventStayLocationLine(EventStaySearch stay) {
+    if (stay.centerKind == EventStayCenterKind.unavailable) {
+      return _t(
+        nl: 'Geen zaaladres of stad. Kies zelf een bestemming.',
+        en: 'No venue address or city. Choose a destination.',
+        fr: 'Pas d’adresse de salle ni de ville. Choisissez une destination.',
+        es: 'No hay dirección ni ciudad. Elige un destino.',
+      );
+    }
+    final venue = stay.venueLabel.trim();
+    final place = stay.stay22Address.trim().isNotEmpty
+        ? stay.stay22Address.trim()
+        : <String>[
+            stay.address.trim(),
+            stay.city.trim(),
+          ].where((part) => part.isNotEmpty).join(', ');
+    if (venue.isEmpty) return place;
+    if (place.isEmpty) return venue;
+    if (place.toLowerCase().contains(venue.toLowerCase())) return place;
+    return '$venue · $place';
+  }
+
+  String get _eventStayProviderNote {
+    return _t(
+      nl: 'Prijzen en beschikbaarheid worden bij de aanbieder gecontroleerd.',
+      en: 'Prices and availability are checked with the provider.',
+      fr: 'Les prix et la disponibilité sont vérifiés chez le prestataire.',
+      es: 'Los precios y la disponibilidad se comprueban con el proveedor.',
+    );
+  }
+
+  Widget _buildStaySearchStrip({Key? key, bool datesOnly = false}) {
+    return RatehawkSearchStrip(
+      key: key,
+      controller: _ratehawkSearch,
+      languageCode: _languageCode,
+      palette: _themePalette,
+      showSubmitButton: datesOnly ? false : _ratehawkSearchSubmitEnabled,
+      datesOnly: datesOnly,
+      destinationGuidance: datesOnly
+          ? null
+          : (_showCitySelector
+                ? stay22MajorCitiesFieldGuidance(_languageCode)
+                : stay22CityRegionGuidance(_languageCode)),
+    );
+  }
+
+  Widget _buildEventStayCompactBlock(EventStaySearch stay) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panelBlack,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            _eventStayLocationLine(stay),
+            key: const Key('customer_event_stay_center'),
+            style: TextStyle(
+              color: _textPrimary,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _buildStaySearchStrip(
+            key: ValueKey<String>('event-stay-dates-${stay.eventId}'),
+            datesOnly: true,
+          ),
+          const SizedBox(height: 8),
+          _buildCustomerToolbar(showStaySearch: false),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _customerCompactChildren({
     required List<HotelStay> displayCards,
     required int resultCount,
     required bool showingDiscoveryRegions,
   }) {
+    final eventStay = widget.eventStay;
+    if (eventStay != null) {
+      return <Widget>[
+        _buildEventStayCompactBlock(eventStay),
+        const SizedBox(height: 8),
+        Text(
+          _eventStayProviderNote,
+          key: const Key('customer_event_stay_provider_note'),
+          style: TextStyle(color: _softText, height: 1.3),
+        ),
+        const SizedBox(height: 8),
+        if (displayCards.isEmpty)
+          Text(
+            _t(
+              nl: 'Rond deze evenementlocatie zijn nu geen verblijven gevonden.',
+              en: 'No stays were found around this event location.',
+              fr: 'Aucun séjour n’a été trouvé autour de ce lieu.',
+              es: 'No se han encontrado alojamientos alrededor de este lugar.',
+            ),
+            key: const Key('customer_event_stay_empty'),
+            style: TextStyle(
+              color: _textPrimary,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          )
+        else
+          _buildCustomerStayList(displayCards),
+      ];
+    }
     return <Widget>[
       _buildSearchField(),
       const SizedBox(height: 8),
       _buildCustomerToolbar(),
       if (_staySearchExpanded) ...<Widget>[
         const SizedBox(height: 8),
-        RatehawkSearchStrip(
-          controller: _ratehawkSearch,
-          languageCode: _languageCode,
-          palette: _themePalette,
-          showSubmitButton: _ratehawkSearchSubmitEnabled,
-          destinationGuidance: _showCitySelector
-              ? stay22MajorCitiesFieldGuidance(_languageCode)
-              : stay22CityRegionGuidance(_languageCode),
-        ),
+        _buildStaySearchStrip(),
         const SizedBox(height: 6),
         Text(
           _t(
@@ -1793,7 +2019,7 @@ class HotelsPageState extends State<HotelsPage> {
     ];
   }
 
-  Widget _buildCustomerToolbar() {
+  Widget _buildCustomerToolbar({bool showStaySearch = true}) {
     final filters = _activeFilterCount;
     return Wrap(
       spacing: 8,
@@ -1809,6 +2035,7 @@ class HotelsPageState extends State<HotelsPage> {
                 : '${_t(nl: 'Filters', en: 'Filters', fr: 'Filtres', es: 'Filtros')} ($filters)',
           ),
         ),
+        if (showStaySearch)
         OutlinedButton.icon(
           key: const Key('customer_hotels_stay_search'),
           onPressed: () =>
@@ -1910,16 +2137,45 @@ class HotelsPageState extends State<HotelsPage> {
     );
   }
 
+  void _markStayPhotoUnavailable(String stayId) {
+    if (stayId.isEmpty || _failedStayPhotoIds.contains(stayId)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _failedStayPhotoIds.contains(stayId)) return;
+      setState(() => _failedStayPhotoIds.add(stayId));
+    });
+  }
+
   Widget _buildCustomerStayCard(HotelStay stay, {required bool sideBySide}) {
     final imageUrl = (stay.imageUrl ?? '').trim();
     final approvedAssetPath = _approvedAssetPath(stay);
+    final showPhoto =
+        !_failedStayPhotoIds.contains(stay.id) &&
+        (imageUrl.isNotEmpty || approvedAssetPath.isNotEmpty);
     final canShowTaxi = _canShowStayTaxiCta(stay);
     final rating = stay.rating;
     final location = <String>[
       if (stay.address.trim().isNotEmpty) stay.address.trim(),
       if (stay.city.trim().isNotEmpty) stay.city.trim(),
     ].join(', ');
+    final distanceLabel = _eventStayDistanceLabel(stay);
+    Widget saveButton({required bool onPhoto}) {
+      return Material(
+        color: onPhoto ? Colors.black54 : Colors.transparent,
+        shape: const CircleBorder(),
+        child: IconButton(
+          onPressed: () => unawaited(_toggleSaved(stay)),
+          visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+          icon: Icon(
+            _isSaved(stay)
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            color: _gold,
+          ),
+        ),
+      );
+    }
     final photo = AspectRatio(
+      key: Key('customer_hotels_stay_photo_${stay.id}'),
       aspectRatio: 16 / 9,
       child: Stack(
         fit: StackFit.expand,
@@ -1929,46 +2185,40 @@ class HotelsPageState extends State<HotelsPage> {
             Image.network(
               imageUrl,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => approvedAssetPath.isNotEmpty
-                  ? Image.asset(approvedAssetPath, fit: BoxFit.cover)
-                  : Icon(Icons.hotel_rounded, color: _gold, size: 36),
+              errorBuilder: (_, __, ___) {
+                if (approvedAssetPath.isNotEmpty) {
+                  return Image.asset(approvedAssetPath, fit: BoxFit.cover);
+                }
+                _markStayPhotoUnavailable(stay.id);
+                return const SizedBox.shrink();
+              },
             )
-          else if (approvedAssetPath.isNotEmpty)
-            Image.asset(approvedAssetPath, fit: BoxFit.cover)
           else
-            Icon(Icons.hotel_rounded, color: _gold, size: 36),
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Material(
-              color: Colors.black54,
-              shape: const CircleBorder(),
-              child: IconButton(
-                onPressed: () => unawaited(_toggleSaved(stay)),
-                icon: Icon(
-                  _isSaved(stay)
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
-                  color: _gold,
-                ),
-              ),
-            ),
-          ),
+            Image.asset(approvedAssetPath, fit: BoxFit.cover),
+          Positioned(right: 8, top: 8, child: saveButton(onPhoto: true)),
         ],
       ),
     );
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          stay.name,
-          key: Key('customer_hotels_stay_name_${stay.id}'),
-          style: TextStyle(
-            color: _textPrimary,
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-            height: 1.2,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                stay.name,
+                key: Key('customer_hotels_stay_name_${stay.id}'),
+                style: TextStyle(
+                  color: _textPrimary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                  height: 1.2,
+                ),
+              ),
+            ),
+            if (!showPhoto) saveButton(onPhoto: false),
+          ],
         ),
         if (rating != null) ...<Widget>[
           const SizedBox(height: 6),
@@ -1987,13 +2237,34 @@ class HotelsPageState extends State<HotelsPage> {
             style: TextStyle(color: _softText, height: 1.35),
           ),
         ],
+        if (distanceLabel != null) ...<Widget>[
+          const SizedBox(height: 4),
+          Text(
+            distanceLabel,
+            key: Key('customer_event_stay_distance_${stay.id}'),
+            style: TextStyle(
+              color: _gold,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+        ],
         const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            key: Key('customer_hotels_view_stay_${stay.id}'),
+            onPressed: () => unawaited(_openExternalHotelSearch(stay: stay)),
+            child: Text(_viewStayLabel),
+          ),
+        ),
+        const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: <Widget>[
             if (canShowTaxi)
-              FilledButton.icon(
+              FilledButton.tonalIcon(
                 key: Key('customer_hotels_taxi_${stay.id}'),
                 onPressed: () => _onTaxiCtaTap(stay),
                 icon: const Icon(Icons.local_taxi_rounded, size: 18),
@@ -2025,7 +2296,9 @@ class HotelsPageState extends State<HotelsPage> {
         onTap: () => _openStayDetail(stay),
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: sideBySide
+          child: !showPhoto
+              ? details
+              : sideBySide
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
@@ -3052,6 +3325,13 @@ class HotelsPageState extends State<HotelsPage> {
             en: '$count saved stays',
             fr: '$count hébergements enregistrés',
             es: '$count alojamientos guardados',
+          )
+        : widget.eventStay != null && count == 0
+        ? _t(
+            nl: 'Geen uitgelichte inspiratie voor deze locatie',
+            en: 'No featured inspiration for this location',
+            fr: 'Aucune inspiration mise en avant pour ce lieu',
+            es: 'No hay inspiración destacada para este lugar',
           )
         : _hasActiveFilters
         ? stay22FeaturedFilterLabel(count, _languageCode)

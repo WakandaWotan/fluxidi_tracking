@@ -3,6 +3,7 @@ import {
   HOTEL_PLACES_ACTIVATION_DELAY_MS,
   HOTEL_PLACES_MAX_PAGES,
   consumeHotelPlacesCursor,
+  googlePlacesSearchCenter,
   hotelPlacesQueryFingerprint,
   isUsableProviderToken,
   normalizeHotelPlacesCursorId,
@@ -15,6 +16,149 @@ import {
 
 function asPlaces(payload) {
   return Array.isArray(payload?.results) ? payload.results : [];
+}
+
+const kPlacesNearbyFieldMask = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.rating",
+  "places.userRatingCount",
+  "places.photos",
+  "places.primaryType",
+  "places.types",
+].join(",");
+
+// Legacy Nearby Search omits photos for these lodging results. Places API
+// (New) searchNearby returns photos[].name, which the public hotel mapper
+// already turns into the photo proxy. The key stays in the header.
+async function fetchPlacesApiNearbySearch({ center, apiKey, fetchImpl }) {
+  try {
+    const res = await fetchImpl(
+      "https://places.googleapis.com/v1/places:searchNearby",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": kPlacesNearbyFieldMask,
+        },
+        body: JSON.stringify({
+          includedTypes: ["lodging"],
+          maxResultCount: 20,
+          rankPreference: "POPULARITY",
+          locationRestriction: {
+            circle: {
+              center: { latitude: center.lat, longitude: center.lng },
+              radius: center.radiusMeters,
+            },
+          },
+        }),
+      },
+    );
+    if (!res?.ok) {
+      return {
+        places: [],
+        nextPageToken: "",
+        called: true,
+        error: "google_places_nearby_http_not_ok",
+        status: Number(res?.status || 0),
+      };
+    }
+    const payload = await res.json().catch(() => null);
+    return {
+      places: Array.isArray(payload?.places) ? payload.places : [],
+      nextPageToken: "",
+      called: true,
+      status: "OK",
+    };
+  } catch (_) {
+    return {
+      places: [],
+      nextPageToken: "",
+      called: true,
+      error: "google_places_nearby_http_not_ok",
+      status: 0,
+    };
+  }
+}
+
+function usablePlacePhoto(place) {
+  const photos = Array.isArray(place?.photos) ? place.photos : [];
+  for (const photo of photos) {
+    const reference = String(photo?.photo_reference ?? "").trim();
+    if (/^[A-Za-z0-9_-]{8,600}$/.test(reference)) return true;
+    const name = String(photo?.name ?? "").trim();
+    if (/^legacy:[A-Za-z0-9_-]{8,600}$/.test(name)) return true;
+    if (/^places\/[\w-]+\/photos\/[\w-]+$/.test(name)) return true;
+  }
+  return false;
+}
+
+function legacyPhotoReference(raw) {
+  const text = String(raw ?? "").trim();
+  if (!/^[A-Za-z0-9_-]{8,600}$/.test(text)) return "";
+  return text;
+}
+
+// Legacy Nearby Search leaves photos empty for these lodging rows. Place
+// Details with fields=photo returns one photo_reference the public proxy
+// already accepts. The key stays on the request URL and is not returned.
+async function attachMissingPlacePhotos(places, apiKey, fetchImpl) {
+  const pending = (Array.isArray(places) ? places : []).filter(
+    (place) => !usablePlacePhoto(place),
+  );
+  await Promise.all(
+    pending.map(async (place) => {
+      const placeId = String(place?.place_id ?? place?.id ?? "")
+        .replace(/^places\//, "")
+        .trim();
+      if (!placeId) return;
+      const url = new URL(
+        "https://maps.googleapis.com/maps/api/place/details/json",
+      );
+      url.searchParams.set("place_id", placeId);
+      url.searchParams.set("fields", "photo");
+      url.searchParams.set("key", apiKey);
+      try {
+        const res = await fetchImpl(url.toString());
+        if (!res?.ok) return;
+        const payload = await res.json().catch(() => null);
+        const photos = Array.isArray(payload?.result?.photos)
+          ? payload.result.photos
+          : [];
+        const reference = legacyPhotoReference(photos[0]?.photo_reference);
+        if (!reference) return;
+        const attributionItems = Array.isArray(photos[0]?.html_attributions)
+          ? photos[0].html_attributions
+          : [];
+        const attributionText = attributionItems
+          .map((entry) => String(entry ?? "").replace(/<[^>]*>/g, "").trim())
+          .filter(Boolean)
+          .join(", ");
+        if (place.place_id) {
+          place.photos = [
+            {
+              photo_reference: reference,
+              html_attributions: attributionText ? [attributionText] : [],
+            },
+          ];
+          return;
+        }
+        place.photos = [
+          {
+            name: `legacy:${reference}`,
+            authorAttributions: attributionText
+              ? [{ displayName: attributionText }]
+              : [],
+          },
+        ];
+      } catch (_) {
+        // A missing photo stays a compact card. The hotel row still returns.
+      }
+    }),
+  );
 }
 
 function providerPageToken(payload) {
@@ -31,11 +175,35 @@ export async function fetchGooglePlacesTextSearchPage({
   if (!apiKey) {
     return { places: [], nextPageToken: "", called: false, error: "missing_api_key" };
   }
-  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
+  const center = googlePlacesSearchCenter(query);
   const token = String(pageToken ?? "").trim();
+  // A fresh coordinate search uses Places Nearby (New) so photo names come
+  // back. Page-2 tokens still belong to the legacy Nearby Search call.
+  if (center && !token) {
+    const nearby = await fetchPlacesApiNearbySearch({
+      center,
+      apiKey,
+      fetchImpl,
+    });
+    if (!nearby.error) {
+      await attachMissingPlacePhotos(nearby.places, apiKey, fetchImpl);
+      return nearby;
+    }
+  }
+  const url = new URL(
+    center
+      ? "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+      : "https://maps.googleapis.com/maps/api/place/textsearch/json",
+  );
   // Text Search answers INVALID_REQUEST to a bare pagetoken; the originating
-  // query has to be repeated even though the docs call it ignored.
-  url.searchParams.set("query", buildGooglePlacesTextQuery(query));
+  // query has to be repeated even though the docs call it ignored. Nearby
+  // Search gets the same treatment for location and radius.
+  if (center) {
+    url.searchParams.set("location", `${center.lat},${center.lng}`);
+    url.searchParams.set("radius", String(center.radiusMeters));
+  } else {
+    url.searchParams.set("query", buildGooglePlacesTextQuery(query));
+  }
   url.searchParams.set("type", "lodging");
   if (token) {
     url.searchParams.set("pagetoken", token);
@@ -53,8 +221,10 @@ export async function fetchGooglePlacesTextSearchPage({
     };
   }
   const payload = await res.json().catch(() => null);
+  const places = asPlaces(payload);
+  if (center) await attachMissingPlacePhotos(places, apiKey, fetchImpl);
   return {
-    places: asPlaces(payload),
+    places,
     nextPageToken: providerPageToken(payload),
     called: true,
     status: String(payload?.status || ""),
