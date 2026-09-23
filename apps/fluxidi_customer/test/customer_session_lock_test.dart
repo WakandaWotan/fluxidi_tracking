@@ -236,7 +236,9 @@ void main() {
     final vault = MemoryCustomerSecureSessionVault();
     final surface = MemoryCustomerSessionSurface()
       ..remember(
-        _session(expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1))),
+        _session(
+          expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        ),
       );
     final unlock = FakeCustomerDeviceUnlock();
     final lock = _lock(vault: vault, unlock: unlock, surface: surface);
@@ -247,10 +249,8 @@ void main() {
           builder: (context) {
             return TextButton(
               key: const Key('start_offer'),
-              onPressed: () => offerCustomerDeviceUnlockAfterSignIn(
-                context,
-                lock: lock,
-              ),
+              onPressed: () =>
+                  offerCustomerDeviceUnlockAfterSignIn(context, lock: lock),
               child: const Text('start'),
             );
           },
@@ -259,7 +259,10 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('start_offer')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('customer_unlock_offer_dialog')), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer_unlock_offer_dialog')),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('customer_unlock_offer_enable')));
     await tester.pumpAndSettle();
     expect(lock.isEnabled, isTrue);
@@ -278,10 +281,8 @@ void main() {
           builder: (context) {
             return TextButton(
               key: const Key('start_offer'),
-              onPressed: () => offerCustomerDeviceUnlockAfterSignIn(
-                context,
-                lock: lock,
-              ),
+              onPressed: () =>
+                  offerCustomerDeviceUnlockAfterSignIn(context, lock: lock),
               child: const Text('start'),
             );
           },
@@ -296,42 +297,51 @@ void main() {
     expect(unlock.authenticateCount, 0);
   });
 
-  test('plaintext session file is deleted after a successful migrate', () async {
-    final vault = MemoryCustomerSecureSessionVault();
-    final surface = MemoryCustomerSessionSurface();
-    final unlock = FakeCustomerDeviceUnlock();
-    final lock = _lock(vault: vault, unlock: unlock, surface: surface);
-    final session = _session(
-      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
-    );
-    surface.fileSession = session;
+  test(
+    'plaintext session file is deleted after a successful migrate',
+    () async {
+      final vault = MemoryCustomerSecureSessionVault();
+      final surface = MemoryCustomerSessionSurface();
+      final unlock = FakeCustomerDeviceUnlock();
+      final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+      final session = _session(
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
+      );
+      surface.fileSession = session;
 
-    await lock.restoreAtLaunch();
+      await lock.restoreAtLaunch();
 
-    expect(await surface.plaintextFileExists(), isFalse);
-    expect(surface.fileSession, isNull);
-    expect(vault.sessionJson, isNotNull);
-    expect(surface.peek()?.customerSessionToken, session.customerSessionToken);
-  });
+      expect(await surface.plaintextFileExists(), isFalse);
+      expect(surface.fileSession, isNull);
+      expect(vault.sessionJson, isNotNull);
+      expect(
+        surface.peek()?.customerSessionToken,
+        session.customerSessionToken,
+      );
+    },
+  );
 
-  test('leftover plaintext is deleted when the vault already has the session', () async {
-    final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
-    final surface = MemoryCustomerSessionSurface();
-    final unlock = FakeCustomerDeviceUnlock();
-    final lock = _lock(vault: vault, unlock: unlock, surface: surface);
-    final session = _session(
-      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
-    );
-    await vault.writeSessionJson(_jsonOf(session));
-    surface.fileSession = session;
+  test(
+    'leftover plaintext is deleted when the vault already has the session',
+    () async {
+      final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
+      final surface = MemoryCustomerSessionSurface();
+      final unlock = FakeCustomerDeviceUnlock();
+      final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+      final session = _session(
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 2)),
+      );
+      await vault.writeSessionJson(_jsonOf(session));
+      surface.fileSession = session;
 
-    await lock.restoreAtLaunch();
+      await lock.restoreAtLaunch();
 
-    expect(await surface.plaintextFileExists(), isFalse);
-    expect(surface.fileSession, isNull);
-    expect(surface.peek(), isNull);
-    expect(lock.isLocked, isTrue);
-  });
+      expect(await surface.plaintextFileExists(), isFalse);
+      expect(surface.fileSession, isNull);
+      expect(surface.peek(), isNull);
+      expect(lock.isLocked, isTrue);
+    },
+  );
 
   test('an invalid plaintext file is deleted and never migrated', () async {
     final vault = MemoryCustomerSecureSessionVault();
@@ -389,23 +399,29 @@ void main() {
     expect(lock.isLocked, isFalse);
   });
 
-  test('persistCurrentSession writes the vault then deletes the JSON file', () async {
-    final vault = MemoryCustomerSecureSessionVault();
-    final surface = MemoryCustomerSessionSurface();
-    final unlock = FakeCustomerDeviceUnlock();
-    final lock = _lock(vault: vault, unlock: unlock, surface: surface);
-    final session = _session(
-      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 3)),
-    );
-    surface.remember(session);
-    surface.fileSession = session;
+  test(
+    'persistCurrentSession writes the vault then deletes the JSON file',
+    () async {
+      final vault = MemoryCustomerSecureSessionVault();
+      final surface = MemoryCustomerSessionSurface();
+      final unlock = FakeCustomerDeviceUnlock();
+      final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+      final session = _session(
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 3)),
+      );
+      surface.remember(session);
+      surface.fileSession = session;
 
-    await lock.persistCurrentSession();
+      await lock.persistCurrentSession();
 
-    expect(vault.sessionJson, isNotNull);
-    expect(await surface.plaintextFileExists(), isFalse);
-    expect(surface.peek()?.customerSessionToken, session.customerSessionToken);
-  });
+      expect(vault.sessionJson, isNotNull);
+      expect(await surface.plaintextFileExists(), isFalse);
+      expect(
+        surface.peek()?.customerSessionToken,
+        session.customerSessionToken,
+      );
+    },
+  );
 
   test('a deferred lock is applied after a booking ends', () async {
     final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
@@ -481,27 +497,30 @@ void main() {
     expect(lock.hasPendingLock, isFalse);
   });
 
-  test('ending a booking applies a pending lock without another request', () async {
-    final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
-    final surface = MemoryCustomerSessionSurface();
-    final unlock = FakeCustomerDeviceUnlock();
-    final lock = _lock(vault: vault, unlock: unlock, surface: surface);
-    final session = _session(
-      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
-    );
-    await vault.writeSessionJson(_jsonOf(session));
-    await lock.attach();
-    await lock.unlock(reason: 'open');
+  test(
+    'ending a booking applies a pending lock without another request',
+    () async {
+      final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
+      final surface = MemoryCustomerSessionSurface();
+      final unlock = FakeCustomerDeviceUnlock();
+      final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+      final session = _session(
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+      await vault.writeSessionJson(_jsonOf(session));
+      await lock.attach();
+      await lock.unlock(reason: 'open');
 
-    CustomerBookingPresence.instance.enter();
-    expect(await lock.lockIfNeeded(), isFalse);
-    CustomerBookingPresence.instance.leave();
-    await Future<void>.delayed(Duration.zero);
+      CustomerBookingPresence.instance.enter();
+      expect(await lock.lockIfNeeded(), isFalse);
+      CustomerBookingPresence.instance.leave();
+      await Future<void>.delayed(Duration.zero);
 
-    expect(lock.isLocked, isTrue);
-    expect(surface.peek(), isNull);
-    lock.detach();
-  });
+      expect(lock.isLocked, isTrue);
+      expect(surface.peek(), isNull);
+      lock.detach();
+    },
+  );
 
   testWidgets('lock gate stays up after cancel and retries', (tester) async {
     final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
@@ -629,4 +648,169 @@ void main() {
       expect(find.byType(CustomerHomeScreen), findsOneWidget);
     },
   );
+
+  test(
+    'a failed vault write keeps the session file and leaves unlock off',
+    () async {
+      final vault = _FailingVault();
+      final surface = MemoryCustomerSessionSurface();
+      final unlock = FakeCustomerDeviceUnlock();
+      final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+      final session = _session(
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+      surface.remember(session);
+      surface.fileSession = session;
+
+      expect(
+        await lock.enableAfterAuthentication(reason: 'enable'),
+        CustomerUnlockResult.failed,
+      );
+      expect(lock.isEnabled, isFalse);
+      expect(surface.fileSession?.customerId, 'cus_1');
+      expect(surface.peek()?.customerId, 'cus_1');
+      expect(vault.sessionJson, isNull);
+      expect(vault.unlockEnabled, isFalse);
+    },
+  );
+
+  testWidgets(
+    'reopen after the grace period locks even when hidden fires again',
+    (tester) async {
+      final harness = await _unlockedApp(tester);
+      await _androidLeave(tester);
+      harness.advance(const Duration(seconds: 5));
+      await _androidReturn(tester);
+      await tester.pumpAndSettle();
+
+      expect(harness.lock.isLocked, isTrue);
+      expect(harness.lock.hasPendingLock, isFalse);
+      expect(harness.surface.peek(), isNull);
+      expect(find.byType(CustomerSessionLockGate), findsOneWidget);
+      harness.lock.detach();
+    },
+  );
+
+  testWidgets(
+    'a brief return does not lock and does not leave a deferred request',
+    (tester) async {
+      final harness = await _unlockedApp(tester);
+      await _androidLeave(tester);
+      harness.advance(const Duration(milliseconds: 200));
+      await _androidReturn(tester);
+      await tester.pumpAndSettle();
+
+      expect(harness.lock.isLocked, isFalse);
+      expect(harness.lock.hasPendingLock, isFalse);
+      expect(harness.surface.peek(), isNotNull);
+      expect(find.byType(CustomerSessionLockGate), findsNothing);
+      harness.lock.detach();
+    },
+  );
+
+  testWidgets('a deferred lock waits for the pushed page and then applies', (
+    tester,
+  ) async {
+    final harness = await _unlockedApp(tester);
+    final homeContext = tester.element(find.byType(CustomerHomeScreen));
+    Navigator.of(homeContext).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(
+          body: TextField(
+            key: Key('deferred_lock_reopen'),
+            decoration: InputDecoration(labelText: 'draft'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('deferred_lock_reopen')),
+      'Koekamerstraat 48A',
+    );
+
+      await _androidLeave(tester);
+      harness.advance(const Duration(seconds: 5));
+      await _androidReturn(tester);
+    await tester.pumpAndSettle();
+
+    expect(harness.lock.isLocked, isFalse);
+    expect(harness.lock.hasPendingLock, isTrue);
+    expect(find.text('Koekamerstraat 48A'), findsOneWidget);
+    expect(find.byType(CustomerSessionLockGate), findsNothing);
+
+    Navigator.of(
+      tester.element(find.byKey(const Key('deferred_lock_reopen'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(harness.lock.isLocked, isTrue);
+    expect(harness.lock.hasPendingLock, isFalse);
+    expect(find.byType(CustomerSessionLockGate), findsOneWidget);
+    expect(harness.surface.peek(), isNull);
+    harness.lock.detach();
+  });
+}
+
+class _FailingVault extends MemoryCustomerSecureSessionVault {
+  @override
+  Future<bool> writeSessionJson(String json) async => false;
+
+  @override
+  Future<bool> writeUnlockEnabled(bool enabled) async => false;
+}
+
+class _UnlockedApp {
+  _UnlockedApp({
+    required this.lock,
+    required this.surface,
+    required this.advance,
+  });
+
+  final CustomerSessionLock lock;
+  final MemoryCustomerSessionSurface surface;
+  final void Function(Duration) advance;
+}
+
+Future<_UnlockedApp> _unlockedApp(WidgetTester tester) async {
+  final vault = MemoryCustomerSecureSessionVault()..unlockEnabled = true;
+  final surface = MemoryCustomerSessionSurface();
+  final unlock = FakeCustomerDeviceUnlock();
+  final lock = _lock(vault: vault, unlock: unlock, surface: surface);
+  final session = _session(
+    expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+  );
+  await vault.writeSessionJson(_jsonOf(session));
+  await lock.attach();
+  await lock.unlock(reason: 'open');
+  unlock.result = CustomerUnlockResult.canceled;
+  var now = DateTime.utc(2026, 9, 22, 12);
+
+  await tester.pumpWidget(
+    FluxidiCustomerApp(
+      sessionLock: lock,
+      lockAfterBackground: const Duration(seconds: 1),
+      now: () => now,
+    ),
+  );
+  await tester.pumpAndSettle();
+  return _UnlockedApp(
+    lock: lock,
+    surface: surface,
+    advance: (duration) => now = now.add(duration),
+  );
+}
+
+Future<void> _androidLeave(WidgetTester tester) async {
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+  await tester.pump();
+}
+
+Future<void> _androidReturn(WidgetTester tester) async {
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+  tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  await tester.pump();
 }
