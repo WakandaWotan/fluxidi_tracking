@@ -67,6 +67,7 @@ class HotelsPage extends StatefulWidget {
     this.initialSearchQuery,
     this.eventStay,
     this.nearbyEventsSource,
+    this.onOpenHotels,
     this.compactCustomerLayout = false,
     super.key,
   });
@@ -98,6 +99,11 @@ class HotelsPage extends StatefulWidget {
 
   /// Nearby-event feed for hotel detail. Null keeps the local seed list.
   final EventDataSource? nearbyEventsSource;
+
+  /// Opens the same event-hotel page as Evenementen → Hotels.
+  ///
+  /// Null keeps the Stay22 map on the event-detail stay button.
+  final void Function(EventDetailData event)? onOpenHotels;
 
   /// Customer-app presentation. The combined app keeps the classic layout.
   final bool compactCustomerLayout;
@@ -1619,6 +1625,7 @@ class HotelsPageState extends State<HotelsPage> {
           onNearbyEventTaxiTap: (event) {
             unawaited(_onNearbyEventTaxiTap(stay, event));
           },
+          onOpenHotels: widget.onOpenHotels,
           onAirportTransferTap: () {
             _onAirportTransferTap(stay);
           },
@@ -4475,6 +4482,7 @@ class HotelStayDetailPage extends StatelessWidget {
     this.ratehawkHotelpageClient,
     this.ratehawkPrebookClient,
     this.nearbyEventsSource,
+    this.onOpenHotels,
     super.key,
   });
 
@@ -4493,6 +4501,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final RatehawkHotelpageClient? ratehawkHotelpageClient;
   final RatehawkPrebookClient? ratehawkPrebookClient;
   final EventDataSource? nearbyEventsSource;
+  final void Function(EventDetailData event)? onOpenHotels;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -4888,8 +4897,11 @@ class HotelStayDetailPage extends StatelessWidget {
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            EventDetailPage(event: resolved, onBookEvent: onNearbyEventTaxiTap),
+        builder: (_) => EventDetailPage(
+          event: resolved,
+          onBookEvent: onNearbyEventTaxiTap,
+          onOpenHotels: onOpenHotels,
+        ),
       ),
     );
   }

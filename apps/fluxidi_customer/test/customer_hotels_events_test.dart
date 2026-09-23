@@ -311,6 +311,197 @@ void main() {
   });
 
   testWidgets(
+    'hotel nearby event stays open the same hotel search as events',
+    (tester) async {
+      addTearDown(tester.view.reset);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      final event = _spiritConcert();
+      final search = EventStaySearch.fromEvent(event);
+      final events = _StaticEvents(<EventDetailData>[event]);
+      final stays = <HotelStay>[
+        _geoStay(
+          id: 'stay-liege',
+          name: 'Aux Cosmos',
+          city: 'Liège',
+          latitude: 50.6326,
+          longitude: 5.5797,
+        ),
+        _geoStay(
+          id: 'stay-verviers',
+          name: 'Van der Valk Hotel Verviers',
+          city: 'Verviers',
+          latitude: 50.5918,
+          longitude: 5.8634,
+        ),
+      ];
+      final source = _FixedStaysSource(stays);
+      final launched = <Uri>[];
+      var navigator = GlobalKey<NavigatorState>();
+
+      void openEventHotels(EventDetailData selected) {
+        navigator.currentState!.push(
+          MaterialPageRoute<void>(
+            builder: (_) => HotelsPage(
+              key: ValueKey<String>('event-hotels-${selected.id}'),
+              compactCustomerLayout: true,
+              eventStay: EventStaySearch.fromEvent(selected),
+              hotelDataSource: source,
+              nearbyEventsSource: events,
+              ratehawkSearchSubmitEnabled: false,
+              onOpenHotels: openEventHotels,
+              externalUrlLauncher: (uri) async {
+                launched.add(uri);
+                return true;
+              },
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: EventCategoryResultsPage(
+            title: 'Evenementen',
+            dataSource: events,
+            marketKey: 'be',
+            dateMode: EventDateMode.all,
+            sortMode: 'default',
+            compactCustomerLayout: true,
+            onBookEvent: (_) {},
+            onOpenHotels: openEventHotels,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('customer_events_title_spirit-66')),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Verblijven rond dit event'),
+        200,
+      );
+      await tester.tap(find.text('Verblijven rond dit event'));
+      await tester.pumpAndSettle();
+
+      await _expectSpiritHotelPage(tester, search);
+      expect(launched, isEmpty);
+      final fromEvents = _centredStayQueries(source);
+      expect(fromEvents, hasLength(1));
+      _expectVenueStayQuery(fromEvents.single, search);
+
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Evenementdetail'), findsOneWidget);
+      expect(find.text('Laurent Voulzy En Concert'), findsOneWidget);
+      expect(find.text('Hotels nabij Spirit of 66'), findsNothing);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Evenementen'), findsOneWidget);
+      expect(find.text('Evenementdetail'), findsNothing);
+
+      navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          key: UniqueKey(),
+          navigatorKey: navigator,
+          home: HotelsPage(
+            compactCustomerLayout: true,
+            stays: stays,
+            nearbyEventsSource: events,
+            ratehawkSearchSubmitEnabled: false,
+            onOpenHotels: openEventHotels,
+            externalUrlLauncher: (uri) async {
+              launched.add(uri);
+              return true;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _bringIntoView(
+        tester,
+        find.byKey(const Key('customer_hotels_stay_name_stay-verviers')),
+      );
+      await tester.tap(
+        find.byKey(const Key('customer_hotels_stay_name_stay-verviers')),
+      );
+      await tester.pumpAndSettle();
+      await _bringIntoView(
+        tester,
+        find.byKey(const Key('customer_hotel_nearby_event_spirit-66')),
+      );
+      await tester.tap(
+        find.byKey(const Key('customer_hotel_nearby_event_spirit-66')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Evenementdetail'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Verblijven rond dit event'),
+        200,
+      );
+      await tester.tap(find.text('Verblijven rond dit event'));
+      await tester.pumpAndSettle();
+
+      await _expectSpiritHotelPage(tester, search);
+      expect(launched, isEmpty);
+      final centred = _centredStayQueries(source);
+      expect(centred, hasLength(2));
+      _expectVenueStayQuery(centred.last, search);
+      expect(centred.last.lat, centred.first.lat);
+      expect(centred.last.lng, centred.first.lng);
+      expect(centred.last.radiusKm, centred.first.radiusKm);
+      expect(centred.last.destination, centred.first.destination);
+      expect(centred.last.searchText, centred.first.searchText);
+
+      await _bringIntoView(
+        tester,
+        find.byKey(const Key('customer_hotels_view_stay_stay-verviers')),
+      );
+      await tester.tap(
+        find.byKey(const Key('customer_hotels_view_stay_stay-verviers')),
+      );
+      await tester.pumpAndSettle();
+      expect(launched, hasLength(1));
+      expect(launched.single.host, 'www.stay22.com');
+      expect(launched.single.path, '/allez/searchbar');
+      expect(launched.single.queryParameters['aid'], 'fluxidi');
+      expect(
+        launched.single.queryParameters['campaign'],
+        'fluxidi_featured_stay',
+      );
+      expect(launched.single.queryParameters['lat'], '50.591800');
+      expect(launched.single.queryParameters['lng'], '5.863400');
+      expect(launched.single.queryParameters['checkin'], search.checkinYmd);
+      expect(launched.single.queryParameters['checkout'], search.checkoutYmd);
+      expect(
+        launched.single.queryParameters['address'],
+        contains('Van der Valk Hotel Verviers'),
+      );
+      expect(
+        launched.single.queryParameters['address'],
+        isNot(contains('Spirit of 66')),
+      );
+
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Evenementdetail'), findsOneWidget);
+      expect(find.text('Hotels nabij Spirit of 66'), findsNothing);
+      expect(find.text('Laurent Voulzy En Concert'), findsOneWidget);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Van der Valk Hotel Verviers'), findsWidgets);
+      expect(find.text('Evenementdetail'), findsNothing);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Hotels & B&B'), findsOneWidget);
+      expect(find.text('Van der Valk Hotel Verviers'), findsWidgets);
+    },
+  );
+
+  testWidgets(
     'event hotels on a phone use the venue, not its name as a filter',
     (tester) async {
       await _expectEventHotels(tester, const Size(390, 844));
@@ -489,6 +680,96 @@ void main() {
     expect(find.textContaining('Geen hotels'), findsNothing);
     expect(find.textContaining('uitgelichte inspiratie'), findsNothing);
   });
+}
+
+EventDetailData _spiritConcert() {
+  return EventDetailData(
+    id: 'spirit-66',
+    title: 'Laurent Voulzy En Concert',
+    category: 'Muziek',
+    dateTimeLabel: '02-10-2026 · 20:30',
+    locationName: 'Spirit of 66',
+    city: 'Verviers',
+    address: 'Place du Martyr, 16',
+    lat: 50.59353,
+    lng: 5.86109,
+    distanceOrStatus: '',
+    gradient: const <Color>[Color(0xFF1A1A1A), Color(0xFF333333)],
+    countryCode: 'BE',
+    startAtUtc: _concertUtc(),
+    timeZone: 'Europe/Brussels',
+    sourceUrl: 'https://example.test/tickets',
+  );
+}
+
+class _FixedStaysSource implements HotelPagedDataSource {
+  _FixedStaysSource(this.stays);
+
+  final List<HotelStay> stays;
+  final queries = <HotelStayQuery>[];
+
+  @override
+  Future<List<HotelStay>> fetchStays({
+    HotelStayQuery query = const HotelStayQuery(),
+  }) async {
+    return (await fetchStayPage(query: query)).stays;
+  }
+
+  @override
+  Future<HotelStaySearchPage> fetchStayPage({
+    HotelStayQuery query = const HotelStayQuery(),
+  }) async {
+    queries.add(query);
+    return HotelStaySearchPage(stays: stays);
+  }
+}
+
+List<HotelStayQuery> _centredStayQueries(_FixedStaysSource source) {
+  return source.queries.where((query) => query.lat != null).toList();
+}
+
+void _expectVenueStayQuery(HotelStayQuery query, EventStaySearch search) {
+  expect(query.source, 'google-places');
+  expect(query.lat, closeTo(search.latitude!, 0.000001));
+  expect(query.lng, closeTo(search.longitude!, 0.000001));
+  expect(query.radiusKm, kEventStayNearbyRadiusKm);
+  expect(query.destination, isNull);
+  expect(query.searchText, isNull);
+  expect(query.city, isNull);
+}
+
+Future<void> _expectSpiritHotelPage(
+  WidgetTester tester,
+  EventStaySearch search,
+) async {
+  expect(find.text('Hotels nabij Spirit of 66'), findsOneWidget);
+  expect(
+    tester
+        .widget<Text>(find.byKey(const Key('customer_event_stay_center')))
+        .data,
+    contains('Place du Martyr, 16'),
+  );
+  expect(find.textContaining(search.checkinYmd!), findsWidgets);
+  expect(find.textContaining(search.checkoutYmd!), findsWidgets);
+  expect(find.byKey(const Key('stay22_live_search_cta')), findsNothing);
+  await _bringIntoView(
+    tester,
+    find.byKey(const Key('customer_hotels_view_stay_stay-verviers')),
+  );
+  expect(
+    find.byKey(const Key('customer_hotels_taxi_stay-verviers')),
+    findsOneWidget,
+  );
+  expect(
+    find.byKey(const Key('customer_hotels_transfer_stay-verviers')),
+    findsOneWidget,
+  );
+  await _bringIntoView(tester, find.text('Aux Cosmos'));
+  expect(
+    tester.getTopLeft(find.text('Van der Valk Hotel Verviers')).dy,
+    lessThan(tester.getTopLeft(find.text('Aux Cosmos')).dy),
+  );
+  expect(find.textContaining('van de evenementlocatie'), findsWidgets);
 }
 
 DateTime _concertUtc() {

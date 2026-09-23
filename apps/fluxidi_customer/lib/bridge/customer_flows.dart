@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/customer_theme_page.dart';
 import 'package:fluxidi_tracking/events/event_data_source.dart';
+import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_taxi_availability.dart';
 import 'package:fluxidi_tracking/events/events_page.dart';
 import 'package:fluxidi_tracking/hotels/event_stay_search.dart';
@@ -200,6 +201,52 @@ EventDataSource _hotelNearbyEventsSource() {
   );
 }
 
+/// Same hotel page as Evenementen → Hotels: venue centre, coordinates and dates.
+void _openEventHotels(BuildContext context, EventDetailData event) {
+  if (!context.mounted) return;
+  final search = EventStaySearch.fromEvent(event);
+  unawaited(
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => HotelsPage(
+          key: ValueKey<String>('event-hotels-${event.id}'),
+          compactCustomerLayout: true,
+          eventStay: search,
+          nearbyEventsSource: _hotelNearbyEventsSource(),
+          onOpenHotels: (next) => _openEventHotels(context, next),
+          onTaxiToStay: (stay) async {
+            final address = stay.address.trim().isNotEmpty
+                ? stay.address.trim()
+                : stay.name;
+            await _openStayRide(
+              context,
+              destination: CustomerFlowPlace(
+                address: address.trim(),
+                name: stay.name.trim(),
+                latitude: stay.lat,
+                longitude: stay.lng,
+              ),
+              sourceLabel: 'event_hotels',
+            );
+          },
+          onTaxiToDestination: (destination) async {
+            await _openStayRide(
+              context,
+              destination: CustomerFlowPlace(
+                address: destination.prefillDestinationText,
+                name: destination.destinationName,
+                latitude: destination.latitude,
+                longitude: destination.longitude,
+              ),
+              sourceLabel: 'event_hotels',
+            );
+          },
+        ),
+      ),
+    ),
+  );
+}
+
 /// Opens the existing hotel and B&B pages, with the same taxi hand-offs the
 /// combined app wires up.
 Future<void> openHotelsFlow(BuildContext context) {
@@ -208,6 +255,7 @@ Future<void> openHotelsFlow(BuildContext context) {
       builder: (_) => HotelsPage(
         compactCustomerLayout: true,
         nearbyEventsSource: _hotelNearbyEventsSource(),
+        onOpenHotels: (event) => _openEventHotels(context, event),
         onTaxiToStay: (stay) async {
           final address = stay.address.trim().isNotEmpty
               ? stay.address.trim()
@@ -282,48 +330,7 @@ Future<void> openEventsFlow(BuildContext context) {
         dataSource: buildDefaultEventLocatorDataSource(
           baseUrl: kBookingBaseUrl,
         ),
-        onOpenHotels: (event) {
-          final search = EventStaySearch.fromEvent(event);
-          unawaited(
-            Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => HotelsPage(
-                  key: ValueKey<String>('event-hotels-${event.id}'),
-                  compactCustomerLayout: true,
-                  eventStay: search,
-                  nearbyEventsSource: _hotelNearbyEventsSource(),
-                  onTaxiToStay: (stay) async {
-                    final address = stay.address.trim().isNotEmpty
-                        ? stay.address.trim()
-                        : stay.name;
-                    await _openStayRide(
-                      context,
-                      destination: CustomerFlowPlace(
-                        address: address.trim(),
-                        name: stay.name.trim(),
-                        latitude: stay.lat,
-                        longitude: stay.lng,
-                      ),
-                      sourceLabel: 'event_hotels',
-                    );
-                  },
-                  onTaxiToDestination: (destination) async {
-                    await _openStayRide(
-                      context,
-                      destination: CustomerFlowPlace(
-                        address: destination.prefillDestinationText,
-                        name: destination.destinationName,
-                        latitude: destination.latitude,
-                        longitude: destination.longitude,
-                      ),
-                      sourceLabel: 'event_hotels',
-                    );
-                  },
-                ),
-              ),
-            ),
-          );
-        },
+        onOpenHotels: (event) => _openEventHotels(context, event),
         onBookEvent: (event) {
           final destination = eventTaxiDestination(event);
           if (!context.mounted) return;
