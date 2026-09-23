@@ -9,9 +9,11 @@ import 'package:fluxidi_tracking/navigation/mapbox_platform_surface.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../discovery/customer_contained_photo.dart';
 import 'event_data_source.dart';
 import 'event_markets.dart';
 import 'event_models.dart';
+import 'event_record_resolve.dart';
 import 'events_detail_page.dart';
 
 class EventCategoryResultsPage extends StatefulWidget {
@@ -92,8 +94,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
         return es;
       case AppLanguage.nl:
         return nl;
-    case AppLanguage.de:
-      return en;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -133,8 +135,9 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     final feed = await widget.dataSource.loadEventFeed(
       query: _buildEventFeedQuery(),
     );
+    final events = await loadMissingEventPhotos(widget.dataSource, feed.events);
     if (!mounted) return;
-    setState(() => _events = List<EventDetailData>.from(feed.events));
+    setState(() => _events = events);
     _syncMapData();
     _prefetchTopThumbnails();
   }
@@ -748,10 +751,16 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   }
 
   Future<void> _openEventDetails(EventDetailData event) async {
+    var resolved = event;
+    if (!eventRecordHasPhoto(event)) {
+      final loaded = await loadMissingEventPhotos(widget.dataSource, [event]);
+      if (loaded.isNotEmpty) resolved = loaded.first;
+    }
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<EventDetailPage>(
         builder: (_) => EventDetailPage(
-          event: event,
+          event: resolved,
           onBookEvent: widget.onBookEvent,
           onOpenHotels: widget.onOpenHotels,
         ),
@@ -838,8 +847,11 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
   }
 
   String _cardImageUrl(EventDetailData event) {
-    return (event.thumbnailUrl ?? event.imageUrl ?? event.heroImageUrl ?? '')
-        .trim();
+    return preferredCustomerDetailPhotoUrl(
+      hero: event.heroImageUrl,
+      image: event.imageUrl,
+      thumbnail: event.thumbnailUrl,
+    );
   }
 
   @override
@@ -1042,16 +1054,24 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
     final photo = AspectRatio(
       aspectRatio: 16 / 9,
       child: ColoredBox(
-        color: event.gradient.isNotEmpty
-            ? event.gradient.first
-            : _panelBlack,
+        color: event.gradient.isNotEmpty ? event.gradient.first : _panelBlack,
         child: cardImageUrl.isEmpty
-            ? Icon(Icons.event_rounded, color: _gold, size: 36)
+            ? Icon(
+                Icons.event_rounded,
+                key: Key('customer_events_photo_fallback_${event.id}'),
+                color: _gold,
+                size: 36,
+              )
             : Image.network(
                 cardImageUrl,
+                key: Key('customer_events_photo_${event.id}'),
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    Icon(Icons.event_rounded, color: _gold, size: 36),
+                errorBuilder: (_, __, ___) => Icon(
+                  Icons.event_rounded,
+                  key: Key('customer_events_photo_fallback_${event.id}'),
+                  color: _gold,
+                  size: 36,
+                ),
               ),
       ),
     );
@@ -1104,12 +1124,7 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
                   : null,
               icon: const Icon(Icons.confirmation_number_outlined, size: 18),
               label: Text(
-                _t(
-                  nl: 'Tickets',
-                  en: 'Tickets',
-                  fr: 'Billets',
-                  es: 'Entradas',
-                ),
+                _t(nl: 'Tickets', en: 'Tickets', fr: 'Billets', es: 'Entradas'),
               ),
             ),
           ],

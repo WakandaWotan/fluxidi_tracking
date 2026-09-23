@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/customer_booking/customer_booking_open.dart';
 import 'package:fluxidi_tracking/customer_phone_recovery_page.dart';
 import 'package:fluxidi_tracking/customer_session_store.dart';
 import 'package:fluxidi_tracking/customer_theme_page.dart';
+import 'package:fluxidi_tracking/events/event_data_source.dart';
 import 'package:fluxidi_tracking/events/event_taxi_availability.dart';
 import 'package:fluxidi_tracking/events/events_page.dart';
 import 'package:fluxidi_tracking/hotels/event_stay_search.dart';
@@ -192,6 +193,13 @@ Future<void> openAirportFlow(
   );
 }
 
+EventDataSource _hotelNearbyEventsSource() {
+  return RemoteEventDataSource(
+    baseUrl: kBookingBaseUrl,
+    fallbackDataSource: const LocalSeedEventDataSource(),
+  );
+}
+
 /// Opens the existing hotel and B&B pages, with the same taxi hand-offs the
 /// combined app wires up.
 Future<void> openHotelsFlow(BuildContext context) {
@@ -199,9 +207,11 @@ Future<void> openHotelsFlow(BuildContext context) {
     MaterialPageRoute<void>(
       builder: (_) => HotelsPage(
         compactCustomerLayout: true,
+        nearbyEventsSource: _hotelNearbyEventsSource(),
         onTaxiToStay: (stay) async {
-          final address =
-              stay.address.trim().isNotEmpty ? stay.address.trim() : stay.name;
+          final address = stay.address.trim().isNotEmpty
+              ? stay.address.trim()
+              : stay.name;
           await _openStayRide(
             context,
             destination: CustomerFlowPlace(
@@ -281,6 +291,7 @@ Future<void> openEventsFlow(BuildContext context) {
                   key: ValueKey<String>('event-hotels-${event.id}'),
                   compactCustomerLayout: true,
                   eventStay: search,
+                  nearbyEventsSource: _hotelNearbyEventsSource(),
                   onTaxiToStay: (stay) async {
                     final address = stay.address.trim().isNotEmpty
                         ? stay.address.trim()
@@ -342,10 +353,7 @@ Future<void> openEventsFlow(BuildContext context) {
 
 /// Opens the existing limousine discovery flow.
 void openLimousineFlow(BuildContext context) {
-  openLimousineCustomerDiscovery(
-    context,
-    customerHomeBuilder: _startPage,
-  );
+  openLimousineCustomerDiscovery(context, customerHomeBuilder: _startPage);
 }
 
 /// Opens "Mijn boekingen": the existing saved bookings list, which refreshes
@@ -359,9 +367,7 @@ Future<void> openMyBookings(BuildContext context) {
 /// Opens Regio Radar: the customer-app screen that shares the website data.
 Future<void> openRegionRadar(BuildContext context) {
   return Navigator.of(context).push<void>(
-    MaterialPageRoute<void>(
-      builder: (_) => const CustomerRegionRadarScreen(),
-    ),
+    MaterialPageRoute<void>(builder: (_) => const CustomerRegionRadarScreen()),
   );
 }
 
@@ -375,7 +381,8 @@ Future<Map<String, String>?> openCompanySearch(
     MaterialPageRoute<Map<String, String>>(
       builder: (_) => NearbyPartnersPage(
         customerHomeBuilder: _startPage,
-        regionRegistrationBuilder: (_) => const CustomerRegionRegistrationPage(),
+        regionRegistrationBuilder: (_) =>
+            const CustomerRegionRegistrationPage(),
         syncCustomerProfileFromBackend: syncCustomerProfileFromBackend,
         selectionMode: selectionMode,
         airportCapableOnly: airportCapableOnly,

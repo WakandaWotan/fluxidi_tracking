@@ -35,8 +35,8 @@ class EventDetailPage extends StatelessWidget {
         return es;
       case AppLanguage.nl:
         return nl;
-    case AppLanguage.de:
-      return en;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -147,16 +147,36 @@ class EventDetailPage extends StatelessWidget {
   }
 
   Widget _buildHeroVisual(CustomerThemePalette palette) {
+    final imageUrl = _heroImageUrl;
+    if (imageUrl.isEmpty) {
+      return Container(
+        key: const Key('customer_event_detail_photo_fallback'),
+        height: 56,
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.border.withOpacity(0.85)),
+        ),
+        child: Icon(
+          Icons.event_rounded,
+          color: palette.gold.withOpacity(0.95),
+          size: 22,
+        ),
+      );
+    }
     return CustomerContainedPhoto(
       key: const Key('customer_event_detail_photo'),
-      imageUrl: _heroImageUrl,
+      imageUrl: imageUrl,
+      compactWithoutImage: true,
       backgroundColor: palette.surface,
       borderColor: palette.border.withOpacity(0.85),
       placeholder: Center(
         child: Icon(
           Icons.event_rounded,
           color: palette.gold.withOpacity(0.95),
-          size: 64,
+          size: 22,
         ),
       ),
     );

@@ -9,7 +9,9 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/discovery/discovery_models.dart';
 import 'package:fluxidi_tracking/discovery/discovery_labels.dart';
+import 'package:fluxidi_tracking/events/event_data_source.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
+import 'package:fluxidi_tracking/events/event_record_resolve.dart';
 import 'package:fluxidi_tracking/events/event_seed_data.dart';
 import 'package:fluxidi_tracking/events/events_detail_page.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -64,6 +66,7 @@ class HotelsPage extends StatefulWidget {
     this.initialCountryCode,
     this.initialSearchQuery,
     this.eventStay,
+    this.nearbyEventsSource,
     this.compactCustomerLayout = false,
     super.key,
   });
@@ -92,6 +95,9 @@ class HotelsPage extends StatefulWidget {
 
   /// Event that opened this page. The venue name is not a hotel-list filter.
   final EventStaySearch? eventStay;
+
+  /// Nearby-event feed for hotel detail. Null keeps the local seed list.
+  final EventDataSource? nearbyEventsSource;
 
   /// Customer-app presentation. The combined app keeps the classic layout.
   final bool compactCustomerLayout;
@@ -396,15 +402,12 @@ class HotelsPageState extends State<HotelsPage> {
       return;
     }
     final wait = availableAt.difference(DateTime.now().toUtc());
-    _page2ActivationTimer = Timer(
-      wait.isNegative ? Duration.zero : wait,
-      () {
-        if (!mounted) return;
-        if (_page2.activateIfReady()) {
-          setState(() {});
-        }
-      },
-    );
+    _page2ActivationTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      if (!mounted) return;
+      if (_page2.activateIfReady()) {
+        setState(() {});
+      }
+    });
   }
 
   Future<void> _requestMoreFeaturedStays() async {
@@ -443,10 +446,10 @@ class HotelsPageState extends State<HotelsPage> {
         setState(() {});
         return;
       }
-      final merged = dedupeHotelStaysByPlaceId(
-        <HotelStay>[..._allStays, ...page.stays],
-        idOf: (stay) => stay.id,
-      );
+      final merged = dedupeHotelStaysByPlaceId(<HotelStay>[
+        ..._allStays,
+        ...page.stays,
+      ], idOf: (stay) => stay.id);
       setState(() {
         _allStays = merged;
         _page2.completeSuccess(queryGeneration: generation);
@@ -1629,6 +1632,7 @@ class HotelsPageState extends State<HotelsPage> {
               : null,
           ratehawkHotelpageClient: widget.ratehawkHotelpageClient,
           ratehawkPrebookClient: widget.ratehawkPrebookClient,
+          nearbyEventsSource: widget.nearbyEventsSource,
         ),
       ),
     );
@@ -1738,46 +1742,48 @@ class HotelsPageState extends State<HotelsPage> {
                         showingDiscoveryRegions: showingDiscoveryRegions,
                       )
                     : [
-                  _buildSearchField(),
-                  const SizedBox(height: 8),
-                  _buildCompactFilterChips(),
-                  const SizedBox(height: 8),
-                  RatehawkSearchStrip(
-                    controller: _ratehawkSearch,
-                    languageCode: _languageCode,
-                    palette: _themePalette,
-                    showSubmitButton: _ratehawkSearchSubmitEnabled,
-                    destinationGuidance: _showCitySelector
-                        ? stay22MajorCitiesFieldGuidance(_languageCode)
-                        : stay22CityRegionGuidance(_languageCode),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildLiveAccommodationsPanel(),
-                  if (showingDiscoveryRegions) ...[
-                    const SizedBox(height: 8),
-                    _buildNativeProviderPendingNotice(),
-                  ],
-                  const SizedBox(height: 8),
-                  _buildResultSummary(
-                    resultCount,
-                    showingDiscoveryRegions: showingDiscoveryRegions,
-                  ),
-                  if (!showingDiscoveryRegions) _buildMoreFeaturedStaysAction(),
-                  if (showingDiscoveryRegions && displayCards.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    _buildDiscoveryRegionsSectionHeader(),
-                  ],
-                  const SizedBox(height: 8),
-                  _buildReturnFlowPanel(),
-                  const SizedBox(height: 8),
-                  RatehawkSearchStatusPanel(
-                    controller: _ratehawkSearch,
-                    languageCode: _languageCode,
-                    palette: _themePalette,
-                  ),
-                  const SizedBox(height: 8),
-                  _buildCardsGrid(displayCards),
-                ],
+                        _buildSearchField(),
+                        const SizedBox(height: 8),
+                        _buildCompactFilterChips(),
+                        const SizedBox(height: 8),
+                        RatehawkSearchStrip(
+                          controller: _ratehawkSearch,
+                          languageCode: _languageCode,
+                          palette: _themePalette,
+                          showSubmitButton: _ratehawkSearchSubmitEnabled,
+                          destinationGuidance: _showCitySelector
+                              ? stay22MajorCitiesFieldGuidance(_languageCode)
+                              : stay22CityRegionGuidance(_languageCode),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildLiveAccommodationsPanel(),
+                        if (showingDiscoveryRegions) ...[
+                          const SizedBox(height: 8),
+                          _buildNativeProviderPendingNotice(),
+                        ],
+                        const SizedBox(height: 8),
+                        _buildResultSummary(
+                          resultCount,
+                          showingDiscoveryRegions: showingDiscoveryRegions,
+                        ),
+                        if (!showingDiscoveryRegions)
+                          _buildMoreFeaturedStaysAction(),
+                        if (showingDiscoveryRegions &&
+                            displayCards.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          _buildDiscoveryRegionsSectionHeader(),
+                        ],
+                        const SizedBox(height: 8),
+                        _buildReturnFlowPanel(),
+                        const SizedBox(height: 8),
+                        RatehawkSearchStatusPanel(
+                          controller: _ratehawkSearch,
+                          languageCode: _languageCode,
+                          palette: _themePalette,
+                        ),
+                        const SizedBox(height: 8),
+                        _buildCardsGrid(displayCards),
+                      ],
               ),
             ),
           ],
@@ -1820,7 +1826,9 @@ class HotelsPageState extends State<HotelsPage> {
               ),
             ),
           ),
-          _buildSavedStaysHeaderShortcut(showLabel: MediaQuery.sizeOf(context).width >= 600),
+          _buildSavedStaysHeaderShortcut(
+            showLabel: MediaQuery.sizeOf(context).width >= 600,
+          ),
         ],
       ),
     );
@@ -2036,25 +2044,25 @@ class HotelsPageState extends State<HotelsPage> {
           ),
         ),
         if (showStaySearch)
-        OutlinedButton.icon(
-          key: const Key('customer_hotels_stay_search'),
-          onPressed: () =>
-              setState(() => _staySearchExpanded = !_staySearchExpanded),
-          icon: Icon(
-            _staySearchExpanded
-                ? Icons.expand_less_rounded
-                : Icons.expand_more_rounded,
-            size: 18,
-          ),
-          label: Text(
-            _t(
-              nl: 'Verblijf zoeken',
-              en: 'Search stay',
-              fr: 'Rechercher un séjour',
-              es: 'Buscar estancia',
+          OutlinedButton.icon(
+            key: const Key('customer_hotels_stay_search'),
+            onPressed: () =>
+                setState(() => _staySearchExpanded = !_staySearchExpanded),
+            icon: Icon(
+              _staySearchExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 18,
+            ),
+            label: Text(
+              _t(
+                nl: 'Verblijf zoeken',
+                en: 'Search stay',
+                fr: 'Rechercher un séjour',
+                es: 'Buscar estancia',
+              ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -2174,6 +2182,7 @@ class HotelsPageState extends State<HotelsPage> {
         ),
       );
     }
+
     final photo = AspectRatio(
       key: Key('customer_hotels_stay_photo_${stay.id}'),
       aspectRatio: 16 / 9,
@@ -2224,18 +2233,12 @@ class HotelsPageState extends State<HotelsPage> {
           const SizedBox(height: 6),
           Text(
             '★ ${rating.toStringAsFixed(1)}',
-            style: TextStyle(
-              color: _textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: _textPrimary, fontWeight: FontWeight.w700),
           ),
         ],
         if (location.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),
-          Text(
-            location,
-            style: TextStyle(color: _softText, height: 1.35),
-          ),
+          Text(location, style: TextStyle(color: _softText, height: 1.35)),
         ],
         if (distanceLabel != null) ...<Widget>[
           const SizedBox(height: 4),
@@ -2302,10 +2305,13 @@ class HotelsPageState extends State<HotelsPage> {
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Expanded(flex: 5, child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: photo,
-                    )),
+                    Expanded(
+                      flex: 5,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: photo,
+                      ),
+                    ),
                     const SizedBox(width: 12),
                     Expanded(flex: 7, child: details),
                   ],
@@ -3198,8 +3204,9 @@ class HotelsPageState extends State<HotelsPage> {
                   ),
                   (value ?? _allKey) == _allKey ? '' : value!,
                 );
-                _selectedSettlementKey =
-                    next.cityKey.isEmpty ? _allKey : next.cityKey;
+                _selectedSettlementKey = next.cityKey.isEmpty
+                    ? _allKey
+                    : next.cityKey;
                 if (next.regionKey.isNotEmpty) {
                   _selectedRegionKey = next.regionKey;
                 }
@@ -3420,8 +3427,7 @@ class HotelsPageState extends State<HotelsPage> {
     }
     final snap = _page2.snapshot;
     if (!snap.showAction) return const SizedBox.shrink();
-    final enabled =
-        snap.canRequest || snap.isRetryable;
+    final enabled = snap.canRequest || snap.isRetryable;
     final label = snap.phase == HotelPlacesPage2Phase.waitingActivation
         ? stay22MoreFeaturedStaysWaitingLabel(_languageCode)
         : snap.phase == HotelPlacesPage2Phase.loading
@@ -3439,7 +3445,9 @@ class HotelsPageState extends State<HotelsPage> {
           width: double.infinity,
           child: OutlinedButton(
             key: const Key('google_places_more_featured_stays'),
-            onPressed: enabled ? () => unawaited(_requestMoreFeaturedStays()) : null,
+            onPressed: enabled
+                ? () => unawaited(_requestMoreFeaturedStays())
+                : null,
             child: Text(label),
           ),
         ),
@@ -4466,6 +4474,7 @@ class HotelStayDetailPage extends StatelessWidget {
     this.externalAvailabilityHint,
     this.ratehawkHotelpageClient,
     this.ratehawkPrebookClient,
+    this.nearbyEventsSource,
     super.key,
   });
 
@@ -4483,6 +4492,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final String? externalAvailabilityHint;
   final RatehawkHotelpageClient? ratehawkHotelpageClient;
   final RatehawkPrebookClient? ratehawkPrebookClient;
+  final EventDataSource? nearbyEventsSource;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -4686,6 +4696,7 @@ class HotelStayDetailPage extends StatelessWidget {
   }
 
   List<EventDetailData> _nearbyEventsForRadiusMode(
+    List<EventDetailData> catalog,
     _HotelNearbyEventRadiusMode mode,
   ) {
     final stayCity = normalizeDiscoveryText(stay.city);
@@ -4696,7 +4707,7 @@ class HotelStayDetailPage extends StatelessWidget {
     final canDistanceRank = _hasValidCoordinates(stayLat, stayLng);
 
     final sameCity = <EventDetailData>[
-      for (final event in kEventSeedData)
+      for (final event in catalog)
         if (normalizeDiscoveryText(event.city) == stayCity) event,
     ];
 
@@ -4706,12 +4717,12 @@ class HotelStayDetailPage extends StatelessWidget {
         .where((city) => city.isNotEmpty)
         .toSet();
     final sameRegion = <EventDetailData>[
-      for (final event in kEventSeedData)
+      for (final event in catalog)
         if (regionCities.contains(normalizeDiscoveryText(event.city))) event,
     ];
 
     final distanceRanked = <({EventDetailData event, double km})>[
-      for (final event in kEventSeedData)
+      for (final event in catalog)
         if (canDistanceRank && _hasValidCoordinates(event.lat, event.lng))
           (
             event: event,
@@ -4732,7 +4743,7 @@ class HotelStayDetailPage extends StatelessWidget {
 
     final countryRanked =
         <({EventDetailData event, double? km})>[
-          for (final event in kEventSeedData)
+          for (final event in catalog)
             if (normalizeDiscoveryText(event.countryCode ?? '') ==
                     stayCountry ||
                 (stayCountry == 'belgium' &&
@@ -4860,22 +4871,88 @@ class HotelStayDetailPage extends StatelessWidget {
     return imageRef.substring('approved_asset:'.length).trim();
   }
 
+  EventDataSource get _nearbyEventsDataSource =>
+      nearbyEventsSource ?? const LocalSeedEventDataSource();
+
+  Future<void> _openNearbyEventDetail(
+    BuildContext context,
+    EventDetailData event,
+  ) async {
+    var resolved = event;
+    if (!eventRecordHasPhoto(event)) {
+      final loaded = await loadMissingEventPhotos(_nearbyEventsDataSource, [
+        event,
+      ]);
+      if (loaded.isNotEmpty) resolved = loaded.first;
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            EventDetailPage(event: resolved, onBookEvent: onNearbyEventTaxiTap),
+      ),
+    );
+  }
+
+  Widget _nearbyEventPhoto(EventDetailData event) {
+    final imageUrl = preferredCustomerDetailPhotoUrl(
+      hero: event.heroImageUrl,
+      image: event.imageUrl,
+      thumbnail: event.thumbnailUrl,
+    );
+    const size = Size(72, 56);
+    if (imageUrl.isEmpty) {
+      return Container(
+        key: Key('customer_hotel_nearby_event_fallback_${event.id}'),
+        width: size.width,
+        height: size.height,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _panelBlack,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
+        ),
+        child: Icon(
+          Icons.event_rounded,
+          color: _gold.withOpacity(0.95),
+          size: 20,
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        imageUrl,
+        key: Key('customer_hotel_nearby_event_photo_${event.id}'),
+        width: size.width,
+        height: size.height,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          key: Key('customer_hotel_nearby_event_fallback_${event.id}'),
+          width: size.width,
+          height: size.height,
+          alignment: Alignment.center,
+          color: _panelBlack,
+          child: Icon(
+            Icons.event_rounded,
+            color: _gold.withOpacity(0.95),
+            size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildNearbyEventCard(BuildContext context, EventDetailData event) {
     final distance = _distanceLabel(event);
     return Material(
       color: Colors.transparent,
       child: InkWell(
+        key: Key('customer_hotel_nearby_event_${event.id}'),
         borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => EventDetailPage(
-                event: event,
-                onBookEvent: onNearbyEventTaxiTap,
-              ),
-            ),
-          );
-        },
+        onTap: () => unawaited(_openNearbyEventDetail(context, event)),
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
@@ -4889,49 +4966,63 @@ class HotelStayDetailPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                event.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _textPrimary,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${event.category} • ${event.dateTimeLabel}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _gold.withOpacity(0.95),
-                  fontSize: 11.4,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '${event.locationName}, ${event.city}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _softText,
-                  fontSize: 11.6,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (distance.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  distance,
-                  style: TextStyle(
-                    color: _softText.withOpacity(0.9),
-                    fontSize: 11.2,
-                    fontWeight: FontWeight.w600,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _nearbyEventPhoto(event),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _textPrimary,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${event.category} • ${event.dateTimeLabel}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.95),
+                            fontSize: 11.4,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${event.locationName}, ${event.city}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _softText,
+                            fontSize: 11.6,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (distance.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            distance,
+                            style: TextStyle(
+                              color: _softText.withOpacity(0.9),
+                              fontSize: 11.2,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
@@ -4985,7 +5076,12 @@ class HotelStayDetailPage extends StatelessWidget {
     final approvedAssetPath = _approvedAssetPath();
     final displayPrice = _displayPriceHint();
     final highlights = _highlights();
+    final nearbyCatalog =
+        _nearbyEventsDataSource.getInitialEvents() ?? kEventSeedData;
+    final stayLat = stay.latitude ?? stay.lat;
+    final stayLng = stay.longitude ?? stay.lng;
     final hasAnyNearbyEvents = _nearbyEventsForRadiusMode(
+      nearbyCatalog,
       _HotelNearbyEventRadiusMode.wider,
     ).isNotEmpty;
     final stayDescription = stay.description.trim();
@@ -5005,369 +5101,360 @@ class HotelStayDetailPage extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
             children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    color: _gold,
+                    tooltip: _t(
+                      nl: 'Terug',
+                      en: 'Back',
+                      fr: 'Retour',
+                      es: 'Volver',
+                    ),
+                  ),
+                ],
+              ),
+              CustomerContainedPhoto(
+                key: const Key('customer_hotel_detail_photo'),
+                imageUrl: imageUrl,
+                assetFallback: approvedAssetPath,
+                backgroundColor: _panelBlack,
+                borderColor: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+                placeholder: Center(
+                  child: Icon(
+                    isDiscoveryCard ? Icons.map_rounded : Icons.hotel_rounded,
+                    color: _gold.withOpacity(0.95),
+                    size: 64,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                decoration: BoxDecoration(
+                  color: _panelBlack,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Row(
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.arrow_back_rounded),
-                          color: _gold,
-                          tooltip: _t(
-                            nl: 'Terug',
-                            en: 'Back',
-                            fr: 'Retour',
-                            es: 'Volver',
+                        Expanded(
+                          child: Text(
+                            stay.name,
+                            style: TextStyle(
+                              color: _textPrimary,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
+                        if (!isDiscoveryCard) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: onToggleSaved,
+                            tooltip: isSaved ? savedLabel : saveLabel,
+                            icon: Icon(
+                              isSaved
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              color: isSaved
+                                  ? _gold
+                                  : _textPrimary.withOpacity(0.92),
+                            ),
+                            style: IconButton.styleFrom(
+                              backgroundColor: _panelBlack,
+                              side: BorderSide(
+                                color: _border.withOpacity(
+                                  _isDarkTheme ? 0.4 : 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                    CustomerContainedPhoto(
-                      key: const Key('customer_hotel_detail_photo'),
-                      imageUrl: imageUrl,
-                      assetFallback: approvedAssetPath,
-                      backgroundColor: _panelBlack,
-                      borderColor: _border.withOpacity(
-                        _isDarkTheme ? 0.35 : 0.95,
-                      ),
-                      placeholder: Center(
-                        child: Icon(
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: <Widget>[
+                        Text(
                           isDiscoveryCard
-                              ? Icons.map_rounded
-                              : Icons.hotel_rounded,
-                          color: _gold.withOpacity(0.95),
-                          size: 64,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                      decoration: BoxDecoration(
-                        color: _panelBlack,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: _border.withOpacity(
-                            _isDarkTheme ? 0.35 : 0.95,
+                              ? _discoveryRegionBadgeLabel
+                              : _typeLabel(stay.type),
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.92),
+                            fontSize: 12.4,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  stay.name,
-                                  style: TextStyle(
-                                    color: _textPrimary,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                              if (!isDiscoveryCard) ...[
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  onPressed: onToggleSaved,
-                                  tooltip: isSaved ? savedLabel : saveLabel,
-                                  icon: Icon(
-                                    isSaved
-                                        ? Icons.favorite_rounded
-                                        : Icons.favorite_border_rounded,
-                                    color: isSaved
-                                        ? _gold
-                                        : _textPrimary.withOpacity(0.92),
-                                  ),
-                                  style: IconButton.styleFrom(
-                                    backgroundColor: _panelBlack,
-                                    side: BorderSide(
-                                      color: _border.withOpacity(
-                                        _isDarkTheme ? 0.4 : 1,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            children: <Widget>[
-                              Text(
-                                isDiscoveryCard
-                                    ? _discoveryRegionBadgeLabel
-                                    : _typeLabel(stay.type),
-                                style: TextStyle(
-                                  color: _gold.withOpacity(0.92),
-                                  fontSize: 12.4,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              if (stay.rating != null)
-                                Text(
-                                  '★ ${stay.rating!.toStringAsFixed(1)}',
-                                  style: TextStyle(
-                                    color: _gold.withOpacity(0.92),
-                                    fontSize: 12.4,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
+                        if (stay.rating != null)
                           Text(
-                            hotelStayLocationLabel(stay, _languageCode),
+                            '★ ${stay.rating!.toStringAsFixed(1)}',
                             style: TextStyle(
                               color: _gold.withOpacity(0.92),
-                              fontSize: 13.2,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 12.4,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (isDiscoveryCard) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              _planRideInRegionLabel,
-                              style: TextStyle(
-                                color: _gold.withOpacity(0.88),
-                                fontSize: 12.4,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                          if (displayPrice.isNotEmpty && !isDiscoveryCard) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              displayPrice,
-                              style: TextStyle(
-                                color: _gold,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                          if (isDiscoveryCard) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              _discoveryRegionCardDescription,
-                              style: TextStyle(
-                                color: _softText,
-                                fontSize: 13.2,
-                                height: 1.3,
-                              ),
-                            ),
-                          ] else if (showStayDescription) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              stayDescription,
-                              style: TextStyle(
-                                color: _softText,
-                                fontSize: 13.2,
-                                height: 1.3,
-                              ),
-                            ),
-                          ],
-                          if (highlights.isNotEmpty) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              _highlightsLabel,
-                              style: TextStyle(
-                                color: _gold.withOpacity(0.9),
-                                fontSize: 12.6,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 7,
-                              runSpacing: 6,
-                              children: highlights
-                                  .map(
-                                    (tag) => Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 9,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: _panelBlack,
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                        border: Border.all(
-                                          color: _border.withOpacity(
-                                            _isDarkTheme ? 0.4 : 1,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        tag,
-                                        style: TextStyle(
-                                          color: _textPrimary.withOpacity(0.82),
-                                          fontSize: 11.2,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      hotelStayLocationLabel(stay, _languageCode),
+                      style: TextStyle(
+                        color: _gold.withOpacity(0.92),
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (isDiscoveryCard) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        _planRideInRegionLabel,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.88),
+                          fontSize: 12.4,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (displayPrice.isNotEmpty && !isDiscoveryCard) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        displayPrice,
+                        style: TextStyle(
+                          color: _gold,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (isDiscoveryCard) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _discoveryRegionCardDescription,
+                        style: TextStyle(
+                          color: _softText,
+                          fontSize: 13.2,
+                          height: 1.3,
+                        ),
+                      ),
+                    ] else if (showStayDescription) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        stayDescription,
+                        style: TextStyle(
+                          color: _softText,
+                          fontSize: 13.2,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                    if (highlights.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _highlightsLabel,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.9),
+                          fontSize: 12.6,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 7,
+                        runSpacing: 6,
+                        children: highlights
+                            .map(
+                              (tag) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 9,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _panelBlack,
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: _border.withOpacity(
+                                      _isDarkTheme ? 0.4 : 1,
                                     ),
-                                  )
-                                  .toList(),
-                            ),
-                          ],
-                          if (showProviderLabel) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              providerLabel,
-                              style: TextStyle(
-                                color: _softText.withOpacity(0.95),
-                                fontSize: 11.7,
-                                fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                child: Text(
+                                  tag,
+                                  style: TextStyle(
+                                    color: _textPrimary.withOpacity(0.82),
+                                    fontSize: 11.2,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
-                        ],
+                            )
+                            .toList(),
+                      ),
+                    ],
+                    if (showProviderLabel) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        providerLabel,
+                        style: TextStyle(
+                          color: _softText.withOpacity(0.95),
+                          fontSize: 11.7,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (isRatehawkStay(stay) || stay.viewStay != null) ...[
+                const SizedBox(height: 12),
+                RatehawkHotelpageSection(
+                  stay: stay,
+                  languageCode: _languageCode,
+                  palette: _themePalette,
+                  client: ratehawkHotelpageClient,
+                  prebookClient: ratehawkPrebookClient,
+                ),
+              ],
+              if (hasAnyNearbyEvents) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                  decoration: BoxDecoration(
+                    color: _panelBlack,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _nearbyEventsLabel,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontSize: 16.2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _HotelNearbyEventsSection(
+                        dataSource: _nearbyEventsDataSource,
+                        initialCatalog: nearbyCatalog,
+                        latitude: stayLat,
+                        longitude: stayLng,
+                        hasCoordinates: _hasValidCoordinates(stayLat, stayLng),
+                        modeLabelBuilder: _radiusModeLabel,
+                        noEventsText: _noNearbyEventsLabel,
+                        eventsForMode: _nearbyEventsForRadiusMode,
+                        buildCard: (event) =>
+                            _buildNearbyEventCard(context, event),
+                        gold: _gold,
+                        softText: _softText,
+                        panelColor: _panelBlack,
+                        textPrimary: _textPrimary,
+                        borderColor: _border,
+                        actionOnGold: _actionOnGold,
+                        isDarkTheme: _isDarkTheme,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              if (canShowTaxiCta) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: onTaxiTap,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _gold,
+                      foregroundColor: _actionOnGold,
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    if (isRatehawkStay(stay) || stay.viewStay != null) ...[
-                      const SizedBox(height: 12),
-                      RatehawkHotelpageSection(
-                        stay: stay,
-                        languageCode: _languageCode,
-                        palette: _themePalette,
-                        client: ratehawkHotelpageClient,
-                        prebookClient: ratehawkPrebookClient,
+                    icon: const Icon(Icons.local_taxi_rounded, size: 17),
+                    label: Text(
+                      _taxiLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: Semantics(
+                  button: true,
+                  label: stay22ExternalActionSemantics(_languageCode),
+                  child: OutlinedButton.icon(
+                    onPressed: onProviderSearchTap,
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _panelBlack,
+                      foregroundColor: _textPrimary.withOpacity(0.94),
+                      side: BorderSide(
+                        color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
                       ),
-                    ],
-                    if (hasAnyNearbyEvents) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                        decoration: BoxDecoration(
-                          color: _panelBlack,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: _border.withOpacity(
-                              _isDarkTheme ? 0.35 : 0.95,
-                            ),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _nearbyEventsLabel,
-                              style: TextStyle(
-                                color: _textPrimary,
-                                fontSize: 16.2,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            _HotelNearbyEventsSection(
-                              modeLabelBuilder: _radiusModeLabel,
-                              noEventsText: _noNearbyEventsLabel,
-                              eventsForMode: _nearbyEventsForRadiusMode,
-                              buildCard: (event) =>
-                                  _buildNearbyEventCard(context, event),
-                              gold: _gold,
-                              softText: _softText,
-                              panelColor: _panelBlack,
-                              textPrimary: _textPrimary,
-                              borderColor: _border,
-                              actionOnGold: _actionOnGold,
-                              isDarkTheme: _isDarkTheme,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    if (canShowTaxiCta) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: onTaxiTap,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _gold,
-                            foregroundColor: _actionOnGold,
-                            minimumSize: const Size.fromHeight(46),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          icon: const Icon(Icons.local_taxi_rounded, size: 17),
-                          label: Text(
-                            _taxiLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    SizedBox(
-                      width: double.infinity,
-                      child: Semantics(
-                        button: true,
-                        label: stay22ExternalActionSemantics(_languageCode),
-                        child: OutlinedButton.icon(
-                          onPressed: onProviderSearchTap,
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: _panelBlack,
-                            foregroundColor: _textPrimary.withOpacity(0.94),
-                            side: BorderSide(
-                              color: _border.withOpacity(
-                                _isDarkTheme ? 0.4 : 1,
-                              ),
-                            ),
-                            minimumSize: const Size.fromHeight(44),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          icon: Icon(
-                            Icons.open_in_new_rounded,
-                            size: 16,
-                            color: _gold.withOpacity(0.92),
-                          ),
-                          label: Text(
-                            externalAvailabilityLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    if (canShowAirportTransferCta) ...[
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: onAirportTransferTap,
-                          style: OutlinedButton.styleFrom(
-                            backgroundColor: _panelBlack,
-                            foregroundColor: _textPrimary.withOpacity(0.94),
-                            side: BorderSide(
-                              color: _border.withOpacity(
-                                _isDarkTheme ? 0.4 : 1,
-                              ),
-                            ),
-                            minimumSize: const Size.fromHeight(44),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          icon: Icon(
-                            Icons.flight_takeoff_rounded,
-                            size: 16,
-                            color: _gold.withOpacity(0.92),
-                          ),
-                          label: Text(
-                            _airportTransferLabel,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
+                    icon: Icon(
+                      Icons.open_in_new_rounded,
+                      size: 16,
+                      color: _gold.withOpacity(0.92),
+                    ),
+                    label: Text(
+                      externalAvailabilityLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ),
+              if (canShowAirportTransferCta) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: onAirportTransferTap,
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _panelBlack,
+                      foregroundColor: _textPrimary.withOpacity(0.94),
+                      side: BorderSide(
+                        color: _border.withOpacity(_isDarkTheme ? 0.4 : 1),
                       ),
-                    ],
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: Icon(
+                      Icons.flight_takeoff_rounded,
+                      size: 16,
+                      color: _gold.withOpacity(0.92),
+                    ),
+                    label: Text(
+                      _airportTransferLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -5378,6 +5465,11 @@ class HotelStayDetailPage extends StatelessWidget {
 
 class _HotelNearbyEventsSection extends StatefulWidget {
   const _HotelNearbyEventsSection({
+    required this.dataSource,
+    required this.initialCatalog,
+    required this.latitude,
+    required this.longitude,
+    required this.hasCoordinates,
     required this.modeLabelBuilder,
     required this.noEventsText,
     required this.eventsForMode,
@@ -5391,9 +5483,17 @@ class _HotelNearbyEventsSection extends StatefulWidget {
     required this.isDarkTheme,
   });
 
+  final EventDataSource dataSource;
+  final List<EventDetailData> initialCatalog;
+  final double latitude;
+  final double longitude;
+  final bool hasCoordinates;
   final String Function(_HotelNearbyEventRadiusMode mode) modeLabelBuilder;
   final String noEventsText;
-  final List<EventDetailData> Function(_HotelNearbyEventRadiusMode mode)
+  final List<EventDetailData> Function(
+    List<EventDetailData> catalog,
+    _HotelNearbyEventRadiusMode mode,
+  )
   eventsForMode;
   final Widget Function(EventDetailData event) buildCard;
   final Color gold;
@@ -5411,10 +5511,55 @@ class _HotelNearbyEventsSection extends StatefulWidget {
 
 class _HotelNearbyEventsSectionState extends State<_HotelNearbyEventsSection> {
   _HotelNearbyEventRadiusMode _selectedMode = _HotelNearbyEventRadiusMode.auto;
+  late List<EventDetailData> _catalog;
+  late bool _loaded;
+  int _refreshGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final remote = widget.dataSource is RemoteEventDataSource;
+    _catalog = remote ? const <EventDetailData>[] : widget.initialCatalog;
+    _loaded = !remote;
+    unawaited(_refresh());
+  }
+
+  EventFeedQuery get _feedQuery {
+    if (!widget.hasCoordinates) {
+      return const EventFeedQuery(dateMode: EventDateMode.all, limit: 50);
+    }
+    return EventFeedQuery(
+      latitude: widget.latitude,
+      longitude: widget.longitude,
+      radiusKm: 80,
+      dateMode: EventDateMode.all,
+      limit: 50,
+    );
+  }
+
+  Future<void> _refresh() async {
+    final generation = ++_refreshGeneration;
+    try {
+      final feed = await widget.dataSource.loadEventFeed(query: _feedQuery);
+      final events = await loadMissingEventPhotos(
+        widget.dataSource,
+        feed.events,
+      );
+      if (!mounted || generation != _refreshGeneration) return;
+      setState(() {
+        _catalog = events;
+        _loaded = true;
+      });
+    } catch (_) {
+      if (!mounted || generation != _refreshGeneration) return;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final events = widget.eventsForMode(_selectedMode);
+    final events = _loaded
+        ? widget.eventsForMode(_catalog, _selectedMode)
+        : const <EventDetailData>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5459,7 +5604,9 @@ class _HotelNearbyEventsSectionState extends State<_HotelNearbyEventsSection> {
           }).toList(),
         ),
         const SizedBox(height: 10),
-        if (events.isEmpty)
+        if (!_loaded)
+          const SizedBox.shrink()
+        else if (events.isEmpty)
           Text(
             widget.noEventsText,
             style: TextStyle(

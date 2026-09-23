@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/discovery/customer_contained_photo.dart';
 import 'package:fluxidi_tracking/events/event_data_source.dart';
 import 'package:fluxidi_tracking/events/event_models.dart';
 import 'package:fluxidi_tracking/events/event_category_results_page.dart';
@@ -11,45 +12,45 @@ import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotels_page.dart';
 
 HotelStay get _stay => const HotelStay(
-      id: 'stay-1',
-      name: 'Leopold Hotel Oudenaarde',
-      type: HotelStayType.hotel,
-      city: 'Oudenaarde',
-      region: 'Oost-Vlaanderen',
-      country: 'Belgium',
-      address: 'Markt 1, Oudenaarde',
-      description: 'Hotel in Oudenaarde.',
-      imageRef: 'places:1',
-      lat: 50.8449,
-      lng: 3.6052,
-      latitude: 50.8449,
-      longitude: 3.6052,
-      source: 'google-places',
-      isRealApproved: true,
-      rating: 4.3,
-    );
+  id: 'stay-1',
+  name: 'Leopold Hotel Oudenaarde',
+  type: HotelStayType.hotel,
+  city: 'Oudenaarde',
+  region: 'Oost-Vlaanderen',
+  country: 'Belgium',
+  address: 'Markt 1, Oudenaarde',
+  description: 'Hotel in Oudenaarde.',
+  imageRef: 'places:1',
+  lat: 50.8449,
+  lng: 3.6052,
+  latitude: 50.8449,
+  longitude: 3.6052,
+  source: 'google-places',
+  isRealApproved: true,
+  rating: 4.3,
+);
 
 HotelStay get _radisson => const HotelStay(
-      id: 'stay-radisson',
-      name: 'Radisson Blu Hotel, Hamburg',
-      type: HotelStayType.hotel,
-      city: 'Hamburg',
-      region: 'Hamburg',
-      country: 'Germany',
-      address: 'Congressplatz 2, Hamburg',
-      description: 'Live place discovery - Radisson Blu Hotel, Hamburg',
-      imageRef: '',
-      lat: 53.562,
-      lng: 9.986,
-      latitude: 53.562,
-      longitude: 9.986,
-      imageUrl: 'https://places.example/photo?maxwidth=400&maxheight=240',
-      providerType: HotelStayProviderType.googlePlaces,
-      providerLabel: 'Real place discovery',
-      source: 'google-places',
-      isRealApproved: true,
-      rating: 4.4,
-    );
+  id: 'stay-radisson',
+  name: 'Radisson Blu Hotel, Hamburg',
+  type: HotelStayType.hotel,
+  city: 'Hamburg',
+  region: 'Hamburg',
+  country: 'Germany',
+  address: 'Congressplatz 2, Hamburg',
+  description: 'Live place discovery - Radisson Blu Hotel, Hamburg',
+  imageRef: '',
+  lat: 53.562,
+  lng: 9.986,
+  latitude: 53.562,
+  longitude: 9.986,
+  imageUrl: 'https://places.example/photo?maxwidth=400&maxheight=240',
+  providerType: HotelStayProviderType.googlePlaces,
+  providerLabel: 'Real place discovery',
+  source: 'google-places',
+  isRealApproved: true,
+  rating: 4.4,
+);
 
 class _StaticEvents implements EventDataSource {
   const _StaticEvents(this.events);
@@ -75,21 +76,21 @@ class _StaticEvents implements EventDataSource {
 }
 
 EventDetailData get _event => const EventDetailData(
-      id: 'event-1',
-      title: 'Zomerconcert op de Markt',
-      category: 'Muziek',
-      dateTimeLabel: 'za 21 jun · 20:00',
-      locationName: 'Stadsschouwburg',
-      city: 'Oudenaarde',
-      address: 'Markt 1, Oudenaarde',
-      lat: 50.8449,
-      lng: 3.6052,
-      distanceOrStatus: '',
-      gradient: <Color>[Color(0xFF1A1A1A), Color(0xFF333333)],
-      sourceUrl: 'https://example.test/tickets',
-      marketCode: 'be',
-      countryCode: 'BE',
-    );
+  id: 'event-1',
+  title: 'Zomerconcert op de Markt',
+  category: 'Muziek',
+  dateTimeLabel: 'za 21 jun · 20:00',
+  locationName: 'Stadsschouwburg',
+  city: 'Oudenaarde',
+  address: 'Markt 1, Oudenaarde',
+  lat: 50.8449,
+  lng: 3.6052,
+  distanceOrStatus: '',
+  gradient: <Color>[Color(0xFF1A1A1A), Color(0xFF333333)],
+  sourceUrl: 'https://example.test/tickets',
+  marketCode: 'be',
+  countryCode: 'BE',
+);
 
 void main() {
   setUp(() {
@@ -119,7 +120,10 @@ void main() {
 
     expect(find.text('Hotels & B&B'), findsOneWidget);
     expect(find.byKey(const Key('customer_hotels_filters')), findsOneWidget);
-    expect(find.byKey(const Key('customer_hotels_stay_search')), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer_hotels_stay_search')),
+      findsOneWidget,
+    );
     expect(find.text('Leopold Hotel Oudenaarde'), findsOneWidget);
     expect(find.text('Real place discovery'), findsNothing);
     expect(find.textContaining('Taxi naar dit verblijf'), findsNothing);
@@ -163,7 +167,10 @@ void main() {
     await tester.tap(find.byKey(const Key('customer_events_hotels_event-1')));
     await tester.pump();
     expect(hotels, 1);
-    expect(find.byKey(const Key('customer_events_tickets_event-1')), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer_events_tickets_event-1')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('hotel detail shows the full photo and drops discovery copy', (
@@ -182,10 +189,15 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('customer_hotels_stay_name_stay-radisson')));
+    await tester.tap(
+      find.byKey(const Key('customer_hotels_stay_name_stay-radisson')),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('customer_hotel_detail_photo')), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer_hotel_detail_photo')),
+      findsOneWidget,
+    );
     expect(find.text('Radisson Blu Hotel, Hamburg'), findsWidgets);
     expect(find.text('Taxi naar dit verblijf'), findsOneWidget);
     expect(find.text('Bekijk beschikbaarheid'), findsOneWidget);
@@ -196,37 +208,74 @@ void main() {
     expect(find.textContaining('Stay22-partners'), findsNothing);
   });
 
-  testWidgets('event detail shows the full photo and drops mobility copy', (
+  testWidgets(
+    'event detail stays compact without a photo and drops mobility copy',
+    (tester) async {
+      addTearDown(tester.view.reset);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EventCategoryResultsPage(
+            title: 'Evenementen',
+            dataSource: _StaticEvents(<EventDetailData>[_event]),
+            marketKey: 'be',
+            dateMode: EventDateMode.all,
+            sortMode: 'default',
+            compactCustomerLayout: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('customer_events_card_event-1')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('customer_event_detail_photo_fallback')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getSize(
+              find.byKey(const Key('customer_event_detail_photo_fallback')),
+            )
+            .height,
+        lessThan(80),
+      );
+      expect(
+        find.byKey(const Key('customer_event_detail_photo')),
+        findsNothing,
+      );
+      expect(find.text('Zomerconcert op de Markt'), findsWidgets);
+      expect(find.textContaining('Stadsschouwburg'), findsWidgets);
+      expect(find.text('Taxi naar dit event boeken'), findsOneWidget);
+      expect(find.text('Tickets bekijken'), findsOneWidget);
+      expect(find.text('Mobiliteitsadvies'), findsNothing);
+      expect(find.text('Verwachte mobiliteitsvraag'), findsNothing);
+      expect(find.textContaining('uitgelichte inspiratie'), findsNothing);
+      expect(find.textContaining('extern getoond'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'event and hotel routes share the photo for the same event id on a phone',
+    (tester) async {
+      await _expectSharedEventPhoto(tester, const Size(390, 844));
+    },
+  );
+
+  testWidgets(
+    'event and hotel routes share the photo for the same event id on a tablet',
+    (tester) async {
+      await _expectSharedEventPhoto(tester, const Size(800, 1280));
+    },
+  );
+
+  testWidgets('nearby events stay compact when the full record has no photo', (
     tester,
   ) async {
-    addTearDown(tester.view.reset);
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1.0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EventCategoryResultsPage(
-          title: 'Evenementen',
-          dataSource: _StaticEvents(<EventDetailData>[_event]),
-          marketKey: 'be',
-          dateMode: EventDateMode.all,
-          sortMode: 'default',
-          compactCustomerLayout: true,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('customer_events_card_event-1')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('customer_event_detail_photo')), findsOneWidget);
-    expect(find.text('Zomerconcert op de Markt'), findsWidgets);
-    expect(find.textContaining('Stadsschouwburg'), findsWidgets);
-    expect(find.text('Taxi naar dit event boeken'), findsOneWidget);
-    expect(find.text('Tickets bekijken'), findsOneWidget);
-    expect(find.text('Mobiliteitsadvies'), findsNothing);
-    expect(find.text('Verwachte mobiliteitsvraag'), findsNothing);
-    expect(find.textContaining('uitgelichte inspiratie'), findsNothing);
-    expect(find.textContaining('extern getoond'), findsNothing);
+    await _expectMissingEventPhoto(tester, const Size(390, 844));
+    await _expectMissingEventPhoto(tester, const Size(800, 1280));
   });
 
   testWidgets('event detail hotels follow the selected event', (tester) async {
@@ -261,11 +310,12 @@ void main() {
     expect(opened?.locationName, 'Stadsschouwburg');
   });
 
-  testWidgets('event hotels on a phone use the venue, not its name as a filter', (
-    tester,
-  ) async {
-    await _expectEventHotels(tester, const Size(390, 844));
-  });
+  testWidgets(
+    'event hotels on a phone use the venue, not its name as a filter',
+    (tester) async {
+      await _expectEventHotels(tester, const Size(390, 844));
+    },
+  );
 
   testWidgets('event hotels on a tablet refresh when the event changes', (
     tester,
@@ -273,122 +323,129 @@ void main() {
     await _expectEventHotels(tester, const Size(800, 1280));
   });
 
-  testWidgets(
-    'event hotels use the places search centred on the venue',
-    (tester) async {
-      addTearDown(tester.view.reset);
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      final source = _VenuePlacesSource();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: HotelsPage(
-            compactCustomerLayout: true,
-            hotelDataSource: source,
-            ratehawkSearchSubmitEnabled: false,
-          ),
+  testWidgets('event hotels use the places search centred on the venue', (
+    tester,
+  ) async {
+    addTearDown(tester.view.reset);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    final source = _VenuePlacesSource();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HotelsPage(
+          compactCustomerLayout: true,
+          hotelDataSource: source,
+          ratehawkSearchSubmitEnabled: false,
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('MEININGER Hotel Bruxelles City Center'), findsOneWidget);
-      expect(source.queries, hasLength(1));
-      expect(source.queries.single.source, 'google-places');
-      expect(source.queries.single.lat, isNull);
-      expect(source.queries.single.lng, isNull);
-      expect(source.queries.single.radiusKm, isNull);
-      expect(source.queries.single.destination, isNull);
-      expect(source.queries.single.searchText, isNull);
+    expect(find.text('MEININGER Hotel Bruxelles City Center'), findsOneWidget);
+    expect(source.queries, hasLength(1));
+    expect(source.queries.single.source, 'google-places');
+    expect(source.queries.single.lat, isNull);
+    expect(source.queries.single.lng, isNull);
+    expect(source.queries.single.radiusKm, isNull);
+    expect(source.queries.single.destination, isNull);
+    expect(source.queries.single.searchText, isNull);
 
-      final spirit = _locatedEvent(
-        id: 'spirit-66',
-        locationName: 'Spirit of 66',
-        city: 'Verviers',
-        address: 'Place du Martyr, 16',
-        lat: 50.59353,
-        lng: 5.86109,
-        startAtUtc: _concertUtc(),
-      );
-      final spiritSearch = EventStaySearch.fromEvent(spirit);
-      final hostKey = GlobalKey<_SearchingEventHostState>();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: _SearchingEventHost(
-            key: hostKey,
-            event: spirit,
-            source: source,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+    final spirit = _locatedEvent(
+      id: 'spirit-66',
+      locationName: 'Spirit of 66',
+      city: 'Verviers',
+      address: 'Place du Martyr, 16',
+      lat: 50.59353,
+      lng: 5.86109,
+      startAtUtc: _concertUtc(),
+    );
+    final spiritSearch = EventStaySearch.fromEvent(spirit);
+    final hostKey = GlobalKey<_SearchingEventHostState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _SearchingEventHost(key: hostKey, event: spirit, source: source),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(source.queries, hasLength(2));
-      final spiritQuery = source.queries.last;
-      expect(spiritQuery.source, 'google-places');
-      expect(spiritQuery.lat, closeTo(50.59353, 0.000001));
-      expect(spiritQuery.lng, closeTo(5.86109, 0.000001));
-      expect(spiritQuery.radiusKm, kEventStayNearbyRadiusKm);
-      expect(spiritQuery.destination, isNull);
-      expect(spiritQuery.searchText, isNull);
-      expect(spiritQuery.city, isNull);
-      expect(find.text('Hotels nabij Spirit of 66'), findsOneWidget);
-      expect(find.textContaining(spiritSearch.checkinYmd!), findsWidgets);
-      expect(find.byKey(const Key('customer_hotels_stay_search')), findsNothing);
-      expect(find.byKey(const Key('stay22_live_search_cta')), findsNothing);
-      expect(find.byKey(const Key('customer_event_stay_provider_note')), findsOneWidget);
-      await _bringIntoView(tester, find.text('Van der Valk Hotel Verviers'));
-      expect(find.text('Hotel des Ardennes'), findsOneWidget);
-      expect(find.text('MEININGER Hotel Bruxelles City Center'), findsNothing);
-      expect(find.textContaining('Geen uitgelichte inspiratie'), findsNothing);
-      expect(find.byKey(const Key('customer_hotels_stay_photo_vdv')), findsNothing);
-      expect(find.byKey(const Key('customer_event_stay_distance_vdv')), findsOneWidget);
-      expect(find.textContaining('van de evenementlocatie'), findsWidgets);
-      expect(
-        tester.getTopLeft(find.text('Van der Valk Hotel Verviers')).dy,
-        lessThan(tester.getTopLeft(find.text('Hotel des Ardennes')).dy),
-      );
-      await _bringIntoView(
-        tester,
-        find.byKey(const Key('customer_hotels_view_stay_vdv')),
-      );
+    expect(source.queries, hasLength(2));
+    final spiritQuery = source.queries.last;
+    expect(spiritQuery.source, 'google-places');
+    expect(spiritQuery.lat, closeTo(50.59353, 0.000001));
+    expect(spiritQuery.lng, closeTo(5.86109, 0.000001));
+    expect(spiritQuery.radiusKm, kEventStayNearbyRadiusKm);
+    expect(spiritQuery.destination, isNull);
+    expect(spiritQuery.searchText, isNull);
+    expect(spiritQuery.city, isNull);
+    expect(find.text('Hotels nabij Spirit of 66'), findsOneWidget);
+    expect(find.textContaining(spiritSearch.checkinYmd!), findsWidgets);
+    expect(find.byKey(const Key('customer_hotels_stay_search')), findsNothing);
+    expect(find.byKey(const Key('stay22_live_search_cta')), findsNothing);
+    expect(
+      find.byKey(const Key('customer_event_stay_provider_note')),
+      findsOneWidget,
+    );
+    await _bringIntoView(tester, find.text('Van der Valk Hotel Verviers'));
+    expect(find.text('Hotel des Ardennes'), findsOneWidget);
+    expect(find.text('MEININGER Hotel Bruxelles City Center'), findsNothing);
+    expect(find.textContaining('Geen uitgelichte inspiratie'), findsNothing);
+    expect(
+      find.byKey(const Key('customer_hotels_stay_photo_vdv')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('customer_event_stay_distance_vdv')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('van de evenementlocatie'), findsWidgets);
+    expect(
+      tester.getTopLeft(find.text('Van der Valk Hotel Verviers')).dy,
+      lessThan(tester.getTopLeft(find.text('Hotel des Ardennes')).dy),
+    );
+    await _bringIntoView(
+      tester,
+      find.byKey(const Key('customer_hotels_view_stay_vdv')),
+    );
 
-      final brussels = _locatedEvent(
-        id: 'ancienne-belgique',
-        locationName: 'Ancienne Belgique',
-        city: 'Brussels',
-        address: 'Boulevard Anspach 110',
-        lat: 50.847232,
-        lng: 4.348831,
-        startAtUtc: _concertUtc().add(const Duration(days: 51)),
-      );
-      final brusselsSearch = EventStaySearch.fromEvent(brussels);
-      hostKey.currentState!.show(brussels);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pumpAndSettle();
+    final brussels = _locatedEvent(
+      id: 'ancienne-belgique',
+      locationName: 'Ancienne Belgique',
+      city: 'Brussels',
+      address: 'Boulevard Anspach 110',
+      lat: 50.847232,
+      lng: 4.348831,
+      startAtUtc: _concertUtc().add(const Duration(days: 51)),
+    );
+    final brusselsSearch = EventStaySearch.fromEvent(brussels);
+    hostKey.currentState!.show(brussels);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
 
-      expect(source.queries, hasLength(3));
-      final brusselsQuery = source.queries.last;
-      expect(brusselsQuery.source, 'google-places');
-      expect(brusselsQuery.lat, closeTo(50.847232, 0.000001));
-      expect(brusselsQuery.lng, closeTo(4.348831, 0.000001));
-      expect(brusselsQuery.radiusKm, kEventStayNearbyRadiusKm);
-      expect(brusselsQuery.destination, isNull);
-      expect(brusselsQuery.searchText, isNull);
-      await _returnToListStart(tester);
-      expect(find.text('Hotels nabij Ancienne Belgique'), findsOneWidget);
-      expect(find.textContaining(brusselsSearch.checkinYmd!), findsWidgets);
-      await _bringIntoView(tester, find.text('La Bourse Hotel'));
-      expect(find.text('Aparthotel Adagio Brussels Grand Place'), findsOneWidget);
-      expect(find.text('Van der Valk Hotel Verviers'), findsNothing);
-      expect(find.byKey(const Key('customer_event_stay_distance_bourse')), findsOneWidget);
-      expect(find.textContaining('van de evenementlocatie'), findsWidgets);
-      await _bringIntoView(
-        tester,
-        find.byKey(const Key('customer_hotels_view_stay_bourse')),
-      );
-    },
-  );
+    expect(source.queries, hasLength(3));
+    final brusselsQuery = source.queries.last;
+    expect(brusselsQuery.source, 'google-places');
+    expect(brusselsQuery.lat, closeTo(50.847232, 0.000001));
+    expect(brusselsQuery.lng, closeTo(4.348831, 0.000001));
+    expect(brusselsQuery.radiusKm, kEventStayNearbyRadiusKm);
+    expect(brusselsQuery.destination, isNull);
+    expect(brusselsQuery.searchText, isNull);
+    await _returnToListStart(tester);
+    expect(find.text('Hotels nabij Ancienne Belgique'), findsOneWidget);
+    expect(find.textContaining(brusselsSearch.checkinYmd!), findsWidgets);
+    await _bringIntoView(tester, find.text('La Bourse Hotel'));
+    expect(find.text('Aparthotel Adagio Brussels Grand Place'), findsOneWidget);
+    expect(find.text('Van der Valk Hotel Verviers'), findsNothing);
+    expect(
+      find.byKey(const Key('customer_event_stay_distance_bourse')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('van de evenementlocatie'), findsWidgets);
+    await _bringIntoView(
+      tester,
+      find.byKey(const Key('customer_hotels_view_stay_bourse')),
+    );
+  });
 
   testWidgets('an empty inspiration list is not shown as no hotels', (
     tester,
@@ -420,7 +477,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Hotels nabij Spirit of 66'), findsOneWidget);
-    expect(find.byKey(const Key('customer_event_stay_provider_note')), findsOneWidget);
+    expect(
+      find.byKey(const Key('customer_event_stay_provider_note')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('customer_hotels_filters')), findsOneWidget);
     expect(find.byKey(const Key('customer_hotels_stay_search')), findsNothing);
     expect(find.byKey(const Key('stay22_live_search_cta')), findsNothing);
@@ -660,6 +720,251 @@ class _EventHotelsHostState extends State<_EventHotelsHost> {
   }
 }
 
+const String _sharedEventPhotoUrl = 'https://images.example/leuven-market.jpg';
+
+EventDetailData _sharedEvent({required bool withPhoto}) {
+  return EventDetailData(
+    id: 'evt_leuven_food_market_2026',
+    title: 'Leuven Food & Culture Market',
+    category: 'Vandaag',
+    dateTimeLabel: 'Vandaag • 17:00',
+    locationName: 'Grote Markt Leuven',
+    city: 'Leuven',
+    address: 'Grote Markt 1, 3000 Leuven, België',
+    lat: 50.848,
+    lng: 4.349,
+    distanceOrStatus: '',
+    gradient: const <Color>[Color(0xFF2E220B), Color(0xFF141108)],
+    imageUrl: withPhoto ? _sharedEventPhotoUrl : null,
+    heroImageUrl: withPhoto ? _sharedEventPhotoUrl : null,
+    thumbnailUrl: withPhoto ? _sharedEventPhotoUrl : null,
+    sourceUrl: 'https://example.test/tickets',
+    countryCode: 'BE',
+  );
+}
+
+HotelStay get _brusselsStay => const HotelStay(
+  id: 'stay-brussels',
+  name: 'MEININGER Hotel Bruxelles City Center',
+  type: HotelStayType.hotel,
+  city: 'Brussel',
+  region: 'Brussels',
+  country: 'Belgium',
+  address: 'Quai du Hainaut 33, 1080 Brussel',
+  description: 'Hotel in Brussel.',
+  imageRef: '',
+  lat: 50.848,
+  lng: 4.349,
+  latitude: 50.848,
+  longitude: 4.349,
+  source: 'google-places',
+  isRealApproved: true,
+  rating: 4.3,
+);
+
+class _IdLookupEvents implements EventDataSource {
+  const _IdLookupEvents({required this.limited, required this.full});
+
+  final EventDetailData limited;
+  final EventDetailData full;
+
+  @override
+  List<EventDetailData> getInitialEvents() => <EventDetailData>[limited];
+
+  @override
+  Future<List<EventDetailData>> loadEvents() async => <EventDetailData>[
+    limited,
+  ];
+
+  @override
+  Future<EventFeedResult> loadEventFeed({
+    EventFeedQuery query = const EventFeedQuery(),
+  }) async {
+    final lookup = (query.searchQuery ?? '').trim() == limited.id;
+    return EventFeedResult(
+      events: <EventDetailData>[lookup ? full : limited],
+      source: 'test',
+    );
+  }
+}
+
+Future<void> _expectSharedEventPhoto(WidgetTester tester, Size size) async {
+  addTearDown(tester.view.reset);
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  final limited = _sharedEvent(withPhoto: false);
+  final full = _sharedEvent(withPhoto: true);
+  final source = _IdLookupEvents(limited: limited, full: full);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      key: UniqueKey(),
+      home: EventCategoryResultsPage(
+        title: 'Evenementen',
+        dataSource: source,
+        marketKey: 'be',
+        dateMode: EventDateMode.all,
+        sortMode: 'default',
+        compactCustomerLayout: true,
+        onBookEvent: (_) {},
+        onOpenHotels: (_) {},
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+
+  expect(
+    _networkUrl(
+      find.byKey(
+        const Key('customer_events_photo_evt_leuven_food_market_2026'),
+      ),
+      tester,
+    ),
+    _sharedEventPhotoUrl,
+  );
+  await tester.tap(
+    find.byKey(const Key('customer_events_title_evt_leuven_food_market_2026')),
+  );
+  await tester.pumpAndSettle();
+  expect(
+    tester
+        .widget<CustomerContainedPhoto>(
+          find.byKey(const Key('customer_event_detail_photo')),
+        )
+        .imageUrl,
+    _sharedEventPhotoUrl,
+  );
+  expect(find.text('Taxi naar dit event boeken'), findsOneWidget);
+  expect(find.text('Verblijven rond dit event'), findsOneWidget);
+  expect(find.text('Tickets bekijken'), findsOneWidget);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      key: UniqueKey(),
+      home: HotelsPage(
+        compactCustomerLayout: true,
+        stays: <HotelStay>[_brusselsStay],
+        nearbyEventsSource: source,
+        ratehawkSearchSubmitEnabled: false,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(
+    find.byKey(const Key('customer_hotels_stay_name_stay-brussels')),
+  );
+  await tester.pumpAndSettle();
+  await _bringIntoView(
+    tester,
+    find.byKey(
+      const Key(
+        'customer_hotel_nearby_event_photo_evt_leuven_food_market_2026',
+      ),
+    ),
+  );
+  expect(
+    _networkUrl(
+      find.byKey(
+        const Key(
+          'customer_hotel_nearby_event_photo_evt_leuven_food_market_2026',
+        ),
+      ),
+      tester,
+    ),
+    _sharedEventPhotoUrl,
+  );
+  expect(find.text('Taxi naar dit event'), findsWidgets);
+  await tester.tap(find.text('Leuven Food & Culture Market'));
+  await tester.pumpAndSettle();
+  expect(
+    tester
+        .widget<CustomerContainedPhoto>(
+          find.byKey(const Key('customer_event_detail_photo')),
+        )
+        .imageUrl,
+    _sharedEventPhotoUrl,
+  );
+  expect(find.text('Taxi naar dit event boeken'), findsOneWidget);
+  expect(find.text('Verblijven rond dit event'), findsOneWidget);
+  expect(find.text('Tickets bekijken'), findsOneWidget);
+  expect(find.text('Details opslaan'), findsOneWidget);
+  _drainImageErrors(tester);
+}
+
+Future<void> _expectMissingEventPhoto(WidgetTester tester, Size size) async {
+  addTearDown(tester.view.reset);
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  final limited = _sharedEvent(withPhoto: false);
+  final source = _IdLookupEvents(limited: limited, full: limited);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      key: UniqueKey(),
+      home: HotelsPage(
+        compactCustomerLayout: true,
+        stays: <HotelStay>[_brusselsStay],
+        nearbyEventsSource: source,
+        ratehawkSearchSubmitEnabled: false,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(
+    find.byKey(const Key('customer_hotels_stay_name_stay-brussels')),
+  );
+  await tester.pumpAndSettle();
+  await _bringIntoView(
+    tester,
+    find.byKey(
+      const Key(
+        'customer_hotel_nearby_event_fallback_evt_leuven_food_market_2026',
+      ),
+    ),
+  );
+  expect(
+    tester
+        .getSize(
+          find.byKey(
+            const Key(
+              'customer_hotel_nearby_event_fallback_evt_leuven_food_market_2026',
+            ),
+          ),
+        )
+        .height,
+    lessThan(80),
+  );
+  expect(find.text('Taxi naar dit event'), findsWidgets);
+  await tester.tap(find.text('Leuven Food & Culture Market'));
+  await tester.pumpAndSettle();
+  final fallback = find.byKey(
+    const Key('customer_event_detail_photo_fallback'),
+  );
+  expect(fallback, findsOneWidget);
+  expect(tester.getSize(fallback).height, lessThan(80));
+  expect(find.byKey(const Key('customer_event_detail_photo')), findsNothing);
+  expect(find.text('Taxi naar dit event boeken'), findsOneWidget);
+  expect(find.text('Verblijven rond dit event'), findsOneWidget);
+  expect(find.text('Tickets bekijken'), findsOneWidget);
+  _drainImageErrors(tester);
+}
+
+void _drainImageErrors(WidgetTester tester) {
+  while (true) {
+    final exception = tester.takeException();
+    if (exception == null) return;
+    if (exception is NetworkImageLoadException) continue;
+    fail('Unexpected exception: $exception');
+  }
+}
+
+String _networkUrl(Finder finder, WidgetTester tester) {
+  final image = tester.widget<Image>(finder);
+  final provider = image.image;
+  expect(provider, isA<NetworkImage>());
+  return (provider as NetworkImage).url;
+}
+
 Future<void> _bringIntoView(WidgetTester tester, Finder target) async {
   final list = find.byType(ListView).first;
   Future<void> drag(Offset offset) async {
@@ -734,7 +1039,10 @@ Future<void> _expectEventHotels(WidgetTester tester, Size size) async {
   expect(find.byKey(const Key('customer_hotels_filters')), findsOneWidget);
   expect(find.byKey(const Key('customer_hotels_stay_search')), findsNothing);
   expect(find.byKey(const Key('stay22_live_search_cta')), findsNothing);
-  expect(find.byKey(const Key('customer_event_stay_provider_note')), findsOneWidget);
+  expect(
+    find.byKey(const Key('customer_event_stay_provider_note')),
+    findsOneWidget,
+  );
   expect(find.textContaining(spiritSearch.checkinYmd!), findsWidgets);
   expect(find.textContaining(spiritSearch.checkoutYmd!), findsWidgets);
 
@@ -762,7 +1070,10 @@ Future<void> _expectEventHotels(WidgetTester tester, Size size) async {
   expect(opened.single.queryParameters['lng'], '5.870000');
   expect(opened.single.queryParameters['checkin'], spiritSearch.checkinYmd);
   expect(opened.single.queryParameters['checkout'], spiritSearch.checkoutYmd);
-  expect(opened.single.queryParameters['address'], contains('Hotel des Ardennes'));
+  expect(
+    opened.single.queryParameters['address'],
+    contains('Hotel des Ardennes'),
+  );
   expect(
     opened.single.queryParameters['address'],
     isNot(contains('Spirit of 66')),
@@ -803,6 +1114,12 @@ Future<void> _expectEventHotels(WidgetTester tester, Size size) async {
   expect(opened.last.queryParameters['lng'], '4.348831');
   expect(opened.last.queryParameters['checkin'], brusselsSearch.checkinYmd);
   expect(opened.last.queryParameters['address'], contains('Hotel Brussel'));
-  expect(opened.last.queryParameters['address'], isNot(contains('Place du Martyr')));
-  expect(opened.last.queryParameters['address'], isNot(contains('Hotel des Ardennes')));
+  expect(
+    opened.last.queryParameters['address'],
+    isNot(contains('Place du Martyr')),
+  );
+  expect(
+    opened.last.queryParameters['address'],
+    isNot(contains('Hotel des Ardennes')),
+  );
 }

@@ -97,7 +97,8 @@ Uri _upgradeGoogleUserContentSize(Uri uri) {
     caseSensitive: false,
   ).firstMatch(path);
   if (match == null) return uri;
-  final upgraded = '${path.substring(0, match.start)}=s$kCustomerDetailPhotoTargetPx';
+  final upgraded =
+      '${path.substring(0, match.start)}=s$kCustomerDetailPhotoTargetPx';
   return uri.replace(path: upgraded);
 }
 
@@ -110,6 +111,7 @@ class CustomerContainedPhoto extends StatefulWidget {
     this.assetFallback = '',
     this.borderRadius = 18,
     this.maxHeight,
+    this.compactWithoutImage = false,
     super.key,
   });
 
@@ -120,6 +122,9 @@ class CustomerContainedPhoto extends StatefulWidget {
   final Widget placeholder;
   final double borderRadius;
   final double? maxHeight;
+
+  /// Uses a short bar when there is no image or the image fails to load.
+  final bool compactWithoutImage;
 
   @override
   State<CustomerContainedPhoto> createState() => _CustomerContainedPhotoState();
@@ -215,12 +220,16 @@ class _CustomerContainedPhotoState extends State<CustomerContainedPhoto> {
         final maxHeight =
             widget.maxHeight ?? (screen.height * 0.85).clamp(240.0, 900.0);
         final hasImage = _provider != null && _error == null;
-        var height = 168.0;
-        if (hasImage && _imageSize != null && _imageSize!.height > 0) {
+        final compact = widget.compactWithoutImage && !hasImage;
+        var height = compact ? 56.0 : 168.0;
+        if (!compact &&
+            hasImage &&
+            _imageSize != null &&
+            _imageSize!.height > 0) {
           final aspect = _imageSize!.width / _imageSize!.height;
           height = maxWidth / aspect;
           if (height > maxHeight) height = maxHeight;
-        } else if (hasImage) {
+        } else if (!compact && hasImage) {
           height = (maxWidth * 9 / 16).clamp(160.0, maxHeight);
         }
 
