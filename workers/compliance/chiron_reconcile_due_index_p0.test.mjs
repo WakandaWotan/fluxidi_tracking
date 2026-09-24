@@ -269,10 +269,14 @@ test("1. no-due pass: 0 value reads, 1 due list, 0 writes, 0 provider", async ()
   const h = createCountingEnv();
   await seedConnection(h, TENANT_A, COMPANY_A);
   await finishMigration(h, TENANT_A, COMPANY_A);
+  await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS,
+  });
   h.resetCounts();
   const summary = await _chironCronReconcileAllScopesBestEffort(h.env, {
     source: "cron",
-    nowMs: NOW_MS,
+    nowMs: NOW_MS + 60_000,
   });
   assert.equal(summary.ok, true);
   assert.equal(summary.due_selected, 0);

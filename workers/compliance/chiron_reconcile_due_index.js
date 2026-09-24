@@ -27,6 +27,11 @@ export const CHIRON_RECONCILE_DUE_LEGACY_EVENT_PREFIX = "compliance_event_v1/";
 export const CHIRON_RECONCILE_WAKEUP_PREFIX = "chiron_reconcile_wakeup:v1:";
 export const CHIRON_WAITING_RECHECK_MS = 5 * 60 * 1000;
 export const CHIRON_BLOCKED_RECHECK_MS = 5 * 60 * 1000;
+// Retryable/queued leftovers were re-selected every */5 tick (due-at-0).
+// Park them past one cron interval so an idle worker stops value-reading
+// the same 20 events forever. Append-time auto-submit is unchanged.
+export const CHIRON_RETRYABLE_RECHECK_MS = 30 * 60 * 1000;
+export const CHIRON_DUE_RECOVER_CAUGHT_UP_SLACK_MS = 60 * 1000;
 // Bounded unmarked-event recovery. Never a full five-minute history scan.
 // Progress is a durable per-scope watermark (oldest-first, 20 keys/tick) so
 // newer keys and a sliding clock cannot hide an unexamined event.
@@ -207,6 +212,8 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
   const definitiveMaxAttempts = Number(options.definitiveMaxAttempts) || 6;
   const waitingRecheckMs = Number(options.waitingRecheckMs) || CHIRON_WAITING_RECHECK_MS;
   const blockedRecheckMs = Number(options.blockedRecheckMs) || CHIRON_BLOCKED_RECHECK_MS;
+  const retryableRecheckMs =
+    Number(options.retryableRecheckMs) || CHIRON_RETRYABLE_RECHECK_MS;
   const departureConfirmedExternal =
     safeText(options.departureConfirmedExternal, 64) || "departure_confirmed_external";
 
@@ -239,7 +246,13 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
     const base = last !== null ? last : now;
     return base + waitingRecheckMs;
   }
-  if (state === "retryable_failed" || state === "queued") return 0;
+  if (state === "retryable_failed" || state === "queued") {
+    const last = parseIsoMs(statusDoc.last_attempt_at);
+    if (last !== null && now - last < retryableRecheckMs) {
+      return last + retryableRecheckMs;
+    }
+    return 0;
+  }
   if (state === "failed") {
     if (statusDoc.failure_kind === "definitive") {
       const last = parseIsoMs(statusDoc.last_attempt_at);
@@ -471,6 +484,58 @@ export function chironDueRecoverStateEqual(a, b) {
     a.prefix === b.prefix &&
     a.cursor === b.cursor
   );
+}
+
+export function chironDueRecoverWatermarkCaughtUp(state, nowMs, slackMs = CHIRON_DUE_RECOVER_CAUGHT_UP_SLACK_MS) {
+  const now = Number(nowMs);
+  const from = Number(state?.from_ms);
+  const slack = Math.max(0, Math.floor(Number(slackMs) || 0));
+  if (!Number.isFinite(now) || !Number.isFinite(from)) return false;
+  if (state?.prefix || state?.cursor) return false;
+  return from >= now - slack;
+}
+
+/** Same-invocation COMPLIANCE_KV.get cache. Invalidated on put/delete. */
+export function memoizeComplianceKvReads(ns) {
+  if (!ns || typeof ns.get !== "function") return ns;
+  const cache = new Map();
+  const cacheKeyFor = (key, opts) => {
+    const type =
+      opts && typeof opts === "object"
+        ? String(opts.type || "")
+        : String(opts || "");
+    return `${type}::${key}`;
+  };
+  const invalidate = (key) => {
+    const suffix = `::${key}`;
+    for (const cached of [...cache.keys()]) {
+      if (cached.endsWith(suffix)) cache.delete(cached);
+    }
+  };
+  return {
+    get: async (key, opts) => {
+      const cacheKey = cacheKeyFor(key, opts);
+      if (cache.has(cacheKey)) return cache.get(cacheKey);
+      const value = await ns.get(key, opts);
+      cache.set(cacheKey, value);
+      return value;
+    },
+    getWithMetadata: async (...args) => {
+      if (typeof ns.getWithMetadata !== "function") {
+        return { value: null, metadata: null };
+      }
+      return ns.getWithMetadata(...args);
+    },
+    list: (...args) => ns.list(...args),
+    put: async (key, value, opts) => {
+      invalidate(key);
+      return ns.put(key, value, opts);
+    },
+    delete: async (key) => {
+      invalidate(key);
+      return ns.delete(key);
+    },
+  };
 }
 
 export async function buildChironWakeupKey(eventKey) {

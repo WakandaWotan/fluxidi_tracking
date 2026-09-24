@@ -6,6 +6,9 @@ import {
   CHIRON_RECONCILE_WAKEUP_PREFIX,
   CHIRON_WAITING_RECHECK_MS,
   CHIRON_BLOCKED_RECHECK_MS,
+  CHIRON_RETRYABLE_RECHECK_MS,
+  chironDueRecoverWatermarkCaughtUp,
+  memoizeComplianceKvReads,
   CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS,
   CHIRON_DUE_RECOVER_BATCH,
   CHIRON_DUE_RECOVER_PREFIX_DIGITS,
@@ -636,6 +639,7 @@ function _chironDueAtComputeOptions() {
     definitiveMaxAttempts: CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS,
     waitingRecheckMs: CHIRON_WAITING_RECHECK_MS,
     blockedRecheckMs: CHIRON_BLOCKED_RECHECK_MS,
+    retryableRecheckMs: CHIRON_RETRYABLE_RECHECK_MS,
     departureConfirmedExternal: CHIRON_DEPARTURE_CONFIRMED_EXTERNAL,
   };
 }
@@ -788,13 +792,22 @@ function _chironConnectionThrottleIsFresh(statusDoc, nowMs) {
   return now - lastMs < CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS;
 }
 
-async function _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs = Date.now()) {
+async function _chironStampReconcileThrottleBestEffort(
+  env,
+  tenantId,
+  companyId,
+  nowMs = Date.now(),
+  existingDoc = undefined,
+) {
   try {
-    const throttleRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
-    if (_chironConnectionThrottleIsFresh(throttleRead.doc, nowMs)) return false;
+    const doc =
+      existingDoc !== undefined
+        ? existingDoc
+        : (await readChironConnectionStatusRaw(env, tenantId, companyId)).doc;
+    if (_chironConnectionThrottleIsFresh(doc, nowMs)) return false;
     const nextStatusDoc =
-      throttleRead.doc && typeof throttleRead.doc === "object"
-        ? { ...throttleRead.doc, testflow_auto_reconcile_last_at: nowIso() }
+      doc && typeof doc === "object"
+        ? { ...doc, testflow_auto_reconcile_last_at: nowIso() }
         : null;
     if (nextStatusDoc) {
       await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
@@ -14494,6 +14507,7 @@ async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
     console.log(`[CHIRON_CRON_RECONCILE][SKIPPED_DISABLED] source=${source}`);
     return summary;
   }
+  env = { ...env, COMPLIANCE_KV: memoizeComplianceKvReads(env.COMPLIANCE_KV) };
   try {
     const scopes = await _chironListConnectionScopes(env);
     const armedScopes = [];
@@ -14514,24 +14528,49 @@ async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
       const gate = _chironReconcileScopeGate(statusPayload, env, nowMs);
       if (!gate.ok) {
         summary.gated += 1;
-        await _chironStampReconcileThrottleBestEffort(env, tenantId, companyId, nowMs);
+        await _chironStampReconcileThrottleBestEffort(
+          env,
+          tenantId,
+          companyId,
+          nowMs,
+          statusRead.doc,
+        );
         continue;
       }
       const scopeMig = await _chironReadScopeDueMigration(env, tenantId, companyId);
       armedScopes.push({ tenantId, companyId, scopeMig });
     }
 
+    let wakeup = { examined: 0, armed: 0 };
     try {
-      const wakeup = await _chironDrainWakeupHints(env, nowMs);
+      wakeup = await _chironDrainWakeupHints(env, nowMs);
       summary.recovered_unmarked += Number(wakeup?.armed) || 0;
     } catch (_) {}
     const recoverTargets = armedScopes.filter(
       (row) => row.scopeMig.completed !== true,
     );
     if (recoverTargets.length === 0 && armedScopes.length > 0) {
-      recoverTargets.push(
-        armedScopes[Math.floor(nowMs / 300_000) % armedScopes.length],
-      );
+      const probe = armedScopes[Math.floor(nowMs / 300_000) % armedScopes.length];
+      const wakeupPending =
+        (Number(wakeup?.examined) || 0) > 0 || (Number(wakeup?.armed) || 0) > 0;
+      if (wakeupPending) {
+        recoverTargets.push(probe);
+      } else {
+        try {
+          const read = await _chironReadScopeRecoverState(
+            env,
+            probe.tenantId,
+            probe.companyId,
+            nowMs,
+            probe.scopeMig,
+          );
+          if (!chironDueRecoverWatermarkCaughtUp(read.state, nowMs)) {
+            recoverTargets.push(probe);
+          }
+        } catch (_) {
+          recoverTargets.push(probe);
+        }
+      }
     }
     for (const recoverScope of recoverTargets) {
       try {

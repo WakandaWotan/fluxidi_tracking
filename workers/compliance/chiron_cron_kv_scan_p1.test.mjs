@@ -16,6 +16,9 @@ import {
   CHIRON_RECONCILE_RECOVER_PREFIX,
   CHIRON_RECONCILE_WAKEUP_PREFIX,
   CHIRON_WAITING_RECHECK_MS,
+  CHIRON_RETRYABLE_RECHECK_MS,
+  CHIRON_DUE_RECOVER_STATE_VERSION,
+  buildChironScopeRecoverKey,
   CHIRON_DUE_RECOVER_BATCH,
   CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS,
   CHIRON_DUE_RECOVER_WINDOW_MS,
@@ -404,8 +407,21 @@ test("3. retryable failure stays due; definitive cooldown is future", async () =
     last_attempt_at: new Date(NOW_MS - 1_000).toISOString(),
     outbound_fingerprint_definitive_attempts: 1,
   };
-  const { computeChironReconcileDueAtMs } = await import("./chiron_reconcile_due_index.js");
-  assert.equal(computeChironReconcileDueAtMs(retryable, NOW_MS), 0);
+  const { computeChironReconcileDueAtMs, CHIRON_RETRYABLE_RECHECK_MS } = await import("./chiron_reconcile_due_index.js");
+  assert.ok(
+    computeChironReconcileDueAtMs(retryable, NOW_MS) > NOW_MS,
+    "fresh retryable is parked past the next cron tick",
+  );
+  assert.equal(
+    computeChironReconcileDueAtMs(
+      {
+        ...retryable,
+        last_attempt_at: new Date(NOW_MS - CHIRON_RETRYABLE_RECHECK_MS - 1).toISOString(),
+      },
+      NOW_MS,
+    ),
+    0,
+  );
   const dueDef = computeChironReconcileDueAtMs(definitive, NOW_MS, {
     definitiveCooldownMs: 10 * 60 * 1000,
     definitiveMaxAttempts: 6,
@@ -1300,5 +1316,61 @@ test("23. markerless event survives an interrupt longer than the recover window"
   assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_DONE_KEY), true);
   assert.equal(h.compliance.has(migKey), true);
   assert.equal(h.compliance.has(CHIRON_RECONCILE_DUE_MIGRATION_KEY), true);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
+});
+
+test("24. idle after caught-up recover parks retryable leftovers and stops event reads", async () => {
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+  const recoverKey = buildChironScopeRecoverKey(
+    safeSegment(TENANT_A, ""),
+    safeSegment(COMPANY_A, ""),
+  );
+  await h.env.COMPLIANCE_KV.put(
+    recoverKey,
+    JSON.stringify({
+      version: CHIRON_DUE_RECOVER_STATE_VERSION,
+      from_ms: NOW_MS,
+      last_key: null,
+      prefix: null,
+      cursor: null,
+    }),
+  );
+  const retryable = rideEvent("ride_start", TENANT_A, COMPANY_A, "idle_retry", 900);
+  const retryKey = eventKeyFor(TENANT_A, COMPANY_A, 900, "idle_retry");
+  await h.env.COMPLIANCE_KV.put(retryKey, JSON.stringify(retryable));
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(
+      safeSegment(TENANT_A, ""),
+      safeSegment(COMPANY_A, ""),
+      `candidate_v1:${retryable.event_id}`,
+    ),
+    JSON.stringify({
+      sync_state: "retryable_failed",
+      failure_kind: "retryable",
+      last_attempt_at: new Date(NOW_MS - 60_000).toISOString(),
+    }),
+  );
+  await armChironDueMarker(h.env.COMPLIANCE_KV, retryKey, 0);
+
+  h.resetCounts();
+  const first = await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS,
+  });
+  assert.equal(first.due_selected, 0, "fresh retryable is re-armed to the future");
+  assert.equal(first.recover_examined, 0);
+  assert.ok(h.eventReads().includes(retryKey));
+
+  h.resetCounts();
+  const second = await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS + 60_000,
+  });
+  assert.equal(second.due_selected, 0);
+  assert.equal(second.recover_examined, 0);
+  assert.equal(h.eventReads().length, 0, "idle tick must not re-read parked events");
+  assert.ok(second.reads === undefined || h.counts.valueReads < 20);
   assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
 });
