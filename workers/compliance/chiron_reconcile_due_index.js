@@ -32,6 +32,17 @@ export const CHIRON_BLOCKED_RECHECK_MS = 5 * 60 * 1000;
 // the same 20 events forever. Append-time auto-submit is unchanged.
 export const CHIRON_RETRYABLE_RECHECK_MS = 30 * 60 * 1000;
 export const CHIRON_DUE_RECOVER_CAUGHT_UP_SLACK_MS = 60 * 1000;
+// Existing attempt_count drives this ladder. No second retry clock.
+// attempt 1 → 15 min, 2 → 1 h, 3 → 6 h, 4+ → 24 h.
+// At CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS the marker is retired (dueAt null).
+export const CHIRON_RETRY_BACKOFF_STEPS_MS = Object.freeze([
+  15 * 60 * 1000,
+  60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+]);
+export const CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS = 6;
+export const CHIRON_BLOCKED_BY_FAILED_DEPARTURE = "blocked_by_failed_departure";
 // Bounded unmarked-event recovery. Never a full five-minute history scan.
 // Progress is a durable per-scope watermark (oldest-first, 20 keys/tick) so
 // newer keys and a sliding clock cannot hide an unexamined event.
@@ -204,16 +215,154 @@ export async function readChironDueMarkerIdentity(entry) {
  * `null` means no marker (terminal / not retryable / unknown fail-closed).
  * Missing status means a new event is immediately due.
  */
+export function chironRetryBackoffMs(attemptCount) {
+  const n = Math.max(1, Math.floor(Number(attemptCount) || 1));
+  const steps = CHIRON_RETRY_BACKOFF_STEPS_MS;
+  return steps[Math.min(n, steps.length) - 1];
+}
+
+export function chironRetryAttemptCount(statusDoc) {
+  const perPayload = Number(statusDoc?.outbound_fingerprint_definitive_attempts);
+  if (Number.isFinite(perPayload) && perPayload > 0) return Math.floor(perPayload);
+  const attempts = Number(statusDoc?.attempt_count);
+  if (Number.isFinite(attempts) && attempts > 0) return Math.floor(attempts);
+  return 1;
+}
+
+/**
+ * Next due time for a temporary failure, using the existing attempt counter.
+ * `null` = stop (max attempts). `0` = cooldown already elapsed, due once.
+ */
+export function chironBackoffDueAtMs(statusDoc, nowMs, options = {}) {
+  const now = Number(nowMs);
+  if (!Number.isFinite(now)) return null;
+  const maxAttempts =
+    Number(options.maxAttempts) || CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS;
+  const attempts = chironRetryAttemptCount(statusDoc);
+  if (attempts >= maxAttempts) return null;
+  const wait = chironRetryBackoffMs(attempts);
+  const last = parseIsoMs(statusDoc?.last_attempt_at);
+  if (last !== null && now - last < wait) return last + wait;
+  if (last !== null) return 0;
+  return now + wait;
+}
+
+export const CHIRON_DUE_HISTORICAL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+export const CHIRON_DUE_RETRY_SOON_MS = 15 * 60 * 1000;
+const CHIRON_PAYLOAD_TERMINAL_REASONS = new Set([
+  "afstand",
+  "vertrekpunt_lengtegraad",
+  "vertrekpunt_breedtegraad",
+  "aankomstpunt_lengtegraad",
+  "aankomstpunt_breedtegraad",
+  "invalid_zero_coordinate_pair",
+]);
+
+/**
+ * V2. Only work that can change within minutes stays on the 5-minute cadence
+ * (RETRY_SOON). Historical exclusions and finished validation failures leave
+ * the due index. Stale builds park on the 24-hour backoff step.
+ */
+export function classifyChironDueWorkV2({
+  status,
+  eventAtMs,
+  departure,
+  nowMs,
+  cutoffMs = null,
+} = {}) {
+  const now = Number(nowMs);
+  const eventAt = Number(eventAtMs);
+  const state = safeText(status?.sync_state, 32).toLowerCase();
+  const reason = safeText(status?.reason_code, 96) || safeText(status?.sanitized_error, 96);
+  const ageMs = Number.isFinite(eventAt) ? now - eventAt : null;
+  const beforeCutoff =
+    Number.isFinite(Number(cutoffMs)) &&
+    Number.isFinite(eventAt) &&
+    eventAt < Number(cutoffMs);
+  const historicalAge = ageMs !== null && ageMs > CHIRON_DUE_HISTORICAL_WINDOW_MS;
+
+  const done = (why) => ({ klass: "DONE", dueAtMs: null, reason: why });
+  const terminal = (why) => ({ klass: "TERMINAL", dueAtMs: null, reason: why });
+  const historical = (why) => ({
+    klass: "NON_ACTIONABLE_HISTORICAL",
+    dueAtMs: null,
+    reason: why,
+  });
+  const soon = (why, dueAtMs) => ({ klass: "RETRY_SOON", dueAtMs, reason: why });
+  const backoff = (why, dueAtMs) => ({ klass: "RETRY_BACKOFF", dueAtMs, reason: why });
+
+  if (
+    state === "synced" ||
+    state === "verification_required" ||
+    state === "departure_confirmed_external"
+  ) {
+    return done(state);
+  }
+  if (state === "waiting_for_departure" && chironDepartureIsTerminalFailure(departure, now)) {
+    return terminal("blocked_by_failed_departure");
+  }
+  if (
+    state === "blocked_by_failed_departure" ||
+    reason === CHIRON_BLOCKED_BY_FAILED_DEPARTURE
+  ) {
+    return terminal("blocked_by_failed_departure");
+  }
+  if (reason === "event_before_testflow_start" || (beforeCutoff && state === "blocked")) {
+    return historical("event_before_testflow_start");
+  }
+  if (state === "blocked" && CHIRON_PAYLOAD_TERMINAL_REASONS.has(reason)) {
+    return terminal(reason);
+  }
+  if (!status) {
+    if (beforeCutoff || historicalAge) return historical(beforeCutoff ? "before_testflow_cutoff" : "outside_reconcile_window");
+    return soon("no_status_recent", now);
+  }
+  if (state === "pending_build" || state === "pending") {
+    const last = parseIsoMs(status.last_attempt_at);
+    const fresh = last !== null && now - last < CHIRON_DUE_RETRY_SOON_MS;
+    if (fresh && !historicalAge) return soon(state, last + CHIRON_DUE_RETRY_SOON_MS);
+    return backoff(state, now + 24 * 60 * 60 * 1000);
+  }
+  if (state === "waiting_for_departure") {
+    const last = parseIsoMs(status.last_attempt_at);
+    const depState = safeText(departure?.sync_state, 32).toLowerCase();
+    if (depState === "synced" || depState === "departure_confirmed_external") {
+      return soon("departure_ready", now);
+    }
+    const depYoung =
+      last !== null &&
+      now - last < CHIRON_DUE_RETRY_SOON_MS &&
+      (depState === "pending" || depState === "pending_build");
+    if (depYoung) return soon("waiting_for_departure", last + CHIRON_DUE_RETRY_SOON_MS);
+    return backoff("waiting_for_departure", now + 24 * 60 * 60 * 1000);
+  }
+  if (state === "retryable_failed" || state === "queued" || state === "failed") {
+    const dueAt = computeChironReconcileDueAtMs(status, now);
+    if (dueAt === null) return terminal("max_attempts_or_not_retryable");
+    if (dueAt > now && dueAt - now <= CHIRON_DUE_RETRY_SOON_MS) return soon(state, dueAt);
+    if (dueAt === 0) return backoff(state, now + chironRetryBackoffMs(chironRetryAttemptCount(status)));
+    return backoff(state, dueAt);
+  }
+  if (state === "blocked") {
+    return historical(reason || "blocked");
+  }
+  if (historicalAge || beforeCutoff) return historical("historical_event");
+  return { klass: "UNKNOWN", dueAtMs: null, reason: state || "unclassified" };
+}
+
+export function chironDepartureIsTerminalFailure(statusDoc, nowMs, options = {}) {
+  if (!statusDoc || typeof statusDoc !== "object" || Array.isArray(statusDoc)) return false;
+  const state = safeText(statusDoc.sync_state, 32).toLowerCase();
+  if (state !== "failed") return false;
+  return computeChironReconcileDueAtMs(statusDoc, nowMs, options) === null;
+}
+
 export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
   const now = Number(nowMs);
   if (!Number.isFinite(now)) return null;
   const pendingStaleMs = Number(options.pendingStaleMs) || 60 * 1000;
-  const definitiveCooldownMs = Number(options.definitiveCooldownMs) || 10 * 60 * 1000;
-  const definitiveMaxAttempts = Number(options.definitiveMaxAttempts) || 6;
-  const waitingRecheckMs = Number(options.waitingRecheckMs) || CHIRON_WAITING_RECHECK_MS;
+  const definitiveMaxAttempts = Number(options.definitiveMaxAttempts) || CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS;
   const blockedRecheckMs = Number(options.blockedRecheckMs) || CHIRON_BLOCKED_RECHECK_MS;
-  const retryableRecheckMs =
-    Number(options.retryableRecheckMs) || CHIRON_RETRYABLE_RECHECK_MS;
   const departureConfirmedExternal =
     safeText(options.departureConfirmedExternal, 64) || "departure_confirmed_external";
 
@@ -241,32 +390,31 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
     if (last !== null && now - last < pendingStaleMs) return last + pendingStaleMs;
     return 0;
   }
+  if (
+    state === "blocked_by_failed_departure" ||
+    safeText(statusDoc.reason_code, 64) === CHIRON_BLOCKED_BY_FAILED_DEPARTURE ||
+    safeText(statusDoc.sanitized_error, 64) === CHIRON_BLOCKED_BY_FAILED_DEPARTURE
+  ) {
+    return null;
+  }
   if (state === "waiting_for_departure") {
-    const last = parseIsoMs(statusDoc.last_attempt_at);
-    const base = last !== null ? last : now;
-    return base + waitingRecheckMs;
+    if (options.pairedDepartureTerminal === true) return null;
+    return chironBackoffDueAtMs(statusDoc, now, {
+      maxAttempts: Number(options.maxAttempts) || CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS,
+    });
   }
   if (state === "retryable_failed" || state === "queued") {
-    const last = parseIsoMs(statusDoc.last_attempt_at);
-    if (last !== null && now - last < retryableRecheckMs) {
-      return last + retryableRecheckMs;
-    }
-    return 0;
+    return chironBackoffDueAtMs(statusDoc, now, {
+      maxAttempts: Number(options.maxAttempts) || CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS,
+    });
   }
   if (state === "failed") {
     if (statusDoc.failure_kind === "definitive") {
-      const last = parseIsoMs(statusDoc.last_attempt_at);
-      const perPayload = Number(statusDoc.outbound_fingerprint_definitive_attempts);
-      const attempts = Number.isFinite(perPayload)
-        ? perPayload
-        : Number(statusDoc.attempt_count);
-      if (Number.isFinite(attempts) && attempts >= definitiveMaxAttempts) {
-        return null;
-      }
-      if (last !== null && now - last < definitiveCooldownMs) {
-        return last + definitiveCooldownMs;
-      }
-      return 0;
+      const attempts = chironRetryAttemptCount(statusDoc);
+      if (attempts >= (Number(options.maxAttempts) || definitiveMaxAttempts)) return null;
+      return chironBackoffDueAtMs(statusDoc, now, {
+        maxAttempts: Number(options.maxAttempts) || definitiveMaxAttempts,
+      });
     }
     const httpStatus = Number(statusDoc.external_status_code);
     const foutenCount = Number(statusDoc.fouten_count);
@@ -277,13 +425,14 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
         httpStatus >= 300 ||
         (Number.isFinite(foutenCount) && foutenCount > 0));
     if (gotChironResponse) {
-      const last = parseIsoMs(statusDoc.last_attempt_at);
-      if (last !== null && now - last < waitingRecheckMs) return last + waitingRecheckMs;
-      return 0;
+      return chironBackoffDueAtMs(statusDoc, now, {
+        maxAttempts: Number(options.maxAttempts) || definitiveMaxAttempts,
+      });
     }
     return null;
   }
   if (state === "blocked") {
+    if (options.blockedIsTerminal === true) return null;
     const last = parseIsoMs(statusDoc.last_attempt_at);
     const base = last !== null ? last : now;
     return base + blockedRecheckMs;
@@ -753,13 +902,31 @@ export async function applyChironDueMarkerTransition(kv, {
   eventKey,
   previousDueAtMs = null,
   nextDueAtMs = null,
+  selectedMarkerKey = null,
   persist,
   crashAfter = null,
 } = {}) {
   const nextKey =
     nextDueAtMs == null ? null : await buildChironDueMarkerKey(nextDueAtMs, eventKey);
-  const prevKey =
+  let prevKey =
     previousDueAtMs == null ? null : await buildChironDueMarkerKey(previousDueAtMs, eventKey);
+
+  // A terminal cron item may carry a legacy due time that cannot be recovered
+  // from its current status. Retire that exact item, never a guessed sibling.
+  // Validate its event hash before persist or any other mutation. This override
+  // is intentionally terminal-only; ordinary retry transitions are unchanged.
+  if (selectedMarkerKey !== null) {
+    const selected = parseChironDueMarkerKey(selectedMarkerKey);
+    if (
+      nextDueAtMs !== null ||
+      typeof persist !== "function" ||
+      !selected.ok ||
+      selectedMarkerKey !== await buildChironDueMarkerKey(selected.dueAtMs, eventKey)
+    ) {
+      throw new Error("selected_terminal_marker_binding_mismatch");
+    }
+    prevKey = selectedMarkerKey;
+  }
 
   if (nextKey) {
     await armChironDueMarker(kv, eventKey, nextDueAtMs);
@@ -771,7 +938,10 @@ export async function applyChironDueMarkerTransition(kv, {
   }
   if (prevKey && prevKey !== nextKey) {
     if (crashAfter === "before_retire") throw new ChironDueIndexTestCrash("before_retire");
-    await retireChironDueMarker(kv, prevKey);
+    const retired = await retireChironDueMarker(kv, prevKey);
+    if (selectedMarkerKey !== null && !retired) {
+      throw new Error("selected_terminal_marker_retirement_failed");
+    }
   }
   return { nextKey, prevKey };
 }

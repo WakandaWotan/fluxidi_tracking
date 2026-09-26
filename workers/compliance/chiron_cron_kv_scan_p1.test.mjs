@@ -437,7 +437,7 @@ test("4. waiting arrival is future until recheck; departure success rearms it", 
   const stopKey = eventKeyFor(TENANT_A, COMPANY_A, 2, "wait_stop");
   await h.env.COMPLIANCE_KV.put(startKey, JSON.stringify(start));
   await h.env.COMPLIANCE_KV.put(stopKey, JSON.stringify(stop));
-  const { computeChironReconcileDueAtMs } = await import("./chiron_reconcile_due_index.js");
+  const { computeChironReconcileDueAtMs, chironRetryBackoffMs } = await import("./chiron_reconcile_due_index.js");
   const waitingDue = computeChironReconcileDueAtMs(
     {
       sync_state: "waiting_for_departure",
@@ -445,7 +445,8 @@ test("4. waiting arrival is future until recheck; departure success rearms it", 
     },
     NOW_MS,
   );
-  assert.equal(waitingDue, NOW_MS + CHIRON_WAITING_RECHECK_MS);
+  assert.equal(waitingDue, NOW_MS + chironRetryBackoffMs(1));
+  assert.ok(waitingDue > NOW_MS + 5 * 60 * 1000);
   const armed = await _chironReArmPairedArrivalAfterDeparture(h.env, start, [
     { key: startKey, event: start },
     { key: stopKey, event: stop },
@@ -1372,5 +1373,330 @@ test("24. idle after caught-up recover parks retryable leftovers and stops event
   assert.equal(second.recover_examined, 0);
   assert.equal(h.eventReads().length, 0, "idle tick must not re-read parked events");
   assert.ok(second.reads === undefined || h.counts.valueReads < 20);
+  assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
+});
+
+test("25. stale due marker on an already synced event is retired", async () => {
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+  const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_done", 25);
+  const key = eventKeyFor(TENANT_A, COMPANY_A, 25, "done");
+  await h.env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  const t = safeSegment(TENANT_A, "");
+  const c = safeSegment(COMPANY_A, "");
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${event.event_id}`),
+    JSON.stringify({ sync_state: "synced", official_status: "vertrek" }),
+  );
+  const markerKey = await armChironDueMarker(h.env.COMPLIANCE_KV, key, 0);
+  const resolved = await _chironResolveDueCandidate(
+    h.env,
+    { eventKey: key, markerKey },
+    NOW_MS,
+    null,
+  );
+  assert.equal(resolved.kind, "terminal");
+  assert.equal(
+    [...h.compliance.keys()].some(
+      (k) => k.startsWith(CHIRON_RECONCILE_DUE_PREFIX) && k !== CHIRON_RECONCILE_DUE_DONE_KEY,
+    ),
+    false,
+  );
+});
+
+test("26. terminal failed departure blocks the waiting arrival and drops its marker", async () => {
+  const {
+    computeChironReconcileDueAtMs,
+    chironDepartureIsTerminalFailure,
+    CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+  } = await import("./chiron_reconcile_due_index.js");
+  const departure = {
+    sync_state: "failed",
+    failure_kind: "definitive",
+    outbound_fingerprint_definitive_attempts: 6,
+    last_attempt_at: new Date(NOW_MS - 60_000).toISOString(),
+  };
+  assert.equal(chironDepartureIsTerminalFailure(departure, NOW_MS), true);
+  assert.equal(
+    computeChironReconcileDueAtMs(
+      {
+        sync_state: "blocked_by_failed_departure",
+        reason_code: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+        failure_kind: "definitive",
+      },
+      NOW_MS,
+    ),
+    null,
+  );
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+  const start = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_block", 26);
+  const stop = rideEvent("ride_stop", TENANT_A, COMPANY_A, "street_block", 27);
+  const startKey = eventKeyFor(TENANT_A, COMPANY_A, 26, "block_start");
+  const stopKey = eventKeyFor(TENANT_A, COMPANY_A, 27, "block_stop");
+  await h.env.COMPLIANCE_KV.put(startKey, JSON.stringify(start));
+  await h.env.COMPLIANCE_KV.put(stopKey, JSON.stringify(stop));
+  const t = safeSegment(TENANT_A, "");
+  const c = safeSegment(COMPANY_A, "");
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${start.event_id}`),
+    JSON.stringify(departure),
+  );
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${stop.event_id}`),
+    JSON.stringify({
+      sync_state: "waiting_for_departure",
+      last_attempt_at: new Date(NOW_MS - 24 * 60 * 60 * 1000).toISOString(),
+      official_status: "aankomst",
+      paired_departure_idempotency_key: `candidate_v1:${start.event_id}`,
+    }),
+  );
+  await armChironDueMarker(h.env.COMPLIANCE_KV, stopKey, 0);
+  await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS,
+  });
+  const docs = [];
+  for (const key of h.compliance.keys()) {
+    if (!key.startsWith("chiron_export_status_v1/")) continue;
+    docs.push(JSON.parse(await h.env.COMPLIANCE_KV.get(key)));
+  }
+  const arrival = docs.find((doc) => doc?.sync_state === "blocked_by_failed_departure");
+  assert.ok(arrival);
+  const stillDue = [...h.compliance.keys()].filter(
+    (k) => k.startsWith(CHIRON_RECONCILE_DUE_PREFIX) && k !== CHIRON_RECONCILE_DUE_DONE_KEY,
+  );
+  assert.equal(stillDue.length, 0);
+  h.resetCounts();
+  const next = await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS + 5 * 60 * 1000,
+  });
+  assert.equal(next.due_selected, 0);
+  assert.equal(h.eventReads().length, 0);
+});
+
+test("27. temporary failure is parked beyond the next 5-minute tick", async () => {
+  const {
+    computeChironReconcileDueAtMs,
+    chironRetryBackoffMs,
+    selectDueChironMarkers,
+    buildChironDueMarkerKey,
+  } = await import("./chiron_reconcile_due_index.js");
+  const status = {
+    sync_state: "retryable_failed",
+    failure_kind: "retryable",
+    attempt_count: 1,
+    last_attempt_at: new Date(NOW_MS).toISOString(),
+  };
+  const dueAt = computeChironReconcileDueAtMs(status, NOW_MS);
+  assert.equal(dueAt, NOW_MS + chironRetryBackoffMs(1));
+  assert.equal(chironRetryBackoffMs(2), 60 * 60 * 1000);
+  assert.equal(chironRetryBackoffMs(3), 6 * 60 * 60 * 1000);
+  assert.equal(chironRetryBackoffMs(4), 24 * 60 * 60 * 1000);
+  assert.equal(chironRetryBackoffMs(8), 24 * 60 * 60 * 1000);
+  assert.equal(
+    computeChironReconcileDueAtMs({ ...status, attempt_count: 6 }, NOW_MS),
+    null,
+  );
+  const eventKey = "compliance_event_v1/tenant/t/company/c/2026/09/21/0000000000001_tmp";
+  const markerKey = await buildChironDueMarkerKey(dueAt, eventKey);
+  const picked = selectDueChironMarkers(
+    [{ name: markerKey, metadata: { ek: eventKey } }],
+    { nowMs: NOW_MS + 5 * 60 * 1000, limit: 20 },
+  );
+  assert.equal(picked.selected.length, 0);
+});
+
+test("28. recoverable waiting arrival stays due later and is not retired", async () => {
+  const { computeChironReconcileDueAtMs, chironRetryBackoffMs } = await import(
+    "./chiron_reconcile_due_index.js"
+  );
+  const dueAt = computeChironReconcileDueAtMs(
+    {
+      sync_state: "waiting_for_departure",
+      attempt_count: 1,
+      last_attempt_at: new Date(NOW_MS).toISOString(),
+    },
+    NOW_MS,
+  );
+  assert.equal(dueAt, NOW_MS + chironRetryBackoffMs(1));
+  assert.notEqual(dueAt, null);
+});
+
+test("30. V2 parks stale work off the 5-minute cadence", async () => {
+  const { classifyChironDueWorkV2 } = await import("./chiron_reconcile_due_index.js");
+  const historical = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: { sync_state: "blocked", reason_code: "event_before_testflow_start" },
+    eventAtMs: NOW_MS - 40 * 24 * 60 * 60 * 1000,
+  });
+  assert.equal(historical.klass, "NON_ACTIONABLE_HISTORICAL");
+  assert.equal(historical.dueAtMs, null);
+  const validation = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: { sync_state: "blocked", reason_code: "afstand" },
+    eventAtMs: NOW_MS - 40 * 24 * 60 * 60 * 1000,
+  });
+  assert.equal(validation.klass, "TERMINAL");
+  const pending = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: {
+      sync_state: "pending_build",
+      reason_code: "payload_build",
+      last_attempt_at: new Date(NOW_MS - 2 * 60 * 60 * 1000).toISOString(),
+    },
+    eventAtMs: NOW_MS - 2 * 60 * 60 * 1000,
+  });
+  assert.equal(pending.klass, "RETRY_BACKOFF");
+  assert.ok(pending.dueAtMs > NOW_MS + 60 * 60 * 1000);
+  const recentGap = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: null,
+    eventAtMs: NOW_MS - 2 * 60 * 60 * 1000,
+  });
+  assert.equal(recentGap.klass, "RETRY_SOON");
+  const oldGap = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: null,
+    eventAtMs: NOW_MS - 40 * 24 * 60 * 60 * 1000,
+  });
+  assert.equal(oldGap.klass, "NON_ACTIONABLE_HISTORICAL");
+  const recoverable = classifyChironDueWorkV2({
+    nowMs: NOW_MS,
+    status: { sync_state: "waiting_for_departure" },
+    departure: { sync_state: "verification_required" },
+    eventAtMs: NOW_MS - 40 * 24 * 60 * 60 * 1000,
+  });
+  assert.equal(recoverable.klass, "RETRY_BACKOFF");
+});
+
+test("31. V2 retires scheduling markers and keeps the compliance event", async () => {
+  const { selectDueChironMarkers, buildChironDueMarkerKey } = await import(
+    "./chiron_reconcile_due_index.js"
+  );
+  const h = createCountingEnv();
+  const event = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_hist", 31);
+  const key = eventKeyFor(TENANT_A, COMPANY_A, 31, "hist");
+  await h.env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  const t = safeSegment(TENANT_A, "");
+  const c = safeSegment(COMPANY_A, "");
+  const statusKey = buildChironExportStatusKey(t, c, `candidate_v1:${event.event_id}`);
+  await h.env.COMPLIANCE_KV.put(
+    statusKey,
+    JSON.stringify({
+      sync_state: "blocked",
+      reason_code: "event_before_testflow_start",
+    }),
+  );
+  const markerKey = await armChironDueMarker(h.env.COMPLIANCE_KV, key, 0);
+  const resolved = await _chironResolveDueCandidate(
+    h.env,
+    { eventKey: key, markerKey, dueAtMs: 0 },
+    NOW_MS,
+    null,
+  );
+  assert.equal(resolved.kind, "terminal");
+  assert.equal(await h.env.COMPLIANCE_KV.get(key), JSON.stringify(event));
+  assert.equal(
+    [...h.compliance.keys()].some(
+      (k) => k.startsWith(CHIRON_RECONCILE_DUE_PREFIX) && k !== CHIRON_RECONCILE_DUE_DONE_KEY,
+    ),
+    false,
+  );
+
+  const stop = rideEvent("ride_stop", TENANT_A, COMPANY_A, "street_dist", 32);
+  const stopKey = eventKeyFor(TENANT_A, COMPANY_A, 32, "dist");
+  await h.env.COMPLIANCE_KV.put(stopKey, JSON.stringify(stop));
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${stop.event_id}`),
+    JSON.stringify({ sync_state: "blocked", reason_code: "afstand" }),
+  );
+  const distMarker = await armChironDueMarker(h.env.COMPLIANCE_KV, stopKey, 0);
+  const distResolved = await _chironResolveDueCandidate(
+    h.env,
+    { eventKey: stopKey, markerKey: distMarker, dueAtMs: 0 },
+    NOW_MS,
+    null,
+  );
+  assert.equal(distResolved.kind, "terminal");
+  assert.ok(await h.env.COMPLIANCE_KV.get(stopKey));
+
+  const pending = rideEvent("ride_start", TENANT_A, COMPANY_A, "street_build", 33);
+  const pendingKey = eventKeyFor(TENANT_A, COMPANY_A, 33, "build");
+  await h.env.COMPLIANCE_KV.put(pendingKey, JSON.stringify(pending));
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${pending.event_id}`),
+    JSON.stringify({
+      sync_state: "pending_build",
+      reason_code: "payload_build",
+      last_attempt_at: new Date(NOW_MS - 2 * 60 * 60 * 1000).toISOString(),
+    }),
+  );
+  const pendingMarker = await armChironDueMarker(h.env.COMPLIANCE_KV, pendingKey, 0);
+  const pendingResolved = await _chironResolveDueCandidate(
+    h.env,
+    { eventKey: pendingKey, markerKey: pendingMarker, dueAtMs: 0 },
+    NOW_MS,
+    null,
+  );
+  assert.equal(pendingResolved.kind, "future");
+  assert.ok(await h.env.COMPLIANCE_KV.get(pendingKey));
+  const dayLater = await buildChironDueMarkerKey(NOW_MS + 24 * 60 * 60 * 1000, pendingKey);
+  assert.equal(h.compliance.has(dayLater), true);
+  const pickedSoon = selectDueChironMarkers(
+    [{ name: dayLater, metadata: { ek: pendingKey } }],
+    { nowMs: NOW_MS + 5 * 60 * 1000, limit: 20 },
+  );
+  assert.equal(pickedSoon.selected.length, 0);
+
+  const arrival = rideEvent("ride_stop", TENANT_A, COMPANY_A, "street_wait_v2", 34);
+  const arrivalKey = eventKeyFor(TENANT_A, COMPANY_A, 34, "waitv2");
+  await h.env.COMPLIANCE_KV.put(arrivalKey, JSON.stringify(arrival));
+  const depId = "dep_verification_required";
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, depId),
+    JSON.stringify({ sync_state: "verification_required" }),
+  );
+  await h.env.COMPLIANCE_KV.put(
+    buildChironExportStatusKey(t, c, `candidate_v1:${arrival.event_id}`),
+    JSON.stringify({
+      sync_state: "waiting_for_departure",
+      paired_departure_idempotency_key: depId,
+      last_attempt_at: new Date(NOW_MS - 20 * 24 * 60 * 60 * 1000).toISOString(),
+    }),
+  );
+  const waitMarker = await armChironDueMarker(h.env.COMPLIANCE_KV, arrivalKey, 0);
+  const waitResolved = await _chironResolveDueCandidate(
+    h.env,
+    { eventKey: arrivalKey, markerKey: waitMarker, dueAtMs: 0 },
+    NOW_MS,
+    null,
+  );
+  assert.equal(waitResolved.kind, "future");
+  assert.ok(await h.env.COMPLIANCE_KV.get(arrivalKey));
+  const waitDay = await buildChironDueMarkerKey(NOW_MS + 24 * 60 * 60 * 1000, arrivalKey);
+  assert.equal(h.compliance.has(waitDay), true);
+  const waitSoon = selectDueChironMarkers(
+    [{ name: waitDay, metadata: { ek: arrivalKey } }],
+    { nowMs: NOW_MS + 5 * 60 * 1000, limit: 20 },
+  );
+  assert.equal(waitSoon.selected.length, 0);
+});
+
+test("29. finished migration does not list compliance events on an idle tick", async () => {
+  const h = createCountingEnv();
+  await seedConnection(h, TENANT_A, COMPANY_A);
+  await finishMigration(h, TENANT_A, COMPANY_A);
+  h.resetCounts();
+  const summary = await _chironCronReconcileAllScopesBestEffort(h.env, {
+    source: "cron",
+    nowMs: NOW_MS,
+  });
+  assert.equal(summary.due_selected, 0);
+  assert.equal(summary.migration_examined, 0);
+  assert.equal(h.eventReads().length, 0);
   assert.equal(h.listPrefixes.some(isChironFullScopeEventListPrefix), false);
 });

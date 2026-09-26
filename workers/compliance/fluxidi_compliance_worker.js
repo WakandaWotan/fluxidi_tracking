@@ -7,6 +7,10 @@ import {
   CHIRON_WAITING_RECHECK_MS,
   CHIRON_BLOCKED_RECHECK_MS,
   CHIRON_RETRYABLE_RECHECK_MS,
+  CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+  CHIRON_RETRY_BACKOFF_MAX_ATTEMPTS,
+  chironDepartureIsTerminalFailure,
+  classifyChironDueWorkV2,
   chironDueRecoverWatermarkCaughtUp,
   memoizeComplianceKvReads,
   CHIRON_DUE_RECOVER_CATCHUP_WINDOW_MS,
@@ -7540,15 +7544,19 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now(),
   return { decision: "not_retryable" };
 }
 
-async function _chironReadExportStatus(env, statusKey) {
+async function _chironReadExportStatus(env, statusKey, { strict = false } = {}) {
   if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") return null;
   try {
     const raw = await env.COMPLIANCE_KV.get(statusKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (strict) throw new Error("invalid_chiron_export_status");
+      return null;
+    }
     return parsed;
-  } catch (_) {
+  } catch (err) {
+    if (strict) throw err;
     return null;
   }
 }
@@ -7604,6 +7612,7 @@ async function _chironWriteExportStatus(env, statusKey, statusDoc, options = {})
         eventKey,
         previousDueAtMs,
         nextDueAtMs,
+        selectedMarkerKey: options.selectedMarkerKey ?? null,
         persist,
         crashAfter: options.crashAfter || null,
       });
@@ -11126,7 +11135,13 @@ async function handleChironConfigStatusGet(request, url, env, origin, ctx) {
   // a bounded reconcile pass via ctx.waitUntil. The response is returned
   // immediately with whatever counters are currently in KV — the reconcile
   // then updates them for the NEXT poll.
-  if (ctx && _chironShouldRunReconcileFromStatusPoll(readResult.doc)) {
+  // A closed gate needs no reconcile and no throttle timestamp. Check the
+  // same gates as cron before scheduling, including when no timestamp exists.
+  if (
+    ctx &&
+    _chironShouldRunReconcileFromStatusPoll(readResult.doc) &&
+    _chironReconcileScopeGate(payload, env, Date.now()).ok
+  ) {
     _chironScheduleAutoReconcileFromStatusPoll(ctx, env, tenantId, companyId);
   }
 
@@ -12846,6 +12861,57 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       const departureConfirmed =
         departureSyncState === "synced" ||
         departureSyncState === CHIRON_DEPARTURE_CONFIRMED_EXTERNAL;
+      const departureTerminalFailed =
+        !departureConfirmed &&
+        chironDepartureIsTerminalFailure(
+          departureStatus,
+          Number(options?.nowMs) || Date.now(),
+          _chironDueAtComputeOptions(),
+        );
+      if (departureTerminalFailed) {
+        const arrivalStatusKey = buildChironExportStatusKey(
+          tenantSegment,
+          companySegment,
+          officialIdempotencyKey,
+        );
+        const arrivalExisting = await _chironReadExportStatus(env, arrivalStatusKey);
+        const blockedDoc = {
+          schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+          tenant_id: scope.tenant_id,
+          company_id: scope.company_id,
+          event_id: cleanText(event.event_id, 200) || null,
+          official_idempotency_key: officialIdempotencyKey,
+          official_ritnummer: ritnummer,
+          official_status: officialStatus,
+          official_payload_shape: "chiron_taxirit_api_v1",
+          sync_state: "blocked_by_failed_departure",
+          failure_kind: "definitive",
+          reason_code: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+          sanitized_error: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+          waiting_for_departure: false,
+          paired_departure_idempotency_key: departureIdempotencyKey || null,
+          paired_departure_sync_state: departureSyncState || null,
+          last_attempt_at: nowIso(),
+          attempt_count: Number(arrivalExisting?.attempt_count || 0),
+          auto_submit: false,
+          auto_submit_source: source,
+        };
+        await _chironWriteExportStatus(env, arrivalStatusKey, blockedDoc, {
+          event,
+          eventKey: eventKey || _chironResolveDateIndexEventKey(event),
+          previousStatus: arrivalExisting,
+          nowMs: Number(options?.nowMs) || Date.now(),
+        });
+        return {
+          ok: false,
+          skipped: true,
+          reason: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+          message_type: messageType,
+          status_key: arrivalStatusKey,
+          source,
+          sync_state: "blocked_by_failed_departure",
+        };
+      }
       if (!departureConfirmed) {
         const arrivalStatusKey = buildChironExportStatusKey(
           tenantSegment,
@@ -12895,8 +12961,8 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           external_reference: null,
           response_shape: null,
           fouten_count: null,
-          last_attempt_at: arrivalExisting?.last_attempt_at || null,
-          attempt_count: Number(arrivalExisting?.attempt_count || 0),
+          last_attempt_at: nowIso(),
+          attempt_count: Number(arrivalExisting?.attempt_count || 0) + 1,
           sanitized_error: null,
           waiting_for_departure: true,
           paired_departure_idempotency_key: departureIdempotencyKey || null,
@@ -12909,7 +12975,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           event,
           eventKey: eventKey || _chironResolveDateIndexEventKey(event),
           previousStatus: arrivalExisting,
-          skipIfUnchanged: true,
+          nowMs: Number(options?.nowMs) || Date.now(),
         });
         console.log(
           `[CHIRON_AUTO_SUBMIT][WAITING] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} paired_dep_state=${departureSyncState || "-"} source=${source}`,
@@ -13439,7 +13505,7 @@ function _chironEventBindingOk(event, eventKey, expectedScope) {
   return true;
 }
 
-async function _chironReadBestExportStatusForEvent(env, event) {
+async function _chironReadBestExportStatusForEvent(env, event, options = {}) {
   const tenantId = cleanText(event?.tenant_id, 128);
   const companyId = cleanText(event?.company_id, 128);
   if (!tenantId || !companyId) return null;
@@ -13449,7 +13515,9 @@ async function _chironReadBestExportStatusForEvent(env, event) {
     event,
     null,
   );
-  const candidate = await _chironReadExportStatus(env, candidateKey);
+  const candidate = options.candidate !== undefined
+    ? options.candidate
+    : await _chironReadExportStatus(env, candidateKey, options);
   let officialIdem = cleanText(candidate?.official_idempotency_key, 256);
   if (!officialIdem) {
     const eventId = cleanText(event?.event_id, 200);
@@ -13457,7 +13525,7 @@ async function _chironReadBestExportStatusForEvent(env, event) {
       ? buildChironOfficialEventRefKey(tenantId, companyId, eventId)
       : "";
     if (refKey) {
-      const ref = await _chironReadExportStatus(env, refKey);
+      const ref = await _chironReadExportStatus(env, refKey, options);
       officialIdem = cleanText(ref?.k, 256);
     }
   }
@@ -13468,6 +13536,7 @@ async function _chironReadBestExportStatusForEvent(env, event) {
     const official = await _chironReadExportStatus(
       env,
       _chironCandidateExportStatusKey(tenantId, companyId, event, officialIdem),
+      options,
     );
     if (official) {
       const officialTenant = cleanText(official.tenant_id, 128);
@@ -13484,6 +13553,46 @@ async function _chironReadBestExportStatusForEvent(env, event) {
     }
   }
   return candidate;
+}
+
+async function _chironRecoveryDueAtForEvent(env, event, nowMs) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  const candidate = await _chironReadExportStatus(
+    env, _chironCandidateExportStatusKey(tenantId, companyId, event, null),
+    { strict: true },
+  );
+  const classification = classifyChironDueWorkV2({ status: candidate, nowMs });
+  let departureCorrected = false;
+  if (classification.klass === "TERMINAL" && classification.reason === CHIRON_BLOCKED_BY_FAILED_DEPARTURE) {
+    const pairedKey = cleanText(candidate?.paired_departure_idempotency_key, 256);
+    if (pairedKey && _chironAutoSubmitMessageTypeForEventType(event.event_type) === "arrival") {
+      const departure = await _chironReadExportStatus(
+        env, buildChironExportStatusKey(tenantId, companyId, pairedKey), { strict: true },
+      );
+      const sameScope = (!departure?.tenant_id || departure.tenant_id === tenantId) &&
+        (!departure?.company_id || departure.company_id === companyId);
+      departureCorrected = sameScope && (
+        departure?.sync_state === "synced" || departure?.sync_state === "departure_confirmed_external"
+      );
+    }
+  }
+  if (classification.klass === "DONE" || (classification.klass === "TERMINAL" && !departureCorrected)) {
+    return null;
+  }
+  const status = await _chironReadBestExportStatusForEvent(env, event, { candidate, strict: true });
+  const current = classifyChironDueWorkV2({ status, nowMs });
+  // A confirmed paired departure is concrete recovery evidence if explicit
+  // rearm persisted its hint but crashed/failed before creating the due marker.
+  if (departureCorrected && (
+    status?.sync_state === "waiting_for_departure" ||
+    (current.klass === "TERMINAL" && current.reason === CHIRON_BLOCKED_BY_FAILED_DEPARTURE)
+  )) return 0;
+  if (current.klass === "DONE" || current.klass === "TERMINAL") return null;
+  // NON_ACTIONABLE_HISTORICAL is deliberately not treated as terminal here:
+  // generic blocked states retain their existing recovery recheck policy.
+  return computeChironReconcileDueAtMs(status, nowMs, _chironDueAtComputeOptions());
 }
 
 async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
@@ -13510,7 +13619,6 @@ async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
     if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
     return { kind: "not_submittable" };
   }
-  const status = await _chironReadBestExportStatusForEvent(env, event);
   const candidate = await _chironReadExportStatus(
     env,
     _chironCandidateExportStatusKey(
@@ -13519,21 +13627,146 @@ async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
       event,
       null,
     ),
+    { strict: true },
   );
+  // A durable terminal candidate outranks an older provider projection. Only
+  // concrete paired-departure correction can lift the existing blocked state.
+  const candidateClass = classifyChironDueWorkV2({ status: candidate, nowMs });
+  let departureCorrected = false;
+  if (candidateClass.klass === "TERMINAL" &&
+      candidateClass.reason === CHIRON_BLOCKED_BY_FAILED_DEPARTURE && messageType === "arrival") {
+    const pairedKey = cleanText(candidate?.paired_departure_idempotency_key, 256);
+    if (pairedKey) {
+      const departure = await _chironReadExportStatus(env,
+        buildChironExportStatusKey(event.tenant_id, event.company_id, pairedKey), { strict: true });
+      const sameScope = (!departure?.tenant_id || departure.tenant_id === event.tenant_id) &&
+        (!departure?.company_id || departure.company_id === event.company_id);
+      departureCorrected = sameScope && (departure?.sync_state === "synced" ||
+        departure?.sync_state === "departure_confirmed_external");
+    }
+  }
+  if (candidateClass.klass === "DONE" || (candidateClass.klass === "TERMINAL" && !departureCorrected)) {
+    const selected = parseChironDueMarkerKey(markerKey);
+    if (!selected.ok || markerKey !== await buildChironDueMarkerKey(selected.dueAtMs, eventKey)) {
+      return { kind: "binding_mismatch", event, eventKey };
+    }
+    // The candidate is already persisted: no rewrite, pointer projection or
+    // inferred sibling deletion is necessary to retire this selected item.
+    const retired = await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    return { kind: retired ? "terminal" : "persist_error", event, eventKey };
+  }
+  const status = await _chironReadBestExportStatusForEvent(env, event, { candidate, strict: true });
   const officialIdem = cleanText(status?.official_idempotency_key, 256);
   if (status && officialIdem && !cleanText(candidate?.official_idempotency_key, 256)) {
     await _chironPutOfficialCandidatePointer(env, event, officialIdem, status);
+  }
+  let pairedStatus = null;
+  if (
+    cleanText(status?.sync_state, 32).toLowerCase() === "waiting_for_departure"
+  ) {
+    const pairedKey = cleanText(status?.paired_departure_idempotency_key, 256);
+    if (pairedKey) {
+      pairedStatus = await _chironReadExportStatus(
+        env,
+        buildChironExportStatusKey(
+          safeSegment(cleanText(event.tenant_id, 128), ""),
+          safeSegment(cleanText(event.company_id, 128), ""),
+          pairedKey,
+        ),
+      );
+      if (
+        chironDepartureIsTerminalFailure(
+          pairedStatus,
+          nowMs,
+          _chironDueAtComputeOptions(),
+        )
+      ) {
+        const arrivalKey = _chironCandidateExportStatusKey(
+          cleanText(event.tenant_id, 128),
+          cleanText(event.company_id, 128),
+          event,
+          null,
+        );
+        const terminalWrite = await _chironWriteExportStatus(
+          env,
+          arrivalKey,
+          {
+            ...status,
+            sync_state: "blocked_by_failed_departure",
+            failure_kind: "definitive",
+            reason_code: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+            sanitized_error: CHIRON_BLOCKED_BY_FAILED_DEPARTURE,
+            waiting_for_departure: false,
+            auto_submit: false,
+            last_attempt_at: new Date(nowMs).toISOString(),
+          },
+          {
+            event,
+            eventKey,
+            previousStatus: status,
+            nowMs,
+            selectedMarkerKey: markerKey,
+            // This IS the candidate, including its existing official pointer.
+            // Re-projecting it through the pointer helper would clear its
+            // terminal reason and write it a second time. Keep the provider
+            // status unchanged so a corrected departure can re-arm it normally.
+            skipOfficialLink: true,
+          },
+        );
+        if (!terminalWrite.ok) return { kind: "persist_error", event, eventKey };
+        return { kind: "terminal", event, eventKey };
+      }
+    }
+  }
+  const eventAtMs = Date.parse(
+    cleanText(event?.created_at_utc, 64) ||
+      cleanText(event?.timestamps?.event_at_utc, 64) ||
+      "",
+  );
+  const v2 = classifyChironDueWorkV2({
+    status,
+    eventAtMs,
+    departure: pairedStatus,
+    nowMs,
+  });
+  const v2State = cleanText(status?.sync_state, 32).toLowerCase();
+  if (
+    v2.klass === "NON_ACTIONABLE_HISTORICAL" ||
+    (v2.klass === "TERMINAL" && v2State === "blocked") ||
+    v2.klass === "DONE"
+  ) {
+    await _chironRetireKnownDueMarkersForEvent(
+      env,
+      eventKey,
+      [markerKey],
+      [candidate, status],
+      nowMs,
+    );
+    return { kind: "terminal", event, eventKey };
+  }
+  const waitingPark =
+    v2State === "waiting_for_departure" &&
+    pairedStatus &&
+    v2.klass === "RETRY_BACKOFF";
+  if (
+    v2.klass === "RETRY_BACKOFF" &&
+    (v2State === "pending_build" || v2State === "pending" || waitingPark)
+  ) {
+    const dueAtV2 = Number(v2.dueAtMs);
+    if (Number.isFinite(dueAtV2) && dueAtV2 > nowMs) {
+      const desired = await buildChironDueMarkerKey(dueAtV2, eventKey);
+      await armChironDueMarker(env.COMPLIANCE_KV, eventKey, dueAtV2);
+      if (markerKey && markerKey !== desired) {
+        await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+      }
+      return { kind: "future" };
+    }
   }
   const dueAt = computeChironReconcileDueAtMs(
     status,
     nowMs,
     _chironDueAtComputeOptions(),
   );
-  const markerDueAtMs = Number(item?.dueAtMs);
-  const waiting =
-    cleanText(status?.sync_state, 32).toLowerCase() === "waiting_for_departure";
-  const markerAlreadyDue =
-    Number.isFinite(markerDueAtMs) && markerDueAtMs <= nowMs;
   if (dueAt === null) {
     await _chironRetireKnownDueMarkersForEvent(
       env,
@@ -13544,6 +13777,10 @@ async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
     );
     return { kind: "terminal", event, eventKey };
   }
+  const markerDueAtMs = Number(item?.dueAtMs);
+  const markerAlreadyDue = Number.isFinite(markerDueAtMs) && markerDueAtMs <= nowMs;
+  const waiting =
+    cleanText(status?.sync_state, 32).toLowerCase() === "waiting_for_departure";
   if (dueAt > nowMs && !(waiting && markerAlreadyDue)) {
     const desired = await buildChironDueMarkerKey(dueAt, eventKey);
     await armChironDueMarker(env.COMPLIANCE_KV, eventKey, dueAt);
@@ -14318,12 +14555,7 @@ async function _chironDrainWakeupHints(env, nowMs) {
       } catch (_) {}
       continue;
     }
-    const status = await _chironReadBestExportStatusForEvent(env, event);
-    const dueAt = computeChironReconcileDueAtMs(
-      status,
-      nowMs,
-      _chironDueAtComputeOptions(),
-    );
+    const dueAt = await _chironRecoveryDueAtForEvent(env, event, nowMs);
     if (dueAt == null) {
       try {
         await retireChironWakeupHint(env.COMPLIANCE_KV, eventKey);
@@ -14427,12 +14659,7 @@ async function _chironRecoverUnmarkedRecentForScope(
       const event = loaded.event;
       if (!_chironAutoSubmitMessageTypeForEventType(event.event_type)) continue;
       if (!_chironEventBindingOk(event, key, { tenantId, companyId })) continue;
-      const status = await _chironReadBestExportStatusForEvent(env, event);
-      const dueAt = computeChironReconcileDueAtMs(
-        status,
-        nowMs,
-        _chironDueAtComputeOptions(),
-      );
+      const dueAt = await _chironRecoveryDueAtForEvent(env, event, nowMs);
       if (dueAt == null) continue;
       try {
         const want = await buildChironDueMarkerKey(dueAt, key);
@@ -14528,13 +14755,6 @@ async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
       const gate = _chironReconcileScopeGate(statusPayload, env, nowMs);
       if (!gate.ok) {
         summary.gated += 1;
-        await _chironStampReconcileThrottleBestEffort(
-          env,
-          tenantId,
-          companyId,
-          nowMs,
-          statusRead.doc,
-        );
         continue;
       }
       const scopeMig = await _chironReadScopeDueMigration(env, tenantId, companyId);
