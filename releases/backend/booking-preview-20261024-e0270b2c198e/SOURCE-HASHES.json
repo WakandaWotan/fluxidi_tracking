@@ -1,0 +1,2021 @@
+{
+  "schema": "fluxidi-live-backend-source-closure-v1",
+  "releaseId": "booking-b113-preview-current-20261024-e0270b2c198e",
+  "files": [
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking-com-hotels/modules/booking_com_criteria.mjs",
+      "bytes": 3545,
+      "sha256": "7048e758758c805c40c9dd4b55609555790c4ed41c064dbd6e8aea977fd484c6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking-com-hotels/modules/booking_com_locations.mjs",
+      "bytes": 3283,
+      "sha256": "5c1999e64b79a80e220e8cb57cb13ac11c031679e265c89258483b0dbef98e58"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking-com-hotels/modules/booking_com_mapping.mjs",
+      "bytes": 7503,
+      "sha256": "27f464f7c3ffb20bad66c29b6611dc15a580e66b3c590040c3aacb3a5e319a5d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking-com-hotels/modules/booking_com_provider.mjs",
+      "bytes": 15682,
+      "sha256": "f2c54a63eaf586fcb675a4445e9d2385f138834898d893b10041d4c51ea654fc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking-com-hotels/modules/booking_com_redirect.mjs",
+      "bytes": 4152,
+      "sha256": "b1c6f4cd5c842df48545da576e14dff881f8e9df5a6078ca19b350400d7033b2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/active_ride_forecast.mjs",
+      "bytes": 5573,
+      "sha256": "29763a7529af25a778c13519a952b765d497344e940bc629a33949e6203736ab"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/active_spatial_index.mjs",
+      "bytes": 3157,
+      "sha256": "f0ffd473431dfa3fc32063eafbfb870567144d3748e16bf2b91a5e2677e70014"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/address_access_errors_v1.mjs",
+      "bytes": 1975,
+      "sha256": "050b7c7c704ca900d4e3f1fb402d3c35ce2c085d51fa78b9bd386a0ae861e09d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/affiliate_admin_reads.mjs",
+      "bytes": 10667,
+      "sha256": "ee9fe243b0323be25b79a5166a6683ff603aa823c5d24f10a92e2b304badafb7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/affiliate_http.mjs",
+      "bytes": 17717,
+      "sha256": "474226044a49cc7a706f55d4a87d22f677f53d3cd8eab56ada575ba4306d2fa1"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/affiliate_ledger.mjs",
+      "bytes": 49775,
+      "sha256": "ded13c1a5f170e52d9a8d9d7c4f157d3a2083e590855f38285dd00e7649ec4fe"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/affiliate_payment_adapter.mjs",
+      "bytes": 7429,
+      "sha256": "79c5c9611f15cafe9248b7e237cc38b4f7f43c09b69c66accba51f0e34de2fad"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/affiliate_registration.mjs",
+      "bytes": 5369,
+      "sha256": "d6639931efc9e7ec40846d340568450a1f1a68f9691a6fcf5c9358bc24ded225"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/airport_availability_contract_v1.mjs",
+      "bytes": 3629,
+      "sha256": "d94e5c4cd6c9dd6d5bdfb2faa8bf14dd3550726da80bf677d24703ccf327b16d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/airport_company_policy.mjs",
+      "bytes": 3621,
+      "sha256": "aa6691c4f6ffa61608012e4cac7c14b595cadc2db7492ffc11000272e6ca3be6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/asap_dispatch_timing.mjs",
+      "bytes": 7488,
+      "sha256": "d8c42480fad747f1deb07e553a34d2086da272a5202b8957cfe0f2aab2b12d59"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/auth_scope.js",
+      "bytes": 5385,
+      "sha256": "69a219381f8456d2d91cb3e5d8bfcd7c38b93cda05e0c06a59741700883426e8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/billit_export_recovery.js",
+      "bytes": 17317,
+      "sha256": "bb3e78293b0f5732b9c8aa54b87da5629ef5ad91f61559481e43b9ead1f70f2b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/billit_outbox_due_index.js",
+      "bytes": 13101,
+      "sha256": "1bb6b1c45268525627d0971ac956b3e30a733229580146459d6454ded735cf17"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/billit_provider.js",
+      "bytes": 80991,
+      "sha256": "514ae4af9cf255af6713701c64d1e7a004233a15319b983fc2f9e9cc341a77b4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/billit_seller_connection.mjs",
+      "bytes": 1240,
+      "sha256": "7eb4ea2170a90a84b16124d9fc2e4618a2aa11707a0c9c4b292be3b42f55c1fc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/billit_total_reconciliation.js",
+      "bytes": 13772,
+      "sha256": "94c221c1cd8b1010e8a89746a311f5fe594e2738710b9ea27e2f7b2d073fedf7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_cutover_inventory.mjs",
+      "bytes": 3722,
+      "sha256": "6407d0251c804d6d14d842f10c466b826d80f83ce4b95cc12282a007d43e1ffa"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_cutover_maintenance.mjs",
+      "bytes": 8314,
+      "sha256": "09bf594c55ff532d3bd4d943a5dbcc5cfba841720439c397d672c37ab1a62cdb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_identity.js",
+      "bytes": 10067,
+      "sha256": "e3af53cca61fd7a18db1a9a07f1c294632f46a8875b8572fbf85d17e519513a9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_indexes.js",
+      "bytes": 49479,
+      "sha256": "15f024e49dd5cc63fc1db781d43046fa1e7cf1ba58db83979161c9da423c497b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_leg_coordinates.mjs",
+      "bytes": 5550,
+      "sha256": "40b3a5159ce3dd97a17514256df7a6954e0265cb36e3d9a8a75374274048f557"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_list_projection.js",
+      "bytes": 77604,
+      "sha256": "ee7fa386916f1f3cd5bc27754ebda3abb3067bc95a60afced675df6de893773f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_payment_classify.js",
+      "bytes": 6842,
+      "sha256": "0d2f45e79539e11f24b4df1d52540d1d492069a6b8bd3dbb50bde96027e52047"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_pushbullet_scope.mjs",
+      "bytes": 4150,
+      "sha256": "7a77a0748bccc0e16b64b7107782935b37c17ef5aa562194e4a36209f8bbd9ab"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_read_model.js",
+      "bytes": 85661,
+      "sha256": "ab16dbcbd58bb6f6f21faab2552f09338652d3cf0299598da56281966de1c79c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_search_cost_guard.mjs",
+      "bytes": 11028,
+      "sha256": "536067cf00c893483604780c21d8c7a930f83fd0ef76f58e3b7cffe6652c2f79"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_utils.js",
+      "bytes": 4148,
+      "sha256": "4b522160c20b6ec117a6ec965f8c5d780c162e34365a44eef440920c381b5820"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/booking_writer_pause.mjs",
+      "bytes": 1639,
+      "sha256": "b65d156df12e087f32feae6b3bca7a7fb50fc720b225851661496b967a054ee2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/bounded_json_storage.mjs",
+      "bytes": 3826,
+      "sha256": "827c895900df31588515d011d3614ab2f07d77d7715e58fa6e02689deb47f4a7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/brussels_datetime.js",
+      "bytes": 3535,
+      "sha256": "11883f431d4a03cd5c8a12d292e28fb0622441caa8744c37c0fe8b30bd866655"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/business_profile_revision.mjs",
+      "bytes": 6519,
+      "sha256": "5c222bd90fa5136cc065e50488cd9aab368bffc07a591a1ab65d9415578d3c05"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/business_profile_theme.mjs",
+      "bytes": 2489,
+      "sha256": "deab1088c6a9d2dc2847a375ef044c83db68196fc07201dde7eee34ab15287bf"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/cancelled_leg_reconciliation.mjs",
+      "bytes": 5282,
+      "sha256": "775abe0f36b5d6d887147e8161b74987cfb72ccf6a6039680f83c91c1df0d8a5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/canonical_booking_authority.mjs",
+      "bytes": 23553,
+      "sha256": "3969c3c94ee5e5dd82bcdd88f6ae139cf10bc2d5fbd25c53f18aa74349cfc372"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/canonical_booking_directory.mjs",
+      "bytes": 5690,
+      "sha256": "4f5b429f9fd120c2a38b1c11816f8eee4d120cf04dc590a6a6124dff7fa355df"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/canonical_booking_inspection.mjs",
+      "bytes": 10300,
+      "sha256": "12e2ee68582bcb6946e5cafb90d95366bddba7b01ec803e66c38beda8be62dbc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/canonical_payment_truth.mjs",
+      "bytes": 5280,
+      "sha256": "93338fd9685bd22ceb2ec1a8de3ff62915e53c80b45815d7a0c6b693013587a4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/capacity_demand.mjs",
+      "bytes": 2465,
+      "sha256": "0ef10ed3790a353038b7a6a5300fc316c0667f9cf4fbd1f33e196f638cb1ac4f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/chiron_bridge.js",
+      "bytes": 7058,
+      "sha256": "edeb85394debc133626b5d402b0d866bc7316b7a58437bbb8c2b9a8122db99f0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_http.mjs",
+      "bytes": 11399,
+      "sha256": "58f04efef3b7d8f8d0a23ee1f7ab566b9b89f2be07154fda76a5d094cac833bd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_integrations.mjs",
+      "bytes": 3578,
+      "sha256": "ad27b392ab0ed0b472ec60de857b1eb724a48be668c818bbbb1eccba4110aee4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_invoice_drafts.mjs",
+      "bytes": 4287,
+      "sha256": "cda7c334d95e81184ec21b85950ed9b97b2b82fdbd95572aa0cf8bc95283ef73"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_projection.mjs",
+      "bytes": 4493,
+      "sha256": "d050ad683275b0fe87f2618215d25f9eb5ac07ba631eb4937b5363a90ff4e7e3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_provider_payments.mjs",
+      "bytes": 8352,
+      "sha256": "6cfbde9641c3b29706e94897b79e765b129cf0f142ee6917a838ce94986ef279"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_registry.mjs",
+      "bytes": 2233,
+      "sha256": "e55ba0cc3518008aedd08e6cb61f47f671e8ed1280bf331051065c00c199d7ae"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/command_center_tax.mjs",
+      "bytes": 590,
+      "sha256": "2b98bfa7ec6dcb8abc8b1188050947355f070ac32aaf475aaa2e3a115ce0cabb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_account_lifecycle.mjs",
+      "bytes": 47799,
+      "sha256": "94b6ea3bd97d9d255a0b8ae8a8e0960f01b5f10abaf9720862060cb5eb2ee354"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_agenda.mjs",
+      "bytes": 78072,
+      "sha256": "5fe07d7f700fdb87a47d11489f32fabdf1d083491a912c8e9922f4aa4a9b1ac7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_bootstrap_sections.mjs",
+      "bytes": 1697,
+      "sha256": "5aab2d47706dedc8c90c3fc89902c683350e790c19b37c3ac568750ad0439891"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_capacity_baseline.mjs",
+      "bytes": 7817,
+      "sha256": "2a609ab781a1d1d1a5f64dae967de20bf050964acf0818bf7e527ddaf9ad5cb3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_capacity_checkpoint.mjs",
+      "bytes": 6401,
+      "sha256": "0c5078554fce8a388e8f9a155164ce681bb9c4a3ee652f26005155de0bfcdaf7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_capacity_commit.mjs",
+      "bytes": 2275,
+      "sha256": "12161938e782f6ae75f4e9fa7e321b9861fda444bb1d47ae2186efa50c8c8ded"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_customer_import_coordinator.mjs",
+      "bytes": 29411,
+      "sha256": "c02f0acd07eaa6944aaf96c2821842f4f5ecd359ad798d35da9de28573349ace"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_customer_invoicing.mjs",
+      "bytes": 9922,
+      "sha256": "63ff2bbe5ca48e3082865f7fabc163ba21dc9b48667a81c466fa89b3a3b975fd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_customer_quotes.mjs",
+      "bytes": 49909,
+      "sha256": "e0ba7669ecc72723d294428666827aad707700e9562ed6274c6e4f83dd080fc9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_customers_import.mjs",
+      "bytes": 15592,
+      "sha256": "87697ddc922ef2b3a4bd595df7dc5f9ee717312ef7971e398019c8aad74c3977"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_customers.mjs",
+      "bytes": 48163,
+      "sha256": "34d4e17c891d6ba40736de7b9c814eb04e46dd684efcbbb9b58d2a478d6d7e97"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_dispatch_delivery.mjs",
+      "bytes": 59790,
+      "sha256": "5845376dff5f37f1c8cbc61e79436a7a57ae7105ee987267735f0fd8f4330a5b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_dispatch_mapbox.mjs",
+      "bytes": 3608,
+      "sha256": "0a8bdbf11a8a506821affbd27d9df30b02d1943ccc3ba322e784b02a978f4069"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_dispatch_rank.mjs",
+      "bytes": 26581,
+      "sha256": "075a10de8907a3deb133c09b7d88d393616adb5227d6f92c42ce0ad9cfad3e3b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_dispatch.mjs",
+      "bytes": 40333,
+      "sha256": "5dd1f0505243421dabf21a439d3c55f77a78d3f2d59135885b39798a07e1f1e6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_driver_schedule.mjs",
+      "bytes": 15449,
+      "sha256": "beb5aef2d88c78b615a5fe6803aa514c9ac379f6ff42b052ae502d2def9ee576"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_first_operational_use.mjs",
+      "bytes": 3959,
+      "sha256": "0f1feb23c5cf7c81925526f4566fa3afd61c15bf511e0ced09a0c7d0aac8d962"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_first_use_trial.mjs",
+      "bytes": 4608,
+      "sha256": "ef8f90ebb019699bbf451005e2ef753ec3d9dfe905f25442100d4957e90a86e9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_fixed_prices.mjs",
+      "bytes": 75933,
+      "sha256": "16d2650003ff23bddfe7c17efcd472198067f845ce38b9b86679aea7c45067bc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_fixed_vehicle_category.mjs",
+      "bytes": 2838,
+      "sha256": "3fd83cb72847c06ea01343ba79828febc872810935a19c0be53b2eafa307b401"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_fleet_delta.mjs",
+      "bytes": 2712,
+      "sha256": "fe167dcebb22e9bea0ab5f9b1eb26628e48a97a27acc9c049dcde55ca1e22143"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_fleet_sync_guard.mjs",
+      "bytes": 1256,
+      "sha256": "cf7612e49cb1fb8dec0c04cc9cf7ac7694fe960896fffd7a0ed558bbf317df31"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_invoice_source_index.mjs",
+      "bytes": 8270,
+      "sha256": "758057f06659385a996e86ee3549593ad323b3fb00bf55dfeb89dfc1266d7eeb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_dispatch_pricing.mjs",
+      "bytes": 4436,
+      "sha256": "4b624bb432484275d5c4b43472c07a6b403bb85fd118cce250c1903e30dc4a60"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_pricing.mjs",
+      "bytes": 4431,
+      "sha256": "da4fd7b40378dafc7b359352ad5b39f4e09fa74ea7344404c32067c3c441b7b8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_quote.mjs",
+      "bytes": 5087,
+      "sha256": "1c4806035f673e48d636f7bbfeba94f85b7dcc5be0bcceee9e5c63ab02895708"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_route.mjs",
+      "bytes": 3749,
+      "sha256": "ed44e0cfbcd7998269a972814a2aa1a48216bed0b964edc95f53da57293046e4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_scope.mjs",
+      "bytes": 862,
+      "sha256": "6400ea35507899e1bfbbb8a3ea0b84bb712da590c49a1c4ac841435df64d81f6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_mission_tariff_config.mjs",
+      "bytes": 3649,
+      "sha256": "f45a283cd75e3c8a9ffecfbfd200ede7809c51d669a74dde5b2a2eeefbf9d3c5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_delivery.mjs",
+      "bytes": 11256,
+      "sha256": "b9109e9cc84ebf2033c95af2bd6a22716981be5a36980577431341c0ba8f8722"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_html.mjs",
+      "bytes": 5451,
+      "sha256": "7b463d7e1adf0a9d2f5572c674e5ca6a563b37711b64af7e4c4b6c4be780a5b3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_issue.mjs",
+      "bytes": 6161,
+      "sha256": "d42eee14ebb1d19725cc4fbe21c34b3821c889dbd7cc2f53599b2d77e7ea2770"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_job.mjs",
+      "bytes": 22064,
+      "sha256": "72fc10373229ca17335a44b73d02f62548692b974676c9c704f9fb3b51d12d25"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_ledger.mjs",
+      "bytes": 4938,
+      "sha256": "0265845c946db7fdc02706be15dcf24c2b243616c73baa1296e1e3c3a5b9ff6c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_preview.mjs",
+      "bytes": 2728,
+      "sha256": "48c29cd03c235a778b8345596c557753a969d6185e313bda6813a7e71cd4e666"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_projection.mjs",
+      "bytes": 5110,
+      "sha256": "492096a53c284cae64aeb143aafa02186563b505c8974cb2fd3fbc89c731a1fd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_registry.mjs",
+      "bytes": 5413,
+      "sha256": "6c63ecde5dfeb8c08446302278f3c26f31914f29186b760e028ca908199270bb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_runtime.mjs",
+      "bytes": 3898,
+      "sha256": "d129659695ac3ea6c275fc8c0fc6334c5d797da7b8f93ca2049308f7360b14cd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_monthly_invoice_sources.mjs",
+      "bytes": 4474,
+      "sha256": "4e6eacea481945e0269576ddeea9a584b277fdf7bfe61503480a7acbce5e78d0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_operating_policy.mjs",
+      "bytes": 4355,
+      "sha256": "6c8c7e5b52a0faae9b9cd9b665ef2fb610c96b64fe0fdaec16344d40be3c3077"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_operation_guard.mjs",
+      "bytes": 3775,
+      "sha256": "ed34f612b54f31d8e4ecbba4f9dedf1301e7581bf091daf13b3e9b602ffef039"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_plan_quote.mjs",
+      "bytes": 11294,
+      "sha256": "13d2ae3c753679d477acb6164e1df952e2d76c7af501dc69cf6a941a545bf5a2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_plan_when.mjs",
+      "bytes": 1303,
+      "sha256": "73493bfe3312d45ad2f95c9d3b8ce1a98f1719229ed767b134c5125d4456e51b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_planned_vehicle_offers.mjs",
+      "bytes": 4105,
+      "sha256": "ed92c0d48f40bf4f56686d64920b2398b919dccd4bada8e4daf29d88643d154c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_presence_authority.mjs",
+      "bytes": 4202,
+      "sha256": "1e92e700ff048b03c2e0325aa9a79602bda23f9093276e45297418cb3ebe0093"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_primary_email_recovery.mjs",
+      "bytes": 10092,
+      "sha256": "d8066c5360af6aee9dd393c7962ecba1a351b743cb1f29854b9d87cdad5761f1"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_public_customer_invoicing.mjs",
+      "bytes": 2891,
+      "sha256": "2fd2a73bcddabd5d15b5806cb3b81ac31af3803760e40dad1009db9869e740c6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_registry_index.mjs",
+      "bytes": 12652,
+      "sha256": "6760426ea34aa7108bd04a02cc54e16001036be5f18104ad4bb8c5baac82d635"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_ride_execution_identity.mjs",
+      "bytes": 2364,
+      "sha256": "687c2ed45a2740ac0566f994973b12adbe3c563e2ec71dca264c5cb540c21858"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_roundtrip.mjs",
+      "bytes": 47872,
+      "sha256": "35250065099bac1340fe2db2315304b77be10e0be4da4b77a280e437c12dc19e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_subscription_facts.mjs",
+      "bytes": 4765,
+      "sha256": "6e0afef45699fed1ec8a8222711cf4ec38447360b6a3a70784e8765ffc53a55b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_trial_entitlement.mjs",
+      "bytes": 17148,
+      "sha256": "3fa0cd4fb4c1d464572c7bf22a0c5dd8257a308d811069b51d1bb8a7173f6ab8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_vehicle_dispatch_policy.mjs",
+      "bytes": 4975,
+      "sha256": "c2e80cd0c5005566e33d4c3bf8cddb4cf2dad65339ce13e8396afb6b1134d618"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_vehicle_duty_fleet.mjs",
+      "bytes": 5875,
+      "sha256": "ac1c6c75fed2e5bb0b330faec209c5e615b2b718e6eb2455456fb01802b17b04"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_vehicle_duty.mjs",
+      "bytes": 4604,
+      "sha256": "23a776abf750232a1f63ad8e464ee8348f1542fe9f3291fb0a91f5743d10cd95"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/company_vehicle_operation_selection.mjs",
+      "bytes": 994,
+      "sha256": "e9bc3d1f811fa4361bc67507f6ebc1d4cf50647bcbfd19941a67637269ac509c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/compliance_events.js",
+      "bytes": 7156,
+      "sha256": "01af258d80951e22096aa90a5e6650dea472b89f67881d8bb76b21819a062f67"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/configured_site_access_v1.mjs",
+      "bytes": 5457,
+      "sha256": "f6c1b6339518f35beef5d5bf37fa1420b587d8841baed7e9c65a3b7fd5b35d1c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/consumer_billit_sale.mjs",
+      "bytes": 34357,
+      "sha256": "a3d9018e1f2460a277eaa6883783e245c90a18a590d80287a207a836effba189"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/crypto_utils.js",
+      "bytes": 2966,
+      "sha256": "eabd6f6c84a33a2528facbb60a22fcf14e7fcb914130f21636ae2c216bad359e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_app_header_mode.mjs",
+      "bytes": 9145,
+      "sha256": "820e109844342d8544d537bdec8c63093ecb05c4e51d738bff254ee195bee1dc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_booked_route_geometry_v1.mjs",
+      "bytes": 2237,
+      "sha256": "33a778b093cfbc293df3b074575a0625967e3f58164bcda11acd3dd5f8f01735"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_driver_photo.mjs",
+      "bytes": 5295,
+      "sha256": "3492e9e1c94284eabaaad12c52ec9a8019635465fec798d78f4f210ef7d8b80f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_mapbox_quote_request_v1.mjs",
+      "bytes": 10582,
+      "sha256": "41b2a6b9ffc3869f2effdcc334b541a056555d9a9d51d64ab77229b093a662db"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_play_review_access.mjs",
+      "bytes": 5338,
+      "sha256": "3f23f7aa395a8ae318be2e1d10d5ebe32cf97caa9a91347c55d910d8f22e0d14"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_projection_journal.mjs",
+      "bytes": 5068,
+      "sha256": "cc1a78c1ee716168b61d4705b1abec85d98ed84fda04d539169bc9360f0dd477"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_tracking_access.mjs",
+      "bytes": 25896,
+      "sha256": "d7f9ca3ca31fbaa486236b7014056d19573cf147be7297d4354d50f4cd8c1a77"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/customer_transient_route_v1.mjs",
+      "bytes": 5084,
+      "sha256": "5854d03c601f94c8f7a5d96dfc7bdfab9a2b9f498cea4b0eae3bbfb6a0469ec9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dev_reset.js",
+      "bytes": 737,
+      "sha256": "c7d320e689555025027ec8f174b53cc262a68f2ab980ae1435614e58b14b4150"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/diagnostics.js",
+      "bytes": 2203,
+      "sha256": "1e794ecb10da0f89a72494a75b66f7ff8e8d5a8e0484b48362abd2f17683a9e6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_advisory_flight.mjs",
+      "bytes": 1090,
+      "sha256": "9151eea4dca17ef92470727652b4061c7f5a648d53deedc8a13e8387f1aec3cc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_booking_open.mjs",
+      "bytes": 2766,
+      "sha256": "9301329386d152d8641dcfdffa88c925d6ff2ba20cac30720eb87cbcc86e4081"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_leg_candidate.mjs",
+      "bytes": 2660,
+      "sha256": "b86855d48a86f7aa11adbb5b526eb740cc86ae68447bdb04fb6c1b170a80cb6c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_offer_basis.mjs",
+      "bytes": 2199,
+      "sha256": "a3b3006b6601234eeef281aad39f9d14c5518732836fea6e4d9fd05664a0e478"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_open_pool.js",
+      "bytes": 18865,
+      "sha256": "07e97fd34a4e40d34081644575b08792af974a8e9e84171525ba1e20e35419c7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_prefilter.mjs",
+      "bytes": 1043,
+      "sha256": "327ab230dfa8dab60094976caf118b66a0c6bca6a0b35c204838e142b68a6477"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_provisional_claims.mjs",
+      "bytes": 5134,
+      "sha256": "8782a1d80d24658557393099ff84a27e60f80501465c2e5b0bf751200556cc5e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/dispatch_trace.mjs",
+      "bytes": 31982,
+      "sha256": "15511071033242738e8612390c441b46563b08860712b554cd464aea57d1710f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/document_branding_email.js",
+      "bytes": 5854,
+      "sha256": "fe2a36c08181a124b293839ad7558197d2934eb2108e775f06cb24582428315b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/document_core.js",
+      "bytes": 42284,
+      "sha256": "980d69954447112c7c4356c71d09541bdf083a58196c1734ebf925f9ff50fe43"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/document_phone_format.js",
+      "bytes": 3186,
+      "sha256": "433c791b1f0ad3cdaeebb88fc2eee97e9ed09fb83f2ee265cf514c88cecdc3c9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_booking_lists.js",
+      "bytes": 28959,
+      "sha256": "eea54360be8335949d21a82e78538f6374304b22ef4dcffa7ce45d6ec998b929"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_directory_membership.mjs",
+      "bytes": 1523,
+      "sha256": "563fc2129e5a4bf26851db03908bc5d82e7ca92c25e461b0d2afc0fab93ce5f5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_eligibility_batch.mjs",
+      "bytes": 2957,
+      "sha256": "7169977cb24e62e3043ba699011ec405fe0530cc0f73ce4caaa9153990b2bffd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_index_mutation.mjs",
+      "bytes": 46426,
+      "sha256": "3705cf3629f677ff0e526f3251680ce90b097498184707289db74f345b65d060"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_management_page.mjs",
+      "bytes": 6637,
+      "sha256": "0e3db4444a140ab9670f12ace8c77726b4655290a25bc918872f5f567407bd29"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_offer_price_v1.mjs",
+      "bytes": 8394,
+      "sha256": "fa4450b00851b1ef63c255ab6c4a77e94d0808ae20e25e8b24a9a7d69c1c17d4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_ops.js",
+      "bytes": 12043,
+      "sha256": "51a654161901a329bb344cd9825cf7836e9f70f9213682bc0f80bf487e39ff6d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_vehicle_relation.mjs",
+      "bytes": 964,
+      "sha256": "3f60c062737d496873255cbb2c29570e62f3bcf093d689d5c46ab32494d68944"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/driver_vehicle_schedule_guard.mjs",
+      "bytes": 2174,
+      "sha256": "03ad185222f127aa4fcd5eb7093f594b8c5a92cb8e261f89a79e857cf0aab936"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/enterprise_candidate_pipeline.mjs",
+      "bytes": 1032,
+      "sha256": "022dff224f1b7273f0bc6086b993c85df39f23b260dbb49491b813b5a784f137"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/enterprise_safe_search.mjs",
+      "bytes": 2775,
+      "sha256": "9f4933dfe62dad4e4a725449f4c089824181e92d5b32ccc3a62f3891f6d9a9f1"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_acceptance_fence_v1.mjs",
+      "bytes": 12184,
+      "sha256": "5715a94e735303497df73f807d7d3587166c6bde7e0b67ed7b0e0c88473dfcf3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_dispatch_price_v2.mjs",
+      "bytes": 7544,
+      "sha256": "2806aeea247fb567a2606de96015d2d73363adde45064f6043dbd8d2981f8dfb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_historical_hold_v1.mjs",
+      "bytes": 4553,
+      "sha256": "44a526dae1499699603b8b583d682c9b074929b56d55f6e98d8ecaaf9d9f8c7a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_intent_recovery_v1.mjs",
+      "bytes": 8734,
+      "sha256": "148957f9f597bbe477e94bfb6c9aec7002ff27dda9fe8da1c4858388d1f34e90"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_intent_resolution_v1.mjs",
+      "bytes": 9952,
+      "sha256": "5377acd1231516d1326e5b37f62fcdecef2462dcc451cdc3a140f84293e144a9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_national_binding_v1.mjs",
+      "bytes": 4114,
+      "sha256": "27c7a760addd28f6352ed99962282512cf7b79408fbf6528803b3f4fe309e946"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_national_quote_locations_v1.mjs",
+      "bytes": 6917,
+      "sha256": "93649c80d44a60c0b9c736be89ab3fee4b03277a1cc1f382a464648b05f61c3e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_national_request_v1.mjs",
+      "bytes": 7530,
+      "sha256": "ba093b01ae4b113c86516e2829b12e5d126667444c149142b1db987e6c2f6cac"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_national_route_adapter_v1.mjs",
+      "bytes": 5624,
+      "sha256": "9fbc92791c3b51b8562b60ef95fb1671194f069966dc795398256b13a0781521"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_quote_lifecycle.mjs",
+      "bytes": 14954,
+      "sha256": "9dfb7a4adaf783643d409e69ca2d1c1a4c0d059f7164513f9520fad2dd56b2e8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_route_batch_candidate.mjs",
+      "bytes": 7232,
+      "sha256": "a8f34344e86ec2f692256763e90499a3e79381474ce1081884444e03903226ca"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_route_evidence_d1.mjs",
+      "bytes": 1843,
+      "sha256": "d58f543909f5f83b077b086e5712206483203b42140df53c84378dee6d776feb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_route_evidence.mjs",
+      "bytes": 14468,
+      "sha256": "8f5582ac231652380a310c3036593aa02594ff5678540604de1341b207ba89c6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_route_preview_v1.mjs",
+      "bytes": 1514,
+      "sha256": "5bdffd06e89e4cabef628b298e7f039098689f204d27720e9d5627a7dceaa913"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/financial_sale_projection_v2.mjs",
+      "bytes": 5882,
+      "sha256": "1195b986535d069c5f219958eee81a00fe1f5678f6b5e1f44a929e727d087f57"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/fleet_roster_availability.mjs",
+      "bytes": 18578,
+      "sha256": "2a02838cfa7fe094895c53c5accc5849115b8854534eadf7150e70e247737953"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/fleet_vehicle_capacity.mjs",
+      "bytes": 4649,
+      "sha256": "53ad788607f2c60915dc85fc66a44c7eb64b644739d8ebe6ad0a3a317c881a1b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/fleet_vehicle_tombstone.mjs",
+      "bytes": 4553,
+      "sha256": "28f8cf0eaac560082d20d7df25d210f1a7955db94f4f67c8d21fcb6f4f90af36"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/free_company_subscription.mjs",
+      "bytes": 989,
+      "sha256": "60ea489b6660709f626b6138dd05ff2e9798cf27330233c41ab76de73c804cc2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/google_places_country.mjs",
+      "bytes": 8157,
+      "sha256": "8cba9e50bf4c3d4605ee89bebb904a4c0c0b13a086e7797a63f7cc86ac34c19d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/google_places_hotels_page.mjs",
+      "bytes": 6554,
+      "sha256": "3400957154b36d43534dae0c85483ce30f6348965f56d45929b10fdec51c3d46"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/google_places_pagination.mjs",
+      "bytes": 8724,
+      "sha256": "ab5a647d65420e5974f749f44cf5e1e13829b0c584e71f2456d2d7b74c553237"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hierarchical_partitioned_routes_v1.mjs",
+      "bytes": 58851,
+      "sha256": "76155a8d986256e770e6a2fd720f460083e6db7ed293b55f30157c81d8947805"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hotels/booking_com_provider_adapter.mjs",
+      "bytes": 2325,
+      "sha256": "38f78751ab7ce92e72e678b09073b0fffa5765f7c06db52d554e66141d733c84"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hotels/booking_com_public_facade.mjs",
+      "bytes": 6268,
+      "sha256": "358bf02cd236960786c8bec15ec5bee5a0fbabd00f3154fc4106f7c47d7b54d2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hotels/hotel_provider_contract.mjs",
+      "bytes": 3813,
+      "sha256": "b79fb1fddfe0cf6ae5e2322566fbab3ea30c91aa09a087ffda619d2d31ea76f8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hotels/hotel_provider_registry.mjs",
+      "bytes": 1912,
+      "sha256": "488abaaa67f418c736f855636b8186dc0fba50c2dc479f00e664bf21f3ab94ed"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/hotels/ratehawk_provider_adapter.mjs",
+      "bytes": 3151,
+      "sha256": "a536dbcd0b2856b121a8f2a2a67b219d2e3f64535c63ef7acfb73ce822842103"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/http_response.js",
+      "bytes": 906,
+      "sha256": "a7df9f985d4649a39fefefa598ec40a004abff4a9de73f3e1ea78e0fe80df568"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/human_booking_id_allocator.mjs",
+      "bytes": 13620,
+      "sha256": "d3c99f26c8c394164143077827f33b5154f2503bc26600cd96f5f869b9b32558"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/human_offer_delivery_budget_v1.mjs",
+      "bytes": 748,
+      "sha256": "1b8afcc41364f62fab7575ef5e81d145d858f3e3e2a66800e0e67257ecb7b5e9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/initial_booking_intent.mjs",
+      "bytes": 5761,
+      "sha256": "01f7eddd44bc46d77219772747226e86f2769edc8a219f90f23dea9397dfb877"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/initial_payment_reconciliation.mjs",
+      "bytes": 8745,
+      "sha256": "9c4fe33162328f1df1d1e34c361eaadc56942f69fdf1ca681bdf9ac6672051d1"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/internal_dev_subscription_exemption.mjs",
+      "bytes": 8324,
+      "sha256": "47434d3deaf86d0ede2b55abfd9c31d80ae77b6c8b06abc0b63b332f278db2fb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/internal_test_booking.mjs",
+      "bytes": 8735,
+      "sha256": "ed4bba9fc5d487129b86f1c2810e8026dcebf0a39d03a98e6f3c9a0c64f6b911"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_company_logo_fetch.js",
+      "bytes": 26862,
+      "sha256": "851c0a094a1aed91ce17a4595ff03e23dc69379fd3770d0adc83d3fbbde39f3c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_logo_embedded.js",
+      "bytes": 7507,
+      "sha256": "e8a9f86188e682b1de51ed480e44dde0e1ebacf796d2d12c0250b47d23cc4100"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_logo_pdf_flatten.js",
+      "bytes": 27155,
+      "sha256": "9455b35782bc4c606426af123157d79c6fe6fa7e59223f02ab5755b46deb31ca"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_number_source_of_truth.js",
+      "bytes": 14442,
+      "sha256": "bbd111489e5f9e7441ee9ebe131eb209be4a27371f2d24d9962025fa6e067540"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_pdf_http_contract.js",
+      "bytes": 3159,
+      "sha256": "2ab4792bedafd274d40e14fad520a7bbb9ba07f45fff27b3baf5628f5f8ac049"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_print_layout.js",
+      "bytes": 6872,
+      "sha256": "eb0782849585ebec09704769c0c0981c483bef2d48acaf7f2e8185f56f5c1c30"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_route_address.js",
+      "bytes": 17020,
+      "sha256": "b7b64bc435722f6434507ab3f39a38521f4ff5a846280c6e1751b69d1f219b0e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/invoice_service_line.mjs",
+      "bytes": 2749,
+      "sha256": "315eb4ef87ac3b8daee4f95a4e681cc7026076a8aa83d3e9a90739cc4dd0f7eb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/kv_op_budget.js",
+      "bytes": 4146,
+      "sha256": "55dbd62378cd65fa0a8a1276e45c5b7b891453c928049397a3d952b6f7d8dad7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/learning_lesson.js",
+      "bytes": 12132,
+      "sha256": "5fad60b5660bc4615424f58bd3b456017ba1b6b4ae28b8160690e76349fc1aec"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/leg_pricing_finalize.mjs",
+      "bytes": 2248,
+      "sha256": "7c0f847523b1c27080160a7f80262810fb0b43dd54f537e97c6424d3fc903bb7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/legacy_scope_evidence.mjs",
+      "bytes": 6494,
+      "sha256": "73535b5a04fe499633f5fd49a8ef3456048c65035d9cce3e6e404f4fc916ead5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/legacy_scope_migration.js",
+      "bytes": 10011,
+      "sha256": "8cb779d5232de26ee05591bfa2f4db49c15a99de54518e7f8b5a388d6742f7b3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_acceptance_token.mjs",
+      "bytes": 6643,
+      "sha256": "f8b2db0b8fada402219e79ad10e7c48d6a29412339c7fff0c7242877c4b98cd4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_accepted_ride_facts.mjs",
+      "bytes": 9505,
+      "sha256": "94cb67bf287fd5a7d67d833102a2ce7f5d301b76b8b168f8c82372f293504c61"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_aead_token.mjs",
+      "bytes": 6105,
+      "sha256": "782b9e62ca8e35663c5110766e4b3551740f1158e575ee21d0de38573e7214d9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_booking.mjs",
+      "bytes": 32123,
+      "sha256": "6ae31b004a2903b0f983a833abad4461020460346eb29200a648ab4a8ebcbb29"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_discovery_preview.mjs",
+      "bytes": 10898,
+      "sha256": "cbe944cb8fb16f695f0909e45f7ef34d7acda1029b932d5ccc8409e9ef32de87"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_distance_rank.mjs",
+      "bytes": 4585,
+      "sha256": "0919e6df3d3803112cd8d9293f4878759c512628cffdbc1d4a65cab4bdd3cca4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_external_customer_page.mjs",
+      "bytes": 16827,
+      "sha256": "3acd7c696bbe6c0eaddce4bce821444d7bebda3b03f4293d293747fca538a7b3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_external_customer.mjs",
+      "bytes": 19458,
+      "sha256": "593be270ae4788d3ed877a2ad9c57450a6b2efc87c7cc6cb58de17b0d19ce553"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_manual_quote.mjs",
+      "bytes": 52927,
+      "sha256": "d0ee410bce0bec65cf3802aa810da109fe1d7f23ba7b092c98b57b59650c60a8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_offers.mjs",
+      "bytes": 36054,
+      "sha256": "01264dd8cb4afe99f650f769a5de978b8759bdc79432a32a3aef7ff093719cc2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_operational_handoff.mjs",
+      "bytes": 7550,
+      "sha256": "5d846842d4271a98f329e7160cb3f04a90717be1822f6502b5e735e36a8c7c7d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_operational_legs.mjs",
+      "bytes": 4784,
+      "sha256": "3a300b7427b2be7b0906ecc90cf988a9958fcc09a7f5244a2a81bfb68acfda48"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_owned_route_binding_v1.mjs",
+      "bytes": 7628,
+      "sha256": "005de2f3b50557437b99e3a81c85f874f7b391fea28745fbb22c706bd7577c64"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_pricing_resolver.mjs",
+      "bytes": 35717,
+      "sha256": "4d72b792d68ea22f619a5a99454c83bf1842619b6df261a670308c04da06dfb4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_projection.mjs",
+      "bytes": 11925,
+      "sha256": "593ecdc0f282289c31eea6283d724f36c7d032a1f3b8ee63533423b8742a1054"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_provider_eligibility.mjs",
+      "bytes": 13810,
+      "sha256": "50e3113a5bc96dbc1fe827c17a47be1f614e5512bbf400134f0618e4a24bc40d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_public_service_persist.mjs",
+      "bytes": 5660,
+      "sha256": "5f47c534f3c9f38fa499746d74db70c3fe6283f30e2c8772628dacb6cee32817"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_public_vehicle_media.mjs",
+      "bytes": 4223,
+      "sha256": "dfafa630f48d1cb77b55491bd74127b5b85e6cd2a5e706f55a95a5792ee5c617"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_public_visiting_card.mjs",
+      "bytes": 6258,
+      "sha256": "e2d5e40b9c49279088915704e8c0d030e5ffec0108ab52c0593a3de44dd7f54a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_published_identity.mjs",
+      "bytes": 12076,
+      "sha256": "ff681d8b336fa6ba0af435b3b692cb05dd6ad2465d5053744ea30d79eba5b8e3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_quotation_document.mjs",
+      "bytes": 30833,
+      "sha256": "7ee6a46bb999de71371ef20e857e0216aaa5baec26aafd72294ab1616a5feef4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_quotation_i18n.mjs",
+      "bytes": 18702,
+      "sha256": "fd05f1bf0ee13a220aa52ebdc1dc7ea6f094c9845c20b3ec337b7b1000b2fa7e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_quotation_snapshot.mjs",
+      "bytes": 25876,
+      "sha256": "72038a92476649579b4e490b05f70b5587ae9e8fb68af821ed098c9ec566f1a7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_quote_inbox.mjs",
+      "bytes": 19635,
+      "sha256": "c1a4fd2b031b6f2b6913a39a1dd379651d6ca2b91c3ded0f31c4d9ccc1e0c5c8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_status_token.mjs",
+      "bytes": 5490,
+      "sha256": "ca1bac34437f800c2601604274cdc165cc9d358ceb5e470009f45de4919e657e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_submit_observability.mjs",
+      "bytes": 4321,
+      "sha256": "796046d0dcaa4bf26d40fdb70f5cacf48cd9382a39b1ccecbfe5a4c317c95cf0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_test_company_allowlist.mjs",
+      "bytes": 2767,
+      "sha256": "dc2996227c9795c156dddd6094710d809824753bcd1a11c1f8c6d2f18966c5fc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_transaction_gate.mjs",
+      "bytes": 4067,
+      "sha256": "3202377630c12df019fe92134e617bf373d4509ba101d5eeef261a57d4bfa5cb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_transfer_endpoint.mjs",
+      "bytes": 7778,
+      "sha256": "b66ecc21312d89cbe0ec27214174bf890a5edd702e761f678c97f4572051a3f2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/limousine_unified_intent.mjs",
+      "bytes": 15773,
+      "sha256": "623ebca6c9547264e525eb2962ad10fe36b5447abd4e5eea46b111ac929ceb29"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mapbox_quote_request_v1.mjs",
+      "bytes": 33144,
+      "sha256": "1087b330b8db9900c644e01e0cf706b8fd90cec233f2ab4de1014192d6dd41af"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mapbox_quote_transport_v1.mjs",
+      "bytes": 18867,
+      "sha256": "979c6d1b980d84376c321b54145f3bf8a6b7184650b45a1f6bba588154fc2588"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mapbox_route_retry.mjs",
+      "bytes": 3600,
+      "sha256": "e95bc28d207fdcd6dacca9f699a2c090828eefc57a9e83321586d2e82cd80790"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mollie_connect.js",
+      "bytes": 57997,
+      "sha256": "ce37182f31aa2ba6fd870162e0f3cdaa836ccc1fb7e0c778192ede2141283df9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mollie_hosted_cancel_wire_evidence.mjs",
+      "bytes": 5029,
+      "sha256": "a2b0a5c7ba775b66a323436276b35f6254450808041cdfced0e48d04361d2fdd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mollie_open_payment_recovery.mjs",
+      "bytes": 13250,
+      "sha256": "d44128f400418cf5a9d052301ee890614b2505ea45ee426887a49a0947d42de9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/mollie_terminal_exclusion.mjs",
+      "bytes": 11102,
+      "sha256": "30e14fec8386fd8ebb11f23a6909d0d33d96a8d4213a528a71eabdf3107d1174"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_authorization_v1.mjs",
+      "bytes": 11756,
+      "sha256": "4adaf6a776c9e177a6dee5b50f39ebbdd803c3de0557e9d2f5a5bcca4ee4c84a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_directions_v1.mjs",
+      "bytes": 11705,
+      "sha256": "86cf31e1ca848387fbf04239a5f12afeb92c8fffc9c8b180cbdf9b55c206fade"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_http_v1.mjs",
+      "bytes": 9532,
+      "sha256": "9da7878556fcce4f4f023637a8a768de516147386597971eee5a9382ae5db188"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_road_tags_binding_v1.mjs",
+      "bytes": 2867,
+      "sha256": "f76a01c2798d0b4a15be3d08e4f4359fcfdd0306b13d30192bdec48921bc3c30"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_road_tags_v1.mjs",
+      "bytes": 8696,
+      "sha256": "113c0635936f9f828ac791e2a950b26839d57d8d88bde8f000ae0cdc6c1a7e14"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_navigation_signals_v1.mjs",
+      "bytes": 5847,
+      "sha256": "39421d619e22e21ce8d58e7120fa3af216beb62b7698783ba196e9db0de36f72"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_road_access_v1.mjs",
+      "bytes": 31213,
+      "sha256": "8e6c903bf8972c353843a7c70193ea16b931a89c3019765a26b1d935593d0779"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_terminal_access_v1.mjs",
+      "bytes": 10288,
+      "sha256": "68523cb0d5052863a1049eabae3f2e7943caace289f9d6eda69e93232a7e71f9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/national_terminal_navigation_v1.mjs",
+      "bytes": 6093,
+      "sha256": "f98dc515240cda9ce4cb3f2de9d6089fa142cf4ef088eefc0df68edf38122186"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/new_company_capacity.mjs",
+      "bytes": 3397,
+      "sha256": "e6870d9b05c131a27085154ecb31727e968170afeeddde0a9f3622282bf23827"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_access_resolver_v1.mjs",
+      "bytes": 23832,
+      "sha256": "f65847f84a7f1d9de984fa1372c551091b3c53f7f870dd1e0ae547a1f24a7933"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_availability_v1.mjs",
+      "bytes": 10224,
+      "sha256": "b2843c995f1a188a8cd2eba63752ae91af593a0ee2ba12bcd8d69521f61c7502"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_index_binding_v1.mjs",
+      "bytes": 3818,
+      "sha256": "43e4a2defc76622f4bd4f8a56f93246cbf33fc9426e5fbdf5c00057323d85cef"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_operational_adapter_v1.mjs",
+      "bytes": 11323,
+      "sha256": "e23e128a52ecd9777988e60f51d68525c5800cb350e96109a3d8b75a29891b38"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_operator_http_v1.mjs",
+      "bytes": 915,
+      "sha256": "d4f574db49223f98bfb5a56b70f9a5a7b376ba8957ab98fdc7f6297d40490a7d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_picker_http_v1.mjs",
+      "bytes": 9647,
+      "sha256": "42ea6f835170bfdc47e36e8973d7051fb056b865c0ada0e02f6adf7be4bd4eee"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_picker_v1.mjs",
+      "bytes": 9923,
+      "sha256": "d972cba2db19424b5c6681de8a17f302cef2ee4c58fc3ffa2bcb7560ef02c347"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_reference_v1.mjs",
+      "bytes": 899,
+      "sha256": "ec3faf32b1a8d8e6b53c48d1b21b9bd52fca8f7b523faf92bce51112b0d04ab5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_route_point_v1.mjs",
+      "bytes": 1927,
+      "sha256": "020d48c876c35b3700e9120c4265d5e49aa2787be9efa4ad1f3c4e362463ac38"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_routing_v1.mjs",
+      "bytes": 15622,
+      "sha256": "20b9ba52354fa2e58179b192bef8775ad58a188b49f0e3c5ff5d2a8591e795b0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_runtime_bootstrap_v2.mjs",
+      "bytes": 2647,
+      "sha256": "0badf89799cd3cf888b6fcce0d7860c2295daf76f60e127433afc04d6b32ccf2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_runtime_index_v2.mjs",
+      "bytes": 9748,
+      "sha256": "7451648eea447970a8cc2504454b24ea36e946217e216eac77d329111919de74"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_text_http_v1.mjs",
+      "bytes": 8808,
+      "sha256": "7c09fa3014fb491ee81efb87a5faa8fbb7181a09ca92b2daa5971a48581e3d2d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/official_address_text_search_v1.mjs",
+      "bytes": 78575,
+      "sha256": "34b378fa0bb443013c24e59eddef2fa809ece2725d3d98bd3e20187c9319e9f3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/online_checkout_failure.mjs",
+      "bytes": 2764,
+      "sha256": "9ecc51889b6f9cd51e05bf2f73e1aed854f92816e973750e68ff601bbdc4cffa"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/online_payment_ride_status.mjs",
+      "bytes": 4471,
+      "sha256": "5e3342be25058583b8ffac0314919c89d648eca204e6ec31eabe411f2578d1de"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/operational_itinerary.mjs",
+      "bytes": 2489,
+      "sha256": "a36a94c5e8345cbf648e7b340ee3f4b24e0612deb543341fd34c673ed546a9d7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/operational_route_update.mjs",
+      "bytes": 11800,
+      "sha256": "d2d3ce0a5089c9a845afb5f6fcc35023ef7aa1c1f545a3c6be3aa944cdec8628"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/osm_speed_rules_v1.mjs",
+      "bytes": 4809,
+      "sha256": "4f836b26b62995ec297cbc1059879918c346473bedbc0a234f238af9a06bc421"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/osm_vehicle_access_v1.mjs",
+      "bytes": 12347,
+      "sha256": "bb9e257065f608fc352103eb6b3ea8e006eef757d9cf0272f68fb6eecf509409"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/owned_address_geocode.mjs",
+      "bytes": 5952,
+      "sha256": "9c80b90a8ecca749562bb8f511054e55c585dd2f6101ca33a2f54dde22a25293"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/owned_release_fetch_v1.mjs",
+      "bytes": 606,
+      "sha256": "8d2510424bd1c185db42feede98cfd0a7ffdedecdf10db243914c634c316b3f2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/owner_promotions.mjs",
+      "bytes": 1015,
+      "sha256": "7422be11a5750c9a86af8a4e7a0f8b5f7dec52052d727429400e7e30369b4d68"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/parsing_utils.js",
+      "bytes": 2781,
+      "sha256": "e592d1c37b383f330a86213d9ecc03a1faaa2129aa4691a474e42248dd08a3c4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/passenger_seat_capacity.mjs",
+      "bytes": 1873,
+      "sha256": "1cb9b1dd9e5fb468bd2016134bddc0e39e1d691c6349bcd7de3b9f42498c1a33"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/payment_method_truth.js",
+      "bytes": 22621,
+      "sha256": "32d3f846f9e04d1b9e6f1fe57d84dcea7f091fec8e0c9ea0779b0aff9e36686e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/pdf_credits.mjs",
+      "bytes": 7065,
+      "sha256": "6d968f0d078f9aee42017951266779b02377823e042b7d19f79bae98e1d8ce81"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/pdf_render.mjs",
+      "bytes": 1615,
+      "sha256": "117ce666eb8602d9299077cf48300780d59e67ce584bfb4bff829fc19b074c4a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/peppol_readiness.js",
+      "bytes": 897,
+      "sha256": "a81785b67edfdb7983283b4665097b60d42e3a357ee53656d9e5e1ddc84b846f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/personal_driver_dispatch_v1.mjs",
+      "bytes": 1281,
+      "sha256": "320beae869388fa19848489f39dd216046fdf3b5b74dd938b9156fb9ec6525c2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/pickup_timing_attention.mjs",
+      "bytes": 3676,
+      "sha256": "f17505d8f0ba5cd68420a699000eadc945ca3a48b40fc7f3ff986fd2641e4c91"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/pos_terminal_payment.mjs",
+      "bytes": 29313,
+      "sha256": "f29f09f36b4a2112200992265bebd9b101fc29cce9a5d4a38aa6f5b7c622297e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/practical_frontage_v1.mjs",
+      "bytes": 10101,
+      "sha256": "b17c435a06fa8c8fd4af4b2029ebb7cf3c0f52b47dd7c4c00de682d0c1d79239"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/private_chauffeur_customer_inbox.mjs",
+      "bytes": 1437,
+      "sha256": "37471a5671c1259613f32f06f38914272e29deb6d802360abb3ec8b51b6569fa"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/private_chauffeur_driver_availability.mjs",
+      "bytes": 3008,
+      "sha256": "3759393454f7fc4e65d63b6a92cee11f7774598255e38d3783baca8aad4ee83e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/private_chauffeur_policy.mjs",
+      "bytes": 16996,
+      "sha256": "f1a5a3000e97770b4f20cb451c224ddc36b7c07e1b09b7dcc4eebad84e78f183"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_booking_capabilities_v1.mjs",
+      "bytes": 2993,
+      "sha256": "62afc5344074f7942ee108a3a4848c4baadf9705aee1a656b155f515d9140b5c"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_booking_vehicles.mjs",
+      "bytes": 4071,
+      "sha256": "da25aaf83d2fe5c922267356e774c5e833c6d177bb61469840c3c3df1debc8c7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_company_contact.mjs",
+      "bytes": 3321,
+      "sha256": "a5ea7ab4d58bf8c1a3cfd2082867ac679fb063ff591050bc0aac3bb0b5f557ec"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_company_visibility.mjs",
+      "bytes": 13132,
+      "sha256": "b64457ab66f76507f423650a50e92e335c5bb6831380bcdf9b25d38080dbe4c2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_partner_media.mjs",
+      "bytes": 3997,
+      "sha256": "9a2e41e822d6e9f71de74f05edc405505a208d2ab2ecec8bce1d4668f50ec10d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_partner_payment_capability.mjs",
+      "bytes": 6288,
+      "sha256": "92a7f90733f51c9c7c5773e7bc4bbab268f2f23ed30945a3c9e5a03aded8fc8b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_payment_capability.mjs",
+      "bytes": 5251,
+      "sha256": "96052778770339732c4b8eb3d9b8ed6132b268ee4a0822a86524b4e116f86726"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/public_service_selection.mjs",
+      "bytes": 885,
+      "sha256": "1208a0e667ae197da0e0ae536d3badf1e5ca17fb3bb905e556000a17365a69ed"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/ratehawk_hotels_facade.mjs",
+      "bytes": 37646,
+      "sha256": "1ebc2cbaa82d860e488e2d557160148ac29c953f9c7e9cca7ea329bba341286e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/ratehawk_test_content_gateway.mjs",
+      "bytes": 7178,
+      "sha256": "ec01479a5d414fc7bebbcbd50d3c8c85aff3efc7da086cc0fd8b1eba3704298f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/recurring_billing.mjs",
+      "bytes": 8915,
+      "sha256": "e20eed8316c43e91dd4d5f28ed8356c6b32ba73478ff2874b1f42cfe85183fc7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_candidate_v1.mjs",
+      "bytes": 28776,
+      "sha256": "1bf47c9e77e34c15f8e3739b0615aa1d9095f0997e872aeff30239ee4e979b37"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_canonical_bridge_v1.mjs",
+      "bytes": 24427,
+      "sha256": "d13e7e30054d7cbeb9ca9a87d183375c07a90755521452e0adf7af9653ea8add"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_choice_cycle_v1.mjs",
+      "bytes": 6989,
+      "sha256": "2b4fa0e46727f274d20a387a8e0a4b96f21ca8c028689a0e2210f42eecdc07bf"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_gps_road_match_v1.mjs",
+      "bytes": 5687,
+      "sha256": "35312ea14ccd79d9eda9df5709fc2d02c6980a118133b90db77d2f156b26a18b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_journey_v1.mjs",
+      "bytes": 10386,
+      "sha256": "88ab8a13afb3b96158a0ffe9d95b1f25aabdab9fe9a9dd1d2494af94390243dd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_national_publication_policy_v1.mjs",
+      "bytes": 3855,
+      "sha256": "1fc24f1d67867f1a4e33393cd4946ae270aeb8a04e5db8e01b601e894be42ccf"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_operational_routes_v1.mjs",
+      "bytes": 21691,
+      "sha256": "579787430b77a700d195d122fc62ed53678646a4194850400afd8c1a729ea97d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_osm_corridor_v1.mjs",
+      "bytes": 9777,
+      "sha256": "102aec446e1ba2b8b2bfb659a276dc57c6e6435665d08f6b0ba7e82a98ce88ed"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_osm_point_routes_v1.mjs",
+      "bytes": 13441,
+      "sha256": "c11b09ef84550251425ba1cf11d9d549e8ab641ae62e876495168f724342c9aa"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_prebooking_v1.mjs",
+      "bytes": 11087,
+      "sha256": "1985b7f00c9408050398154e31dbfd4109afeb96705a0c6de8f0c356ebd608d3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_public_flow_v1.mjs",
+      "bytes": 11900,
+      "sha256": "4a33c3bde3f40505ee3e2dad8e4ef013fd14b499c3eeba45ce7fea703ce20133"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/reliable_regional_many_to_one_v1.mjs",
+      "bytes": 6902,
+      "sha256": "b50eb26fa528ca6c63d3d76b27601b5f6557f28ba603f620fda191a2fc699ea9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/required_vehicle_constraint.mjs",
+      "bytes": 2956,
+      "sha256": "3587213dd1e5f31f50348ead0b144a669033e99edc31a2c09e7284fc83923d45"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/return_leg_assignment.mjs",
+      "bytes": 5090,
+      "sha256": "71f381f88851bbfa6c2a9d2ce40329a3d2d0336a222692e52abf365b12c61976"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/return_leg_quote.mjs",
+      "bytes": 22629,
+      "sha256": "e9780b1e2ffb22ba76cdf32cae944293d7ce4b34847f219f925235e955b04aff"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/ride_activity_summary.mjs",
+      "bytes": 12588,
+      "sha256": "44b636ee1bb48651d479e0df3d0e302758d9d86dd02daba3773b2e719563b205"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/roster_snapshot_cache.mjs",
+      "bytes": 734,
+      "sha256": "e2ff4b48555aa0c1e0b44e4aa416c83433fd9ea4ff9cdfd32f745f9ea2d9abc0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/route_observability.mjs",
+      "bytes": 3765,
+      "sha256": "cb5e346d33ed7b396a31426168c3fe6d2e2a7371223b8de929bbec100d9780e8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/routing_core_v1.mjs",
+      "bytes": 10145,
+      "sha256": "30ce1e40cee4405075cc92e38801193f74d512232c0e2fcfe8ce1d14497f1557"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/routing_evidence_core.mjs",
+      "bytes": 12101,
+      "sha256": "ac3f1215c316eec45ec240f9cf3a177505e004ca3c3bc3fa55837a0da6fbf6d0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/scheduled_dispatch_readiness_v1.mjs",
+      "bytes": 3450,
+      "sha256": "0864d332c9a86d10e9b651b9558e9aa24066fa5ac2ac52c8e3a941c8bbded72d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/scheduled_financial_vehicle_choice_v1.mjs",
+      "bytes": 2413,
+      "sha256": "5303a13c225e5bbf1f79a6c631b43d1887c1a0810814d4aee6d626cddeecdb96"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/scoped_route_cache.mjs",
+      "bytes": 2314,
+      "sha256": "2e503405959bb3e60c11663a1880cb18a8079882a995708be8370874a0b21f35"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/seller_identity.js",
+      "bytes": 17234,
+      "sha256": "4e4bbafd5da30fd0ce1d24173f4cc90278d15330d04528c42618fafb0fd99fdb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/staging_availability_duration_v1.mjs",
+      "bytes": 541,
+      "sha256": "2c7f03212c8c50b9c2bd56410ff984b956b111c5c1f9f32a7d39d8a42c699753"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/staging_frozen_driver_state_v1.mjs",
+      "bytes": 3542,
+      "sha256": "a9989c1eae2ad4efe39ae28cd055a412fa715be0ce91be4f1fad179ce41a4b63"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/staging_trial_budget_v1.mjs",
+      "bytes": 2432,
+      "sha256": "f7b150b1bd7ae62a247cd5917c89f211a42404e17f7848c493c13cbf25a81a8e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/staging_trial_do_fence_v1.mjs",
+      "bytes": 786,
+      "sha256": "fc7a2f2490482802d08a76e5ab6ef6a351d705a3682253ec81d85c811b7797a3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/staging_trial_ingress_v1.mjs",
+      "bytes": 1985,
+      "sha256": "dbb3d59bd6c420a16658b5962d8b4c7f832a534c40d087ff291eda6d8bb8a533"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/street_business_invoice.js",
+      "bytes": 24294,
+      "sha256": "74ef7ac84646961a0a1b76756cbc9f14bf29fc7877c0d6503102af0ee82f3e54"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/street_invoice_pdf_projection.js",
+      "bytes": 44957,
+      "sha256": "71d83d504446a560a35cb565ddd7ce8161e7ec96f558a21839a84cc5641e9bbb"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/street_mollie_checkout.js",
+      "bytes": 19439,
+      "sha256": "ceded53c1b571354510c2f6da54b778cd57cc3269e2daba937c36149fdf9d1a5"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_cancellation.mjs",
+      "bytes": 12380,
+      "sha256": "d2bd9ca9dc975738806f79727ce0da646bc923841a6952fe5e4d1d5df5121b96"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_checkout_claim.mjs",
+      "bytes": 8144,
+      "sha256": "3a22bd717bd1f4982bbbbdfd717b7895264eb7b3f3cae0bf463695ac7160d183"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_checkout_tax.mjs",
+      "bytes": 15212,
+      "sha256": "39c136425323828e18a686f21d7fa506346bb944987671a1f7320ad3bde8c3e6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_invoice_draft.mjs",
+      "bytes": 6043,
+      "sha256": "8178e2e3d49ace043b88e600a188fae04d9e61586079eebb6f6623d5766a712b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_invoice_parties.mjs",
+      "bytes": 3102,
+      "sha256": "fa4f46fc44100586faabee08c3a54f20b3466b6451eb61071b65f03ba8b1e4c8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_locked_addon_units.mjs",
+      "bytes": 21728,
+      "sha256": "9121ad139c402ca565c9dd14c279f92d20b8f89076c9ec5259916bb53a7d5812"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_operator_contract_change.mjs",
+      "bytes": 34580,
+      "sha256": "696b28fccb79915ce9e2d2d61a8fac5a4c74dcf13816751fe8ad52a126a0fc42"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_paid_catalog.mjs",
+      "bytes": 6160,
+      "sha256": "bd1439a9b70a9c8973bcccb7e2f359ce5ab7fbabca60b6440d3b57004f0043a6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_plan_access.mjs",
+      "bytes": 3207,
+      "sha256": "f9df44af1bebed39ff126fef9b83cb05c528d4888e4ec0d500daf41fa2ff2ad7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_profile_authority.mjs",
+      "bytes": 4704,
+      "sha256": "01cc878366b33f944965f7ce46ff1eda56336df21e790eaf4bd660b985665aba"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_profile_client.mjs",
+      "bytes": 2523,
+      "sha256": "25f94a58e333f8a99681a7b40d940918bb732352af55f08d632e3919a0065383"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_profile_source.mjs",
+      "bytes": 751,
+      "sha256": "4c1233c554422e347ae7dc5388da30e7a1e8d6a38683c700f566deeca91d44e4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_provider_diagnostic.mjs",
+      "bytes": 15515,
+      "sha256": "71d975588fc63fe183932c5c69da176e744ad0605f3436841e1daf405902fd75"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_provider_link.mjs",
+      "bytes": 7629,
+      "sha256": "adcb70b26fe7a27990347b1373eb51f77e95a21e822637ecadf8b3a7473b2f39"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_recurring_payment_guard.mjs",
+      "bytes": 1119,
+      "sha256": "c56dc462227af324fc93933f80b0b25d3b0635708efa954c39777911c0de1efd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_recurring_recovery.mjs",
+      "bytes": 4665,
+      "sha256": "68589ad7958e132f50801e0766c22a37377643882f6cdad2c54a25b4fdc2a460"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/subscription_recurring_window.mjs",
+      "bytes": 4854,
+      "sha256": "0633802579eb9b7970b669e1bf45770686a86bf536d43495dae9904ed20d9096"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/taxi_work_area_policy.mjs",
+      "bytes": 4142,
+      "sha256": "f32985e9fb67b6fb0da6f1fd96a9994ab50239f45495ca5a0f761f4ef2c17dbd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/tenant_cost_metrics.mjs",
+      "bytes": 4740,
+      "sha256": "9bb6dd833953b9b59b416a52819ba4368a9c28055917ed8cd6cfc50743c221c4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/tracking_trip_payment_apply.mjs",
+      "bytes": 2316,
+      "sha256": "727559184c2b26247e00bc459745d944bc6e2a5d68ddf0e49714ae97b3387378"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/vehicle_fallback_asset.mjs",
+      "bytes": 1027,
+      "sha256": "2112cc60129b1dfc241b8170c3a830881d3979615302a7be09f7ad35aaa55303"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/vehicle_financial_quotes_v1.mjs",
+      "bytes": 25004,
+      "sha256": "c3a1f8bade3f85702c83ca5556a9af5bec5f18444e37536790c267de284dba21"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/vehicle_management_page.mjs",
+      "bytes": 1808,
+      "sha256": "333c2f7729aa4f7d3fe9008c2f01a03aebb65798c7c1b4bced60382260c0dac0"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/modules/vehicle_service_capacity.mjs",
+      "bytes": 2389,
+      "sha256": "01502af765bfe93dc59417ea8e656adb47412c2118f7e8994d0e5c470e87c811"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/quote_handler_candidate.js",
+      "bytes": 4981301,
+      "sha256": "604bc2dcea6e88222285d7bd93362ea3eb357a1b8ca09de7904abb99c49f202b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/vendor/official-address-index/official_address_bootstrap_v1.mjs",
+      "bytes": 1439,
+      "sha256": "1f76fff56eb65df74f404efc161fac1e1fb6a0275448caeb2be6c319e351d191"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/vendor/official-address-index/official_address_index_v1.mjs",
+      "bytes": 7096,
+      "sha256": "93805e256096238e7646d1f5070e0f578da7107a14a26b6dcd3ceeb1c23b2035"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/booking/vendor/official-address-index/official_address_index_v2.mjs",
+      "bytes": 8144,
+      "sha256": "769271d56fd9cac9fc7aff3eda39f74c68d7f4ff9e5a1d5e865f85650a5d5204"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/crypto_utils.js",
+      "bytes": 2966,
+      "sha256": "eabd6f6c84a33a2528facbb60a22fcf14e7fcb914130f21636ae2c216bad359e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/parsing_utils.js",
+      "bytes": 2781,
+      "sha256": "e592d1c37b383f330a86213d9ecc03a1faaa2129aa4691a474e42248dd08a3c4"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_affiliate_contract.mjs",
+      "bytes": 31193,
+      "sha256": "fe399058ed11f76985ef9d71b0f82eb334e0403fa494dc3192cd66f1281fbc2e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_contract.mjs",
+      "bytes": 21546,
+      "sha256": "3c72440bf3ddc333ae2b864c26fbb676804688d0691bfa6130a1923f0592d6dd"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_finish_transport.mjs",
+      "bytes": 3258,
+      "sha256": "b50dc6e0f18c3c82a30fc15a79c38c3046f0d6333d8d057f8772e046e2466df6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_form_transport.mjs",
+      "bytes": 3922,
+      "sha256": "be0180bec70b2cd0884a2bd63bf341d15ef6420ad72d5003be0e19485fabbbe9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_intent_store.mjs",
+      "bytes": 4077,
+      "sha256": "921b046ad92d5965ec23c99d46402ffaf5ec7b9d8b37a38aeb012dbe64c7a5b3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_status_transport.mjs",
+      "bytes": 3673,
+      "sha256": "88678dc2991ed121d989e48e40fb55d09d6067a4d287ad2a8c02a1fe6e3eb8be"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_booking_worker.mjs",
+      "bytes": 23912,
+      "sha256": "ac1f2d2a0ae3eb774c5c1278403a65e8a74eb44b707d42f48f9dce221dcd89df"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_catalog_query.mjs",
+      "bytes": 2591,
+      "sha256": "4941919cb4628cf8b6f3c4b827c78e58f6a1cccb5f6b2ce87fa92fb3a1c6adc9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_city_aliases.mjs",
+      "bytes": 1163,
+      "sha256": "cadea8558416d89f5867e66f0e8dd99b695ad77ef382e6410ab94dd9493aa36f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_content_catalog.mjs",
+      "bytes": 4956,
+      "sha256": "07b1d3b2e31dc3453336d6fea88f1ce12c9223178250175d7598dd34ce71b0a2"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_content_freshness_contract.mjs",
+      "bytes": 34024,
+      "sha256": "dd0ce0aa8647c87f01992b9b0e7bb72bb07627dc878fdd0c6450064fdd820d65"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_content_store.mjs",
+      "bytes": 42773,
+      "sha256": "93d3dcf1a551bf7afeed6ed626d2afcff8878ba6f237e04c2fbdb69eb9a72833"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_content_strategy.mjs",
+      "bytes": 1798,
+      "sha256": "4110f16cf82bc51333d2cc31d5bfdadb9ac2aeaae1b7e29716c3a2535845a57a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_content_sync.mjs",
+      "bytes": 16946,
+      "sha256": "ce97cc830a045594f419619f62d9a57be192fa4993e3afe81af5340088ad90f3"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_hotelpage_contract.mjs",
+      "bytes": 16052,
+      "sha256": "f105c6b0c08d7197e5b397ae1b15621ffbf23bcfffc8e388746a20b4f9725ade"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_hotelpage_worker.mjs",
+      "bytes": 17829,
+      "sha256": "4333f24a9aa0c3383aab3cecbb954b56a08c535cfd3949b62c1d042ad92a1ab7"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_market_search_limits.mjs",
+      "bytes": 23726,
+      "sha256": "2e515229fed84b060a9902f91bed82c5d5e01dcfb8134d0a9413f898ce524d70"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_policy_display.mjs",
+      "bytes": 7095,
+      "sha256": "45850a4a3c6a90c9c588d3c1837b4c0f752e498bc4a848cdec526e879b53f28f"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_prebook_contract.mjs",
+      "bytes": 16403,
+      "sha256": "c76097a64912adef8a7786bb396a2698385df1bf7539ccb9769c7181b48bb033"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_prebook_tokens.mjs",
+      "bytes": 3737,
+      "sha256": "7c19116ab47f877d9e7e5a825db59d193d811f79fb378b2e6cd04ffa029e3b0a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_prebook_transport.mjs",
+      "bytes": 5733,
+      "sha256": "1438a3283f4b9a65b051ac8f54622ebed81c71b50ea80ee3352455705cb7a130"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_prebook_worker.mjs",
+      "bytes": 12877,
+      "sha256": "47c2d979a8e46d150ff1056bb6ce303c2031281784d584df1f3e2a69202b0d8e"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_provider_quota.mjs",
+      "bytes": 15010,
+      "sha256": "2c3df470bd8765a3426fc61bec606c9e4c176db5dcca2810ed7100d7f9248096"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_provider.mjs",
+      "bytes": 25298,
+      "sha256": "e4c30c5686bb5c75270d852b465bc1c0f78e8c5b9393d79fd86a91d5cdeeebf6"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_test_activation.mjs",
+      "bytes": 12149,
+      "sha256": "60037e15cebedeee5c0d719fd85526d2b8626e5d1048960a39fd4a9a8d0bbc70"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_test_content_context.mjs",
+      "bytes": 3586,
+      "sha256": "0f40586c97e8d1e6a26619e2f229ff7a25006b5ca24fef00eb5021abdeb8c7de"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_test_content.mjs",
+      "bytes": 9879,
+      "sha256": "db4b7489e25e1cdeba3bce7cec46e9cfe3ed392f91e8dc2020e426c8ee6611a8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_test_prebook.mjs",
+      "bytes": 16605,
+      "sha256": "526675cb8423dfeae8ea30c738851a25a402e0bb3880af3aa53a49603a9a0bcc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/ratehawk-hotels/modules/ratehawk_view_stay_context.mjs",
+      "bytes": 6324,
+      "sha256": "b37feef14698fd43cd90b5e28a27118a280b885d704911ad5e748154fc944712"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/shared/fluxidi_fare_rounding.mjs",
+      "bytes": 2611,
+      "sha256": "0f864ca3e07013848aaf713d7a5a4b749d4abe004c78f3f0473038b332589313"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/shared/ride_execution_identity_v1.mjs",
+      "bytes": 1030,
+      "sha256": "f30eea956cad0a9012c8f0396b4e9f87a9b974169a5e649bd68b0a7b32e1df91"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/entry_candidate.mjs",
+      "bytes": 731765,
+      "sha256": "f66b290093c7250faa7a4be99475d3ebaa4e1bea91e9a9d90cfb928ece1ffeb8"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/capacity_resource_index.mjs",
+      "bytes": 1281,
+      "sha256": "6eec0b7c7b77d6d8c1895ef2d36ea3dbd202989cf79f82aea9f7b257a052cd6a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_capacity_ledger.mjs",
+      "bytes": 15167,
+      "sha256": "23a21ef1293e87c7adb4d1cb314dfeaaab891670dbabbdbc08a0204f02a256e9"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_capacity_storage.mjs",
+      "bytes": 8707,
+      "sha256": "58db9c16db9066752e9232c6ecb9f637c4c5af069b888cf91759d0763556912d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_dispatch_amendment.mjs",
+      "bytes": 4636,
+      "sha256": "01c5f6ae46d1568996ebf065a3bfdf3d24ad391e3b2afb8ed7612b832208523a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_dispatch_offers.mjs",
+      "bytes": 32265,
+      "sha256": "d41678002acb44687551d453670f77d35a84630f9a5d9bb213c760602f7b8a01"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_tracking_room.mjs",
+      "bytes": 79518,
+      "sha256": "841f76b7259d8fd615426098f9336c26ac29276f9da54bf5aaf3dff20416a88d"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_vehicle_device.mjs",
+      "bytes": 10915,
+      "sha256": "b139e08371297a52d5678ec434721f89deb7fe8d3a4b46fe2cce32bb9cdab739"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/company_vehicle_duty_storage.mjs",
+      "bytes": 6465,
+      "sha256": "b4fa4ad8b80b90f3fd6f1b56cacab80fc1b105108d0ea990439375cb6d7bb76a"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/customer_adaptive_eta.mjs",
+      "bytes": 7160,
+      "sha256": "584303a81364d2eed649625c97b17b18a9ef58d400bc004f312ba9bcebd79d04"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/customer_grant_storage.mjs",
+      "bytes": 6680,
+      "sha256": "44fdeb3c156f36ac3535a8d6c9d6c789b98029b08969d35c08fefcade82573bc"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/customer_live_snapshot.mjs",
+      "bytes": 22229,
+      "sha256": "c7eec597f98112f36886ce141bae8d17e0b25d1392f8d59c3f0b0774610f830b"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/dispatch_device_capability.mjs",
+      "bytes": 3584,
+      "sha256": "224aa7cbf150411504f71c727196204115a804eb994b3c188fb1585a464a3b96"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/driver_location_owner.mjs",
+      "bytes": 2844,
+      "sha256": "82b7a072dd412ba5969da6b7ba70102aedb37435562f281fcfe3c8b91df4f298"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/per_driver_state.mjs",
+      "bytes": 7236,
+      "sha256": "af2602fa3ad677c9a37f066971e8b07807342479a674477693bb3255a80d9c42"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/modules/personal_driver_execution_v1.mjs",
+      "bytes": 1779,
+      "sha256": "311d64828d98fb003e283ff8de258fbb9ae0c91112b4f461aa285bbc0fd95b95"
+    },
+    {
+      "path": "candidate/source-closure/retained-source/workers/tracking/personal-dispatch.mjs",
+      "bytes": 3389,
+      "sha256": "8029a3a1a94527fef9579eccd0a1c3a5675ba863855fda2164828a92b5be3155"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/cache-correction/product_estimated_eta_v1.mjs",
+      "bytes": 29860,
+      "sha256": "98ab0e132cd0fad65259ad0006d8d2df8891e5604141a4885162acbe99aeb6d9"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/cache-correction/quote_r2_budget_v1.mjs",
+      "bytes": 3419,
+      "sha256": "cec6499baf255df0527c1f6bd389367aead02a3b8ceb8b5a9139f4a5307f14b2"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/cache-correction/reliable_national_points_v1.mjs",
+      "bytes": 6876,
+      "sha256": "b08246a9730306a78adeaf32b122e02ff29239125edfdb791a668e7b13e7ce4b"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/cache-correction/reliable_national_publication_v1.mjs",
+      "bytes": 2710,
+      "sha256": "3bf9cedfa4cbfede168cb87faa241956288ac04092c6e129d250f023b048ed46"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/deployment/read-addon.mjs",
+      "bytes": 1901339,
+      "sha256": "918f5b8a845b99bec20e5d1b36bb6b3a0392e1dbc6398f8b2e2a010b1fd6f1b9"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/financial_price_independence_v1.mjs",
+      "bytes": 3020,
+      "sha256": "71dbb726aa5058d2e4a56b6e2513357e116b21545ad9517270ab10842fa92d6f"
+    },
+    {
+      "path": "candidate/source-closure/workers/booking/launch_entry_candidate.mjs",
+      "bytes": 2672,
+      "sha256": "f7d10c9bd7499aa30ab0afdcaa976983c35010bdd26af928f664854a8488b7f4"
+    }
+  ]
+}

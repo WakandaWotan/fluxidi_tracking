@@ -1,0 +1,16 @@
+{
+  "name": "fluxidi-backend-preview-20261024",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "verify:runtime": "node verify-runtime.mjs",
+    "test": "node run-tests.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.0"
+  }
+}

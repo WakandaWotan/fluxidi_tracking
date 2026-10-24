@@ -1,0 +1,12 @@
+import{committed}from'./committed-fixture.mjs';import{FleetAllocatorDO}from'../candidate/source-closure/retained-source/workers/booking/quote_handler_candidate.js';import{companyDriverPresenceKey}from'../candidate/source-closure/retained-source/workers/booking/modules/company_dispatch.mjs';
+export async function fleetFixture(){
+const x=await committed(),record=await x.f.read(),intent=record.dispatch_offer;
+x.f.records.set(companyDriverPresenceKey({tenant_id:'T',company_id:'C'}),JSON.stringify({drivers:{D:{last_seen_at:new Date(Date.now()).toISOString()}}}));
+const data=new Map(),state={storage:{get:async k=>data.get(k),put:async(k,v)=>data.set(k,v)}};
+const env={...x.env,RELIABLE_CHOICE_ENABLED:'1'};const fleet=new FleetAllocatorDO(state,env);
+const scope={tenant_id:'T',company_id:'C',region_id:'R',graphVersion:'G',evidenceRevision:'E'};
+fleet.env.__reliableRegionalRoutes=async()=>({kind:'LOCAL_ROUTING_ONLY_V1',scope,resolveForJourney:async()=>{},planRoute:async()=>({...scope,operationalDurationBoundSeconds:181,distanceMeters:1,evidenceId:'BASE:traffic.1:planning',validUntil:Date.now()+15000}),route:async()=>({...scope,evidenceId:'BASE:traffic.1:fluxidi-product-estimated-eta-v1',graphVersion:'G',evidenceRevision:'E',evidenceClass:'EXACT_STATIC_ROUTE',etaKind:'product_estimate',certifiedEta:false,seconds:1,distanceMeters:1,observedAt:Date.now(),validUntil:Date.now()+15000,quality:{productGrade:true,modelVersion:'fluxidi-product-estimated-eta-v1',validated:false,tier:'high',errorSeconds:30,trafficState:'AVAILABLE',trafficConfidence:'high'},productEvidence:{trafficRevision:'traffic.1'}})});
+const body={action:'suggest',tenant_id:'T',company_id:'C',booking_id:'B',pickup_mode:'scheduled',pickup_ms:Date.parse(record.pickup_iso),service_min:20,tier:'comfort',pax:1,bags:0,pickup_lat:51.165,pickup_lng:4.142,dropoff_lat:51.17,dropoff_lng:4.15,required_vehicle_id:'VD',revalidation_confirmed_asap:true,revalidation_eta_advisory:true,revalidation_offer:intent,revalidation_canonical_version:record._canonical_version,revalidation_record_revision:record.revision,revalidation_checkpoint:record.dispatch_capacity_checkpoint};
+const context={vehicles:[{vehicle_id:'VD',tenant_id:'T',company_id:'C',is_active:true,passenger_capacity:4,luggage_capacity:4,tier:'comfort',assigned_driver_id:'D',assigned_driver:{driver_id:'D',is_active:true,availability_status:'available',assigned_vehicle_id:'VD'}}],forecastDemandPromise:Promise.resolve({ok:true,items:[]}),sampleDispatchDetails:true,asapDirectValues:true};
+
+return{x,fleet,body,context};}

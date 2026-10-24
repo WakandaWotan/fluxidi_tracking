@@ -1,0 +1,3 @@
+import fs from'node:fs';import{spawnSync}from'node:child_process';import{pathToFileURL}from'node:url';
+const root=import.meta.dirname,tests=[];function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=d+'/'+e.name;if(e.isDirectory())walk(p);else if(e.name.endsWith('.test.mjs')&&e.name!=='mission-capability.test.mjs')tests.push(p);}}walk(root+'/tests');
+const r=spawnSync(process.execPath,['--experimental-loader',pathToFileURL(root+'/test-loader.mjs').href,'--test',...tests],{cwd:root,stdio:'inherit',env:{...process.env,CANDIDATE_RUNTIME:root+'/candidate/booking/entry.mjs',TRACKING_RUNTIME_TEST_ROOT:root+'/candidate/tracking'}});process.exitCode=r.status??1;

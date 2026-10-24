@@ -1,0 +1,127 @@
+{
+  "companies": {
+    "cmp_taxi-mario_4b6d297325": {
+      "mission": {
+        "version": 1,
+        "enabled": true,
+        "default_vehicle_category": "car",
+        "quote_only_month_days": [
+          "12-24",
+          "12-25",
+          "12-31",
+          "01-01"
+        ],
+        "minimum_per_minute_eur": 1,
+        "waiting_per_minute_eur": 1,
+        "categories": {
+          "car": {
+            "vehicle_ids": [
+              "vh_test_pw_2",
+              "vh_test_pw_3",
+              "vh_test_pw_4"
+            ],
+            "local_start_eur": 7.5,
+            "local_per_km_eur": 2.5,
+            "bands": [
+              {
+                "min_km": 0,
+                "max_km": 94,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "start_eur": 7.5,
+                "per_km_eur": 1.25
+              },
+              {
+                "min_km": 94,
+                "max_km": 125,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "fixed_eur": 125
+              },
+              {
+                "min_km": 125,
+                "max_km": 195,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "start_eur": 0,
+                "per_km_eur": 1
+              },
+              {
+                "min_km": 195,
+                "max_km": 217,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "fixed_eur": 195
+              },
+              {
+                "min_km": 217,
+                "max_km": null,
+                "min_inclusive": false,
+                "max_inclusive": true,
+                "start_eur": 0,
+                "per_km_eur": 0.9
+              }
+            ]
+          },
+          "minibus": {
+            "vehicle_ids": [
+              "vh_test_pw_1",
+              "vh_test_vito_1",
+              "vh_test_vito_2",
+              "vh_test_vito_3"
+            ],
+            "local_start_eur": 7.5,
+            "local_per_km_eur": 2.7,
+            "bands": [
+              {
+                "min_km": 0,
+                "max_km": 94,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "start_eur": 7.5,
+                "per_km_eur": 1.35
+              },
+              {
+                "min_km": 94,
+                "max_km": 125,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "fixed_eur": 135
+              },
+              {
+                "min_km": 125,
+                "max_km": 195,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "start_eur": 0,
+                "per_km_eur": 1.1
+              },
+              {
+                "min_km": 195,
+                "max_km": 215,
+                "min_inclusive": true,
+                "max_inclusive": true,
+                "fixed_eur": 215
+              },
+              {
+                "min_km": 215,
+                "max_km": null,
+                "min_inclusive": false,
+                "max_inclusive": true,
+                "start_eur": 0,
+                "per_km_eur": 1
+              }
+            ]
+          }
+        },
+        "local_minimum_applies": null,
+        "depotCoordinatesValid": true,
+        "depot": {
+          "lat": 51.02,
+          "lng": 4.02
+        },
+        "local_municipality": "Synthetic"
+      }
+    }
+  }
+}

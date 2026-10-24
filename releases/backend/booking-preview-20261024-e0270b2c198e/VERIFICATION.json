@@ -1,0 +1,17 @@
+{
+  "exactSourceFiles": 403,
+  "portableRuntimeHashVerification": true,
+  "portableBackendTests": {
+    "pass": 207,
+    "fail": 0
+  },
+  "originalSealedValidation": {
+    "backend": 207,
+    "native": 2,
+    "publishedB113": 15,
+    "total": 224
+  },
+  "sourceAndArtifactBytesChanged": false,
+  "productionConfigExcluded": true,
+  "physicalAcceptance": false
+}
