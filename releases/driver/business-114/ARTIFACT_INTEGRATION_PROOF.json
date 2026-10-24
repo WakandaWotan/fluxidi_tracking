@@ -1,0 +1,19 @@
+{
+  "pass": true,
+  "sourceCommit": "f444520531431c61b5f629defb844911cc5fc34e",
+  "backendParentCommit": "9e7b3e469d606ac9480030ad87ef6154760fae87",
+  "package": "com.fluxidi.tracking",
+  "versionCode": 114,
+  "versionName": "1.0.7",
+  "aabSha256": "3bbe45d1881d550c367cffd8c4577e426fb1988719ad2070e0d7ff0cd1092ecf",
+  "sourceClosure": "b12f1f87fd081abcbd1841100381562b4a0b3acb5e717a0d81f15e11aeb1a731",
+  "permissionSetSameAsB113": true,
+  "assetInventorySameAsB113": true,
+  "changedFlutterAssets": [],
+  "chimeMatchesSealedSource": true,
+  "canonicalRefreshCompiled": true,
+  "knownQAConfigAbsent": true,
+  "uploadCertificate": "b8479589dce57c16b2a2e2528d52196d2701deb7ad046af2e735d58afe0a33fe",
+  "physicalAcceptance": false,
+  "normalPlayUpdateCompatible": true
+}

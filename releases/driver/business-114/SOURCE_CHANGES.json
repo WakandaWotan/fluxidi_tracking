@@ -148,5 +148,10 @@
     "path": "test/driver/ride_alarm_source_preservation_test.dart",
     "before": null,
     "after": "c30a8cb8ff6d84cf39e4020e47c02bfd2cb2d61250bf77b1ceec77ed8002ccf0"
+  },
+  {
+    "path": "android/app/src/main/res/raw/com_fluxidi_tracking_ride_audio_keep.xml",
+    "before": null,
+    "after": "293e93e7b97374488628e9e829b1e5458310a57360b170b9cbb8008282e806c9"
   }
 ]

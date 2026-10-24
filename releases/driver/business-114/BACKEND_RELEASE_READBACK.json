@@ -1,0 +1,74 @@
+{
+  "at": "2026-10-24T08:24:50.031Z",
+  "workers": {
+    "tracking": {
+      "version": "2aecbd6f-f2a5-4236-b175-08ebc2b4ddac",
+      "deploymentId": "f7b5105d-8d49-4d17-8433-271c3c60482c",
+      "percentage": 100,
+      "hashes": {
+        "entry.mjs": "96bc243b3c5ad398988186df84b0fc91c44c4692213fc05f25f2cd67b4625e75",
+        "operational-publication-policy.mjs": "a1c424ab368f1b6c425a8887afbda830cc7f55dbd57331102c08f381fc75821e"
+      },
+      "bindings": 16,
+      "settingsUnchanged": true
+    },
+    "booking": {
+      "version": "d58426a5-6b25-4b0b-90ea-db6a4fcadddd",
+      "deploymentId": "1c08b6d2-3345-4d48-a41c-f78523b0e301",
+      "percentage": 100,
+      "hashes": {
+        "entry.mjs": "e0270b2c198e17fedbe094bd1073655594f2b3f6632d6ea62632be9529103087",
+        "operational-publication-policy.mjs": "9dc892767a74b358605c4367a3e20e95ea344e61ef4a7b1c9d47eb178c5c038e"
+      },
+      "bindings": 148,
+      "settingsUnchanged": true
+    },
+    "navigation": {
+      "version": "b8d82326-2be7-402b-bea2-11e773fc254e",
+      "deploymentId": "34385ab0-372c-42ef-a56b-eb2c478ee589",
+      "percentage": 100,
+      "hashes": {
+        "navigation.mjs": "33bf631240ba6614b5bafebe77f51b6ab07f878c764672ffa9e50f13d152cabc"
+      },
+      "bindings": 3,
+      "settingsUnchanged": true
+    }
+  },
+  "pricesAuthorizationAndReservationsUnchanged": true,
+  "source": "Agent 2 production readback",
+  "coreReferences": {
+    "OWNED_QUOTE_ACTIVATION": {
+      "schema": "fluxidi-national-activation-v1",
+      "state": "active",
+      "runtimeSha256": "e0270b2c198e17fedbe094bd1073655594f2b3f6632d6ea62632be9529103087",
+      "publicationSha256": "b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb",
+      "manifestSha256": "54440cd1e535964cd6a68b60a98b42fd0e3a95a50def3ae8fd10b91f08f0b3b9",
+      "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+      "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44"
+    },
+    "OWNED_QUOTE_PUBLICATION_REF": {
+      "schema": "fluxidi-national-publication-ref-v1",
+      "key": "routing/national/publications/b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb.json",
+      "sha256": "b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb",
+      "bytes": 1266138
+    },
+    "RELIABLE_NATIONAL_ACTIVATION": {
+      "schema": "fluxidi-national-activation-v1",
+      "state": "active",
+      "runtimeSha256": "e0270b2c198e17fedbe094bd1073655594f2b3f6632d6ea62632be9529103087",
+      "publicationSha256": "b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb",
+      "manifestSha256": "54440cd1e535964cd6a68b60a98b42fd0e3a95a50def3ae8fd10b91f08f0b3b9",
+      "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+      "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44"
+    },
+    "RELIABLE_NATIONAL_PUBLICATION_REF": {
+      "schema": "fluxidi-national-publication-ref-v1",
+      "key": "routing/national/publications/b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb.json",
+      "sha256": "b161ba4cb8d41a9abe25f5be8f84d69f8d82c8a2f4f8afb81b40bf49f94808bb",
+      "bytes": 1266138
+    }
+  },
+  "backendGitCommit": "9e7b3e469d606ac9480030ad87ef6154760fae87",
+  "pass": true,
+  "asapPolicyPreserved": true
+}

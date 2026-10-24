@@ -1,0 +1,30 @@
+{
+  "sourceCommit": "f444520531431c61b5f629defb844911cc5fc34e",
+  "backendCommit": "9e7b3e469d606ac9480030ad87ef6154760fae87",
+  "aabSha256": "3bbe45d1881d550c367cffd8c4577e426fb1988719ad2070e0d7ff0cd1092ecf",
+  "package": "com.fluxidi.tracking",
+  "version": "1.0.7 (114)",
+  "playInternal": {
+    "track": "internal",
+    "releases": [
+      {
+        "name": "114 \u2014 Ge\u00efntegreerde Driver-correcties",
+        "versionCodes": [
+          "114"
+        ],
+        "releaseNotes": [
+          {
+            "language": "nl-NL",
+            "text": "QR-deellink, compacte telefoonnavigatie, herhalend ritalarm en automatische ritlijstverversing na bevestigde toewijzing. Bestaande voertuig- en sessiebeveiliging behouden."
+          }
+        ],
+        "status": "completed"
+      }
+    ]
+  },
+  "playBundleHashVerified": true,
+  "otherTracksUnchanged": true,
+  "testersCount": 4,
+  "physicalAcceptance": false,
+  "finalTagCreated": false
+}

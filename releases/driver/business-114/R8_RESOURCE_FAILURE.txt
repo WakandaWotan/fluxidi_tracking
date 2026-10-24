@@ -1,0 +1,3 @@
+/raw/fluxidi_ride_chime
+@com.fluxidi.tracking:raw/fluxidi_ride_chime : reachable=false
+ raw:fluxidi_ride_chime:2131623936
