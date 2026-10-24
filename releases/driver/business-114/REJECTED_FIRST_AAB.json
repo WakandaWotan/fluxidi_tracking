@@ -1,0 +1,9 @@
+{
+  "firstCandidateCommit": "c9731692eff8a2c02f24528207f82e3db30e5135",
+  "aab": "business-114.rejected-missing-chime.aab",
+  "sha256": "7697bd88c5cb4560dcdbed71537b9fccb77f6fbfd84c90dba030243d7db05d45",
+  "uploaded": false,
+  "reason": "R8 removed dynamically named alarm WAV; zero audio files in B113 and first B114 bundle; resources.txt marks raw/fluxidi_ride_chime reachable=false",
+  "minimalCorrection": "One resource keep XML; no Kotlin/Dart/runtime/permissions change",
+  "evidence": "R8_RESOURCE_FAILURE.txt"
+}

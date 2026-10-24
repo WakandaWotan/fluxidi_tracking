@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification channel opens this stable URI by name, not through R.raw. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/fluxidi_ride_chime" />

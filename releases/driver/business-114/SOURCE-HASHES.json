@@ -157,6 +157,10 @@
       "sha256": "576e1a456334450e306a6117d79b6c1ba95be84056e0e34ca71632f31dfc6213"
     },
     {
+      "path": "android/app/src/main/res/raw/com_fluxidi_tracking_ride_audio_keep.xml",
+      "sha256": "293e93e7b97374488628e9e829b1e5458310a57360b170b9cbb8008282e806c9"
+    },
+    {
       "path": "android/app/src/main/res/raw/fluxidi_ride_chime.wav",
       "sha256": "102eaf093ee0b36e8adb1ffde160d8e691d35c66d040cc86407961bce546d385"
     },
@@ -11157,6 +11161,6 @@
       "sha256": "23aef4cecbacbe65a465e1a464080eba16b145349ecdb28d9665b06285069d35"
     }
   ],
-  "closure": "7a51418448ed3952bbb15d4e205e356623ff2ed0b22a6323c6ca72e51954d9e2",
+  "closure": "b12f1f87fd081abcbd1841100381562b4a0b3acb5e717a0d81f15e11aeb1a731",
   "baseClosure": "6f438135c3f2bed38c90984900c70521fd2772deaae1bc76d54a1e0f0e039e50"
 }

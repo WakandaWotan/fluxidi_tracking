@@ -2,7 +2,7 @@
   "package": "com.fluxidi.tracking",
   "versionCode": 114,
   "versionName": "1.0.7",
-  "sourceClosure": "7a51418448ed3952bbb15d4e205e356623ff2ed0b22a6323c6ca72e51954d9e2",
+  "sourceClosure": "b12f1f87fd081abcbd1841100381562b4a0b3acb5e717a0d81f15e11aeb1a731",
   "baseAabSha256": "1c1e0a6143f7f1cf63e5da489f612b1f6efb03d85d99448d39251c0a795f3e27",
   "backendCommit": "9e7b3e469d606ac9480030ad87ef6154760fae87",
   "productionDefinesSha256": "79920a0afdc37450da2531b53688ad8bd67beff6d14eac5a6967678a32c4e600",
@@ -13,5 +13,14 @@
     "assignment_driver_no_vehicle",
     "physical navigation failure cause",
     "9.8s booking processing"
-  ]
+  ],
+  "resourcePackagingCorrection": {
+    "firstCandidateCommit": "c9731692eff8a2c02f24528207f82e3db30e5135",
+    "aab": "business-114.rejected-missing-chime.aab",
+    "sha256": "7697bd88c5cb4560dcdbed71537b9fccb77f6fbfd84c90dba030243d7db05d45",
+    "uploaded": false,
+    "reason": "R8 removed dynamically named alarm WAV; zero audio files in B113 and first B114 bundle; resources.txt marks raw/fluxidi_ride_chime reachable=false",
+    "minimalCorrection": "One resource keep XML; no Kotlin/Dart/runtime/permissions change",
+    "evidence": "R8_RESOURCE_FAILURE.txt"
+  }
 }
