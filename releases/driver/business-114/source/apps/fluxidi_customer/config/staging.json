@@ -1,0 +1,8 @@
+{
+  "FLUXIDI_RUNTIME_ENV": "staging",
+  "BOOKING_BASE_URL": "https://fluxidi-booking-api-staging.fluxidi.workers.dev",
+  "PUBLIC_BOOKING_BASE_URL": "https://fluxidi-booking-api-staging.fluxidi.workers.dev",
+  "FLUXIDI_PUBLIC_BOOKING_BASE_URL": "https://fluxidi-booking-api-staging.fluxidi.workers.dev",
+  "WORKER_BASE_URL": "https://fluxidi-tracking-api-staging.fluxidi.workers.dev",
+  "NAVIGATION_WORKER_BASE_URL": "https://fluxidi-navigation-api-staging.fluxidi.workers.dev"
+}

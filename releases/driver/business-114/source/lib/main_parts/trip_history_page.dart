@@ -1,0 +1,2299 @@
+part of '../main.dart';
+
+/// Full-screen Bookings Hub opened from the drawer.
+/// Keeps the map screen clean: operations live here.
+class _TripHistoryPage extends StatefulWidget {
+  final String workerBaseUrl;
+  final String tenantId;
+  final String companyId;
+  final String driverId;
+  final Map<String, String> headers;
+  final Map<String, Map<String, dynamic>> bookingDetailsById;
+
+  /// Effective chauffeur-theme source for this History view. Mirrors the
+  /// pattern used by [CalculatorPage] and [_BookingsHubPage]: when omitted we
+  /// fall back to the global [driverThemeNotifier] (standalone personal
+  /// driver), and when provided we follow the caller's active driver-theme
+  /// listenable. From Driver Home this is `_activeDriverThemeListenable`,
+  /// which resolves to `companyDriverViewThemeNotifier` in the business /
+  /// admin chauffeur view and to `driverAppThemeNotifier` in the standalone
+  /// driver app. Using a single shared listenable keeps the page in sync with
+  /// the same theme the Driver Home renders with, so opening History from a
+  /// Midnight Blue / Midday Gold chauffeur view no longer falls back to Night
+  /// Gold accents.
+  final ValueListenable<DriverThemeVariant>? driverThemeListenable;
+
+  const _TripHistoryPage({
+    required this.workerBaseUrl,
+    required this.tenantId,
+    required this.companyId,
+    required this.driverId,
+    required this.headers,
+    this.bookingDetailsById = const <String, Map<String, dynamic>>{},
+    this.driverThemeListenable,
+  });
+
+  @override
+  State<_TripHistoryPage> createState() => _TripHistoryPageState();
+}
+
+enum _TripHistoryFilter { all, completed, cancelled }
+
+/// Visual chauffeur-theme tokens for the Driver History page.
+///
+/// Mirrors the local-token pattern already used by [_BookingsHubPage]
+/// (`_BookingsHubThemeTokens`) and [DriverMyDocumentsPage]
+/// (`_DriverDocumentsThemeTokens`) so all three pages render with consistent
+/// chauffeur palettes per variant:
+///
+/// - Night Gold keeps the existing production look (same values as
+///   `paletteForDriverTheme(DriverThemeVariant.nightGold)`).
+/// - Midnight Blue keeps the existing palette values (blue/cyan, no regression).
+/// - Midday Gold (`DriverThemeVariant.highContrast`) is realigned with the
+///   Documents/Bookings reference pages so titles, borders, chips, the price
+///   pill, the receipt button and timeline accents use soft warm champagne
+///   over warm espresso, instead of the dimmer values that previously made
+///   the page read as Night Gold.
+class _TripHistoryThemeTokens {
+  const _TripHistoryThemeTokens({
+    required this.background,
+    required this.surface,
+    required this.surfaceAlt,
+    required this.border,
+    required this.accent,
+    required this.textPrimary,
+    required this.textMuted,
+    required this.accentForeground,
+    this.pageGradient,
+    this.overviewGradient,
+    this.overviewBorder,
+    this.tileGradient,
+    this.tileBorder,
+    this.cardGradient,
+    this.cardBorder,
+    this.selectedChipGradient,
+    this.selectedChipBorder,
+    this.selectedChipTextColor,
+    this.softBorder,
+  });
+
+  final Color background;
+  final Color surface;
+  final Color surfaceAlt;
+  final Color border;
+  final Color accent;
+  final Color textPrimary;
+  final Color textMuted;
+
+  /// Foreground color used on top of [accent] for filled buttons/pills
+  /// (e.g. the Receipt button). Mirrors the values used by other chauffeur
+  /// surfaces (driver documents, cockpit) so each theme keeps its own
+  /// readable contrast pair.
+  final Color accentForeground;
+
+  // Optional Midday Gold visual enhancements. All `null` for the Night Gold
+  // and Midnight Blue branches so those variants fall through to the
+  // original flat-color rendering and accent-derived outlines and therefore
+  // do not regress.
+  //
+  // - [pageGradient] backs the entire Scaffold body
+  //   (BookingsHub `_BookingsHubThemeTokens.pageGradient` for highContrast).
+  // - [overviewGradient] / [overviewBorder] decorate the "Overview / Recent
+  //   rides" panel (Documents `_DriverDocumentsThemeTokens.panelGradient` +
+  //   `panelBorder` for highContrast).
+  // - [tileGradient] / [tileBorder] decorate the inner KPI tiles inside the
+  //   overview panel (Documents `cardGradient` + `cardBorder`).
+  // - [cardGradient] / [cardBorder] decorate the ride history cards as well
+  //   as the empty / error / filtered-empty cards that share the same
+  //   surface treatment (BookingsHub `surfaceGradient` + `surfaceBorder`).
+  // - [selectedChipGradient] / [selectedChipBorder] / [selectedChipTextColor]
+  //   render the selected filter chip with Driver Home's existing
+  //   `_middayGoldSelectedSurfaceGradient` + `_middayGoldBorderColor(0.72)`
+  //   + `_middayGoldTextOnSelected()` styling.
+  // - [softBorder] is a low-emphasis outline used by inactive filter chips
+  //   and matches Driver Home's `_middayGoldBorderColor(0.24)`.
+  final Gradient? pageGradient;
+  final Gradient? overviewGradient;
+  final Color? overviewBorder;
+  final Gradient? tileGradient;
+  final Color? tileBorder;
+  final Gradient? cardGradient;
+  final Color? cardBorder;
+  final Gradient? selectedChipGradient;
+  final Color? selectedChipBorder;
+  final Color? selectedChipTextColor;
+  final Color? softBorder;
+}
+
+_TripHistoryThemeTokens _tripHistoryThemeForVariant(
+  DriverThemeVariant variant,
+) {
+  switch (variant) {
+    case DriverThemeVariant.midnightBlue:
+      // Identical to `paletteForDriverTheme(midnightBlue)` so the existing
+      // blue/cyan look is preserved exactly. No gradients here on purpose:
+      // the Midnight Blue surfaces in History are intentionally flat to
+      // match the existing production look.
+      return const _TripHistoryThemeTokens(
+        background: Color(0xFF08142D),
+        surface: Color(0xFF101E3A),
+        surfaceAlt: Color(0xFF0F1A2F),
+        border: Color(0xFF2D8CFF),
+        accent: Color(0xFF4DA3FF),
+        textPrimary: Color(0xFFF4F8FF),
+        textMuted: Color(0xFFB6C4DA),
+        accentForeground: Color(0xFF04172C),
+      );
+    case DriverThemeVariant.highContrast:
+      // Aligned with `_DriverDocumentsThemeTokens` (highContrast),
+      // `_BookingsHubThemeTokens` (highContrast) and Driver Home's
+      // `_middayGold*` helpers so the History page visually matches the
+      // other Midday Gold chauffeur pages with warm-espresso/champagne
+      // gradients instead of flat dark gold (which previously read as
+      // Night Gold).
+      return _TripHistoryThemeTokens(
+        background: const Color(0xFF171108),
+        surface: const Color(0xFF22170C),
+        surfaceAlt: const Color(0xFF362510),
+        border: const Color(0xFFE8C57E),
+        accent: const Color(0xFFFFDFA3),
+        textPrimary: const Color(0xFFFFF0D0),
+        textMuted: const Color(0xFFE1CCA0),
+        accentForeground: const Color(0xFF3A2406),
+        // BookingsHub `pageGradient` (highContrast).
+        pageGradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF100B06), Color(0xFF17110A), Color(0xFF2C2113)],
+        ),
+        // Documents `panelGradient` + `panelBorder` (highContrast).
+        overviewGradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF5D4321), Color(0xFF362510)],
+        ),
+        overviewBorder: const Color(0x99FFDFA3),
+        // Documents `cardGradient` + `cardBorder` (highContrast) for the
+        // inner KPI tiles inside the overview panel.
+        tileGradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3A2B17), Color(0xFF22170C)],
+        ),
+        tileBorder: const Color(0x66E8C57E),
+        // BookingsHub `surfaceGradient` + `surfaceBorder` (highContrast)
+        // for the history ride cards and the message cards (empty / error
+        // / filtered-empty) that share the same surface treatment.
+        cardGradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3B2B17), Color(0xFF22170C)],
+        ),
+        cardBorder: const Color(0x99E8C57E),
+        // Driver Home `_middayGoldSelectedSurfaceGradient()` + selected
+        // border (`_middayGoldBorderColor(0.72)`) + dark on-selected text
+        // (`_middayGoldTextOnSelected()`) for the active filter chip.
+        selectedChipGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFFF6E8C2).withOpacity(0.96),
+            const Color(0xFFD8BF7B).withOpacity(0.88),
+            const Color(0xFF8D7448).withOpacity(0.72),
+            const Color(0xFF3A2A10).withOpacity(0.80),
+          ],
+        ),
+        selectedChipBorder: const Color(0xFFFFDFA3).withOpacity(0.72),
+        selectedChipTextColor: const Color(0xFF2B2113),
+        // Driver Home `_middayGoldBorderColor(0.24)` for low-emphasis
+        // outlines (inactive filter chip).
+        softBorder: const Color(0xFFFFDFA3).withOpacity(0.24),
+      );
+    case DriverThemeVariant.nightGold:
+      // Identical to `paletteForDriverTheme(nightGold)` so the production
+      // gold/black look stays unchanged. No gradients here on purpose.
+      return const _TripHistoryThemeTokens(
+        background: Color(0xFF07080C),
+        surface: Color(0xFF101113),
+        surfaceAlt: Color(0xFF16120A),
+        border: Color(0xFF3B2C14),
+        accent: Color(0xFFE5B641),
+        textPrimary: Color(0xFFFFFFFF),
+        textMuted: Color(0xFFB4B4B4),
+        accentForeground: Color(0xFF101010),
+      );
+    case DriverThemeVariant.lightEmerald:
+      return const _TripHistoryThemeTokens(
+        background: Color(0xFFEEF5F2),
+        surface: Color(0xFFFFFFFF),
+        surfaceAlt: Color(0xFFE4F1EB),
+        border: Color(0xFFB7CEC4),
+        accent: Color(0xFF1F8A65),
+        textPrimary: Color(0xFF143028),
+        textMuted: Color(0xFF4A665C),
+        accentForeground: Color(0xFFFFFFFF),
+        pageGradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF4FAF7), Color(0xFFEEF5F2), Color(0xFFE4F1EB)],
+        ),
+        overviewGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF4FAF7), Color(0xFFDCEEE6)],
+        ),
+        overviewBorder: Color(0x991F8A65),
+        tileGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFEAF4EF)],
+        ),
+        tileBorder: Color(0x66B7CEC4),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFEAF4EF)],
+        ),
+        cardBorder: Color(0x99B7CEC4),
+      );
+    case DriverThemeVariant.customHuisstijl:
+      final palette = paletteForDriverTheme(variant);
+      return _TripHistoryThemeTokens(
+        background: palette.background,
+        surface: palette.surface,
+        surfaceAlt: palette.surfaceAlt,
+        border: palette.border,
+        accent: palette.accent,
+        textPrimary: palette.textPrimary,
+        textMuted: palette.textMuted,
+        accentForeground: palette.isDark
+            ? const Color(0xFF1A1408)
+            : const Color(0xFFF8F0D8),
+        pageGradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [palette.background, palette.surfaceAlt, palette.surface],
+        ),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.surface, palette.surfaceAlt],
+        ),
+        cardBorder: palette.border.withOpacity(0.72),
+      );
+  }
+}
+
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): sync-status enum surfaced to
+// the UI so the History page can show a small non-destructive warning
+// while a remote refresh is running or after a failure — without ever
+// replacing valid local rows with a spinner or an empty state.
+enum _TripHistorySyncStatus { idle, syncing, syncFailed }
+
+class _TripHistoryPageState extends State<_TripHistoryPage> {
+  _TripHistoryFilter _activeFilter = _TripHistoryFilter.all;
+
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first state.
+  //
+  // Pre-repair the page used `Future<List<_TripHistoryItem>>` with a
+  // remote-first `_fetch()` inside `FutureBuilder`, so locally-stored
+  // rides remained hidden behind a spinner for up to 10 s while the
+  // tracking-worker request either succeeded or timed out. Post-repair
+  // the local read populates `_items` first, then the authenticated
+  // remote request runs in the background and merges atomically.
+  List<_TripHistoryItem> _items = const <_TripHistoryItem>[];
+  bool _initialLoadStarted = false;
+  bool _localReadCompleted = false;
+  _TripHistorySyncStatus _syncStatus = _TripHistorySyncStatus.idle;
+  int _fetchGeneration = 0;
+  String _scopeSignature = '';
+  String? _workerCanonicalVersion;
+  bool _lastRemoteSucceeded = false;
+  // DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1: retain last successful
+  // summary while syncing so KPIs never flash provisional local-pending totals.
+  ({int total, int completed, int cancelled, double revenue})?
+  _authoritativeSummary;
+  bool _summaryNeutralWhileSyncing = false;
+  final Map<String, Map<String, dynamic>> _paymentByBookingId =
+      <String, Map<String, dynamic>>{};
+
+  _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
+    _TripHistoryItem item, {
+    required String sourceTag,
+  }) {
+    final bookingId = item.bookingId?.trim() ?? '';
+    if (bookingId.isEmpty) return item;
+    final authoritative = widget.bookingDetailsById[bookingId];
+    if (authoritative == null || authoritative.isEmpty) return item;
+
+    final mergedRawSource = _mergeBusinessReferencesIntoSource(
+      source: Map<String, dynamic>.from(item.rawSource),
+      authoritative: authoritative,
+      canonicalBookingId: item.bookingId,
+      tripId: item.tripId,
+      sourceTag: sourceTag,
+    );
+    final mergedBookingDetails = _mergeBusinessReferencesIntoSource(
+      source: Map<String, dynamic>.from(item.bookingDetails),
+      authoritative: authoritative,
+      canonicalBookingId: item.bookingId,
+      tripId: item.tripId,
+      sourceTag: '${sourceTag}_booking_details',
+    );
+    if (mergedBookingDetails.isNotEmpty) {
+      mergedRawSource['booking_details'] = mergedBookingDetails;
+      mergedRawSource['bookingDetails'] = mergedBookingDetails;
+    }
+
+    return item.copyWith(
+      rawSource: mergedRawSource,
+      bookingDetails: mergedBookingDetails,
+    );
+  }
+
+  ({bool hasPlanning, bool hasPublicBooking, bool hasRealReceipt})
+  _referencePresenceForItem(_TripHistoryItem item) {
+    final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+      item.rawSource,
+      item.bookingDetails,
+    ]);
+    final refs = _extractBusinessReferenceAliasesFromMaps(maps);
+    final canonicalBookingId =
+        _cleanBusinessReferenceText(item.bookingId) ??
+        _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['booking_id'],
+          <String>['bookingId'],
+          <String>['id'],
+          <String>['booking', 'booking_id'],
+          <String>['booking', 'bookingId'],
+          <String>['record', 'booking_id'],
+          <String>['record', 'bookingId'],
+        ]);
+    final effectiveTripId =
+        _cleanBusinessReferenceText(item.tripId) ??
+        _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['trip_id'],
+          <String>['tripId'],
+        ]);
+    final hasRealReceipt =
+        refs.receipt != null &&
+        _isRealReceiptReference(
+          candidate: refs.receipt!,
+          canonicalBookingId: canonicalBookingId,
+          tripId: effectiveTripId,
+          planningReference: refs.planning,
+          publicBookingReference: refs.publicBooking,
+          legacyTripReceiptNumber: effectiveTripId == null
+              ? null
+              : _legacyTripReceiptNumber(effectiveTripId),
+        );
+    return (
+      hasPlanning: refs.planning != null,
+      hasPublicBooking:
+          refs.publicBooking != null ||
+          refs.booking != null ||
+          refs.publicRef != null,
+      hasRealReceipt: hasRealReceipt,
+    );
+  }
+
+  String _canonicalBookingIdFromItem(_TripHistoryItem item) {
+    final direct = _cleanBusinessReferenceText(item.bookingId) ?? '';
+    if (direct.isNotEmpty) return direct;
+    final maps = _referenceLookupMaps(<Map<String, dynamic>>[
+      item.rawSource,
+      item.bookingDetails,
+    ]);
+    return _pickReferenceAliasFromMaps(maps, const <List<String>>[
+          <String>['booking_id'],
+          <String>['bookingId'],
+          <String>['id'],
+          <String>['booking', 'booking_id'],
+          <String>['booking', 'bookingId'],
+          <String>['record', 'booking_id'],
+          <String>['record', 'bookingId'],
+          <String>['record', 'booking', 'booking_id'],
+          <String>['record', 'booking', 'bookingId'],
+          <String>['payload', 'booking_id'],
+          <String>['payload', 'bookingId'],
+          <String>['payload', 'booking', 'booking_id'],
+          <String>['payload', 'booking', 'bookingId'],
+        ]) ??
+        '';
+  }
+
+  Future<_TripHistoryItem> _enrichTripHistoryItemForReceipt(
+    _TripHistoryItem item,
+  ) async {
+    var enriched = _enrichTripHistoryItemWithBusinessRefs(
+      item,
+      sourceTag: 'trip_history_open_receipt_cache',
+    );
+    final before = _referencePresenceForItem(enriched);
+    final routeResolved = resolveReceiptRouteAddresses(
+      rawSource: enriched.rawSource,
+      bookingDetails: enriched.bookingDetails,
+      origin: enriched.origin,
+      destination: enriched.destination,
+    );
+    final needsRouteAddressFetch =
+        routeResolved.from == null || routeResolved.to == null;
+    // References alone are not a receipt. The local register always merges the
+    // full booking record, which is why the same ride shows its amount, status
+    // and pickup time there but not here.
+    final needsRideFactsFetch = receiptNeedsBookingRecordHydration(
+      totalEur: enriched.totalEur,
+      status: enriched.status,
+      startedAt: enriched.startedAt,
+      routeLabelsResolved: !needsRouteAddressFetch,
+    );
+    if ((before.hasPlanning ||
+            before.hasPublicBooking ||
+            before.hasRealReceipt) &&
+        !needsRouteAddressFetch &&
+        !needsRideFactsFetch) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(_canonicalBookingIdFromItem(enriched))} foundPlanning=${before.hasPlanning} foundPublic=${before.hasPublicBooking} foundReceipt=${before.hasRealReceipt} source=already_present',
+      );
+      return enriched;
+    }
+
+    final bookingId = _canonicalBookingIdFromItem(enriched);
+    if (bookingId.isEmpty) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking= foundPlanning=false foundPublic=false foundReceipt=false source=skipped_no_booking',
+      );
+      return enriched;
+    }
+
+    try {
+      tripHistoryBookingDetailRepository.applyScope(
+        tenantId: widget.tenantId,
+        companyId: widget.companyId,
+        driverId: widget.driverId,
+      );
+      final result = await tripHistoryBookingDetailRepository.fetch(
+        request: TripHistoryBookingDetailRequest(
+          tenantId: widget.tenantId,
+          companyId: widget.companyId,
+          driverId: widget.driverId,
+          bookingId: bookingId,
+          scopeQuery: _activeBookingScopeQuery(),
+        ),
+        headers: () async => widget.headers,
+      );
+      final decoded = Map<String, dynamic>.from(result.payload);
+      final record = decoded['record'];
+      final booking = record is Map ? record['booking'] : null;
+      final authoritative = <String, dynamic>{
+        ...decoded,
+        if (record is Map) ...Map<String, dynamic>.from(record),
+        if (record is Map) 'record': Map<String, dynamic>.from(record),
+        if (booking is Map) 'booking': Map<String, dynamic>.from(booking),
+        'booking_id': bookingId,
+        'bookingId': bookingId,
+      };
+      final authoritativePresence = _extractBusinessReferenceAliasesFromMaps(
+        _referenceLookupMaps(<Map<String, dynamic>>[authoritative]),
+      );
+      final mergedRawSource = _mergeBusinessReferencesIntoSource(
+        source: Map<String, dynamic>.from(enriched.rawSource),
+        authoritative: authoritative,
+        canonicalBookingId: bookingId,
+        tripId: enriched.tripId,
+        sourceTag: 'trip_history_open_receipt_booking_detail_fetch',
+      );
+      final mergedBookingDetails = _mergeBusinessReferencesIntoSource(
+        source: Map<String, dynamic>.from(enriched.bookingDetails),
+        authoritative: authoritative,
+        canonicalBookingId: bookingId,
+        tripId: enriched.tripId,
+        sourceTag: 'trip_history_open_receipt_booking_detail_fetch_details',
+      );
+      mergeReceiptRouteAddressFields(
+        target: mergedRawSource,
+        authoritative: authoritative,
+      );
+      mergeReceiptRouteAddressFields(
+        target: mergedBookingDetails,
+        authoritative: authoritative,
+      );
+      if (mergedBookingDetails.isNotEmpty) {
+        mergedRawSource['booking_details'] = mergedBookingDetails;
+        mergedRawSource['bookingDetails'] = mergedBookingDetails;
+      }
+      // Same authoritative merge the local register applies, so amount,
+      // payment status, pickup time, route and company context come from the
+      // booking record instead of staying blank. The merge keeps a confirmed
+      // paid state and never invents values.
+      if (needsRideFactsFetch) {
+        final hydrated = mergeBookingRecordIntoTripHistoryJson(
+          tripHistoryJson: mergedRawSource,
+          decodedResponse: decoded,
+        );
+        // The chauffeur row owns the trip identity; the booking record only
+        // supplies the ride facts around it.
+        if (enriched.tripId.trim().isNotEmpty) {
+          hydrated['trip_id'] = enriched.tripId;
+        }
+        mergedRawSource
+          ..clear()
+          ..addAll(hydrated);
+        final hydratedDetails = hydrated['booking_details'];
+        if (hydratedDetails is Map) {
+          mergedBookingDetails
+            ..clear()
+            ..addAll(Map<String, dynamic>.from(hydratedDetails));
+        }
+      }
+      try {
+        enriched = _TripHistoryItem.fromJson(mergedRawSource);
+      } catch (err) {
+        debugPrint(
+          '[DRIVER_HISTORY][HYDRATE] booking=${_safeRefPreview(bookingId)} ok=false reason=parse_failed',
+        );
+        enriched = enriched.copyWith(
+          rawSource: mergedRawSource,
+          bookingDetails: mergedBookingDetails,
+        );
+      }
+      debugPrint(
+        '[DRIVER_HISTORY][HYDRATE] booking=${_safeRefPreview(bookingId)}'
+        ' hydrated=$needsRideFactsFetch'
+        ' amount=${enriched.totalEur != null}'
+        ' status=${receiptStatusIsKnown(enriched.status)}'
+        ' started=${(enriched.startedAt ?? '').trim().isNotEmpty}',
+      );
+      final after = _referencePresenceForItem(enriched);
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=${authoritativePresence.planning != null || after.hasPlanning} foundPublic=${authoritativePresence.publicBooking != null || authoritativePresence.booking != null || authoritativePresence.publicRef != null || after.hasPublicBooking} foundReceipt=${authoritativePresence.receipt != null || after.hasRealReceipt} source=booking_detail_fetch',
+      );
+      return enriched;
+    } catch (_) {
+      debugPrint(
+        '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(bookingId)} foundPlanning=false foundPublic=false foundReceipt=false source=fetch_failed',
+      );
+      return enriched;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _scopeSignature = _computeScopeSignature();
+    tripHistoryBookingDetailRepository.applyScope(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+      driverId: widget.driverId,
+    );
+    _startLoad(reason: 'initState');
+  }
+
+  @override
+  void didUpdateWidget(covariant _TripHistoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): if the caller rebuilds
+    // this page with a different tenant/company/driver (e.g. a company
+    // switch or a driver re-auth), invalidate the current items and
+    // restart the local-first cycle so we never surface another
+    // company's rows.
+    final nextSignature = _computeScopeSignature();
+    if (nextSignature != _scopeSignature) {
+      _scopeSignature = nextSignature;
+      tripHistoryBookingDetailRepository.applyScope(
+        tenantId: widget.tenantId,
+        companyId: widget.companyId,
+        driverId: widget.driverId,
+      );
+      setState(() {
+        _items = const <_TripHistoryItem>[];
+        _localReadCompleted = false;
+        _lastRemoteSucceeded = false;
+        _authoritativeSummary = null;
+        _summaryNeutralWhileSyncing = false;
+        _workerCanonicalVersion = null;
+        _syncStatus = _TripHistorySyncStatus.idle;
+      });
+      _startLoad(reason: 'scope_changed');
+    }
+  }
+
+  @override
+  void dispose() {
+    // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): bump the generation so
+    // any still-in-flight remote/local completions are dropped by the
+    // latest-wins guard rather than mutating disposed state.
+    _fetchGeneration += 1;
+    super.dispose();
+  }
+
+  String _computeScopeSignature() {
+    return '${widget.tenantId.trim()}::${widget.companyId.trim()}::${widget.driverId.trim()}';
+  }
+
+  static DateTime? _parseTripHistoryIso(String? iso) {
+    final text = iso?.trim();
+    if (text == null || text.isEmpty) return null;
+    return DateTime.tryParse(text);
+  }
+
+  static void _sortNewestFirst(List<_TripHistoryItem> items) {
+    items.sort((a, b) {
+      final aStopped = _parseTripHistoryIso(a.stoppedAt);
+      final bStopped = _parseTripHistoryIso(b.stoppedAt);
+      if (aStopped != null && bStopped != null) {
+        final c = bStopped.compareTo(aStopped);
+        if (c != 0) return c;
+      } else if (aStopped == null && bStopped != null) {
+        return 1;
+      } else if (aStopped != null && bStopped == null) {
+        return -1;
+      }
+      final aStarted = _parseTripHistoryIso(a.startedAt);
+      final bStarted = _parseTripHistoryIso(b.startedAt);
+      if (aStarted != null && bStarted != null) {
+        final c = bStarted.compareTo(aStarted);
+        if (c != 0) return c;
+      } else if (aStarted == null && bStarted != null) {
+        return 1;
+      } else if (aStarted != null && bStarted == null) {
+        return -1;
+      }
+      return b.tripId.compareTo(a.tripId);
+    });
+  }
+
+  Future<List<_TripHistoryItem>> _readLocalItems() async {
+    final localRecords = await _LocalDirectTripHistoryStore.readFor(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+      driverId: widget.driverId,
+      limit: 120,
+    );
+    return localRecords
+        .map(_TripHistoryItem.fromJson)
+        .where((e) => e.tripId.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  /// Applies the canonical dedupe + business-reference enrichment pipeline
+  /// to a merged (or local-only) list of items. Pure — no I/O.
+  List<_TripHistoryItem> _finalizeItems(
+    Iterable<_TripHistoryItem> input, {
+    required String sourceTag,
+    required bool cacheUsed,
+  }) {
+    final mergedByTripId = <String, _TripHistoryItem>{};
+    for (final item in input) {
+      mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
+    }
+    final beforeItems = mergedByTripId.values.toList(growable: false);
+    final canonical = canonicalizeStreetHistory<_TripHistoryItem>(
+      beforeItems,
+      tripId: (item) => item.tripId,
+      kind: (item) => item.kind,
+      bookingId: (item) => item.bookingId ?? '',
+      parentBookingId: (item) => item.parentBookingId,
+      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
+      isOperationalLeg: (item) => item.isOperationalLeg,
+      workerShadowHint: (item) => item.workerOperationalShadowHint,
+      onLog: (log) => debugPrint(log.toLogLine()),
+    );
+    debugPrint(
+      '[STREET_HISTORY_RUNTIME] source=client '
+      'workerCanonicalVersion=${_workerCanonicalVersion ?? 'absent'} '
+      'clientCanonicalVersion=$kStreetHistoryClientCanonicalVersion '
+      'rowsBefore=${beforeItems.length} rowsAfter=${canonical.length} '
+      'cacheUsed=$cacheUsed',
+    );
+    final finalized = canonical
+        .map(
+          (item) => _enrichTripHistoryItemWithBusinessRefs(
+            item,
+            sourceTag: sourceTag,
+          ),
+        )
+        .toList();
+    _sortNewestFirst(finalized);
+    return List<_TripHistoryItem>.unmodifiable(finalized);
+  }
+
+  /// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E) +
+  /// DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1:
+  ///
+  /// 1. Read local rides.
+  /// 2. Paint without downgrading an already-authoritative snapshot:
+  ///    - refresh with prior remote success → keep authoritative rows and
+  ///      overlay only genuine pending locals whose trip_id is absent;
+  ///    - cold start → show genuine pending locals only; KPIs stay neutral.
+  /// 3. Remote merge (backend wins on trip_id); clean superseded pending.
+  /// 4. On timeout / failure: keep painted rows, surface sync warning.
+  ///
+  /// Offline STOP durability (`_persistPendingFinalizeDirectHistory`) is
+  /// unchanged — this only gates presentation/merge monotonicity.
+  Future<void> _startLoad({required String reason}) async {
+    final generation = ++_fetchGeneration;
+    final scopeSignatureAtStart = _scopeSignature;
+    _initialLoadStarted = true;
+    debugPrint(
+      '[TRIP_HISTORY_LIFECYCLE] phase=start reason=$reason generation=$generation',
+    );
+
+    // ------------------------------------------------------------------
+    // 1. LOCAL PHASE — monotonic paint (never downgrade authoritative).
+    // ------------------------------------------------------------------
+    final priorAuthoritativeItems = List<_TripHistoryItem>.from(_items);
+    final hadAuthoritativeSnapshot =
+        _lastRemoteSucceeded && priorAuthoritativeItems.isNotEmpty;
+    final priorSummary = _authoritativeSummary;
+
+    List<_TripHistoryItem> localItems;
+    try {
+      localItems = await _readLocalItems();
+    } catch (_) {
+      localItems = const <_TripHistoryItem>[];
+    }
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      return;
+    }
+    final localFinalized = _finalizeItems(
+      localItems,
+      sourceTag: 'trip_history_local_first',
+      cacheUsed: true,
+    );
+    final paintPlan = planTripHistoryLocalPaintPhase<_TripHistoryItem>(
+      priorAuthoritativeItems: priorAuthoritativeItems,
+      hasAuthoritativeSnapshot: hadAuthoritativeSnapshot,
+      localItems: localFinalized,
+      tripIdOf: (item) => item.tripId,
+      isLocalUnconfirmed: (item) => item.shouldRenderAsLocalOnlyUnconfirmed,
+    );
+    final painted = _finalizeItems(
+      paintPlan.items,
+      sourceTag: 'trip_history_local_monotonic',
+      cacheUsed: true,
+    );
+    setState(() {
+      _items = painted.map(_overlayCanonicalPaymentOnItem).toList();
+      _localReadCompleted = true;
+      _syncStatus = _TripHistorySyncStatus.syncing;
+      _summaryNeutralWhileSyncing = paintPlan.summaryNeutral;
+      if (paintPlan.retainAuthoritativeSummary && priorSummary != null) {
+        _authoritativeSummary = priorSummary;
+      }
+    });
+    debugPrint(
+      '[TRIP_HISTORY_LIFECYCLE] phase=local_done generation=$generation '
+      'local_count=${localFinalized.length} painted_count=${painted.length} '
+      'retained_auth=$hadAuthoritativeSnapshot '
+      'summary_neutral=${paintPlan.summaryNeutral}',
+    );
+
+    // ------------------------------------------------------------------
+    // 2. REMOTE PHASE — background, non-blocking for the UI.
+    // ------------------------------------------------------------------
+    List<_TripHistoryItem>? backendItems;
+    String? nextWorkerCanonicalVersion;
+    Object? remoteError;
+    try {
+      final uri = Uri.parse(
+        '${widget.workerBaseUrl}$kTripsHistoryPath'
+        '?tenant_id=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&company_id=${Uri.encodeQueryComponent(widget.companyId)}'
+        '&tenantId=${Uri.encodeQueryComponent(widget.tenantId)}'
+        '&companyId=${Uri.encodeQueryComponent(widget.companyId)}'
+        '&driver_id=${Uri.encodeQueryComponent(widget.driverId)}'
+        '&limit=100',
+      );
+      final res = await http
+          .get(uri, headers: widget.headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}: ${res.body}');
+      }
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map || decoded['ok'] != true) {
+        throw Exception('Ongeldig antwoord van Worker');
+      }
+      final rawVersion =
+          (res.headers['x-fluxidi-history-canonical'] ??
+                  decoded['canonical_version'])
+              ?.toString()
+              .trim();
+      nextWorkerCanonicalVersion = (rawVersion == null || rawVersion.isEmpty)
+          ? null
+          : rawVersion;
+      final trips = decoded['trips'];
+      backendItems = trips is! List
+          ? const <_TripHistoryItem>[]
+          : trips
+                .whereType<Map>()
+                .where((row) => historyExecutionBelongsToDriver(row,
+                  tenantId: widget.tenantId.trim(), companyId: widget.companyId.trim(),
+                  driverId: widget.driverId.trim()))
+                .map(
+                  (e) =>
+                      _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)),
+                )
+                .where((e) => e.tripId.trim().isNotEmpty)
+                .toList(growable: false);
+    } catch (err) {
+      remoteError = err;
+    }
+
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      debugPrint(
+        '[TRIP_HISTORY_LIFECYCLE] phase=remote_stale_dropped '
+        'generation=$generation currentGeneration=$_fetchGeneration '
+        'scopeChanged=${scopeSignatureAtStart != _scopeSignature}',
+      );
+      return;
+    }
+
+    if (remoteError != null) {
+      debugPrint(
+        '[TRIP_HISTORY_LIFECYCLE] phase=remote_failed generation=$generation '
+        'reason=${remoteError.runtimeType}',
+      );
+      setState(() {
+        _syncStatus = _TripHistorySyncStatus.syncFailed;
+        // Keep prior authoritative success flag so a later refresh still
+        // retains Voltooid/Betaald instead of re-downgrading from local.
+        if (!hadAuthoritativeSnapshot) {
+          _lastRemoteSucceeded = false;
+        }
+      });
+      return;
+    }
+
+    _workerCanonicalVersion = nextWorkerCanonicalVersion;
+    // Re-read local rows a second time so a ride that finished during
+    // the network request still appears atomically merged (the pre-repair
+    // handler read local rides after the remote leg for the same reason).
+    List<_TripHistoryItem> latestLocalItems;
+    try {
+      latestLocalItems = await _readLocalItems();
+    } catch (_) {
+      latestLocalItems = const <_TripHistoryItem>[];
+    }
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      return;
+    }
+    final safeBackendItems = backendItems ?? const <_TripHistoryItem>[];
+    // Backend takes precedence on ID collision (matches pre-repair merge
+    // order); local-only rows are appended after so their truthful
+    // `shouldRenderAsLocalOnlyUnconfirmed` badge survives.
+    final Map<String, _TripHistoryItem> mergedByTripId = {};
+    for (final item in safeBackendItems) {
+      mergedByTripId[item.tripId.trim()] = item;
+    }
+    for (final item in latestLocalItems) {
+      final tripId = item.tripId.trim();
+      final existing = mergedByTripId[tripId];
+      if (existing == null) {
+        mergedByTripId[tripId] = item;
+        continue;
+      }
+      final localPaid = resolveCanonicalRideIsPaid(
+        historyRaw: item.rawSource,
+        historyDetails: item.bookingDetails,
+      );
+      final remotePaid = resolveCanonicalRideIsPaid(
+        historyRaw: existing.rawSource,
+        historyDetails: existing.bookingDetails,
+      );
+      if (localPaid && !remotePaid) {
+        final fields = extractCanonicalPaymentFields(item.rawSource);
+        fields.addAll(extractCanonicalPaymentFields(item.bookingDetails));
+        mergedByTripId[tripId] = existing.copyWith(
+          rawSource: overlayCanonicalPaymentFields(existing.rawSource, fields),
+          bookingDetails: overlayCanonicalPaymentFields(
+            existing.bookingDetails,
+            fields,
+          ),
+        );
+      }
+    }
+    final merged = _finalizeItems(
+      mergedByTripId.values,
+      sourceTag: 'trip_history_fetch_merge',
+      cacheUsed: safeBackendItems.isEmpty && latestLocalItems.isNotEmpty,
+    );
+    final nextSummary = _summary(merged);
+    debugPrint(
+      '[TRIP_HISTORY_LIFECYCLE] phase=remote_done generation=$generation '
+      'backend_count=${safeBackendItems.length} '
+      'local_count=${latestLocalItems.length} merged_count=${merged.length}',
+    );
+    final overlaid = merged.map(_overlayCanonicalPaymentOnItem).toList();
+    setState(() {
+      _items = overlaid;
+      _syncStatus = _TripHistorySyncStatus.idle;
+      _lastRemoteSucceeded = true;
+      _summaryNeutralWhileSyncing = false;
+      _authoritativeSummary = nextSummary;
+    });
+    // Payment/document hydration is explicit-open only. History sync never
+    // fans out GET /bookings/:id.
+
+    // Drop superseded offline-STOP pending projections so the next cold
+    // start cannot re-flash "Lokaal opgeslagen — niet bevestigd".
+    final confirmedTripIds = safeBackendItems
+        .map((e) => e.tripId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (confirmedTripIds.isNotEmpty) {
+      unawaited(
+        _LocalDirectTripHistoryStore.removeSupersededOfflineStopPending(
+          tenantId: widget.tenantId,
+          companyId: widget.companyId,
+          driverId: widget.driverId,
+          confirmedTripIds: confirmedTripIds,
+        ),
+      );
+    }
+  }
+
+  void _refresh() {
+    _startLoad(reason: 'user_refresh');
+  }
+
+  String _formatDate(String? iso) {
+    if (iso == null || iso.trim().isEmpty) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${two(dt.day)}-${two(dt.month)}-${dt.year} ${two(dt.hour)}:${two(dt.minute)}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  String _formatWait(int seconds) {
+    if (seconds <= 0) return '0 min';
+    final min = seconds ~/ 60;
+    final sec = seconds % 60;
+    if (min <= 0) return '${sec}s';
+    if (sec == 0) return '$min min';
+    return '$min min ${sec}s';
+  }
+
+  Future<void> _openReceipt(_TripHistoryItem item) async {
+    final enrichedItem = await _enrichTripHistoryItemForReceipt(item);
+    if (!mounted) return;
+    if (!enrichedItem.isCompletedForReceipt) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('receiptUnavailable'))),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _RideReceiptPage(
+          item: enrichedItem,
+          driverThemeListenable:
+              widget.driverThemeListenable ?? driverThemeNotifier,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _refresh();
+  }
+
+  Future<void> _archiveTrip(_TripHistoryItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_receiptText('archiveTripTitle')),
+        content: Text(_receiptText('archiveTripBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_receiptText('archiveTripCancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_receiptText('archiveTripConfirm')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final scopeQuery = <String, String>{
+        'tenant_id': widget.tenantId,
+        'company_id': widget.companyId,
+        'tenantId': widget.tenantId,
+        'companyId': widget.companyId,
+      };
+      final res = await http
+          .post(
+            Uri.parse(
+              '${widget.workerBaseUrl}$kTripsArchivePath',
+            ).replace(queryParameters: scopeQuery),
+            headers: widget.headers,
+            body: jsonEncode({
+              'tenant_id': widget.tenantId,
+              'company_id': widget.companyId,
+              'tenantId': widget.tenantId,
+              'companyId': widget.companyId,
+              'driver_id': widget.driverId,
+              'trip_id': item.tripId,
+              'archived': true,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      final decoded = jsonDecode(res.body);
+      if (res.statusCode != 200 || decoded is! Map || decoded['ok'] != true) {
+        throw Exception('archive_failed');
+      }
+      if (!mounted) return;
+      _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('archiveTripSuccess'))),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('archiveTripFailed'))),
+      );
+    }
+  }
+
+  bool _isCompletedStatus(String? raw) {
+    final status = (raw ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return status == 'stopped' ||
+        status == 'completed' ||
+        status == 'complete' ||
+        status == 'done' ||
+        status == 'finished' ||
+        status == 'finalized';
+  }
+
+  bool _isCancelledStatus(String? raw) {
+    final status = (raw ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return status == 'cancelled' || status == 'canceled';
+  }
+
+  _TripHistoryItem _overlayCanonicalPaymentOnItem(_TripHistoryItem item) {
+    final bookingId = _canonicalBookingIdFromItem(item);
+    if (bookingId.isEmpty) return item;
+    final booking =
+        _paymentByBookingId[bookingId] ?? widget.bookingDetailsById[bookingId];
+    if (booking == null || booking.isEmpty) return item;
+    final fields = extractCanonicalPaymentFields(booking);
+    if (fields.isEmpty) return item;
+    return item.copyWith(
+      rawSource: overlayCanonicalPaymentFields(item.rawSource, fields),
+      bookingDetails: overlayCanonicalPaymentFields(
+        item.bookingDetails,
+        fields,
+      ),
+    );
+  }
+
+  String _normalizePaymentStatus(_TripHistoryItem item) {
+    final bookingId = _canonicalBookingIdFromItem(item);
+    final booking = bookingId.isEmpty
+        ? null
+        : (_paymentByBookingId[bookingId] ??
+              widget.bookingDetailsById[bookingId]);
+    switch (resolveCanonicalRidePaidDisplay(
+      historyRaw: item.rawSource,
+      historyDetails: item.bookingDetails,
+      bookingRecord: booking,
+    )) {
+      case CanonicalRidePaidDisplay.paid:
+        return 'paid';
+      case CanonicalRidePaidDisplay.unpaid:
+        return 'unpaid';
+      case CanonicalRidePaidDisplay.unknown:
+        return 'unknown';
+    }
+  }
+
+  String _formatEur(double value) {
+    return '€${value.toStringAsFixed(2).replaceAll('.', ',')}';
+  }
+
+  List<_TripHistoryItem> _applyFilter(List<_TripHistoryItem> items) {
+    switch (_activeFilter) {
+      case _TripHistoryFilter.completed:
+        return items.where((item) => _isCompletedStatus(item.status)).toList();
+      case _TripHistoryFilter.cancelled:
+        return items.where((item) => _isCancelledStatus(item.status)).toList();
+      case _TripHistoryFilter.all:
+        return items;
+    }
+  }
+
+  ({int total, int completed, int cancelled, double revenue}) _summary(
+    List<_TripHistoryItem> items,
+  ) {
+    var completed = 0;
+    var cancelled = 0;
+    var revenue = 0.0;
+    for (final item in items) {
+      if (_isCancelledStatus(item.status)) {
+        cancelled++;
+        continue;
+      }
+      if (_isCompletedStatus(item.status)) {
+        // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix,
+        // Commit 5): a local-only / backend_confirmed=false ride carries
+        // `status='COMPLETED'` in the persisted local record but was
+        // never acknowledged by the server. It must NOT contribute to
+        // the normal "Completed / Afgerond" aggregate. The `completed`
+        // counter is the only field this presentation commit gates —
+        // the revenue accumulation retains its exact pre-Commit-5
+        // behavior below so no business-logic side-effect is
+        // introduced. The `total: items.length` count is also
+        // unchanged so the overall ride count remains truthful across
+        // all outcomes.
+        if (!item.shouldRenderAsLocalOnlyUnconfirmed) {
+          completed++;
+        }
+        final payment = _normalizePaymentStatus(item);
+        final canInclude = payment != 'unpaid';
+        if (canInclude && item.totalEur != null) {
+          revenue += item.totalEur!;
+        }
+      }
+    }
+    return (
+      total: items.length,
+      completed: completed,
+      cancelled: cancelled,
+      revenue: revenue,
+    );
+  }
+
+  String _dateOnly(String? iso) {
+    if (iso == null || iso.trim().isEmpty) return '—';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '—';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.day)}-${two(local.month)}-${local.year}';
+  }
+
+  String _timeOnly(String? iso) {
+    if (iso == null || iso.trim().isEmpty) return '—';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '—';
+    final local = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _statusChipText(_TripHistoryItem item) {
+    if (_isCancelledStatus(item.status)) {
+      return _tr(
+        nl: 'Geannuleerd',
+        en: 'Cancelled',
+        fr: 'Annulée',
+        es: 'Cancelada',
+      );
+    }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+    // a local-only / backend_confirmed=false ride must never render with the
+    // green "Voltooid/Completed" chip. The unconfirmed label takes priority
+    // over the raw `status='COMPLETED'` string persisted by the local
+    // fallback path so the driver and the company owner immediately see the
+    // ride was not confirmed by the backend.
+    if (item.shouldRenderAsLocalOnlyUnconfirmed) {
+      return kLocalOnlyUnconfirmedBadge.of(appLanguageNotifier.value);
+    }
+    if (_isCompletedStatus(item.status)) {
+      return _tr(
+        nl: 'Voltooid',
+        en: 'Completed',
+        fr: 'Terminée',
+        es: 'Completada',
+      );
+    }
+    return _tr(nl: 'Onbekend', en: 'Unknown', fr: 'Inconnu', es: 'Desconocido');
+  }
+
+  Color _statusChipColor(_TripHistoryItem item) {
+    if (_isCancelledStatus(item.status)) return const Color(0xFFF97373);
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+    // amber, visually distinct from the "Completed" green so an unconfirmed
+    // ride is never mistaken for a normal completed ride.
+    if (item.shouldRenderAsLocalOnlyUnconfirmed) {
+      return const Color(kLocalOnlyUnconfirmedBadgeColorArgb);
+    }
+    if (_isCompletedStatus(item.status)) return const Color(0xFF4ADE80);
+    return const Color(0xFFA3A3A3);
+  }
+
+  String _paymentChipText(_TripHistoryItem item) {
+    final payment = _normalizePaymentStatus(item);
+    if (payment == 'paid') {
+      return _tr(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+    }
+    if (payment == 'unpaid') {
+      return _tr(nl: 'Onbetaald', en: 'Unpaid', fr: 'Impayé', es: 'No pagado');
+    }
+    return '';
+  }
+
+  String? _historyLegTypeToken(_TripHistoryItem item) {
+    String? pick(List<List<String>> paths) {
+      for (final path in paths) {
+        dynamic current = item.bookingDetails;
+        for (final key in path) {
+          if (current is Map && current.containsKey(key)) {
+            current = current[key];
+          } else {
+            current = null;
+            break;
+          }
+        }
+        final text = current?.toString().trim();
+        if (text != null && text.isNotEmpty) return text;
+      }
+      return null;
+    }
+
+    final raw = pick(const [
+      ['leg_type'],
+      ['legType'],
+      ['details', 'leg_type'],
+      ['details', 'legType'],
+      ['booking', 'leg_type'],
+      ['booking', 'legType'],
+      ['booking_details', 'leg_type'],
+      ['booking_details', 'legType'],
+    ])?.toLowerCase();
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.contains('return') || raw.contains('terug')) return 'return';
+    if (raw.contains('outbound') || raw.contains('heen')) return 'outbound';
+    return null;
+  }
+
+  String? _historyLegBadgeText(_TripHistoryItem item) {
+    final token = _historyLegTypeToken(item);
+    if (token == null) return null;
+    if (token == 'return') {
+      return _tr(nl: 'Terugrit', en: 'Return', fr: 'Retour', es: 'Vuelta');
+    }
+    return _tr(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida');
+  }
+
+  bool _looksLikeRawCoordinatePair(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return false;
+    final match = RegExp(
+      r'^([+-]?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{1,3}(?:\.\d+)?)$',
+    ).firstMatch(text);
+    if (match == null) return false;
+    final first = double.tryParse(match.group(1)!);
+    final second = double.tryParse(match.group(2)!);
+    if (first == null || second == null) return false;
+    final firstInLatLon = first.abs() <= 90.0 && second.abs() <= 180.0;
+    final secondInLatLon = first.abs() <= 180.0 && second.abs() <= 90.0;
+    return firstInLatLon || secondInLatLon;
+  }
+
+  String _displayHistoryOrigin(String rawOrigin) {
+    final trimmed = rawOrigin.trim();
+    if (_looksLikeRawCoordinatePair(trimmed)) {
+      return _tr(
+        nl: 'Startlocatie',
+        en: 'Start location',
+        fr: 'Point de départ',
+        es: 'Punto de inicio',
+      );
+    }
+    return trimmed.isEmpty ? '—' : trimmed;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ValueListenable<DriverThemeVariant> themeListenable =
+        widget.driverThemeListenable ?? driverThemeNotifier;
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) => ValueListenableBuilder<DriverThemeVariant>(
+        valueListenable: themeListenable,
+        builder: (context, themeVariant, ___) {
+          final tokens = _tripHistoryThemeForVariant(themeVariant);
+          final accent = tokens.accent;
+          final accentForeground = tokens.accentForeground;
+          final background = tokens.background;
+          final surface = tokens.surface;
+          final surfaceAlt = tokens.surfaceAlt;
+          final textPrimary = tokens.textPrimary;
+          final textMuted = tokens.textMuted;
+          final paletteBorder = tokens.border;
+
+          // Gradient-aware decoration helpers. For Night Gold and Midnight
+          // Blue the optional gradient/border tokens are null, so each
+          // helper falls back to the existing flat-color surface and
+          // accent-derived outline (no regression). For Midday Gold the
+          // helpers paint the warm-espresso/champagne gradients copied from
+          // Documents / BookingsHub / Driver Home.
+          BoxDecoration overviewDecoration() => BoxDecoration(
+            color: tokens.overviewGradient == null ? surface : null,
+            gradient: tokens.overviewGradient,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: tokens.overviewBorder ?? accent.withOpacity(0.30),
+            ),
+          );
+          BoxDecoration tileDecoration() => BoxDecoration(
+            color: tokens.tileGradient == null ? surface : null,
+            gradient: tokens.tileGradient,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: tokens.tileBorder ?? accent.withOpacity(0.24),
+            ),
+          );
+          BoxDecoration cardDecoration({double fallbackBorderOpacity = 0.28}) =>
+              BoxDecoration(
+                color: tokens.cardGradient == null ? surface : null,
+                gradient: tokens.cardGradient,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color:
+                      tokens.cardBorder ??
+                      accent.withOpacity(fallbackBorderOpacity),
+                ),
+              );
+          BoxDecoration filterChipDecoration({required bool active}) =>
+              BoxDecoration(
+                color: active
+                    ? (tokens.selectedChipGradient == null ? surfaceAlt : null)
+                    : surface,
+                gradient: active ? tokens.selectedChipGradient : null,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: active
+                      ? (tokens.selectedChipBorder ?? accent.withOpacity(0.7))
+                      : (tokens.softBorder ?? paletteBorder.withOpacity(0.45)),
+                ),
+              );
+          Color filterChipTextColor({required bool active}) => active
+              ? (tokens.selectedChipTextColor ?? accent.withOpacity(0.98))
+              : textMuted;
+          return Scaffold(
+            backgroundColor: background,
+            appBar: AppBar(
+              backgroundColor: background,
+              elevation: 0,
+              iconTheme: IconThemeData(color: textPrimary),
+              titleTextStyle: TextStyle(
+                color: textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+              ),
+              title: Text(
+                _tr(
+                  nl: 'Historiek',
+                  en: 'History',
+                  fr: 'Historique',
+                  es: 'Historial',
+                ),
+              ),
+              actions: [
+                IconButton(
+                  tooltip: _receiptText('refresh'),
+                  onPressed: _refresh,
+                  icon: Icon(Icons.refresh, color: accent.withOpacity(0.95)),
+                ),
+              ],
+            ),
+            body: Container(
+              // For Night Gold and Midnight Blue this is a flat
+              // [background] paint (no behavioural change). For Midday Gold
+              // [tokens.pageGradient] paints BookingsHub's vertical
+              // warm-espresso gradient behind the whole list, so the
+              // History scaffold reads as Midday Gold instead of flat
+              // dark gold.
+              decoration: BoxDecoration(
+                color: background,
+                gradient: tokens.pageGradient,
+              ),
+              // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first
+              // presentation. `_items`, `_localReadCompleted` and
+              // `_syncStatus` drive the tree directly; no `FutureBuilder`
+              // and no top-level spinner over valid local rows.
+              child: Builder(
+                builder: (context) {
+                  final tabLabels = <_TripHistoryFilter, String>{
+                    _TripHistoryFilter.all: _tr(
+                      nl: 'Alle ritten',
+                      en: 'All rides',
+                      fr: 'Toutes',
+                      es: 'Todas',
+                    ),
+                    _TripHistoryFilter.completed: _tr(
+                      nl: 'Voltooid',
+                      en: 'Completed',
+                      fr: 'Terminées',
+                      es: 'Completadas',
+                    ),
+                    _TripHistoryFilter.cancelled: _tr(
+                      nl: 'Geannuleerd',
+                      en: 'Cancelled',
+                      fr: 'Annulées',
+                      es: 'Canceladas',
+                    ),
+                  };
+
+                  Widget metric({
+                    required String label,
+                    required String value,
+                    required IconData icon,
+                    required Color accentColor,
+                    Color? valueColor,
+                  }) {
+                    final resolvedValueColor = valueColor ?? textPrimary;
+                    return Container(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      decoration: tileDecoration(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: accentColor.withOpacity(0.16),
+                                  border: Border.all(
+                                    color: accentColor.withOpacity(0.52),
+                                  ),
+                                ),
+                                child: Icon(
+                                  icon,
+                                  size: 13.5,
+                                  color: accentColor,
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: textMuted,
+                                    fontSize: 10.6,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            value,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: resolvedValueColor,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 17,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  Widget historyCard(_TripHistoryItem item) {
+                    final startedIso = (item.startedAt ?? '').trim().isNotEmpty
+                        ? item.startedAt
+                        : item.stoppedAt;
+                    final km = item.kmTotal == null
+                        ? '—'
+                        : '${item.kmTotal!.toStringAsFixed(1)} km';
+                    final total = item.totalEur == null
+                        ? '€ —'
+                        : _formatEur(item.totalEur!);
+                    final statusColor = _statusChipColor(item);
+                    final paymentChip = _paymentChipText(item);
+                    final legBadgeText = _historyLegBadgeText(item);
+                    final originText = _displayHistoryOrigin(item.origin);
+                    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure
+                    // Fix, Commit 5): the ad-hoc ' • Lokaal' Dutch-only
+                    // suffix is removed. The truthful, localized
+                    // `kLocalOnlyUnconfirmedBadge` chip (from
+                    // `_statusChipText` above) plus the descriptive
+                    // `kLocalOnlyUnconfirmedDescription` row below the
+                    // status chips already convey local/unconfirmed state
+                    // across nl/en/fr/es.
+                    final kindOrCustomer =
+                        (item.customerName ?? '').trim().isNotEmpty
+                        ? item.customerName!.trim()
+                        : item.kindLabel;
+                    return Container(
+                      decoration: cardDecoration(),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => _openReceipt(item),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 24,
+                                padding: const EdgeInsets.only(top: 3),
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.radio_button_checked,
+                                      size: 12.5,
+                                      color: statusColor,
+                                    ),
+                                    Container(
+                                      width: 2,
+                                      height: 76,
+                                      margin: const EdgeInsets.only(top: 4),
+                                      decoration: BoxDecoration(
+                                        color: accent.withOpacity(0.28),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${_dateOnly(startedIso)} • ${_timeOnly(startedIso)}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: accent.withOpacity(0.95),
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 9,
+                                            vertical: 5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: surfaceAlt,
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: accent.withOpacity(0.45),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            total,
+                                            style: TextStyle(
+                                              color: accent.withOpacity(0.98),
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 12.4,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.my_location_rounded,
+                                          size: 14,
+                                          color: accent,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            originText,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: textPrimary,
+                                              fontSize: 12.2,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.location_on_outlined,
+                                          size: 14,
+                                          color: accent,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            item.destination,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: textPrimary,
+                                              fontSize: 12.2,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 7),
+                                    Text(
+                                      '$kindOrCustomer • $km • ${_receiptText('waitingCompact')} ${_formatWait(item.waitSecondsTotal)}',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: textMuted,
+                                        fontSize: 11.2,
+                                        height: 1.35,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 7,
+                                      runSpacing: 7,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: statusColor.withOpacity(
+                                              0.15,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: statusColor.withOpacity(
+                                                0.55,
+                                              ),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _statusChipText(item),
+                                            style: TextStyle(
+                                              color: statusColor,
+                                              fontSize: 10.8,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        if (paymentChip.isNotEmpty)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: surfaceAlt,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: accent.withOpacity(0.42),
+                                              ),
+                                            ),
+                                            child: Text(
+                                              paymentChip,
+                                              style: TextStyle(
+                                                color: accent.withOpacity(0.95),
+                                                fontSize: 10.8,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                        if (legBadgeText != null)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: surfaceAlt,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: paletteBorder
+                                                    .withOpacity(0.55),
+                                              ),
+                                            ),
+                                            child: Text(
+                                              legBadgeText,
+                                              style: TextStyle(
+                                                color: textPrimary,
+                                                fontSize: 10.8,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1
+                                    // (Field Failure Fix, Commit 5): render an
+                                    // explanatory info row below the status
+                                    // chips so the driver / company owner
+                                    // sees why the ride carries the
+                                    // "Lokaal opgeslagen — niet bevestigd"
+                                    // badge and that Company Bookings may
+                                    // not contain it. The row is gated on
+                                    // `shouldRenderAsLocalOnlyUnconfirmed`
+                                    // and therefore appears only for
+                                    // fallback / backend_confirmed=false
+                                    // rides.
+                                    if (item
+                                        .shouldRenderAsLocalOnlyUnconfirmed) ...[
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(
+                                            Icons.info_outline,
+                                            size: 13.5,
+                                            color: const Color(
+                                              kLocalOnlyUnconfirmedBadgeColorArgb,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              kLocalOnlyUnconfirmedDescription
+                                                  .of(
+                                                    appLanguageNotifier.value,
+                                                  ),
+                                              style: TextStyle(
+                                                color: textMuted,
+                                                fontSize: 11.2,
+                                                height: 1.35,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                    const SizedBox(height: 10),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        alignment: WrapAlignment.end,
+                                        children: [
+                                          OutlinedButton.icon(
+                                            onPressed: () => _archiveTrip(item),
+                                            icon: const Icon(
+                                              Icons.archive_outlined,
+                                              size: 17,
+                                            ),
+                                            label: Text(
+                                              _receiptText('archiveTripLabel'),
+                                            ),
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: textMuted,
+                                              side: BorderSide(
+                                                color: accent.withOpacity(0.35),
+                                              ),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                          ),
+                                          FilledButton.icon(
+                                            onPressed: () => _openReceipt(item),
+                                            icon: const Icon(
+                                              Icons.receipt_long,
+                                              size: 17,
+                                            ),
+                                            label: Text(
+                                              _receiptText('receiptTitle'),
+                                            ),
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: accent,
+                                              foregroundColor: accentForeground,
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): only the
+                  // very first frame (before the local read completes)
+                  // shows a tiny placeholder. Once local rows are
+                  // available they are ALWAYS rendered directly, even
+                  // while a remote request is in flight or a previous
+                  // one failed. Never replace valid local rows with a
+                  // spinner or an empty state.
+                  final items = _items;
+                  final filteredItems = _applyFilter(items);
+                  // DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1: while
+                  // syncing, prefer the last authoritative KPI snapshot (or
+                  // neutral placeholders on cold start) over provisional
+                  // local-pending totals.
+                  final ({
+                    int total,
+                    int completed,
+                    int cancelled,
+                    double revenue,
+                  })?
+                  summary;
+                  final String Function(int) kpiInt;
+                  final String Function(double) kpiEur;
+                  if (_syncStatus == _TripHistorySyncStatus.syncing &&
+                      _authoritativeSummary != null &&
+                      !_summaryNeutralWhileSyncing) {
+                    summary = _authoritativeSummary;
+                    kpiInt = (v) => v.toString();
+                    kpiEur = _formatEur;
+                  } else if (_syncStatus == _TripHistorySyncStatus.syncing &&
+                      _summaryNeutralWhileSyncing) {
+                    summary = (
+                      total: 0,
+                      completed: 0,
+                      cancelled: 0,
+                      revenue: 0,
+                    );
+                    kpiInt = (_) => '—';
+                    kpiEur = (_) => '—';
+                  } else {
+                    summary = _summary(items);
+                    kpiInt = (v) => v.toString();
+                    kpiEur = _formatEur;
+                  }
+                  final waitingForFirstAuthoritative =
+                      !_localReadCompleted ||
+                      (_syncStatus == _TripHistorySyncStatus.syncing &&
+                          items.isEmpty &&
+                          !_lastRemoteSucceeded);
+                  if (waitingForFirstAuthoritative && items.isEmpty) {
+                    return Center(
+                      child: CircularProgressIndicator(color: accent),
+                    );
+                  }
+                  if (items.isEmpty) {
+                    return Center(
+                      child: Container(
+                        margin: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(16),
+                        decoration: cardDecoration(fallbackBorderOpacity: 0.30),
+                        child: Text(
+                          _receiptText('historyEmpty'),
+                          style: TextStyle(color: textMuted),
+                        ),
+                      ),
+                    );
+                  }
+                  // Small non-destructive sync-status banner (renders
+                  // above the list). Truthful:
+                  //   * `syncing`     → "Bijwerken…" / "Syncing…"
+                  //   * `syncFailed`  → "Nieuwste ritten kunnen niet
+                  //                      worden opgehaald…"
+                  //   * `idle`        → null (no banner)
+                  Widget? syncBanner;
+                  final currentSyncStatus = _syncStatus;
+                  if (currentSyncStatus == _TripHistorySyncStatus.syncing) {
+                    syncBanner = _tripHistorySyncBanner(
+                      icon: Icons.sync,
+                      iconColor: accent.withOpacity(0.95),
+                      backgroundColor: surface,
+                      borderColor: accent.withOpacity(0.35),
+                      textColor: textMuted,
+                      text: _tr(
+                        nl: 'Ritten bijwerken…',
+                        en: 'Syncing rides…',
+                        fr: 'Synchronisation des courses…',
+                        es: 'Sincronizando viajes…',
+                      ),
+                      trailing: SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accent.withOpacity(0.95),
+                        ),
+                      ),
+                    );
+                  } else if (currentSyncStatus ==
+                      _TripHistorySyncStatus.syncFailed) {
+                    syncBanner = _tripHistorySyncBanner(
+                      icon: Icons.cloud_off_rounded,
+                      iconColor: const Color(
+                        kLocalOnlyUnconfirmedBadgeColorArgb,
+                      ),
+                      backgroundColor: surface,
+                      borderColor: const Color(
+                        kLocalOnlyUnconfirmedBadgeColorArgb,
+                      ).withOpacity(0.55),
+                      textColor: textMuted,
+                      text: _tr(
+                        nl:
+                            'Nieuwste ritten kunnen niet worden '
+                            'opgehaald. Lokale ritten blijven zichtbaar.',
+                        en:
+                            'Could not fetch the latest rides. '
+                            'Local rides remain visible.',
+                        fr:
+                            'Impossible de récupérer les dernières '
+                            'courses. Les courses locales restent visibles.',
+                        es:
+                            'No se pudieron obtener los viajes más '
+                            'recientes. Los viajes locales siguen visibles.',
+                      ),
+                      trailing: null,
+                    );
+                  }
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                    children: [
+                      if (syncBanner != null) ...[
+                        syncBanner,
+                        const SizedBox(height: 10),
+                      ],
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+                        decoration: overviewDecoration(),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _tr(
+                                nl: 'Overzicht',
+                                en: 'Overview',
+                                fr: 'Aperçu',
+                                es: 'Resumen',
+                              ),
+                              style: TextStyle(
+                                color: accent.withOpacity(0.98),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14.2,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _tr(
+                                nl: 'Laatste ritten',
+                                en: 'Recent rides',
+                                fr: 'Courses récentes',
+                                es: 'Viajes recientes',
+                              ),
+                              style: TextStyle(
+                                color: textMuted,
+                                fontSize: 11.4,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final compact = constraints.maxWidth < 380;
+                                if (compact) {
+                                  return Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: metric(
+                                              label: _tr(
+                                                nl: 'Totaal ritten',
+                                                en: 'Total rides',
+                                                fr: 'Total courses',
+                                                es: 'Total viajes',
+                                              ),
+                                              value: kpiInt(summary!.total),
+                                              icon: Icons.list_alt_rounded,
+                                              accentColor: const Color(
+                                                0xFF60A5FA,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: metric(
+                                              label: _tr(
+                                                nl: 'Voltooid',
+                                                en: 'Completed',
+                                                fr: 'Terminées',
+                                                es: 'Completados',
+                                              ),
+                                              value: kpiInt(summary.completed),
+                                              icon: Icons
+                                                  .check_circle_outline_rounded,
+                                              accentColor: const Color(
+                                                0xFF4ADE80,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: metric(
+                                              label: _tr(
+                                                nl: 'Geannuleerd',
+                                                en: 'Cancelled',
+                                                fr: 'Annulées',
+                                                es: 'Cancelados',
+                                              ),
+                                              value: kpiInt(summary.cancelled),
+                                              icon: Icons.cancel_outlined,
+                                              accentColor: const Color(
+                                                0xFFF97373,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: metric(
+                                              label: _tr(
+                                                nl: 'Omzet',
+                                                en: 'Revenue',
+                                                fr: 'Revenus',
+                                                es: 'Ingresos',
+                                              ),
+                                              value: kpiEur(summary.revenue),
+                                              icon: Icons.euro_rounded,
+                                              accentColor: accent,
+                                              valueColor: accent,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  );
+                                }
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Totaal ritten',
+                                          en: 'Total rides',
+                                          fr: 'Total courses',
+                                          es: 'Total viajes',
+                                        ),
+                                        value: kpiInt(summary!.total),
+                                        icon: Icons.list_alt_rounded,
+                                        accentColor: const Color(0xFF60A5FA),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Voltooid',
+                                          en: 'Completed',
+                                          fr: 'Terminées',
+                                          es: 'Completados',
+                                        ),
+                                        value: kpiInt(summary.completed),
+                                        icon:
+                                            Icons.check_circle_outline_rounded,
+                                        accentColor: const Color(0xFF4ADE80),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Geannuleerd',
+                                          en: 'Cancelled',
+                                          fr: 'Annulées',
+                                          es: 'Cancelados',
+                                        ),
+                                        value: kpiInt(summary.cancelled),
+                                        icon: Icons.cancel_outlined,
+                                        accentColor: const Color(0xFFF97373),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: metric(
+                                        label: _tr(
+                                          nl: 'Omzet',
+                                          en: 'Revenue',
+                                          fr: 'Revenus',
+                                          es: 'Ingresos',
+                                        ),
+                                        value: kpiEur(summary.revenue),
+                                        icon: Icons.euro_rounded,
+                                        accentColor: accent,
+                                        valueColor: accent,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: _TripHistoryFilter.values
+                              .map((filter) {
+                                final active = _activeFilter == filter;
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(999),
+                                    onTap: () =>
+                                        setState(() => _activeFilter = filter),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 7,
+                                      ),
+                                      decoration: filterChipDecoration(
+                                        active: active,
+                                      ),
+                                      child: Text(
+                                        tabLabels[filter]!,
+                                        style: TextStyle(
+                                          color: filterChipTextColor(
+                                            active: active,
+                                          ),
+                                          fontSize: 11.8,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              })
+                              .toList(growable: false),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _tr(
+                          nl: 'Rit geschiedenis',
+                          en: 'Ride history',
+                          fr: 'Historique des courses',
+                          es: 'Historial de viajes',
+                        ),
+                        style: TextStyle(
+                          color: accent.withOpacity(0.95),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.8,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (filteredItems.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: cardDecoration(),
+                          child: Text(
+                            _receiptText('historyEmpty'),
+                            style: TextStyle(color: textMuted),
+                          ),
+                        )
+                      else
+                        ...filteredItems.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: historyCard(item),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): shared visual for the small
+// non-destructive sync-status banner rendered above the History list. The
+// banner never covers or replaces trip cards — it stacks above them so
+// locally-stored rides remain visible during a remote refresh or after a
+// remote failure.
+Widget _tripHistorySyncBanner({
+  required IconData icon,
+  required Color iconColor,
+  required Color backgroundColor,
+  required Color borderColor,
+  required Color textColor,
+  required String text,
+  required Widget? trailing,
+}) {
+  return Container(
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+    decoration: BoxDecoration(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: borderColor),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: iconColor),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 11.6,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ),
+        if (trailing != null) ...[const SizedBox(width: 8), trailing],
+      ],
+    ),
+  );
+}

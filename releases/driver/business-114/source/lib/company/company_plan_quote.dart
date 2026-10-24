@@ -1,0 +1,1417 @@
+// COMPANY-AGENDA-P0 — plan-form quote. Server calcPrice only. No local fares.
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_agenda_http.dart';
+import 'package:fluxidi_tracking/company/company_agenda_labels.dart';
+import 'package:fluxidi_tracking/company/company_agenda_scope_io.dart'
+    if (dart.library.html) 'package:fluxidi_tracking/company/company_agenda_scope_web.dart';
+import 'package:fluxidi_tracking/company/company_booking_metrics.dart';
+import 'package:fluxidi_tracking/company/company_plan_when.dart';
+import 'package:fluxidi_tracking/company/company_ride_options.dart';
+import 'package:fluxidi_tracking/limousine/limousine_address_lookup.dart';
+import 'package:fluxidi_tracking/customer_booking/official_address_payload.dart';
+
+const String kCompanyAgendaQuotePath = '/company/agenda/quote';
+const Duration kCompanyPlanQuoteDebounce = Duration(milliseconds: 450);
+
+/// Server reason when the chosen company has no fixed airport fare.
+const String kCompanyPlanNoFixedAirportFare = 'no_fixed_airport_fare';
+
+/// Server action: the customer contacts that company instead of booking online.
+const String kCompanyPlanContactCompanyAction = 'contact_company';
+
+const Key kCompanyPlanQuoteStatusKey = Key('company_plan_quote_status');
+const Key kCompanyPlanQuoteRetryKey = Key('company_plan_quote_retry');
+const Key kCompanyPlanQuotePriceKey = Key('company_plan_quote_price');
+const Key kCompanyPlanQuoteManualDurationKey = Key(
+  'company_plan_quote_manual_duration',
+);
+
+class CompanyPlanQuoteResult {
+  const CompanyPlanQuoteResult({
+    required this.fingerprint,
+    this.distanceKm,
+    this.durationMin,
+    this.routePreview,
+    this.priceInclVat,
+    this.priceExVat,
+    this.priceVat,
+    this.currency = 'EUR',
+    this.pricingSource = '',
+    this.priceAvailable = false,
+    this.requestQuoteRequired = false,
+    this.calculatorOff = false,
+    this.fixedPriceSnapshot,
+    this.financialQuoteId = '',
+    this.financialQuoteExpiresAt,
+    this.financialRequestBody,
+    this.pickupLat,
+    this.pickupLon,
+    this.dropoffLat,
+    this.dropoffLon,
+    this.returnDistanceKm,
+    this.returnDurationMin,
+    this.returnPriceInclVat,
+    this.returnPickupLat,
+    this.returnPickupLon,
+    this.returnDropoffLat,
+    this.returnDropoffLon,
+    this.outboundPriceInclVat,
+    this.totalPriceInclVat,
+    this.message = '',
+    this.breakdown,
+    this.returnBreakdown,
+    this.quoteReason = '',
+    this.customerAction = '',
+    this.priceLabel = '',
+    this.conditionCodes = const <String>[],
+    this.leadTimeLabel = '',
+  });
+
+  final String fingerprint;
+  /// Presentation from the same server quote; never financial authority.
+  final Map<String,dynamic>? routePreview;
+  final num? distanceKm;
+  final int? durationMin;
+  final num? priceInclVat;
+  final num? priceExVat;
+  final num? priceVat;
+  final String currency;
+  final String pricingSource;
+  final bool priceAvailable;
+  final bool requestQuoteRequired;
+  final bool calculatorOff;
+  final Map<String, dynamic>? fixedPriceSnapshot;
+  final String financialQuoteId;
+  final DateTime? financialQuoteExpiresAt;
+  final Map<String, dynamic>? financialRequestBody;
+  bool get financialQuoteExpired => financialQuoteExpiresAt != null &&
+      !DateTime.now().isBefore(financialQuoteExpiresAt!);
+  final double? pickupLat;
+  final double? pickupLon;
+  final double? dropoffLat;
+  final double? dropoffLon;
+  final num? returnDistanceKm;
+  final int? returnDurationMin;
+  final num? returnPriceInclVat;
+  final double? returnPickupLat;
+  final double? returnPickupLon;
+  final double? returnDropoffLat;
+  final double? returnDropoffLon;
+  final num? outboundPriceInclVat;
+  final num? totalPriceInclVat;
+  final String message;
+  final CompanyPlanQuoteBreakdown? breakdown;
+  final CompanyPlanQuoteBreakdown? returnBreakdown;
+  final String quoteReason;
+  final String customerAction;
+  final String priceLabel;
+  final List<String> conditionCodes;
+  final String leadTimeLabel;
+
+  /// Chosen-company airport policy: no fixed online fare, contact the company.
+  bool get requiresAirportFareContact =>
+      requestQuoteRequired &&
+      (quoteReason == kCompanyPlanNoFixedAirportFare ||
+          customerAction == kCompanyPlanContactCompanyAction);
+
+  bool get hasRoute =>
+      distanceKm != null &&
+      distanceKm! > 0 &&
+      durationMin != null &&
+      durationMin! > 0;
+
+  bool get hasReturnRoute =>
+      returnDistanceKm != null &&
+      returnDistanceKm! > 0 &&
+      returnDurationMin != null &&
+      returnDurationMin! > 0;
+
+  num? get _outboundForTotalCheck =>
+      outboundPriceInclVat ??
+      (returnPriceInclVat == null ? priceInclVat : outboundPriceInclVat);
+
+  /// Compares the server total against the sum of its legs. A round trip of
+  /// 200 + 200 that is listed as 401 must surface as a problem, not be quietly
+  /// rewritten to 400 behind the customer's back.
+  CompanyPlanQuoteTotalCheck get totalCheck => companyPlanQuoteTotalCheck(
+    outboundInclVat: _outboundForTotalCheck,
+    returnInclVat: returnPriceInclVat,
+    listedTotalInclVat: totalPriceInclVat ?? priceInclVat,
+  );
+
+  /// The authoritative server total. Never a locally repaired number: when it
+  /// disagrees with the legs, [totalCheck] reports the drift and the caller
+  /// blocks the price instead of showing an invented one.
+  num? get displayTotalPrice => totalPriceInclVat ?? priceInclVat;
+}
+
+/// Drops every billable amount when the chosen company requires an airport quote.
+///
+/// Route distance and duration stay. Price, pricing and the fixed-price
+/// snapshot do not, so a stale or zero amount cannot be shown or rebooked.
+CompanyPlanQuoteResult companyPlanQuoteDropBillableFare(
+  CompanyPlanQuoteResult quote,
+) {
+  if (!quote.requiresAirportFareContact) return quote;
+  return CompanyPlanQuoteResult(
+    fingerprint: quote.fingerprint,
+    distanceKm: quote.distanceKm,
+    routePreview: quote.routePreview,
+    durationMin: quote.durationMin,
+    currency: quote.currency.isEmpty ? 'EUR' : quote.currency,
+    priceAvailable: false,
+    requestQuoteRequired: true,
+    calculatorOff: false,
+    quoteReason: quote.quoteReason.trim().isEmpty
+        ? kCompanyPlanNoFixedAirportFare
+        : quote.quoteReason.trim(),
+    customerAction: quote.customerAction.trim().isEmpty
+        ? kCompanyPlanContactCompanyAction
+        : quote.customerAction.trim(),
+    priceLabel: quote.priceLabel,
+    conditionCodes: quote.conditionCodes,
+    leadTimeLabel: quote.leadTimeLabel,
+    pickupLat: quote.pickupLat,
+    pickupLon: quote.pickupLon,
+    dropoffLat: quote.dropoffLat,
+    dropoffLon: quote.dropoffLon,
+    returnDistanceKm: quote.returnDistanceKm,
+    returnDurationMin: quote.returnDurationMin,
+    returnPickupLat: quote.returnPickupLat,
+    returnPickupLon: quote.returnPickupLon,
+    returnDropoffLat: quote.returnDropoffLat,
+    returnDropoffLon: quote.returnDropoffLon,
+  );
+}
+
+({List<String> codes, String leadTimeLabel}) companyPlanQuoteReadConditions(
+  Object? raw,
+) {
+  final codes = <String>[];
+  var leadTimeLabel = '';
+  void addCode(String code) {
+    final text = code.trim();
+    if (text.isEmpty || codes.contains(text)) return;
+    codes.add(text);
+  }
+
+  void readLead(Object? value) {
+    if (value is String) {
+      final text = value.trim();
+      if (text.isNotEmpty && text != 'lead_time') leadTimeLabel = text;
+      return;
+    }
+    if (value is Map) {
+      final text = (value['label'] ?? value['text'] ?? value['message'] ?? '')
+          .toString()
+          .trim();
+      if (text.isNotEmpty && text != 'lead_time') leadTimeLabel = text;
+    }
+  }
+
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is String) {
+        addCode(item);
+      } else if (item is Map) {
+        final code = (item['code'] ?? item['id'] ?? item['type'] ?? '')
+            .toString();
+        addCode(code);
+        if (code.trim() == 'lead_time') readLead(item);
+      }
+    }
+  } else if (raw is Map) {
+    for (final entry in raw.entries) {
+      if (entry.value == false || entry.value == null) continue;
+      final code = entry.key.toString();
+      addCode(code);
+      if (code == 'lead_time') readLead(entry.value);
+    }
+  }
+  return (
+    codes: List<String>.unmodifiable(codes),
+    leadTimeLabel: leadTimeLabel,
+  );
+}
+
+bool companyPlanQuoteBodyRequestsAirportContact(Map<String, dynamic> raw) {
+  final error = (raw['error'] ?? '').toString().trim();
+  if (error == 'request_quote_required') return true;
+  if (raw['request_quote_required'] != true) return false;
+  final reason = (raw['reason'] ?? '').toString().trim();
+  final action = (raw['customer_action'] ?? raw['customerAction'] ?? '')
+      .toString()
+      .trim();
+  return reason == kCompanyPlanNoFixedAirportFare ||
+      action == kCompanyPlanContactCompanyAction;
+}
+
+Map<String, dynamic> companyPlanQuoteAcceptAirportContactBody(
+  Map<String, dynamic> raw,
+) {
+  final next = Map<String, dynamic>.from(raw);
+  next['ok'] = true;
+  next['request_quote_required'] = true;
+  if ((next['reason'] ?? '').toString().trim().isEmpty) {
+    next['reason'] = kCompanyPlanNoFixedAirportFare;
+  }
+  final action = (next['customer_action'] ?? next['customerAction'] ?? '')
+      .toString()
+      .trim();
+  if (action.isEmpty)
+    next['customer_action'] = kCompanyPlanContactCompanyAction;
+  if ((next['price_label'] ?? next['priceLabel'] ?? '')
+      .toString()
+      .trim()
+      .isEmpty) {
+    next['price_label'] = 'Prijs op aanvraag';
+  }
+  for (final key in const <String>[
+    'price_incl_vat',
+    'price_ex_vat',
+    'price_excl_vat',
+    'price_vat',
+    'total_price_incl_vat',
+    'outbound_price_incl_vat',
+    'return_price_incl_vat',
+    'price_incl_vat_main',
+    'price_incl_vat_return',
+    'pricing',
+    'breakdown',
+    'price_breakdown',
+    'return_breakdown',
+    'fixed_price_snapshot',
+  ]) {
+    next[key] = null;
+  }
+  final nested = next['return'];
+  if (nested is Map) {
+    final copy = Map<String, dynamic>.from(nested);
+    copy['price_incl_vat'] = null;
+    copy['breakdown'] = null;
+    next['return'] = copy;
+  }
+  return next;
+}
+
+/// Result of comparing a listed round-trip total with its two legs, in cents.
+@immutable
+class CompanyPlanQuoteTotalCheck {
+  const CompanyPlanQuoteTotalCheck({
+    required this.comparable,
+    required this.legSumCents,
+    required this.listedCents,
+  });
+
+  final bool comparable;
+  final int? legSumCents;
+  final int? listedCents;
+
+  bool get consistent => !comparable || legSumCents == listedCents;
+  int get driftCents =>
+      comparable ? (listedCents ?? 0) - (legSumCents ?? 0) : 0;
+  num? get legSum => legSumCents == null ? null : legSumCents! / 100;
+}
+
+int? _quoteCentsOrNull(num? amount) {
+  if (amount == null) return null;
+  return (amount * 100).round();
+}
+
+CompanyPlanQuoteTotalCheck companyPlanQuoteTotalCheck({
+  required num? outboundInclVat,
+  required num? returnInclVat,
+  required num? listedTotalInclVat,
+}) {
+  final outbound = _quoteCentsOrNull(outboundInclVat);
+  final inbound = _quoteCentsOrNull(returnInclVat);
+  final listed = _quoteCentsOrNull(listedTotalInclVat);
+  if (outbound == null || inbound == null || listed == null) {
+    return CompanyPlanQuoteTotalCheck(
+      comparable: false,
+      legSumCents: outbound != null && inbound != null
+          ? outbound + inbound
+          : null,
+      listedCents: listed,
+    );
+  }
+  return CompanyPlanQuoteTotalCheck(
+    comparable: true,
+    legSumCents: outbound + inbound,
+    listedCents: listed,
+  );
+}
+
+/// Same check straight from a raw `/quote` body, for screens that read the wire
+/// map instead of a parsed [CompanyPlanQuoteResult] (the airport review page).
+CompanyPlanQuoteTotalCheck companyPlanQuoteTotalCheckFromWire(
+  Map<String, dynamic> raw,
+) {
+  final returnRaw = raw['return'] is Map
+      ? Map<String, dynamic>.from(raw['return'] as Map)
+      : const <String, dynamic>{};
+  return companyPlanQuoteTotalCheck(
+    outboundInclVat: _quoteMoney(
+      raw['price_incl_vat_main'] ??
+          raw['outbound_price_incl_vat'] ??
+          (returnRaw.isEmpty ? raw['price_incl_vat'] : null),
+    ),
+    returnInclVat: _quoteMoney(
+      raw['return_price_incl_vat'] ??
+          raw['price_incl_vat_return'] ??
+          returnRaw['price_incl_vat'],
+    ),
+    listedTotalInclVat: _quoteMoney(
+      raw['total_price_incl_vat'] ??
+          raw['price_incl_vat_total'] ??
+          raw['price_incl_vat'],
+    ),
+  );
+}
+
+class CompanyPlanQuoteRequest {
+  const CompanyPlanQuoteRequest({
+    required this.fingerprint,
+    required this.body,
+  });
+
+  final String fingerprint;
+  final Map<String, dynamic> body;
+}
+
+typedef CompanyPlanQuoteTransport =
+    Future<CompanyPlanQuoteResult> Function(CompanyPlanQuoteRequest request);
+
+class CompanyPlanQuoteBreakdown {
+  const CompanyPlanQuoteBreakdown({
+    this.startFeeEx,
+    this.perKmEx,
+    this.distanceCostEx,
+    this.perMinEx,
+    this.timeCostEx,
+    this.waitingEx,
+    this.bagsEx,
+    this.extraStopsEx,
+    this.surchargeAmountEx,
+    this.surchargeRate,
+    this.returnFeeEx,
+    this.fuelSurchargeEx,
+    this.airportRuleId = '',
+    this.kind = '',
+    this.vatRate,
+    this.vatAmount,
+    this.totalEx,
+    this.totalIncl,
+    this.vatMode = 'excl',
+  });
+
+  final num? startFeeEx;
+  final num? perKmEx;
+  final num? distanceCostEx;
+  final num? perMinEx;
+  final num? timeCostEx;
+  final num? waitingEx;
+  final num? bagsEx;
+  final num? extraStopsEx;
+  final num? surchargeAmountEx;
+  final num? surchargeRate;
+  final num? returnFeeEx;
+  final num? fuelSurchargeEx;
+  final String airportRuleId;
+  final String kind;
+  final num? vatRate;
+  final num? vatAmount;
+  final num? totalEx;
+  final num? totalIncl;
+  final String vatMode;
+
+  num extrasEx() => (waitingEx ?? 0) + (bagsEx ?? 0);
+
+  bool get explainsAsymmetry =>
+      (waitingEx ?? 0) > 0.01 ||
+      (bagsEx ?? 0) > 0.01 ||
+      (surchargeAmountEx ?? 0) > 0.01 ||
+      (returnFeeEx ?? 0) > 0.01 ||
+      airportRuleId.isNotEmpty ||
+      kind.contains('airport') ||
+      kind.contains('fixed');
+}
+
+bool companyPlanQuoteBreakdownHasLines(CompanyPlanQuoteBreakdown breakdown) {
+  return breakdown.startFeeEx != null ||
+      breakdown.distanceCostEx != null ||
+      breakdown.timeCostEx != null ||
+      breakdown.waitingEx != null ||
+      breakdown.bagsEx != null ||
+      breakdown.extraStopsEx != null ||
+      breakdown.surchargeAmountEx != null ||
+      breakdown.returnFeeEx != null ||
+      breakdown.fuelSurchargeEx != null ||
+      breakdown.totalEx != null ||
+      breakdown.totalIncl != null ||
+      breakdown.vatAmount != null;
+}
+
+CompanyPlanQuoteBreakdown? resolveCompanyBookingStoredBreakdown(
+  Map<String, dynamic> raw,
+) {
+  Map<String, dynamic> asMap(Object? value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  final record = raw['record'] is Map ? asMap(raw['record']) : raw;
+  final booking = asMap(record['booking']);
+  final quote = asMap(record['quote'] ?? raw['quote']);
+  final pricing = asMap(quote['pricing']);
+  final pricingMain = asMap(quote['pricing_main']);
+  for (final candidate in <Object?>[
+    quote['breakdown'],
+    quote['price_breakdown'],
+    pricing['breakdown'],
+    pricingMain['breakdown'],
+    booking['breakdown'],
+    record['breakdown'],
+    raw['breakdown'],
+  ]) {
+    final parsed = parseCompanyPlanQuoteBreakdown(candidate);
+    if (parsed != null && companyPlanQuoteBreakdownHasLines(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+List<String> formatCompanyPlanQuoteBreakdownLines(
+  CompanyPlanQuoteBreakdown breakdown, {
+  required AppLanguage language,
+  required String currency,
+}) {
+  String? line(LocalizedText label, num? value) {
+    if (value == null || value == 0) return null;
+    return '${label.of(language)}: ${formatCompanyPlanQuoteMoney(value, currency)}';
+  }
+
+  final total = breakdown.totalIncl ?? breakdown.totalEx;
+  return <String?>[
+    line(kCompanyAgendaStartFee, breakdown.startFeeEx),
+    if (breakdown.distanceCostEx != null && breakdown.distanceCostEx != 0)
+      language == AppLanguage.nl
+          ? 'Afstand: ${formatCompanyPlanQuoteMoney(breakdown.distanceCostEx!, currency)}'
+          : 'Distance: ${formatCompanyPlanQuoteMoney(breakdown.distanceCostEx!, currency)}',
+    if (breakdown.timeCostEx != null && breakdown.timeCostEx != 0)
+      language == AppLanguage.nl
+          ? 'Tijd: ${formatCompanyPlanQuoteMoney(breakdown.timeCostEx!, currency)}'
+          : 'Time: ${formatCompanyPlanQuoteMoney(breakdown.timeCostEx!, currency)}',
+    line(kCompanyAgendaWaitPrice, breakdown.waitingEx),
+    line(kCompanyAgendaBagsPrice, breakdown.bagsEx),
+    if (breakdown.extraStopsEx != null && breakdown.extraStopsEx != 0)
+      language == AppLanguage.nl
+          ? 'Extra stops: ${formatCompanyPlanQuoteMoney(breakdown.extraStopsEx!, currency)}'
+          : 'Extra stops: ${formatCompanyPlanQuoteMoney(breakdown.extraStopsEx!, currency)}',
+    if (breakdown.surchargeAmountEx != null && breakdown.surchargeAmountEx != 0)
+      language == AppLanguage.nl
+          ? 'Toeslag: ${formatCompanyPlanQuoteMoney(breakdown.surchargeAmountEx!, currency)}'
+          : 'Surcharge: ${formatCompanyPlanQuoteMoney(breakdown.surchargeAmountEx!, currency)}',
+    if (breakdown.returnFeeEx != null && breakdown.returnFeeEx != 0)
+      language == AppLanguage.nl
+          ? 'Retour: ${formatCompanyPlanQuoteMoney(breakdown.returnFeeEx!, currency)}'
+          : 'Return: ${formatCompanyPlanQuoteMoney(breakdown.returnFeeEx!, currency)}',
+    if (breakdown.fuelSurchargeEx != null && breakdown.fuelSurchargeEx != 0)
+      language == AppLanguage.nl
+          ? 'Brandstof: ${formatCompanyPlanQuoteMoney(breakdown.fuelSurchargeEx!, currency)}'
+          : 'Fuel: ${formatCompanyPlanQuoteMoney(breakdown.fuelSurchargeEx!, currency)}',
+    if (breakdown.vatAmount != null && breakdown.vatAmount != 0)
+      language == AppLanguage.nl
+          ? 'Btw: ${formatCompanyPlanQuoteMoney(breakdown.vatAmount!, currency)}'
+          : 'VAT: ${formatCompanyPlanQuoteMoney(breakdown.vatAmount!, currency)}',
+    if (total != null)
+      language == AppLanguage.nl
+          ? 'Totaal: ${formatCompanyPlanQuoteMoney(total, currency)}'
+          : 'Total: ${formatCompanyPlanQuoteMoney(total, currency)}',
+  ].whereType<String>().toList(growable: false);
+}
+
+CompanyPlanQuoteBreakdown? parseCompanyPlanQuoteBreakdown(Object? raw) {
+  if (raw is! Map) return null;
+  final map = Map<String, dynamic>.from(raw);
+  num? money(String key) => _quoteMoney(map[key]);
+  return CompanyPlanQuoteBreakdown(
+    startFeeEx: money('start_fee_ex'),
+    perKmEx: money('per_km_ex'),
+    distanceCostEx: money('distance_cost_ex') ?? money('per_km_total_ex'),
+    perMinEx: money('per_min_ex'),
+    timeCostEx: money('time_cost_ex') ?? money('per_min_total_ex'),
+    waitingEx: money('waiting_ex'),
+    bagsEx: money('bags_ex'),
+    extraStopsEx: money('extra_stops_ex'),
+    surchargeAmountEx: money('surcharge_amount_ex'),
+    surchargeRate: money('surcharge_rate'),
+    returnFeeEx: money('return_fee_ex'),
+    fuelSurchargeEx: money('fuel_surcharge_ex'),
+    airportRuleId: map['fixed_fare_rule_id']?.toString().trim() ?? '',
+    kind: map['kind']?.toString().trim() ?? '',
+    vatRate: money('vat_rate'),
+    vatAmount: money('vat_amount'),
+    totalEx: money('total_ex'),
+    totalIncl: money('total_incl'),
+    vatMode: map['vat_mode']?.toString().trim() ?? 'excl',
+  );
+}
+
+num? _quoteMoney(Object? raw) => parseCompanyBookingMoney(raw);
+
+int? _quoteMinutes(Object? raw) => parseCompanyBookingDurationMin(raw);
+
+bool _quoteFlagIsTrue(Object? raw) {
+  if (raw == true || raw == 1) return true;
+  final text = raw?.toString().trim().toLowerCase() ?? '';
+  return text == 'true' || text == '1' || text == 'yes';
+}
+
+bool _quoteFlagIsFalse(Object? raw) {
+  if (raw == false || raw == 0) return true;
+  final text = raw?.toString().trim().toLowerCase() ?? '';
+  return text == 'false' || text == '0' || text == 'no';
+}
+
+num? _sumMoney(num? left, num? right) {
+  if (left == null && right == null) return null;
+  return (left ?? 0) + (right ?? 0);
+}
+
+CompanyPlanQuoteResult companyPlanMergeLegQuotes({
+  required CompanyPlanQuoteResult outbound,
+  required CompanyPlanQuoteResult inbound,
+}) {
+  final outboundPrice =
+      outbound.outboundPriceInclVat ??
+      (outbound.returnPriceInclVat == null
+          ? outbound.priceInclVat
+          : outbound.outboundPriceInclVat);
+  final inboundPrice =
+      inbound.outboundPriceInclVat ??
+      (inbound.returnPriceInclVat == null
+          ? inbound.priceInclVat
+          : inbound.outboundPriceInclVat);
+  final total = _sumMoney(outboundPrice, inboundPrice);
+  final merged = CompanyPlanQuoteResult(
+    fingerprint: '${outbound.fingerprint}||${inbound.fingerprint}',
+    distanceKm: outbound.distanceKm,
+    routePreview: outbound.routePreview,
+    durationMin: outbound.durationMin,
+    priceInclVat: total ?? outbound.priceInclVat,
+    priceExVat: _sumMoney(outbound.priceExVat, inbound.priceExVat),
+    priceVat: _sumMoney(outbound.priceVat, inbound.priceVat),
+    currency: outbound.currency,
+    pricingSource: outbound.pricingSource,
+    priceAvailable: total != null,
+    calculatorOff: outbound.calculatorOff,
+    fixedPriceSnapshot: outbound.fixedPriceSnapshot,
+    pickupLat: outbound.pickupLat,
+    pickupLon: outbound.pickupLon,
+    dropoffLat: outbound.dropoffLat,
+    dropoffLon: outbound.dropoffLon,
+    returnDistanceKm: inbound.distanceKm,
+    returnDurationMin: inbound.durationMin,
+    returnPriceInclVat: inboundPrice,
+    returnPickupLat: inbound.pickupLat,
+    returnPickupLon: inbound.pickupLon,
+    returnDropoffLat: inbound.dropoffLat,
+    returnDropoffLon: inbound.dropoffLon,
+    outboundPriceInclVat: outboundPrice,
+    totalPriceInclVat: total,
+    message: outbound.message,
+    breakdown: outbound.breakdown,
+    returnBreakdown: inbound.breakdown ?? inbound.returnBreakdown,
+    quoteReason: outbound.quoteReason.trim().isNotEmpty
+        ? outbound.quoteReason
+        : inbound.quoteReason,
+    customerAction: outbound.customerAction.trim().isNotEmpty
+        ? outbound.customerAction
+        : inbound.customerAction,
+    priceLabel: outbound.priceLabel.trim().isNotEmpty
+        ? outbound.priceLabel
+        : inbound.priceLabel,
+    conditionCodes: outbound.conditionCodes.isNotEmpty
+        ? outbound.conditionCodes
+        : inbound.conditionCodes,
+    leadTimeLabel: outbound.leadTimeLabel.trim().isNotEmpty
+        ? outbound.leadTimeLabel
+        : inbound.leadTimeLabel,
+    requestQuoteRequired:
+        outbound.requestQuoteRequired || inbound.requestQuoteRequired,
+  );
+  final dropped = companyPlanQuoteDropBillableFare(merged);
+  companyPlanLogQuoteTotalMismatch(dropped);
+  return dropped;
+}
+
+bool companyPlanQuoteNeedsInboundLeg(CompanyPlanQuoteResult result) {
+  if (result.returnPriceInclVat != null) return false;
+  if (result.hasReturnRoute &&
+      result.totalPriceInclVat != null &&
+      result.outboundPriceInclVat != null &&
+      result.totalPriceInclVat != result.outboundPriceInclVat) {
+    return false;
+  }
+  return true;
+}
+
+CompanyPlanQuoteResult parseCompanyPlanQuote(
+  Map<String, dynamic> raw, {
+  required String fingerprint,
+  Map<String, dynamic>? financialRequestBody,
+}) {
+  if (raw['ok'] != true) {
+    throw CompanyAgendaException(
+      raw['error']?.toString().trim().isNotEmpty == true
+          ? raw['error'].toString()
+          : 'route_failed',
+    );
+  }
+  final returnRaw = raw['return'] is Map
+      ? Map<String, dynamic>.from(raw['return'] as Map)
+      : const <String, dynamic>{};
+  final outboundPrice = _quoteMoney(
+    raw['price_incl_vat_main'] ??
+        raw['outbound_price_incl_vat'] ??
+        (returnRaw.isEmpty ? raw['price_incl_vat'] : null),
+  );
+  final returnPrice = _quoteMoney(
+    raw['return_price_incl_vat'] ??
+        raw['price_incl_vat_return'] ??
+        returnRaw['price_incl_vat'],
+  );
+  final listedTotal = _quoteMoney(raw['total_price_incl_vat']);
+  final totalPrice =
+      listedTotal ??
+      (returnPrice != null
+          ? _sumMoney(outboundPrice, returnPrice)
+          : (outboundPrice ?? _quoteMoney(raw['price_incl_vat'])));
+  final conditions = companyPlanQuoteReadConditions(raw['conditions']);
+  final priced = CompanyPlanQuoteResult(
+    fingerprint: fingerprint,
+    financialQuoteId: (raw['financial_quote_id'] ?? '').toString(),
+    routePreview: raw['route_preview'] is Map ? Map<String,dynamic>.unmodifiable(Map<String,dynamic>.from(raw['route_preview'] as Map)) : null,
+    financialQuoteExpiresAt: raw['financial_quote_expires_at'] is num
+        ? DateTime.fromMillisecondsSinceEpoch((raw['financial_quote_expires_at'] as num).toInt(), isUtc: true)
+        : DateTime.tryParse('${raw['financial_quote_expires_at'] ?? ''}'),
+    financialRequestBody: financialRequestBody == null ? null :
+        Map<String, dynamic>.unmodifiable(financialRequestBody),
+    distanceKm: _quoteMoney(raw['distance_km']),
+    durationMin: _quoteMinutes(raw['duration_min']),
+    priceInclVat: totalPrice ?? outboundPrice,
+    priceExVat:
+        _quoteMoney(raw['price_ex_vat']) ??
+        _quoteMoney(raw['price_excl_vat']) ??
+        parseCompanyPlanQuoteBreakdown(
+          raw['breakdown'] ?? raw['pricing'],
+        )?.totalEx,
+    priceVat:
+        _quoteMoney(raw['price_vat']) ??
+        parseCompanyPlanQuoteBreakdown(
+          raw['breakdown'] ?? raw['pricing'],
+        )?.vatAmount,
+    currency: (raw['currency']?.toString().trim().isNotEmpty == true)
+        ? raw['currency'].toString().trim()
+        : 'EUR',
+    pricingSource: raw['pricing_source']?.toString().trim() ?? '',
+    priceAvailable:
+        _quoteFlagIsTrue(raw['price_available']) ||
+        (!_quoteFlagIsFalse(raw['price_available']) &&
+            (totalPrice ?? outboundPrice) != null &&
+            (totalPrice ?? outboundPrice)! > 0 &&
+            raw['request_quote_required'] != true &&
+            raw['calculator_off'] != true),
+    requestQuoteRequired: _quoteFlagIsTrue(raw['request_quote_required']),
+    calculatorOff: _quoteFlagIsTrue(raw['calculator_off']),
+    fixedPriceSnapshot: raw['fixed_price_snapshot'] is Map
+        ? Map<String, dynamic>.from(raw['fixed_price_snapshot'] as Map)
+        : null,
+    pickupLat: _quoteMoney(raw['pickup_lat'])?.toDouble(),
+    pickupLon: _quoteMoney(raw['pickup_lon'])?.toDouble(),
+    dropoffLat: _quoteMoney(raw['dropoff_lat'])?.toDouble(),
+    dropoffLon: _quoteMoney(raw['dropoff_lon'])?.toDouble(),
+    returnDistanceKm: _quoteMoney(
+      raw['return_distance_km'] ?? returnRaw['distance_km'],
+    ),
+    returnDurationMin: _quoteMinutes(
+      raw['return_duration_min'] ?? returnRaw['duration_min'],
+    ),
+    returnPriceInclVat: returnPrice,
+    returnPickupLat: _quoteMoney(raw['return_pickup_lat'])?.toDouble(),
+    returnPickupLon: _quoteMoney(raw['return_pickup_lon'])?.toDouble(),
+    returnDropoffLat: _quoteMoney(raw['return_dropoff_lat'])?.toDouble(),
+    returnDropoffLon: _quoteMoney(raw['return_dropoff_lon'])?.toDouble(),
+    outboundPriceInclVat: outboundPrice,
+    totalPriceInclVat: totalPrice,
+    message: raw['message']?.toString().trim() ?? '',
+    breakdown: parseCompanyPlanQuoteBreakdown(
+      raw['breakdown'] ?? raw['price_breakdown'],
+    ),
+    returnBreakdown: parseCompanyPlanQuoteBreakdown(
+      raw['return_breakdown'] ?? returnRaw['breakdown'],
+    ),
+    quoteReason: (raw['reason'] ?? '').toString().trim(),
+    customerAction: (raw['customer_action'] ?? raw['customerAction'] ?? '')
+        .toString()
+        .trim(),
+    priceLabel: (raw['price_label'] ?? raw['priceLabel'] ?? '')
+        .toString()
+        .trim(),
+    conditionCodes: conditions.codes,
+    leadTimeLabel: conditions.leadTimeLabel,
+  );
+  final result = companyPlanQuoteDropBillableFare(priced);
+  companyPlanLogQuoteTotalMismatch(result);
+  return result;
+}
+
+void companyPlanLogQuoteTotalMismatch(CompanyPlanQuoteResult result) {
+  final check = result.totalCheck;
+  if (check.consistent) return;
+  debugPrint(
+    '[QUOTE][LEG_TOTAL_MISMATCH] listed_cents=${check.listedCents} leg_sum_cents=${check.legSumCents} drift_cents=${check.driftCents} outbound=${result.outboundPriceInclVat} return=${result.returnPriceInclVat} extras_ex=${result.breakdown?.extrasEx()} return_extras_ex=${result.returnBreakdown?.extrasEx()} source=${result.pricingSource}',
+  );
+}
+
+String companyPlanQuotePricingSourceLabel(String source, AppLanguage language) {
+  switch (source.trim().toLowerCase()) {
+    case 'company_fixed_price':
+    case 'fixed_price':
+    case 'fixed':
+      return language == AppLanguage.fr
+          ? 'prix fixe'
+          : language == AppLanguage.es
+          ? 'precio fijo'
+          : language == AppLanguage.nl
+          ? 'vaste routeprijs'
+          : 'fixed route price';
+    case 'airport_fixed_fare':
+    case 'airport_fixed_price':
+      return language == AppLanguage.fr
+          ? 'tarif aéroport'
+          : language == AppLanguage.es
+          ? 'tarifa de aeropuerto'
+          : language == AppLanguage.nl
+          ? 'luchthavenprijs'
+          : 'airport price';
+    case 'hourly':
+    case 'hourly_package':
+    case 'package':
+    case 'limousine_hourly':
+      return language == AppLanguage.fr
+          ? 'location à l’heure'
+          : language == AppLanguage.es
+          ? 'alquiler por horas'
+          : language == AppLanguage.nl
+          ? 'uurhuur of pakket'
+          : 'hourly or package';
+    case 'manual':
+      return language == AppLanguage.fr
+          ? 'prix manuel'
+          : language == AppLanguage.es
+          ? 'precio manual'
+          : language == AppLanguage.nl
+          ? 'handmatige prijs'
+          : 'manual price';
+    case 'calculator_off':
+    case 'request_quote':
+      return language == AppLanguage.fr
+          ? 'sans calcul automatique'
+          : language == AppLanguage.es
+          ? 'sin cálculo automático'
+          : language == AppLanguage.nl
+          ? 'geen automatische prijs'
+          : 'no automatic price';
+    default:
+      return language == AppLanguage.fr
+          ? 'tarifs de l’entreprise'
+          : language == AppLanguage.es
+          ? 'tarifas de la empresa'
+          : language == AppLanguage.nl
+          ? 'bedrijfstarieven'
+          : 'company tariffs';
+  }
+}
+
+String formatCompanyPlanQuoteRoute(
+  CompanyPlanQuoteResult result,
+  AppLanguage language,
+) {
+  final minutes = result.durationMin;
+  final km = result.distanceKm;
+  if (minutes == null || km == null) return '';
+  final kmText = km.toStringAsFixed(1).replaceAll('.', ',');
+  return '$minutes min · $kmText km';
+}
+
+String formatCompanyPlanQuoteMoney(num amount, String currency) {
+  final formatted = formatCompanyBookingMoney(
+    amount,
+    currency,
+  ).replaceFirst(' EUR', '').trim();
+  final prefix = currency.toUpperCase() == 'EUR' ? '€' : currency;
+  return '$prefix$formatted';
+}
+
+String formatCompanyPlanQuotePrice(
+  CompanyPlanQuoteResult result,
+  AppLanguage language, {
+  bool includeSource = true,
+}) {
+  final amount = result.displayTotalPrice;
+  if (!result.priceAvailable || amount == null) return '';
+  final price = formatCompanyPlanQuoteMoney(amount, result.currency);
+  if (!includeSource) return price;
+  final source = companyPlanQuotePricingSourceLabel(
+    result.pricingSource,
+    language,
+  );
+  final verb = language == AppLanguage.fr
+      ? 'calculé avec'
+      : language == AppLanguage.es
+      ? 'calculado con'
+      : language == AppLanguage.nl
+      ? 'berekend met'
+      : 'calculated with';
+  return '$price · $verb $source';
+}
+
+String formatCompanyPlanQuoteLegLine({
+  required String label,
+  required CompanyPlanQuoteResult result,
+  required bool inbound,
+  required AppLanguage language,
+  DateTime? pickupLocal,
+}) {
+  final minutes = inbound ? result.returnDurationMin : result.durationMin;
+  final km = inbound ? result.returnDistanceKm : result.distanceKm;
+  final price = companyPlanQuoteDisplayedLegPrice(result, inbound: inbound);
+  if (minutes == null || km == null) return '';
+  final parts = <String>[
+    label,
+    if (pickupLocal != null)
+      '${pickupLocal.hour.toString().padLeft(2, '0')}:${pickupLocal.minute.toString().padLeft(2, '0')}',
+    '$minutes min',
+    '${km.toStringAsFixed(1).replaceAll('.', ',')} km',
+    if (price != null) formatCompanyPlanQuoteMoney(price, result.currency),
+  ];
+  return parts.join(' · ');
+}
+
+num? companyPlanQuoteLineIncl(
+  CompanyPlanQuoteBreakdown? breakdown,
+  num? amountEx,
+) {
+  if (breakdown == null || amountEx == null || amountEx <= 0) return null;
+  if (breakdown.vatMode == 'incl') return amountEx;
+  return amountEx * (1 + (breakdown.vatRate ?? 0));
+}
+
+num? companyPlanQuoteExtrasIncl(CompanyPlanQuoteBreakdown? breakdown) {
+  if (breakdown == null) return null;
+  final extras = breakdown.extrasEx();
+  if (extras <= 0) return 0;
+  return companyPlanQuoteLineIncl(breakdown, extras) ?? 0;
+}
+
+num? companyPlanQuoteDisplayedLegPrice(
+  CompanyPlanQuoteResult result, {
+  required bool inbound,
+}) {
+  final raw = inbound
+      ? result.returnPriceInclVat
+      : (result.outboundPriceInclVat ?? result.priceInclVat);
+  if (raw == null) return null;
+  final extras = companyPlanQuoteExtrasIncl(
+    inbound ? result.returnBreakdown : result.breakdown,
+  );
+  if (extras == null || extras <= 0) return raw;
+  return raw - extras;
+}
+
+class CompanyPlanQuoteSanity {
+  const CompanyPlanQuoteSanity({required this.ok, this.reason = ''});
+
+  final bool ok;
+  final String reason;
+}
+
+CompanyPlanQuoteSanity companyPlanQuoteSanityCheck(
+  CompanyPlanQuoteResult result,
+) {
+  bool invalid(num? value) {
+    if (value == null) return false;
+    return value.isNaN || value.isInfinite || value < 0;
+  }
+
+  if (invalid(result.priceInclVat) ||
+      invalid(result.returnPriceInclVat) ||
+      invalid(result.totalPriceInclVat) ||
+      invalid(result.distanceKm) ||
+      invalid(result.returnDistanceKm)) {
+    return const CompanyPlanQuoteSanity(ok: false, reason: 'invalid_money');
+  }
+  if (result.distanceKm != null &&
+      result.distanceKm! > 800 &&
+      (result.durationMin ?? 0) < 180) {
+    return const CompanyPlanQuoteSanity(ok: false, reason: 'distance_unit');
+  }
+  final out = companyPlanQuoteDisplayedLegPrice(result, inbound: false);
+  final back = companyPlanQuoteDisplayedLegPrice(result, inbound: true);
+  final d1 = result.distanceKm;
+  final d2 = result.returnDistanceKm;
+  if (out != null &&
+      back != null &&
+      d1 != null &&
+      d2 != null &&
+      d1 > 0 &&
+      d2 > 0) {
+    final distRatio = d1 > d2 ? d1 / d2 : d2 / d1;
+    final priceRatio = out > back ? out / back : back / out;
+    final explained =
+        (result.breakdown?.explainsAsymmetry ?? false) ||
+        (result.returnBreakdown?.explainsAsymmetry ?? false);
+    if (distRatio < 1.15 && priceRatio >= 1.8 && !explained) {
+      return const CompanyPlanQuoteSanity(
+        ok: false,
+        reason: 'unexplained_price_gap',
+      );
+    }
+  }
+  return const CompanyPlanQuoteSanity(ok: true);
+}
+
+String formatCompanyPlanQuoteEta({
+  required CompanyPlanQuoteResult result,
+  required DateTime? pickupLocal,
+}) {
+  final minutes = result.durationMin;
+  if (minutes == null || minutes <= 0 || pickupLocal == null) return '';
+  final eta = pickupLocal.toLocal().add(Duration(minutes: minutes));
+  final hour = eta.hour.toString().padLeft(2, '0');
+  final minute = eta.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+bool companyPlanAddressIsQuoteReady(LimousineAddressValue value) {
+  if (!value.isRouteReady) return false;
+  if (!value.hasCoordinates) return false;
+  final text = value.routeText;
+  return text.isNotEmpty;
+}
+
+enum CompanyPlanRouteStatus {
+  missingEndpoints,
+  confirmPickup,
+  confirmDropoff,
+  needsRestore,
+  calculating,
+  ready,
+  failed,
+}
+
+bool companyPlanQuoteHasUsableCoords(CompanyPlanQuoteResult? quote) {
+  if (quote == null) return false;
+  return quote.pickupLat != null &&
+      quote.pickupLon != null &&
+      quote.dropoffLat != null &&
+      quote.dropoffLon != null &&
+      quote.pickupLat!.isFinite &&
+      quote.pickupLon!.isFinite &&
+      quote.dropoffLat!.isFinite &&
+      quote.dropoffLon!.isFinite;
+}
+
+CompanyPlanRouteStatus companyPlanRouteStatus({
+  required LimousineAddressValue from,
+  required LimousineAddressValue to,
+  required bool loading,
+  CompanyPlanQuoteResult? quote,
+  String? error,
+  bool hasPolyline = false,
+}) {
+  final fromReady = companyPlanAddressIsQuoteReady(from);
+  final toReady = companyPlanAddressIsQuoteReady(to);
+  final hasText =
+      from.displayText.trim().isNotEmpty && to.displayText.trim().isNotEmpty;
+  final addressCoords =
+      from.lat != null &&
+      from.lon != null &&
+      to.lat != null &&
+      to.lon != null &&
+      from.lat!.isFinite &&
+      from.lon!.isFinite &&
+      to.lat!.isFinite &&
+      to.lon!.isFinite;
+  final hasCoords =
+      hasPolyline ||
+      addressCoords ||
+      (fromReady && toReady && companyPlanQuoteHasUsableCoords(quote));
+  if (!hasCoords) {
+    if (from.displayText.trim().isNotEmpty && !fromReady) {
+      return CompanyPlanRouteStatus.confirmPickup;
+    }
+    if (to.displayText.trim().isNotEmpty && !toReady) {
+      return CompanyPlanRouteStatus.confirmDropoff;
+    }
+    if (hasText) return CompanyPlanRouteStatus.needsRestore;
+    return CompanyPlanRouteStatus.missingEndpoints;
+  }
+  if (loading) return CompanyPlanRouteStatus.calculating;
+  if (error != null && error.trim().isNotEmpty) {
+    return CompanyPlanRouteStatus.failed;
+  }
+  if (quote != null && quote.hasRoute) return CompanyPlanRouteStatus.ready;
+  if (fromReady && toReady) return CompanyPlanRouteStatus.calculating;
+  return CompanyPlanRouteStatus.ready;
+}
+
+String companyPlanQuoteErrorText(String? raw, AppLanguage language) {
+  final code = raw?.trim() ?? '';
+  if (code.isEmpty) return '';
+  final lower = code.toLowerCase();
+  if (code == 'route_required') {
+    return kCompanyAgendaRouteRetry.of(language);
+  }
+  if (code == 'pickup_iso_required' || code == 'invalid_pickup_iso') {
+    return kCompanyAgendaPickupRequired.of(language);
+  }
+  if (code == 'quote_unavailable' ||
+      code == 'price_unavailable' ||
+      code == 'calculator_off') {
+    return kCompanyAgendaQuoteUnavailable.of(language);
+  }
+  if (lower.contains('price') ||
+      lower.contains('tariff') ||
+      lower.contains('calculator') ||
+      lower.contains('prijs')) {
+    return kCompanyAgendaPriceInvalid.of(language);
+  }
+  if (code.contains(' ') || code.contains('.') || code.length > 32) {
+    return code;
+  }
+  return kCompanyAgendaRouteRetry.of(language);
+}
+
+bool companyPlanQuoteErrorIsMissingRoute(
+  String? raw,
+  LimousineAddressValue from,
+  LimousineAddressValue to,
+) {
+  if (raw?.trim() != 'route_required') return false;
+  return !companyPlanAddressIsQuoteReady(from) ||
+      !companyPlanAddressIsQuoteReady(to);
+}
+
+String companyPlanPostcodeFromAddress(LimousineAddressValue address) {
+  final match = RegExp(r'\b(\d{4})\b').firstMatch(address.routeText);
+  return match?.group(1) ?? '';
+}
+
+String companyPlanQuoteFingerprint({
+  required LimousineAddressValue from,
+  required LimousineAddressValue to,
+  required DateTime? pickupLocal,
+  required CompanyRideOptions options,
+  required int passengers,
+  DateTime? returnPickupLocal,
+  LimousineAddressValue? returnFrom,
+  LimousineAddressValue? returnTo,
+  List<LimousineAddressValue> stops = const <LimousineAddressValue>[],
+  List<LimousineAddressValue> returnStops = const <LimousineAddressValue>[],
+  bool returnEnabled = false,
+  bool whenNow = false,
+  String vehicleId = '',
+  String partnerId = '',
+}) {
+  String coord(LimousineAddressValue value) {
+    final lat = value.lat;
+    final lon = value.lon;
+    if (lat != null && lon != null && lat.isFinite && lon.isFinite) {
+      return '${lat.toStringAsFixed(5)},${lon.toStringAsFixed(5)}';
+    }
+    return '${value.placeId ?? ''}|${value.routeText}';
+  }
+
+  String minute(DateTime? value) {
+    if (value == null) return '';
+    final local = value.toLocal();
+    return '${local.year}-${local.month}-${local.day}T${local.hour}:${local.minute}';
+  }
+
+  return <String>[
+    coord(from),
+    coord(to),
+    whenNow ? 'now' : minute(pickupLocal),
+    options.service,
+    options.tier,
+    options.vehicleType,
+    '${options.bags}',
+    '${options.waitMin}',
+    '$passengers',
+        if ([from,to,if(returnEnabled)...[returnFrom,returnTo],...stops,...returnStops].any((value)=>value?.officialAddress!=null))
+      'official-inputs:${jsonEncode([from.officialAddress?.toJson(),to.officialAddress?.toJson(),if(returnEnabled)...[returnFrom?.officialAddress?.toJson(),returnTo?.officialAddress?.toJson()],for(final stop in stops)stop.officialAddress?.toJson(),for(final stop in returnStops)stop.officialAddress?.toJson()])}',
+options.airportIata,
+    options.returnAirportIata,
+    options.airportDirection,
+    options.tier,
+    returnEnabled ? 'rt' : 'one',
+    if (returnEnabled) minute(returnPickupLocal),
+    if (returnEnabled) coord(returnFrom ?? const LimousineAddressValue()),
+    if (returnEnabled) coord(returnTo ?? const LimousineAddressValue()),
+    for (final stop in stops) coord(stop),
+    for (final stop in returnStops) 'r:${coord(stop)}',
+    vehicleId.trim(),
+    if (partnerId.trim().isNotEmpty) 'partner:${partnerId.trim()}',
+    if ([from,to,if(returnEnabled&&returnFrom!=null)returnFrom,if(returnEnabled&&returnTo!=null)returnTo,...stops,...returnStops].any((p)=>p.officialAddress!=null))
+      'official:${jsonEncode([from.officialAddress?.toJson(),to.officialAddress?.toJson(),if(returnEnabled)returnFrom?.officialAddress?.toJson(),if(returnEnabled)returnTo?.officialAddress?.toJson(),for(final p in stops)p.officialAddress?.toJson(),for(final p in returnStops)p.officialAddress?.toJson()])}',
+  ].join('|');
+}
+
+Map<String, dynamic> _companyOfficialAddressInput(LimousineAddressValue value) => {
+  'kind':'address', 'label':value.routeText,
+  'official_address':value.officialAddress!.toJson(),
+  if(value.hasCoordinates) 'lat':value.lat,
+  if(value.hasCoordinates) 'lng':value.lon,
+};
+
+CompanyPlanQuoteRequest? companyPlanQuoteRequestFromAddresses({
+  required LimousineAddressValue from,
+  required LimousineAddressValue to,
+  required DateTime? pickupLocal,
+  required CompanyRideOptions options,
+  required int passengers,
+  DateTime? returnPickupLocal,
+  LimousineAddressValue? returnFrom,
+  LimousineAddressValue? returnTo,
+  List<LimousineAddressValue> stops = const <LimousineAddressValue>[],
+  List<LimousineAddressValue> returnStops = const <LimousineAddressValue>[],
+  bool returnEnabled = false,
+  String currency = 'EUR',
+  bool whenNow = false,
+  String vehicleId = '',
+  String partnerId = '',
+}) {
+  if (!companyPlanAddressIsQuoteReady(from) ||
+      !companyPlanAddressIsQuoteReady(to) ||
+      (!whenNow && pickupLocal == null)) {
+    return null;
+  }
+  final fingerprint = companyPlanQuoteFingerprint(
+    from: from,
+    to: to,
+    pickupLocal: whenNow ? null : pickupLocal,
+    options: options,
+    passengers: passengers,
+    returnPickupLocal: returnPickupLocal,
+    returnFrom: returnFrom,
+    returnTo: returnTo,
+    stops: stops,
+    returnStops: returnStops,
+    returnEnabled: returnEnabled,
+    whenNow: whenNow,
+    vehicleId: vehicleId,
+    partnerId: partnerId,
+  );
+  final stopTexts = [
+    for (final stop in stops)
+      if (stop.routeText.isNotEmpty) stop.routeText,
+  ];
+  final returnStopTexts = [
+    for (final stop in returnStops)
+      if (stop.routeText.isNotEmpty) stop.routeText,
+  ];
+  final userSide = options.airportDirection == 'from_airport' ? to : from;
+  final userPostcode = options.isAirport
+      ? companyPlanPostcodeFromAddress(userSide)
+      : '';
+  final body = <String, dynamic>{
+        if(from.officialAddress!=null) 'pickup_input':_companyOfficialAddressInput(from),
+    if(to.officialAddress!=null) 'destination_input':_companyOfficialAddressInput(to),
+    if(returnEnabled && returnFrom?.officialAddress!=null) 'return_pickup_input':_companyOfficialAddressInput(returnFrom!),
+    if(returnEnabled && returnTo?.officialAddress!=null) 'return_destination_input':_companyOfficialAddressInput(returnTo!),
+    if(stops.any((value)=>value.officialAddress!=null)) 'stop_coordinates':[
+      for(final value in stops) {'address':value.routeText,if(value.hasCoordinates)...{'lat':value.lat,'lng':value.lon},if(value.officialAddress!=null)'input':_companyOfficialAddressInput(value)}],
+    if(returnEnabled && returnStops.any((value)=>value.officialAddress!=null)) 'return_stop_coordinates':[
+      for(final value in returnStops) {'address':value.routeText,if(value.hasCoordinates)...{'lat':value.lat,'lng':value.lon},if(value.officialAddress!=null)'input':_companyOfficialAddressInput(value)}],
+'from': from.routeText,
+    'to': to.routeText,
+    if(from.officialAddress!=null||from.fromCurrentLocation)'pickup_input':officialOperationalInput(from),
+    if(to.officialAddress!=null||to.fromCurrentLocation)'destination_input':officialOperationalInput(to),
+    if(returnEnabled&&returnFrom!=null&&(returnFrom.officialAddress!=null||returnFrom.fromCurrentLocation))'return_pickup_input':officialOperationalInput(returnFrom),
+    if(returnEnabled&&returnTo!=null&&(returnTo.officialAddress!=null||returnTo.fromCurrentLocation))'return_destination_input':officialOperationalInput(returnTo),
+    if(stops.any((p)=>p.officialAddress!=null||p.fromCurrentLocation))'stop_coordinates':[for(final p in stops)officialOperationalStop(p)],
+    if(returnStops.any((p)=>p.officialAddress!=null||p.fromCurrentLocation))'return_stop_coordinates':[for(final p in returnStops)officialOperationalStop(p)],
+    'passengers': passengers,
+    'currency': currency,
+    'ride_options': options.toJson(),
+    if (options.service.isNotEmpty) 'service': options.service,
+    if (options.tier.isNotEmpty) 'tier': options.tier,
+    if (options.bags > 0) 'bags': options.bags,
+    if (!options.isAirport && options.waitMin > 0) 'wait_min': options.waitMin,
+    if (options.airportIata.isNotEmpty) 'airport_iata': options.airportIata,
+    if (options.airportIata.isNotEmpty)
+      'airport_id': options.airportIata.trim().toLowerCase(),
+    if (options.returnAirportIata.isNotEmpty)
+      'return_airport_iata': options.returnAirportIata,
+    if (options.airportDirection.isNotEmpty)
+      'airport_direction': options.airportDirection,
+    if (userPostcode.isNotEmpty) ...<String, dynamic>{
+      'postcode': userPostcode,
+      'postal_code': userPostcode,
+      'pickup_postcode': userPostcode,
+      'from_postcode': userPostcode,
+      'fixed_fare_zone_type': 'postcode',
+      'fixed_fare_zone_value': userPostcode,
+    },
+    if (from.lat != null && from.lon != null) ...<String, dynamic>{
+      'pickup_lat': from.lat,
+      'pickup_lon': from.lon,
+      'from_lat': from.lat,
+      'from_lng': from.lon,
+    },
+    if (to.lat != null && to.lon != null) ...<String, dynamic>{
+      'dropoff_lat': to.lat,
+      'dropoff_lon': to.lon,
+      'to_lat': to.lat,
+      'to_lng': to.lon,
+    },
+    if (stopTexts.isNotEmpty) 'stops': stopTexts,
+    'return_enabled': returnEnabled,
+    if (returnEnabled && options.isAirport) ...<String, dynamic>{
+      'return_direction': options.airportDirection == 'to_airport'
+          ? 'from_airport'
+          : (options.airportDirection == 'from_airport'
+                ? 'to_airport'
+                : options.airportDirection),
+    },
+    if (returnEnabled && returnPickupLocal != null)
+      'return_pickup_iso': companyPlanPickupIso(returnPickupLocal),
+    if (returnEnabled && returnFrom != null && returnFrom.routeText.isNotEmpty)
+      'return_from': returnFrom.routeText,
+    if (returnEnabled && returnTo != null && returnTo.routeText.isNotEmpty)
+      'return_to': returnTo.routeText,
+    if (returnEnabled &&
+        returnFrom != null &&
+        returnFrom.lat != null &&
+        returnFrom.lon != null) ...<String, dynamic>{
+      'return_from_lat': returnFrom.lat,
+      'return_from_lng': returnFrom.lon,
+    },
+    if (returnEnabled &&
+        returnTo != null &&
+        returnTo.lat != null &&
+        returnTo.lon != null) ...<String, dynamic>{
+      'return_to_lat': returnTo.lat,
+      'return_to_lng': returnTo.lon,
+    },
+    if (returnStopTexts.isNotEmpty) 'return_stops': returnStopTexts,
+    if (vehicleId.trim().isNotEmpty) ...<String, dynamic>{
+      'vehicle_id': vehicleId.trim(),
+      'preferred_vehicle_id': vehicleId.trim(),
+    },
+  };
+  if (whenNow) {
+    body.addAll(companyPlanWhenWireFields(whenNow: true));
+    companyPlanStripClientScheduleFields(body);
+  } else if (pickupLocal != null) {
+    body['pickup_iso'] = companyPlanPickupIso(pickupLocal);
+  }
+  if (options.isAirport) {
+    companyRideOptionsStripWaitFields(body);
+  }
+  return CompanyPlanQuoteRequest(fingerprint: fingerprint, body: body);
+}
+
+class CompanyPlanQuoteCoordinator {
+  CompanyPlanQuoteCoordinator({required this.transport});
+
+  final CompanyPlanQuoteTransport transport;
+
+  String? _key;
+  Future<CompanyPlanQuoteResult>? _inFlight;
+  CompanyPlanQuoteResult? cached;
+
+  Future<CompanyPlanQuoteResult> quote(CompanyPlanQuoteRequest request) {
+    if (_key == request.fingerprint && cached != null && !cached!.financialQuoteExpired) {
+      return Future<CompanyPlanQuoteResult>.value(cached);
+    }
+    if (_key == request.fingerprint && _inFlight != null) {
+      return _inFlight!;
+    }
+    _key = request.fingerprint;
+    cached = null;
+    final pending = transport(request);
+    _inFlight = pending;
+    return pending
+        .then((result) {
+          if (_key == request.fingerprint) {
+            cached = result;
+            if (identical(_inFlight, pending)) _inFlight = null;
+          }
+          return result;
+        })
+        .catchError((Object error, StackTrace stack) {
+          if (identical(_inFlight, pending)) _inFlight = null;
+          throw error;
+        });
+  }
+
+  void invalidate() {
+    _key = null;
+    cached = null;
+    _inFlight = null;
+  }
+}
+
+Future<CompanyPlanQuoteResult> fetchCompanyAgendaQuote(
+  CompanyPlanQuoteRequest request, {
+  Future<Map<String, String>> Function()? headers,
+  Map<String, String>? Function()? scopeResolver,
+}) async {
+  final scope = (scopeResolver ?? resolveCompanyAgendaScopeQuery)();
+  if (scope == null) {
+    throw const CompanyAgendaException('missing_company_scope');
+  }
+  try {
+    final resolved = await (headers ?? resolveCompanyAgendaHeaders)();
+    final res = await http
+        .post(
+          Uri.parse(
+            '$kBookingBaseUrl$kCompanyAgendaQuotePath',
+          ).replace(queryParameters: scope),
+          headers: <String, String>{
+            ...resolved,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{...scope, ...request.body}),
+        )
+        .timeout(const Duration(seconds: 20));
+    final decoded = tryDecodeCompanyAgendaJson(res.bodyBytes);
+    if (decoded == null) {
+      throw CompanyAgendaException('http_${res.statusCode}');
+    }
+    if (decoded['ok'] != true) {
+      throw CompanyAgendaException(
+        decoded['message']?.toString().trim().isNotEmpty == true
+            ? decoded['message'].toString()
+            : (decoded['error']?.toString().trim().isNotEmpty == true
+                  ? decoded['error'].toString()
+                  : 'route_failed'),
+      );
+    }
+    return parseCompanyPlanQuote(decoded, fingerprint: request.fingerprint);
+  } catch (error) {
+    throwCompanyAgendaHttpError(error);
+  }
+}

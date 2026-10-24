@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+        width="1024" height="1024" viewBox="0 0 1024 1024">
+        
+<defs>
+  <linearGradient id="gold" gradientUnits="userSpaceOnUse"
+                  x1="180" y1="120" x2="820" y2="700">
+    <stop offset="0%" stop-color="#FFE16A"/>
+    <stop offset="42%" stop-color="#FFD000"/>
+    <stop offset="100%" stop-color="#F2AD00"/>
+  </linearGradient>
+  <filter id="shadow" x="-25%" y="-25%" width="150%" height="160%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="8"/>
+    <feOffset dx="0" dy="10" result="offsetblur"/>
+    <feColorMatrix in="offsetblur" type="matrix"
+      values="0 0 0 0 0
+              0 0 0 0 0
+              0 0 0 0 0
+              0 0 0 .38 0"/>
+    <feMerge>
+      <feMergeNode/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+</defs>
+<path d="M 374 650 L 374 318 C 374 174 650 174 650 318 L 650 480" fill="none" stroke="url(#gold)" stroke-width="84" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)"/><polygon points="650.0,590.0 578.0,464.0 650.0,511.9 722.0,464.0" fill="url(#gold)" filter="url(#shadow)"/>
+    </svg>

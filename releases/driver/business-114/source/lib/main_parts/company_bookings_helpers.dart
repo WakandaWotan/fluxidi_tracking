@@ -1,0 +1,1958 @@
+part of '../main.dart';
+
+enum _AdminCancelPaidScope { singleLeg, fullRoundtrip }
+
+enum _AdminCreditScope { legOnly, fullParent }
+
+enum _CompanyBookingsFilter {
+  open,
+  completed,
+  cancelled,
+  toCredit,
+  refundPending,
+  refunded,
+  refundFailed,
+}
+
+class _CompanyBookingsLoadException implements Exception {
+  final String code;
+  _CompanyBookingsLoadException(this.code);
+}
+
+class _CompanyBookingOverviewItem {
+  final String bookingId;
+  final String parentBookingId;
+  final String legId;
+  final String legType;
+  final bool isOperationalLeg;
+  final bool isRoundtripParent;
+  final String referenceText;
+  final String parentReferenceText;
+
+  /// Canonical server creation timestamp (ISO). Empty when absent on the row.
+  /// Used only for newest-created-first list ordering — never pickup/updated.
+  final String createdAtIso;
+  final String pickupIso;
+  final Map<String,dynamic> timingAttention;
+  final String fromAddress;
+  final String toAddress;
+  final String customerName;
+  // Patch 2D: buyer email is present in the company-bookings list payload
+  // (customer_email/email) and is safe to map. Buyer tax identity (VAT,
+  // address, country) is NOT in this payload and stays unmapped on purpose.
+  final String customerEmail;
+  final String assignedDriverText;
+  final String assignedVehicleText;
+  final String statusText;
+  final String paymentStatus;
+  final String paymentProvider;
+  final String creditStatus;
+  final String refundStatus;
+  final bool refundRequired;
+  final String creditDecision;
+  final int? creditedAmountCents;
+  final String creditedAt;
+  final String mollieRefundId;
+  final String mollieRefundStatus;
+  final String mollieRefundError;
+  final int? refundedAmountCents;
+  final String refundedAt;
+  final String refundProvider;
+  final String complianceMollieRefundEmittedAt;
+  final String complianceMollieRefundFinalEmittedAt;
+  final bool isPendingCredit;
+  final num? amount;
+  final num? parentAmount;
+  // Patch 2D: leg-first VAT breakdown when present in the list payload.
+  // For operational legs these come from leg_price_ex_vat / leg_price_vat;
+  // for parent/full rows from price_ex_vat / total_price_ex_vat. They stay
+  // null when the backend did not project a split (then the document draft
+  // remains structurally incomplete).
+  final num? subtotalExVat;
+  final num? vatAmount;
+  final num? vatRatePercent;
+  final String currency;
+  // True when the booking originated from a driver-started street/direct ride
+  // (source == street_ride or ride_type == direct). Drives the "Straatrit"
+  // source badge in the overview list.
+  final bool isStreetRide;
+  // True ONLY for a canonical street ride (source/booking_source == street_ride
+  // or a street_ booking id). Unlike [isStreetRide] this is NOT set by
+  // ride_type == direct alone, so it can safely gate the business-invoice
+  // action (UI-1B strictness).
+  final bool isCanonicalStreetRide;
+  final String serviceType;
+  final String pricingMode;
+  final String occasion;
+  final int? requestedDurationMinutes;
+  final bool companyConfirmationRequired;
+  final String companyConfirmedAt;
+  final Map<String, dynamic> pricingSnapshot;
+  final String quoteId;
+  final int? passengerCount;
+  final _CompanyBookingsFilter bucket;
+
+  const _CompanyBookingOverviewItem({
+    required this.bookingId,
+    required this.parentBookingId,
+    required this.legId,
+    required this.legType,
+    required this.isOperationalLeg,
+    required this.isRoundtripParent,
+    required this.referenceText,
+    required this.parentReferenceText,
+    required this.createdAtIso,
+    required this.pickupIso,
+    this.timingAttention = const {},
+    required this.fromAddress,
+    required this.toAddress,
+    required this.customerName,
+    required this.customerEmail,
+    required this.assignedDriverText,
+    required this.assignedVehicleText,
+    required this.statusText,
+    required this.paymentStatus,
+    required this.paymentProvider,
+    required this.creditStatus,
+    required this.refundStatus,
+    required this.refundRequired,
+    required this.creditDecision,
+    required this.creditedAmountCents,
+    required this.creditedAt,
+    required this.mollieRefundId,
+    required this.mollieRefundStatus,
+    this.mollieRefundError = '',
+    required this.refundedAmountCents,
+    required this.refundedAt,
+    required this.refundProvider,
+    required this.complianceMollieRefundEmittedAt,
+    required this.complianceMollieRefundFinalEmittedAt,
+    required this.isPendingCredit,
+    required this.amount,
+    required this.parentAmount,
+    required this.subtotalExVat,
+    required this.vatAmount,
+    required this.vatRatePercent,
+    required this.currency,
+    required this.isStreetRide,
+    required this.isCanonicalStreetRide,
+    this.serviceType = '',
+    this.pricingMode = '',
+    this.occasion = '',
+    this.requestedDurationMinutes,
+    this.companyConfirmationRequired = false,
+    this.companyConfirmedAt = '',
+    this.pricingSnapshot = const <String, dynamic>{},
+    this.quoteId = '',
+    this.passengerCount,
+    required this.bucket,
+  });
+
+  static dynamic _path(Map<String, dynamic> root, String path) {
+    dynamic cursor = root;
+    for (final rawPart in path.split('.')) {
+      final part = rawPart.trim();
+      if (part.isEmpty) continue;
+      if (cursor is Map && cursor.containsKey(part)) {
+        cursor = cursor[part];
+      } else {
+        return null;
+      }
+    }
+    return cursor;
+  }
+
+  static String _text(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty || text.toLowerCase() == 'null') return '';
+    return text;
+  }
+
+  static String _firstText(Map<String, dynamic> root, List<String> paths) {
+    for (final path in paths) {
+      final value = _text(_path(root, path));
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  static num? _firstNum(Map<String, dynamic> root, List<String> paths) {
+    for (final path in paths) {
+      final value = _path(root, path);
+      if (value is num) return value;
+      if (value is String) {
+        final parsed = num.tryParse(value.trim().replaceAll(',', '.'));
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  static String _normStatus(String raw) {
+    return raw.trim().toUpperCase().replaceAll('-', '_').replaceAll(' ', '_');
+  }
+
+  static bool _firstBool(Map<String, dynamic> root, List<String> paths) {
+    for (final path in paths) {
+      final value = _path(root, path);
+      if (value == true) return true;
+      if (value == false) return false;
+      final text = _text(value).toLowerCase();
+      if (text == 'true' || text == '1' || text == 'yes') return true;
+    }
+    return false;
+  }
+
+  static bool _isCancelledStatus(String statusRaw) {
+    final normalized = _normStatus(statusRaw);
+    return normalized.contains('CANCEL') || normalized == 'DELETED';
+  }
+
+  static bool isExplicitNotPaidPaymentStatus(String paymentStatus) {
+    final normalized = _normStatus(paymentStatus);
+    if (normalized.isEmpty) return false;
+    return normalized == 'PENDING' ||
+        normalized == 'OPEN' ||
+        normalized == 'CHECKOUT_OPEN' ||
+        normalized == 'ONLINE_PENDING' ||
+        normalized == 'CREATED' ||
+        normalized == 'WAITING' ||
+        normalized == 'FAILED' ||
+        normalized == 'CANCELLED' ||
+        normalized == 'CANCELED' ||
+        normalized == 'EXPIRED' ||
+        normalized == 'ABANDONED' ||
+        normalized == 'NOT_CONFIRMED' ||
+        normalized == 'UNKNOWN' ||
+        normalized == 'UNPAID' ||
+        normalized == 'NOT_PAID' ||
+        normalized == 'INITIALIZING' ||
+        normalized == 'PAYMENT_CHECKOUT_FAILED' ||
+        normalized == 'PROCESSING' ||
+        normalized == 'AUTHORIZED';
+  }
+
+  static bool isPaidPaymentStatus(String paymentStatus) {
+    if (isExplicitNotPaidPaymentStatus(paymentStatus)) return false;
+    final normalized = _normStatus(paymentStatus);
+    return normalized == 'PAID' ||
+        normalized == 'SUCCESS' ||
+        normalized == 'CONFIRMED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SETTLED' ||
+        normalized == 'SUCCEEDED' ||
+        normalized == 'CAPTURED';
+  }
+
+  static const List<String> _paymentStatusFieldPaths = <String>[
+    'payment_status',
+    'paymentStatus',
+    'record.payment_status',
+    'record.paymentStatus',
+    'booking.payment_status',
+    'booking.paymentStatus',
+    'record.booking.payment_status',
+    'record.booking.paymentStatus',
+    'quote.payment_status',
+    'quote.paymentStatus',
+    'record.quote.payment_status',
+    'record.quote.paymentStatus',
+    'payload.payment_status',
+    'payload.paymentStatus',
+    'record.payload.payment_status',
+    'record.payload.paymentStatus',
+    'mollie.status',
+    'record.mollie.status',
+    'booking.mollie.status',
+    'payload.mollie.status',
+  ];
+
+  static String _safeBookingRefForDiag(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return '-';
+    if (text.length <= 8) return text;
+    return '${text.substring(0, 4)}…${text.substring(text.length - 2)}';
+  }
+
+  static void _logBookingPaymentClassify({
+    required Map<String, dynamic> raw,
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
+    required String rawPaymentStatus,
+    required String normalizedPaymentStatus,
+    required bool isPaid,
+    required bool isCreditEligible,
+  }) {
+    debugPrint(
+      '[BOOKING_PAYMENT_CLASSIFY] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType} '
+      'raw_status=${rawPaymentStatus.isEmpty ? "-" : rawPaymentStatus} '
+      'normalized_status=${normalizedPaymentStatus.isEmpty ? "-" : normalizedPaymentStatus} '
+      'isPaid=$isPaid isCreditEligible=$isCreditEligible',
+    );
+  }
+
+  static void _logCreditClassify({
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
+    required bool isPaid,
+    required bool isCreditEligible,
+    required String reason,
+  }) {
+    debugPrint(
+      '[CREDIT_CLASSIFY] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType} '
+      'isPaid=$isPaid isCreditEligible=$isCreditEligible reason=$reason',
+    );
+    if (!isPaid && reason == 'skip_unpaid') {
+      debugPrint(
+        '[CREDIT_CLASSIFY][SKIP_UNPAID] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'parent=${_safeBookingRefForDiag(parentRef)} leg=${legType.isEmpty ? "-" : legType}',
+      );
+    }
+  }
+
+  static bool _inferPaidFromRawMap(Map<String, dynamic> raw) {
+    final status = _firstText(raw, _paymentStatusFieldPaths);
+    if (status.isNotEmpty) {
+      if (isExplicitNotPaidPaymentStatus(status)) return false;
+      if (isPaidPaymentStatus(status)) return true;
+    }
+    final molliePaid = _firstBool(raw, const <String>[
+      '__mollie_paid',
+      'record.__mollie_paid',
+      'booking.__mollie_paid',
+      'payload.__mollie_paid',
+    ]);
+    if (molliePaid == true) return true;
+    return false;
+  }
+
+  static bool _isPaidPaymentStatus(String paymentStatus) =>
+      isPaidPaymentStatus(paymentStatus);
+
+  static bool isManualPaymentProvider(String paymentProvider) {
+    final normalized = _normStatus(paymentProvider);
+    return normalized == 'MANUAL' ||
+        normalized == 'CASH' ||
+        normalized == 'OFFLINE' ||
+        normalized == 'INVOICE';
+  }
+
+  static bool isMolliePaymentProvider(String paymentProvider) {
+    final normalized = _normStatus(paymentProvider);
+    return normalized == 'MOLLIE' ||
+        normalized == 'ONLINE' ||
+        normalized == 'ONLINE_PAYMENT' ||
+        normalized == 'ONLINE_PAYMENTS' ||
+        normalized == 'PREPAID';
+  }
+
+  static bool isMollieRefundStatusRefunded(String mollieRefundStatus) {
+    final normalized = _normStatus(mollieRefundStatus);
+    return normalized == 'REFUNDED' ||
+        normalized == 'SUCCEEDED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SUCCESS' ||
+        normalized == 'PAID' ||
+        normalized == 'PAID_OUT' ||
+        normalized == 'SETTLED';
+  }
+
+  static bool isMollieRefundStatusPending(String mollieRefundStatus) {
+    final normalized = _normStatus(mollieRefundStatus);
+    return normalized == 'QUEUED' ||
+        normalized == 'PENDING' ||
+        normalized == 'IN_PROGRESS' ||
+        normalized == 'PROCESSING' ||
+        normalized == 'OPEN' ||
+        normalized == 'REQUESTED' ||
+        normalized == 'CREATED' ||
+        normalized == 'UNKNOWN' ||
+        normalized == 'IN_BEHANDELING' ||
+        normalized == 'MOLLIE_REFUND_PENDING';
+  }
+
+  static bool isMollieRefundStatusFailed(String mollieRefundStatus) {
+    final normalized = _normStatus(mollieRefundStatus);
+    return normalized == 'FAILED' ||
+        normalized == 'FAILURE' ||
+        normalized == 'CANCELLED' ||
+        normalized == 'CANCELED' ||
+        normalized == 'EXPIRED' ||
+        normalized == 'REJECTED' ||
+        normalized == 'REQUIRES_ACTION' ||
+        normalized == 'ERROR';
+  }
+
+  static bool isRefundStatusRefundedOrComplete(String refundStatus) {
+    final normalized = _normStatus(refundStatus);
+    return normalized == 'REFUNDED' ||
+        normalized == 'SUCCEEDED' ||
+        normalized == 'COMPLETED' ||
+        normalized == 'SUCCESS' ||
+        normalized == 'PAID' ||
+        normalized == 'PAID_OUT' ||
+        normalized == 'SETTLED';
+  }
+
+  static bool isRefundStatusPending(String refundStatus) {
+    final normalized = _normStatus(refundStatus);
+    return normalized == 'MOLLIE_REFUND_PENDING' ||
+        normalized == 'REFUNDED_PENDING' ||
+        normalized == 'QUEUED' ||
+        normalized == 'PENDING' ||
+        normalized == 'IN_PROGRESS' ||
+        normalized == 'OPEN' ||
+        normalized == 'REQUESTED' ||
+        normalized == 'CREATED' ||
+        normalized == 'UNKNOWN' ||
+        normalized == 'IN_BEHANDELING' ||
+        normalized == 'PROCESSING';
+  }
+
+  static bool isRefundStatusFailed(String refundStatus) {
+    final normalized = _normStatus(refundStatus);
+    return normalized == 'FAILED' ||
+        normalized == 'FAILURE' ||
+        normalized == 'CANCELLED' ||
+        normalized == 'CANCELED' ||
+        normalized == 'EXPIRED' ||
+        normalized == 'REJECTED' ||
+        normalized == 'REQUIRES_ACTION' ||
+        normalized == 'ERROR';
+  }
+
+  static bool hasMollieRefundAlreadyApplied(_CompanyBookingOverviewItem item) {
+    if (item.mollieRefundId.trim().isNotEmpty) return true;
+    if (isMollieRefundStatusRefunded(item.mollieRefundStatus)) return true;
+    if (isMollieRefundStatusPending(item.mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(item.refundStatus)) return true;
+    if (isRefundStatusPending(item.refundStatus)) return true;
+    if ((item.refundedAmountCents ?? 0) > 0) return true;
+    if (item.complianceMollieRefundEmittedAt.trim().isNotEmpty) return true;
+    return false;
+  }
+
+  static bool hasMollieRefundAuditResyncSignal(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (item.mollieRefundId.trim().isNotEmpty) return true;
+    if (isMollieRefundStatusRefunded(item.mollieRefundStatus)) return true;
+    if (isMollieRefundStatusPending(item.mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(item.refundStatus)) return true;
+    if (isRefundStatusPending(item.refundStatus)) return true;
+    if ((item.refundedAmountCents ?? 0) > 0) return true;
+    return false;
+  }
+
+  static bool isMollieRefundDisplayRefunded(_CompanyBookingOverviewItem item) {
+    return refundUiKind(item) == CompanyBookingRefundUiKind.refunded;
+  }
+
+  static bool isMollieRefundDisplayPending(_CompanyBookingOverviewItem item) {
+    return refundUiKind(item) == CompanyBookingRefundUiKind.pending;
+  }
+
+  static bool isRefundLifecycleCandidate(_CompanyBookingOverviewItem item) {
+    if (item.bucket != _CompanyBookingsFilter.cancelled) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    return item.mollieRefundId.trim().isNotEmpty ||
+        item.mollieRefundStatus.trim().isNotEmpty ||
+        item.refundStatus.trim().isNotEmpty ||
+        (item.refundedAmountCents ?? 0) > 0 ||
+        item.refundedAt.trim().isNotEmpty ||
+        item.complianceMollieRefundEmittedAt.trim().isNotEmpty ||
+        item.complianceMollieRefundFinalEmittedAt.trim().isNotEmpty;
+  }
+
+  // Refund identifiers, requested/emitted timestamps, and amount fields only
+  // prove a refund was requested. They are not final provider settlement.
+  static bool hasRefundLifecycleRequestSignal(
+    _CompanyBookingOverviewItem item,
+  ) {
+    return item.mollieRefundId.trim().isNotEmpty ||
+        (item.refundedAmountCents ?? 0) > 0 ||
+        item.refundedAt.trim().isNotEmpty ||
+        item.complianceMollieRefundEmittedAt.trim().isNotEmpty ||
+        item.complianceMollieRefundFinalEmittedAt.trim().isNotEmpty;
+  }
+
+  static CompanyBookingRefundUiKind refundUiKind(
+    _CompanyBookingOverviewItem item,
+  ) {
+    return companyBookingRefundUiKind(
+      cancelled: _isCancelledStatus(item.statusText) ||
+          item.bucket == _CompanyBookingsFilter.cancelled,
+      paid: isPaidPaymentStatus(item.paymentStatus),
+      mollieRefundStatus: item.mollieRefundStatus,
+      refundStatus: item.refundStatus,
+      mollieRefundId: item.mollieRefundId,
+      refundedAmountCents: item.refundedAmountCents,
+      refundedAt: item.refundedAt,
+      lastError: item.mollieRefundError,
+      complianceEmittedAt: item.complianceMollieRefundEmittedAt,
+    );
+  }
+
+  static bool isRefundLifecycleRefunded(_CompanyBookingOverviewItem item) {
+    return refundUiKind(item) == CompanyBookingRefundUiKind.refunded;
+  }
+
+  static bool isRefundLifecycleFailed(_CompanyBookingOverviewItem item) {
+    return refundUiKind(item) == CompanyBookingRefundUiKind.failed;
+  }
+
+  static bool isRefundLifecyclePending(_CompanyBookingOverviewItem item) {
+    return refundUiKind(item) == CompanyBookingRefundUiKind.pending;
+  }
+
+  static void logRefundStateDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final canRefund = canShowMollieRefundAction(item);
+    final canSyncAudit = canShowMollieRefundAuditResyncAction(item);
+    final canRefreshStatus = canShowMollieRefundStatusRefreshAction(item);
+    debugPrint(
+      '[COMPANY_BOOKINGS][REFUND_STATE] booking=$bookingLabel '
+      'mollie_refund_id_present=${item.mollieRefundId.trim().isNotEmpty} '
+      'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+      'refunded_amount_cents=${item.refundedAmountCents ?? "-"} '
+      'can_refund=$canRefund can_sync_audit=$canSyncAudit can_refresh_status=$canRefreshStatus',
+    );
+  }
+
+  static bool hasMollieRefundEligibleCreditStatus(String creditStatus) {
+    final normalized = _normStatus(creditStatus);
+    return normalized == 'CREDITED' || normalized == 'PARTIAL_CREDIT';
+  }
+
+  static bool _looksLikeUuidIdentity(String value) {
+    final text = value.trim();
+    if (text.length < 24) return false;
+    return RegExp(
+      r'^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$',
+    ).hasMatch(text);
+  }
+
+  static bool _looksLikeFluxidiCanonicalBookingId(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return false;
+    return RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{3,}$').hasMatch(text);
+  }
+
+  /// True when the row references a human/canonical booking, not a bare UUID shadow.
+  static bool hasCanonicalBookingIdentity(_CompanyBookingOverviewItem item) {
+    final bookingId = item.bookingId.trim();
+    if (_looksLikeFluxidiCanonicalBookingId(bookingId)) return true;
+    final ref = item.referenceText.trim();
+    if (ref.isEmpty) return false;
+    if (_looksLikeUuidIdentity(ref)) return false;
+    if (ref.startsWith('…') && ref.length <= 8) return false;
+    return true;
+  }
+
+  /// True when pickup and route fields are present for operational display.
+  static bool hasMinimumOperationalContext(_CompanyBookingOverviewItem item) {
+    if (item.pickupIso.trim().isEmpty) return false;
+    final from = item.fromAddress.trim();
+    final to = item.toAddress.trim();
+    if (from.isEmpty || from == '—') return false;
+    if (to.isEmpty || to == '—') return false;
+    return true;
+  }
+
+  static bool isRoundtripOperationalLegRow(_CompanyBookingOverviewItem item) {
+    return item.isOperationalLeg &&
+        item.isRoundtripParent &&
+        item.legId.trim().isNotEmpty;
+  }
+
+  static _AdminCreditScope creditScopeForItem(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (isRoundtripOperationalLegRow(item)) {
+      return _AdminCreditScope.legOnly;
+    }
+    return _AdminCreditScope.fullParent;
+  }
+
+  static num? creditDecisionMaxAmount(_CompanyBookingOverviewItem item) {
+    if (isRoundtripOperationalLegRow(item)) {
+      return item.amount;
+    }
+    return item.parentAmount ?? item.amount;
+  }
+
+  static String creditDecisionBusyKey(_CompanyBookingOverviewItem item) {
+    final bookingId = item.parentBookingId.trim().isNotEmpty
+        ? item.parentBookingId.trim()
+        : item.bookingId.trim();
+    final legId = item.legId.trim();
+    if (legId.isEmpty) return bookingId;
+    return '$bookingId::$legId';
+  }
+
+  /// Gate for credit decisions and Mollie refund/money actions in Company Bookings.
+  static bool canExecuteCompanyBookingMoneyAction(
+    _CompanyBookingOverviewItem item,
+  ) => hasCanonicalBookingIdentity(item) && hasMinimumOperationalContext(item);
+
+  static bool hasCreditDecisionRecorded(_CompanyBookingOverviewItem item) {
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'FULL_CREDIT' ||
+        decision == 'PARTIAL_CREDIT' ||
+        decision == 'NO_REFUND' ||
+        decision == 'HANDLED_MANUALLY') {
+      return true;
+    }
+    final creditStatus = _normStatus(item.creditStatus);
+    return creditStatus == 'CREDITED' ||
+        creditStatus == 'PARTIAL_CREDIT' ||
+        creditStatus == 'NO_REFUND' ||
+        creditStatus == 'HANDLED_MANUALLY';
+  }
+
+  static bool canShowCreditDecisionActions(_CompanyBookingOverviewItem item) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    if (hasCreditDecisionRecorded(item)) return false;
+    final pendingDecision =
+        _isPendingCreditToken(item.creditStatus) ||
+        _isPendingCreditToken(item.refundStatus) ||
+        item.refundRequired;
+    final visible = pendingDecision;
+    debugPrint(
+      '[CREDIT_DECISION][ACTION_VISIBILITY] booking=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)} '
+      'leg=${item.legId.trim().isEmpty ? "-" : _safeBookingRefForDiag(item.legId)} '
+      'show_decision_actions=$visible credit_decision=${item.creditDecision.isEmpty ? "-" : item.creditDecision}',
+    );
+    return visible;
+  }
+
+  static bool isMollieRefundEligibleCreditDecision(String creditDecision) {
+    final normalized = _normStatus(creditDecision);
+    return normalized == 'FULL_CREDIT' || normalized == 'PARTIAL_CREDIT';
+  }
+
+  static bool shouldShowMollieRefundStatus(_CompanyBookingOverviewItem item) {
+    if (canShowCreditDecisionActions(item)) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    if (isManualPaymentProvider(item.paymentProvider)) return false;
+    if (!isMolliePaymentProvider(item.paymentProvider)) return false;
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'NO_REFUND' || decision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (hasMollieRefundEligibleCreditStatus(item.creditStatus)) return true;
+    return isMollieRefundEligibleCreditDecision(item.creditDecision);
+  }
+
+  static bool canShowMollieRefundAction(_CompanyBookingOverviewItem item) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    if (item.refundRequired && !hasCreditDecisionRecorded(item)) return false;
+    if (item.creditDecision == 'NO_REFUND' ||
+        item.creditDecision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (hasMollieRefundAlreadyApplied(item)) return false;
+    return true;
+  }
+
+  /// True when an *effective* credit correction exists for the row: an actual
+  /// full/partial credit decision, a credited/partial credit status, a recorded
+  /// credited amount, or a finalised refund.
+  ///
+  /// Patch 2E-A: this intentionally EXCLUDES `NO_REFUND` and `HANDLED_MANUALLY`.
+  /// Those record an administrator decision but apply no credit to the invoice,
+  /// so a credit note (a correction document that credits the booking) would be
+  /// misleading. A credit note is only meaningful when money is actually
+  /// credited or refunded.
+  static bool hasEffectiveCreditCorrection(_CompanyBookingOverviewItem item) {
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'FULL_CREDIT' || decision == 'PARTIAL_CREDIT') return true;
+    final creditStatus = _normStatus(item.creditStatus);
+    if (creditStatus == 'CREDITED' || creditStatus == 'PARTIAL_CREDIT') {
+      return true;
+    }
+    if ((item.creditedAmountCents ?? 0) > 0) return true;
+    if (isRefundLifecycleRefunded(item)) return true;
+    return false;
+  }
+
+  /// Patch 2F-C: the strict, document-grade credit amount rule.
+  ///
+  /// True only when a reliable credited amount > 0 exists for this row. This is
+  /// exactly the value the credit note PDF renders as "Gecrediteerd bedrag"
+  /// (`creditedAmountCents / 100`) and the same value the Document Core preflight
+  /// requires (`missing_credited_amount`). Deliberately NOT derived from
+  /// `refundedAmountCents` or the leg/original amount, so the Creditnota button
+  /// is never shown when the preview would always be blocked.
+  static bool hasReliableCreditNoteAmount(_CompanyBookingOverviewItem item) {
+    return (item.creditedAmountCents ?? 0) > 0;
+  }
+
+  /// Patch-1 gate: local "Creditnota" (credit note) PDF document action.
+  ///
+  /// A credit note is a local correction document for a cancelled/credited
+  /// booking or leg. Patch 2E-A excludes `NO_REFUND` / `HANDLED_MANUALLY`
+  /// (an administrator decision that credits nothing). Patch 2F-C tightens this
+  /// further to align visibility with the preflight: the button is shown only
+  /// when a reliable credited amount > 0 exists ([hasReliableCreditNoteAmount]),
+  /// i.e. exactly the amount the PDF would render. A row that is only
+  /// refunded (no `creditedAmountCents`) therefore hides the Creditnota button
+  /// while the Terugbetalingsbewijs button remains governed by the refund
+  /// lifecycle. Leg-first: on a roundtrip booking the credit belongs to a leg
+  /// row, so the action is suppressed on the (non-leg) roundtrip parent row and
+  /// surfaced on the operational leg row instead.
+  static bool canShowCreditNotePdfAction(_CompanyBookingOverviewItem item) {
+    if (!hasCanonicalBookingIdentity(item)) return false;
+    if (!_isCancelledStatus(item.statusText)) return false;
+    if (!isPaidPaymentStatus(item.paymentStatus)) return false;
+    if (!hasReliableCreditNoteAmount(item)) return false;
+    if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Patch-1 gate: local "Terugbetalingsbewijs" (refund proof) PDF action.
+  ///
+  /// Shown only for a final refunded lifecycle row ([isRefundLifecycleRefunded]);
+  /// never for refund pending or refund failed. Mirrors the leg-first
+  /// suppression of [canShowCreditNotePdfAction].
+  static bool canShowRefundProofPdfAction(_CompanyBookingOverviewItem item) {
+    if (!hasCanonicalBookingIdentity(item)) return false;
+    if (!isRefundLifecycleRefunded(item)) return false;
+    if (item.isRoundtripParent && !isRoundtripOperationalLegRow(item)) {
+      return false;
+    }
+    return true;
+  }
+
+  static ({
+    String bookingId,
+    String legId,
+    String legType,
+    String refundScope,
+    bool blocked,
+    String blockReason,
+  })
+  resolveMollieRefundTarget(_CompanyBookingOverviewItem item) {
+    final parentId = item.parentBookingId.trim().isNotEmpty
+        ? item.parentBookingId.trim()
+        : item.bookingId.trim();
+    final legId = item.legId.trim();
+    if (isRoundtripOperationalLegRow(item) && legId.isNotEmpty) {
+      final target = (
+        bookingId: parentId,
+        legId: legId,
+        legType: item.legType.trim(),
+        refundScope: 'leg_only',
+        blocked: false,
+        blockReason: '',
+      );
+      debugPrint(
+        '[LEG_REFUND][TARGET] booking=$parentId leg=$legId scope=leg_only '
+        'ref=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)}',
+      );
+      return target;
+    }
+    debugPrint(
+      '[LEG_REFUND][TARGET] booking=$parentId leg=- scope=full_parent '
+      'ref=${_safeBookingRefForDiag(item.referenceText.isEmpty ? item.bookingId : item.referenceText)}',
+    );
+    return (
+      bookingId: parentId,
+      legId: '',
+      legType: '',
+      refundScope: 'full_parent',
+      blocked: false,
+      blockReason: '',
+    );
+  }
+
+  static bool canShowMollieRefundAuditResyncAction(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    if (item.creditDecision == 'NO_REFUND' ||
+        item.creditDecision == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    // Leg-only refunds intentionally never emit a parent-level compliance
+    // final event from the status-refresh path. Surfacing the audit-resync
+    // CTA on a refunded leg row would only re-trigger that suppressed parent
+    // emission and confuse operators ("the leg is refunded, why does it
+    // still want resync?"). Operator-level resync of parent compliance
+    // belongs on the parent booking detail, not on a leg row.
+    if (isRoundtripOperationalLegRow(item) &&
+        isMollieRefundDisplayRefunded(item)) {
+      return false;
+    }
+    if (item.complianceMollieRefundFinalEmittedAt.trim().isEmpty &&
+        isMollieRefundDisplayRefunded(item) &&
+        hasMollieRefundAuditResyncSignal(item)) {
+      return true;
+    }
+    if (item.complianceMollieRefundEmittedAt.trim().isNotEmpty) return false;
+    if (canShowMollieRefundStatusRefreshAction(item)) return false;
+    return hasMollieRefundAuditResyncSignal(item);
+  }
+
+  static bool canShowMollieRefundStatusRefreshAction(
+    _CompanyBookingOverviewItem item,
+  ) {
+    final bookingRef = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    final legLabel = item.legId.trim().isEmpty ? '-' : item.legId.trim();
+    if (!canExecuteCompanyBookingMoneyAction(item)) return false;
+    if (!shouldShowMollieRefundStatus(item)) return false;
+    // Hard guard: never expose the "Controleer terugbetalingsstatus" button when
+    // the row does not carry a refund id we can actually refresh. This is the
+    // primary protection against backend missing_mollie_refund_id.
+    if (item.mollieRefundId.trim().isEmpty) {
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][HIDDEN_NO_REFUND_ID] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel mollie_refund_id=empty',
+      );
+      return false;
+    }
+    // Final refunded display = settled from the row's perspective.
+    //
+    // The previous gate kept the button visible while the parent record's
+    // `compliance_mollie_refund_final_emitted_at` was empty so an operator
+    // could nudge compliance forward. That worked for full-parent refunds,
+    // but for **leg-only** refunds the worker intentionally skips parent
+    // compliance final emit (the leg-refund apply path owns it). As a
+    // result a fully refunded leg row kept showing "Check refund status"
+    // forever. Final refund state on the leg's own fields is the source of
+    // truth here, so we hide the button as soon as the row reports
+    // refunded/completed/success on either `mollie_refund_status` or
+    // `refund_status`.
+    if (isMollieRefundDisplayRefunded(item)) {
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][HIDDEN_FINAL_REFUND] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+        'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+        'compliance_final_emitted_at=${item.complianceMollieRefundFinalEmittedAt.trim().isEmpty ? "empty" : "present"}',
+      );
+      return false;
+    }
+    if (isMollieRefundStatusFailed(item.mollieRefundStatus)) return false;
+    final pending =
+        isMollieRefundDisplayPending(item) ||
+        isRefundStatusPending(item.refundStatus);
+    if (pending) {
+      debugPrint(
+        '[REFUND_STATUS_BUTTON][VISIBLE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=$legLabel reason=refund_pending '
+        'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+        'refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus}',
+      );
+    }
+    return pending;
+  }
+
+  static bool _isPendingCreditToken(String raw) {
+    return _normStatus(raw) == 'PENDING_CREDIT';
+  }
+
+  static bool _isRefundBucketSettledFromRaw(Map<String, dynamic> raw) {
+    final mollieRefundStatus = _firstText(raw, const <String>[
+      'mollie_refund_status',
+      'mollieRefundStatus',
+      'record.mollie_refund_status',
+      'record.mollieRefundStatus',
+      'booking.mollie_refund_status',
+      'booking.mollieRefundStatus',
+      'record.booking.mollie_refund_status',
+      'record.booking.mollieRefundStatus',
+      'payload.mollie_refund_status',
+      'payload.mollieRefundStatus',
+      'record.payload.mollie_refund_status',
+      'record.payload.mollieRefundStatus',
+    ]);
+    final refundStatus = _firstText(raw, const <String>[
+      'refund_status',
+      'refundStatus',
+      'record.refund_status',
+      'record.refundStatus',
+      'booking.refund_status',
+      'booking.refundStatus',
+      'record.booking.refund_status',
+      'record.booking.refundStatus',
+      'payload.refund_status',
+      'payload.refundStatus',
+      'record.payload.refund_status',
+      'record.payload.refundStatus',
+    ]);
+    final mollieRefundId = _firstText(raw, const <String>[
+      'mollie_refund_id',
+      'mollieRefundId',
+      'refund_id',
+      'refundId',
+      'record.mollie_refund_id',
+      'record.mollieRefundId',
+      'record.refund_id',
+      'record.refundId',
+      'booking.mollie_refund_id',
+      'booking.mollieRefundId',
+      'booking.refund_id',
+      'booking.refundId',
+      'record.booking.mollie_refund_id',
+      'record.booking.mollieRefundId',
+      'record.booking.refund_id',
+      'record.booking.refundId',
+      'payload.mollie_refund_id',
+      'payload.mollieRefundId',
+      'payload.refund_id',
+      'payload.refundId',
+      'record.payload.mollie_refund_id',
+      'record.payload.mollieRefundId',
+      'record.payload.refund_id',
+      'record.payload.refundId',
+    ]);
+    final refundedAmountRaw = _firstNum(raw, const <String>[
+      'refunded_amount_cents',
+      'refundedAmountCents',
+      'record.refunded_amount_cents',
+      'record.refundedAmountCents',
+      'booking.refunded_amount_cents',
+      'booking.refundedAmountCents',
+      'record.booking.refunded_amount_cents',
+      'record.booking.refundedAmountCents',
+      'payload.refunded_amount_cents',
+      'payload.refundedAmountCents',
+      'record.payload.refunded_amount_cents',
+      'record.payload.refundedAmountCents',
+    ]);
+    final complianceFinal = _firstText(raw, const <String>[
+      'compliance_mollie_refund_final_emitted_at',
+      'complianceMollieRefundFinalEmittedAt',
+      'record.compliance_mollie_refund_final_emitted_at',
+      'record.complianceMollieRefundFinalEmittedAt',
+      'booking.compliance_mollie_refund_final_emitted_at',
+      'booking.complianceMollieRefundFinalEmittedAt',
+      'record.booking.compliance_mollie_refund_final_emitted_at',
+      'record.booking.complianceMollieRefundFinalEmittedAt',
+      'payload.compliance_mollie_refund_final_emitted_at',
+      'payload.complianceMollieRefundFinalEmittedAt',
+      'record.payload.compliance_mollie_refund_final_emitted_at',
+      'record.payload.complianceMollieRefundFinalEmittedAt',
+    ]);
+    if (isMollieRefundStatusRefunded(mollieRefundStatus)) return true;
+    if (isRefundStatusRefundedOrComplete(refundStatus)) return true;
+    if (complianceFinal.trim().isNotEmpty && mollieRefundId.trim().isNotEmpty) {
+      return true;
+    }
+    if ((refundedAmountRaw ?? 0) > 0 &&
+        !isRefundStatusPending(refundStatus) &&
+        !isMollieRefundStatusPending(mollieRefundStatus)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// True when this row should be visible inside the **Geannuleerd** tab.
+  ///
+  /// Mutually exclusive with [isPendingCredit]: a paid cancelled leg that still
+  /// requires an administrator credit decision belongs in **Te crediteren**.
+  /// Refund lifecycle follow-up is exposed by separate refund status filters.
+  static bool isCancelledBucketVisible(_CompanyBookingOverviewItem item) {
+    if (item.bucket != _CompanyBookingsFilter.cancelled) return false;
+    return !item.isPendingCredit;
+  }
+
+  /// True when this row should be visible inside the **Te crediteren** tab.
+  static bool isToCreditBucketVisible(_CompanyBookingOverviewItem item) {
+    return item.isPendingCredit;
+  }
+
+  /// Settlement label for a paid cancelled row that no longer needs refund
+  /// follow-up. Used by the Cancelled tab to render a clear status chip.
+  /// Returns an empty string when no settlement state is applicable yet.
+  static String settledRefundChipToken(_CompanyBookingOverviewItem item) {
+    if (item.bucket != _CompanyBookingsFilter.cancelled) return '';
+    if (item.isPendingCredit) return '';
+    if (!isPaidPaymentStatus(item.paymentStatus)) return '';
+    final decision = _normStatus(item.creditDecision);
+    if (decision == 'NO_REFUND') return 'NO_REFUND';
+    if (decision == 'HANDLED_MANUALLY') return 'HANDLED_MANUALLY';
+    if (isMollieRefundDisplayRefunded(item)) {
+      if (decision == 'PARTIAL_CREDIT') return 'PARTIAL_REFUNDED';
+      return 'REFUNDED';
+    }
+    if (decision == 'FULL_CREDIT') return 'REFUNDED';
+    if (decision == 'PARTIAL_CREDIT') return 'PARTIAL_REFUNDED';
+    final creditStatus = _normStatus(item.creditStatus);
+    if (creditStatus == 'NO_REFUND') return 'NO_REFUND';
+    if (creditStatus == 'HANDLED_MANUALLY') return 'HANDLED_MANUALLY';
+    return '';
+  }
+
+  static void logRefundQueueDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final legLabel = item.legId.trim().isEmpty ? '-' : item.legId.trim();
+    final inCancelled = isCancelledBucketVisible(item);
+    final inToCredit = isToCreditBucketVisible(item);
+    debugPrint(
+      '[REFUND_BUCKET][QUEUE] booking=${_safeBookingRefForDiag(bookingLabel)} '
+      'leg=$legLabel cancelled_visible=$inCancelled to_credit=$inToCredit '
+      'status=${item.statusText.isEmpty ? "-" : item.statusText} '
+      'payment=${item.paymentStatus.isEmpty ? "-" : item.paymentStatus} '
+      'credit_decision=${item.creditDecision.isEmpty ? "-" : item.creditDecision} '
+      'mollie_refund_id=${item.mollieRefundId.trim().isEmpty ? "empty" : "present"} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus}',
+    );
+    if (inCancelled &&
+        isPaidPaymentStatus(item.paymentStatus) &&
+        settledRefundChipToken(item).isNotEmpty) {
+      debugPrint(
+        '[REFUND_BUCKET][CANCELLED_VISIBLE] booking=${_safeBookingRefForDiag(bookingLabel)} '
+        'leg=$legLabel settlement=${settledRefundChipToken(item)}',
+      );
+    }
+  }
+
+  static void logRefundBucketStateDiagnostic(_CompanyBookingOverviewItem item) {
+    final bookingLabel = item.referenceText.trim().isNotEmpty
+        ? item.referenceText.trim()
+        : item.bookingId.trim();
+    if (bookingLabel.isEmpty) return;
+    final inCancelled = item.bucket == _CompanyBookingsFilter.cancelled;
+    final inToCredit = item.isPendingCredit;
+    final refundSettled =
+        isMollieRefundDisplayRefunded(item) ||
+        (hasMollieRefundAlreadyApplied(item) &&
+            !isMollieRefundDisplayPending(item));
+    debugPrint(
+      '[REFUND_BUCKET][STATE] booking=$bookingLabel '
+      'cancelled_bucket=$inCancelled to_credit=$inToCredit '
+      'refund_settled=$refundSettled refund_status=${item.refundStatus.isEmpty ? "-" : item.refundStatus} '
+      'mollie_refund_status=${item.mollieRefundStatus.isEmpty ? "-" : item.mollieRefundStatus} '
+      'can_refund=${canShowMollieRefundAction(item)}',
+    );
+  }
+
+  static bool _deriveIsPendingCredit({
+    required Map<String, dynamic> raw,
+    required String statusRaw,
+    required String paymentStatus,
+    required String creditStatus,
+    required String refundStatus,
+    required bool refundRequired,
+    required String creditDecision,
+    required String paymentProvider,
+    required String bookingRef,
+    required String parentRef,
+    required String legType,
+  }) {
+    if (!_isCancelledStatus(statusRaw)) return false;
+    final isPaid =
+        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw);
+    if (!isPaid) {
+      _logCreditClassify(
+        bookingRef: bookingRef,
+        parentRef: parentRef,
+        legType: legType,
+        isPaid: false,
+        isCreditEligible: false,
+        reason: 'skip_unpaid',
+      );
+      return false;
+    }
+    if (_isRefundBucketSettledFromRaw(raw)) {
+      debugPrint(
+        '[REFUND_BUCKET][SETTLED] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} reason=mollie_refund_complete',
+      );
+      _logCreditClassify(
+        bookingRef: bookingRef,
+        parentRef: parentRef,
+        legType: legType,
+        isPaid: true,
+        isCreditEligible: false,
+        reason: 'refund_settled',
+      );
+      return false;
+    }
+    final decision = _normStatus(creditDecision);
+    if (decision == 'NO_REFUND' || decision == 'HANDLED_MANUALLY') {
+      debugPrint(
+        '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} decision=$decision to_credit=false reason=settled_manual',
+      );
+      return false;
+    }
+    if (decision == 'FULL_CREDIT' || decision == 'PARTIAL_CREDIT') {
+      debugPrint(
+        '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+        'leg=${legType.isEmpty ? "-" : legType} decision=$decision to_credit=false reason=decision_recorded',
+      );
+      return false;
+    }
+    final resolvedCreditStatus = _normStatus(creditStatus);
+    if (resolvedCreditStatus == 'NO_REFUND' ||
+        resolvedCreditStatus == 'HANDLED_MANUALLY') {
+      return false;
+    }
+    if (resolvedCreditStatus == 'CREDITED' ||
+        resolvedCreditStatus == 'PARTIAL_CREDIT') {
+      return false;
+    }
+    final needsDecision =
+        _isPendingCreditToken(creditStatus) ||
+        _isPendingCreditToken(refundStatus) ||
+        refundRequired;
+    debugPrint(
+      '[CREDIT_DECISION][STATE] booking=${_safeBookingRefForDiag(bookingRef)} '
+      'leg=${legType.isEmpty ? "-" : legType} to_credit=$needsDecision reason=${needsDecision ? "pending_decision" : "paid_not_creditable"}',
+    );
+    _logCreditClassify(
+      bookingRef: bookingRef,
+      parentRef: parentRef,
+      legType: legType,
+      isPaid: true,
+      isCreditEligible: needsDecision,
+      reason: needsDecision ? 'pending_credit' : 'paid_not_creditable',
+    );
+    return needsDecision;
+  }
+
+  static _CompanyBookingsFilter _bucketFromStatus({required String statusRaw}) {
+    final normalized = _normStatus(statusRaw);
+    if (normalized.contains('CANCEL')) return _CompanyBookingsFilter.cancelled;
+    if (normalized == 'DELETED') return _CompanyBookingsFilter.cancelled;
+    if (normalized.contains('COMPLETE') ||
+        normalized == 'DONE' ||
+        normalized == 'FINISHED') {
+      return _CompanyBookingsFilter.completed;
+    }
+    return _CompanyBookingsFilter.open;
+  }
+
+  factory _CompanyBookingOverviewItem.fromMap(Map<String, dynamic> raw) {
+    final bookingId = _firstText(raw, const <String>[
+      'booking_id',
+      'bookingId',
+      'id',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.id',
+      'booking.id',
+    ]);
+    final parentBookingId = _firstText(raw, const <String>[
+      'parent_booking_id',
+      'parentBookingId',
+      'booking_id',
+      'bookingId',
+      'id',
+      'record.parent_booking_id',
+      'record.parentBookingId',
+      'record.booking_id',
+      'record.bookingId',
+      'record.booking.parent_booking_id',
+      'record.booking.parentBookingId',
+    ]);
+    final legId = _firstText(raw, const <String>[
+      'leg_id',
+      'legId',
+      'record.leg_id',
+      'record.legId',
+      'booking.leg_id',
+      'booking.legId',
+    ]);
+    final legType = _firstText(raw, const <String>[
+      'leg_type',
+      'legType',
+      'record.leg_type',
+      'record.legType',
+      'booking.leg_type',
+      'booking.legType',
+    ]);
+    final isOperationalLegToken = _firstText(raw, const <String>[
+      'is_operational_leg',
+      'isOperationalLeg',
+      'record.is_operational_leg',
+      'record.isOperationalLeg',
+      'booking.is_operational_leg',
+      'booking.isOperationalLeg',
+    ]).toLowerCase();
+    final isOperationalLeg =
+        isOperationalLegToken == 'true' ||
+        isOperationalLegToken == '1' ||
+        legId.isNotEmpty;
+    final isRoundtripToken = _firstText(raw, const <String>[
+      'is_roundtrip_parent',
+      'isRoundtripParent',
+      'record.is_roundtrip_parent',
+      'record.isRoundtripParent',
+      'booking.is_roundtrip_parent',
+      'booking.isRoundtripParent',
+    ]).toLowerCase();
+    final isRoundtripParent =
+        isRoundtripToken == 'true' || isRoundtripToken == '1';
+    final planningRef = _firstText(raw, const <String>[
+      'planning_reference',
+      'planningReference',
+      'record.planning_reference',
+      'record.planningReference',
+      'booking.planning_reference',
+      'booking.planningReference',
+    ]);
+    final publicRef = _firstText(raw, const <String>[
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'record.public_booking_reference',
+      'record.publicBookingReference',
+      'record.booking_reference',
+      'record.bookingReference',
+      'booking.public_booking_reference',
+      'booking.publicBookingReference',
+      'booking.booking_reference',
+      'booking.bookingReference',
+    ]);
+    final referenceText = planningRef.isNotEmpty
+        ? planningRef
+        : (publicRef.isNotEmpty ? publicRef : bookingId);
+    final parentRef = _firstText(raw, const <String>[
+      'parent_booking_reference',
+      'parentBookingReference',
+      'linked_order_reference',
+      'linkedOrderReference',
+      'planning_reference',
+      'planningReference',
+      'public_booking_reference',
+      'publicBookingReference',
+      'booking_reference',
+      'bookingReference',
+      'record.parent_booking_reference',
+      'record.parentBookingReference',
+      'record.linked_order_reference',
+      'record.linkedOrderReference',
+      'record.planning_reference',
+      'record.planningReference',
+      'record.public_booking_reference',
+      'record.publicBookingReference',
+      'record.booking_reference',
+      'record.bookingReference',
+      'booking.parent_booking_reference',
+      'booking.parentBookingReference',
+      'booking.linked_order_reference',
+      'booking.linkedOrderReference',
+      'booking.planning_reference',
+      'booking.planningReference',
+      'booking.public_booking_reference',
+      'booking.publicBookingReference',
+      'booking.booking_reference',
+      'booking.bookingReference',
+    ]);
+    final createdAtIso = extractCompanyBookingCreatedAtIso(raw);
+    final pickupIso = _firstText(raw, const <String>[
+      'pickup_iso',
+      'pickupIso',
+      'booking.pickup_iso',
+      'booking.pickupIso',
+      'quote.pickup_iso',
+      'record.pickup_iso',
+      'record.pickupIso',
+      'record.booking.pickup_iso',
+      'record.booking.pickupIso',
+      'record.quote.pickup_iso',
+    ]);
+    final fromAddress = _firstText(raw, const <String>[
+      'from',
+      'pickup',
+      'pickup_address',
+      'booking.pickup.address',
+      'booking.pickup_address',
+      'quote.pickup.address',
+      'quote.pickup_address',
+      'record.from',
+      'record.booking.pickup.address',
+      'record.booking.pickup_address',
+      'record.quote.pickup.address',
+      'record.quote.pickup_address',
+    ]);
+    final toAddress = _firstText(raw, const <String>[
+      'to',
+      'dropoff',
+      'dropoff_address',
+      'booking.dropoff.address',
+      'booking.dropoff_address',
+      'quote.dropoff.address',
+      'quote.dropoff_address',
+      'record.to',
+      'record.booking.dropoff.address',
+      'record.booking.dropoff_address',
+      'record.quote.dropoff.address',
+      'record.quote.dropoff_address',
+    ]);
+    final customerName = _firstText(raw, const <String>[
+      'customer_name',
+      'customerName',
+      'booking.customer_name',
+      'booking.customerName',
+      'record.customer_name',
+      'record.customerName',
+      'record.booking.customer_name',
+      'record.booking.customerName',
+      'record.booking.customer.name',
+      'booking.customer.name',
+    ]);
+    final assignedDriver = _firstText(raw, const <String>[
+      'assigned_driver_name',
+      'assignedDriverName',
+      'assigned_driver_id',
+      'assignedDriverId',
+      'driver_id',
+      'driverId',
+      'booking.assigned_driver_name',
+      'booking.assignedDriverName',
+      'booking.assigned_driver_id',
+      'booking.assignedDriverId',
+      'record.booking.assigned_driver_name',
+      'record.booking.assignedDriverName',
+      'record.booking.assigned_driver_id',
+      'record.booking.assignedDriverId',
+      'record.booking.driver_id',
+      'record.booking.driverId',
+    ]);
+    final assignedVehicle = _firstText(raw, const <String>[
+      'assigned_vehicle_id',
+      'assignedVehicleId',
+      'vehicle_id',
+      'vehicleId',
+      'booking.assigned_vehicle_id',
+      'booking.assignedVehicleId',
+      'booking.vehicle_id',
+      'booking.vehicleId',
+      'record.booking.assigned_vehicle_id',
+      'record.booking.assignedVehicleId',
+      'record.booking.vehicle_id',
+      'record.booking.vehicleId',
+    ]);
+    final statusRaw = _firstText(raw, const <String>[
+      'status',
+      'lifecycle',
+      'lifecycle_status',
+      'stage',
+      'booking.status',
+      'booking.lifecycle',
+      'booking.lifecycle_status',
+      'record.status',
+      'record.lifecycle',
+      'record.lifecycle_status',
+      'record.booking.status',
+      'record.booking.lifecycle',
+      'record.booking.lifecycle_status',
+      'record.booking.stage',
+    ]);
+    final paymentStatus = _firstText(raw, const <String>[
+      'payment_status',
+      'paymentStatus',
+      'record.payment_status',
+      'record.paymentStatus',
+      'booking.payment_status',
+      'booking.paymentStatus',
+      'record.booking.payment_status',
+      'record.booking.paymentStatus',
+      'quote.payment_status',
+      'quote.paymentStatus',
+      'record.quote.payment_status',
+      'record.quote.paymentStatus',
+      'payload.payment_status',
+      'payload.paymentStatus',
+      'record.payload.payment_status',
+      'record.payload.paymentStatus',
+      'mollie.status',
+      'record.mollie.status',
+      'booking.mollie.status',
+    ]);
+    final paymentProvider = _firstText(raw, const <String>[
+      'payment_provider',
+      'paymentProvider',
+      'payment_mode',
+      'paymentMode',
+      'record.payment_provider',
+      'record.paymentProvider',
+      'record.payment_mode',
+      'record.paymentMode',
+      'booking.payment_provider',
+      'booking.paymentProvider',
+      'booking.payment_mode',
+      'booking.paymentMode',
+      'record.booking.payment_provider',
+      'record.booking.paymentProvider',
+      'payload.payment_provider',
+      'payload.paymentProvider',
+    ]);
+    final creditStatus = _firstText(raw, const <String>[
+      'credit_status',
+      'creditStatus',
+      'record.credit_status',
+      'record.creditStatus',
+      'booking.credit_status',
+      'booking.creditStatus',
+      'record.booking.credit_status',
+      'record.booking.creditStatus',
+      'payload.credit_status',
+      'payload.creditStatus',
+      'record.payload.credit_status',
+      'record.payload.creditStatus',
+    ]);
+    final refundStatus = _firstText(raw, const <String>[
+      'refund_status',
+      'refundStatus',
+      'record.refund_status',
+      'record.refundStatus',
+      'booking.refund_status',
+      'booking.refundStatus',
+      'record.booking.refund_status',
+      'record.booking.refundStatus',
+      'payload.refund_status',
+      'payload.refundStatus',
+      'record.payload.refund_status',
+      'record.payload.refundStatus',
+    ]);
+    final refundRequired = _firstBool(raw, const <String>[
+      'refund_required',
+      'refundRequired',
+      'record.refund_required',
+      'record.refundRequired',
+      'booking.refund_required',
+      'booking.refundRequired',
+      'record.booking.refund_required',
+      'record.booking.refundRequired',
+      'payload.refund_required',
+      'payload.refundRequired',
+      'record.payload.refund_required',
+      'record.payload.refundRequired',
+    ]);
+    final creditDecision = _firstText(raw, const <String>[
+      'credit_decision',
+      'creditDecision',
+      'record.credit_decision',
+      'record.creditDecision',
+      'booking.credit_decision',
+      'booking.creditDecision',
+      'record.booking.credit_decision',
+      'record.booking.creditDecision',
+      'payload.credit_decision',
+      'payload.creditDecision',
+      'record.payload.credit_decision',
+      'record.payload.creditDecision',
+    ]);
+    final creditedAmountRaw = _firstNum(raw, const <String>[
+      'credited_amount_cents',
+      'creditedAmountCents',
+      'record.credited_amount_cents',
+      'record.creditedAmountCents',
+      'booking.credited_amount_cents',
+      'booking.creditedAmountCents',
+      'record.booking.credited_amount_cents',
+      'record.booking.creditedAmountCents',
+      'payload.credited_amount_cents',
+      'payload.creditedAmountCents',
+      'record.payload.credited_amount_cents',
+      'record.payload.creditedAmountCents',
+    ]);
+    final creditedAt = _firstText(raw, const <String>[
+      'credited_at',
+      'creditedAt',
+      'record.credited_at',
+      'record.creditedAt',
+      'booking.credited_at',
+      'booking.creditedAt',
+      'record.booking.credited_at',
+      'record.booking.creditedAt',
+      'payload.credited_at',
+      'payload.creditedAt',
+      'record.payload.credited_at',
+      'record.payload.creditedAt',
+    ]);
+    final mollieRefundId = _firstText(raw, const <String>[
+      'mollie_refund_id',
+      'mollieRefundId',
+      'refund_id',
+      'refundId',
+      'record.mollie_refund_id',
+      'record.mollieRefundId',
+      'record.refund_id',
+      'record.refundId',
+      'booking.mollie_refund_id',
+      'booking.mollieRefundId',
+      'booking.refund_id',
+      'booking.refundId',
+      'record.booking.mollie_refund_id',
+      'record.booking.mollieRefundId',
+      'record.booking.refund_id',
+      'record.booking.refundId',
+      'payload.mollie_refund_id',
+      'payload.mollieRefundId',
+      'payload.refund_id',
+      'payload.refundId',
+      'record.payload.mollie_refund_id',
+      'record.payload.mollieRefundId',
+      'record.payload.refund_id',
+      'record.payload.refundId',
+    ]);
+    final mollieRefundStatus = _firstText(raw, const <String>[
+      'mollie_refund_status',
+      'mollieRefundStatus',
+      'record.mollie_refund_status',
+      'record.mollieRefundStatus',
+      'booking.mollie_refund_status',
+      'booking.mollieRefundStatus',
+      'record.booking.mollie_refund_status',
+      'record.booking.mollieRefundStatus',
+      'payload.mollie_refund_status',
+      'payload.mollieRefundStatus',
+      'record.payload.mollie_refund_status',
+      'record.payload.mollieRefundStatus',
+    ]);
+    final mollieRefundError = _firstText(raw, const <String>[
+      'mollie_refund_error',
+      'mollieRefundError',
+      'record.mollie_refund_error',
+      'record.mollieRefundError',
+      'booking.mollie_refund_error',
+      'booking.mollieRefundError',
+      'record.booking.mollie_refund_error',
+      'record.booking.mollieRefundError',
+      'payload.mollie_refund_error',
+      'payload.mollieRefundError',
+      'record.payload.mollie_refund_error',
+      'record.payload.mollieRefundError',
+    ]);
+    final refundedAmountRaw = _firstNum(raw, const <String>[
+      'refunded_amount_cents',
+      'refundedAmountCents',
+      'record.refunded_amount_cents',
+      'record.refundedAmountCents',
+      'booking.refunded_amount_cents',
+      'booking.refundedAmountCents',
+      'record.booking.refunded_amount_cents',
+      'record.booking.refundedAmountCents',
+      'payload.refunded_amount_cents',
+      'payload.refundedAmountCents',
+      'record.payload.refunded_amount_cents',
+      'record.payload.refundedAmountCents',
+    ]);
+    final refundedAt = _firstText(raw, const <String>[
+      'refunded_at',
+      'refundedAt',
+      'record.refunded_at',
+      'record.refundedAt',
+      'booking.refunded_at',
+      'booking.refundedAt',
+      'record.booking.refunded_at',
+      'record.booking.refundedAt',
+      'payload.refunded_at',
+      'payload.refundedAt',
+      'record.payload.refunded_at',
+      'record.payload.refundedAt',
+    ]);
+    final refundProvider = _firstText(raw, const <String>[
+      'refund_provider',
+      'refundProvider',
+      'record.refund_provider',
+      'record.refundProvider',
+      'booking.refund_provider',
+      'booking.refundProvider',
+      'record.booking.refund_provider',
+      'record.booking.refundProvider',
+      'payload.refund_provider',
+      'payload.refundProvider',
+      'record.payload.refund_provider',
+      'record.payload.refundProvider',
+    ]);
+    final complianceMollieRefundFinalEmittedAt = _firstText(raw, const <String>[
+      'compliance_mollie_refund_final_emitted_at',
+      'complianceMollieRefundFinalEmittedAt',
+      'record.compliance_mollie_refund_final_emitted_at',
+      'record.complianceMollieRefundFinalEmittedAt',
+      'booking.compliance_mollie_refund_final_emitted_at',
+      'booking.complianceMollieRefundFinalEmittedAt',
+      'record.booking.compliance_mollie_refund_final_emitted_at',
+      'record.booking.complianceMollieRefundFinalEmittedAt',
+      'payload.compliance_mollie_refund_final_emitted_at',
+      'payload.complianceMollieRefundFinalEmittedAt',
+      'record.payload.compliance_mollie_refund_final_emitted_at',
+      'record.payload.complianceMollieRefundFinalEmittedAt',
+    ]);
+    final complianceMollieRefundEmittedAt = _firstText(raw, const <String>[
+      'compliance_mollie_refund_emitted_at',
+      'complianceMollieRefundEmittedAt',
+      'record.compliance_mollie_refund_emitted_at',
+      'record.complianceMollieRefundEmittedAt',
+      'booking.compliance_mollie_refund_emitted_at',
+      'booking.complianceMollieRefundEmittedAt',
+      'record.booking.compliance_mollie_refund_emitted_at',
+      'record.booking.complianceMollieRefundEmittedAt',
+      'payload.compliance_mollie_refund_emitted_at',
+      'payload.complianceMollieRefundEmittedAt',
+      'record.payload.compliance_mollie_refund_emitted_at',
+      'record.payload.complianceMollieRefundEmittedAt',
+    ]);
+    final amount = _firstNum(raw, const <String>[
+      'leg_price_incl_vat',
+      'legPriceInclVat',
+      'price',
+      'total_price',
+      'total',
+      'amount',
+      'eur',
+      'quote.price',
+      'quote.total_price',
+      'quote.total',
+      'quote.amount',
+      'quote.eur',
+      'quote.pricing.price_incl_vat',
+      'quote.pricing.total_price',
+      'quote.pricing.total',
+      'quote.pricing.price',
+      'quote.pricing.amount',
+      'quote.pricing.eur',
+      'record.price',
+      'record.total_price',
+      'record.total',
+      'record.amount',
+      'record.quote.price',
+      'record.quote.total_price',
+      'record.quote.total',
+      'record.quote.amount',
+      'record.quote.eur',
+      'record.quote.pricing.price_incl_vat',
+      'record.quote.pricing.total_price',
+      'record.quote.pricing.total',
+      'record.quote.pricing.price',
+      'record.quote.pricing.amount',
+      'record.quote.pricing.eur',
+      'booking.total_price',
+      'booking.price',
+      'booking.amount',
+      'record.booking.total_price',
+      'record.booking.price',
+      'record.booking.amount',
+    ]);
+    final parentAmount = _firstNum(raw, const <String>[
+      'parent_total_price',
+      'parentTotalPrice',
+      'parent_price_incl_vat',
+      'parentPriceInclVat',
+      'booking.price_incl_vat',
+      'booking.total_price',
+      'record.booking.price_incl_vat',
+      'record.booking.total_price',
+      'price',
+      'total_price',
+      'total',
+      'amount',
+    ]);
+    final currency = _firstText(raw, const <String>[
+      'currency',
+      'quote.currency',
+      'quote.pricing.currency',
+      'record.currency',
+      'record.quote.currency',
+      'record.quote.pricing.currency',
+      'booking.currency',
+      'record.booking.currency',
+    ]);
+    final customerEmail = _firstText(raw, const <String>[
+      'customer_email',
+      'customerEmail',
+      'custEmail',
+      'email',
+      'customer.email',
+      'booking.customer_email',
+      'booking.customerEmail',
+      'record.customer_email',
+      'record.customerEmail',
+      'record.booking.customer_email',
+      'record.booking.customerEmail',
+    ]);
+    // Patch 2D leg-first VAT breakdown. Operational legs prefer their own
+    // leg_price_* fields; parent/full rows use the booking/quote split. No
+    // value is invented: fields stay null when the payload omits them.
+    final num? subtotalExVat = isOperationalLeg
+        ? _firstNum(raw, const <String>['leg_price_ex_vat', 'legPriceExVat'])
+        : _firstNum(raw, const <String>[
+            'quote.limousine_accepted_price.price_ex_vat',
+            'record.quote.limousine_accepted_price.price_ex_vat',
+            'booking.quote.limousine_accepted_price.price_ex_vat',
+            'price_ex_vat',
+            'priceExVat',
+            'total_price_ex_vat',
+            'parent_price_ex_vat',
+            'parentPriceExVat',
+            'quote.pricing.price_ex_vat',
+            'record.quote.pricing.price_ex_vat',
+          ]);
+    final num? vatAmount = isOperationalLeg
+        ? _firstNum(raw, const <String>['leg_price_vat', 'legPriceVat'])
+        : _firstNum(raw, const <String>[
+            'quote.limousine_accepted_price.price_vat',
+            'record.quote.limousine_accepted_price.price_vat',
+            'booking.quote.limousine_accepted_price.price_vat',
+            'price_vat',
+            'priceVat',
+            'total_price_vat',
+            'parent_price_vat',
+            'parentPriceVat',
+            'quote.pricing.price_vat',
+            'record.quote.pricing.price_vat',
+          ]);
+    final num? vatRatePercentRaw = _firstNum(raw, const <String>[
+      'quote.limousine_accepted_price.vat_rate',
+      'record.quote.limousine_accepted_price.vat_rate',
+      'booking.quote.limousine_accepted_price.vat_rate',
+      'vat_rate',
+      'vatRate',
+      'vat_rate_percent',
+      'quote.pricing.vat_rate',
+      'record.quote.pricing.vat_rate',
+    ]);
+    final looksLimousine =
+        _firstText(raw, const <String>[
+              'service_type',
+              'serviceType',
+              'record.service_type',
+              'record.booking.service_type',
+              'booking.service_type',
+            ]).trim().toLowerCase() ==
+            'limousine' ||
+        _path(raw, 'quote.limousine_accepted_price') is Map ||
+        _path(raw, 'record.quote.limousine_accepted_price') is Map;
+    // Backend stores vat_rate as a fraction (e.g. 0.06). Normalize to percent
+    // when below 1; otherwise treat as an already-percent value. Taxi may
+    // derive a display percent from the split. Limousine never infers the
+    // rate from the VAT amount — only the frozen snapshot rate is shown.
+    num? vatRatePercent;
+    if (vatRatePercentRaw != null) {
+      vatRatePercent = vatRatePercentRaw <= 1
+          ? vatRatePercentRaw * 100
+          : vatRatePercentRaw;
+    } else if (!looksLimousine &&
+        subtotalExVat != null &&
+        subtotalExVat != 0 &&
+        vatAmount != null) {
+      vatRatePercent = (vatAmount / subtotalExVat) * 100;
+    }
+    final isPendingCredit = _deriveIsPendingCredit(
+      raw: raw,
+      statusRaw: statusRaw,
+      paymentStatus: paymentStatus,
+      creditStatus: creditStatus,
+      refundStatus: refundStatus,
+      refundRequired: refundRequired,
+      creditDecision: creditDecision,
+      paymentProvider: paymentProvider,
+      bookingRef: referenceText.isEmpty ? bookingId : referenceText,
+      parentRef: parentRef.isEmpty ? referenceText : parentRef,
+      legType: legType,
+    );
+    final isPaid =
+        isPaidPaymentStatus(paymentStatus) || _inferPaidFromRawMap(raw);
+    final normalizedPaymentStatus = isPaid
+        ? 'PAID'
+        : (_normStatus(paymentStatus).isNotEmpty
+              ? _normStatus(paymentStatus)
+              : 'UNPAID');
+    _logBookingPaymentClassify(
+      raw: raw,
+      bookingRef: referenceText.isEmpty ? bookingId : referenceText,
+      parentRef: parentRef.isEmpty ? referenceText : parentRef,
+      legType: legType,
+      rawPaymentStatus: paymentStatus,
+      normalizedPaymentStatus: normalizedPaymentStatus,
+      isPaid: isPaid,
+      isCreditEligible: isPendingCredit,
+    );
+    final sourceRaw = _firstText(raw, const <String>[
+      'source',
+      'booking_source',
+      'bookingSource',
+      'ride_type',
+      'rideType',
+      'booking.source',
+      'booking.booking_source',
+      'booking.ride_type',
+      'booking.rideType',
+      'record.source',
+      'record.ride_type',
+      'record.booking.source',
+      'record.booking.ride_type',
+    ]);
+    final normalizedSource = _normStatus(sourceRaw);
+    final isStreetRide =
+        normalizedSource == 'STREET_RIDE' ||
+        normalizedSource == 'STREETRIDE' ||
+        normalizedSource == 'DIRECT' ||
+        normalizedSource == 'DIRECT_RIDE';
+    // Canonical street identity excludes ride_type == direct on purpose: only a
+    // dedicated source/booking_source of street_ride, or a street_ booking id,
+    // may gate the business-invoice action (UI-1B strictness).
+    final canonicalSourceRaw = _firstText(raw, const <String>[
+      'source',
+      'booking_source',
+      'bookingSource',
+      'booking.source',
+      'booking.booking_source',
+      'booking.bookingSource',
+      'record.source',
+      'record.booking_source',
+      'record.booking.source',
+    ]);
+    final normalizedCanonicalSource = _normStatus(canonicalSourceRaw);
+    final isCanonicalStreetRide =
+        normalizedCanonicalSource == 'STREET_RIDE' ||
+        normalizedCanonicalSource == 'STREETRIDE' ||
+        bookingId.trim().toLowerCase().startsWith('street_');
+    final serviceType = _firstText(raw, const <String>[
+      'service_type',
+      'serviceType',
+      'service_category',
+      'record.service_type',
+      'record.booking.service_type',
+      'booking.service_type',
+    ]);
+    final pricingMode = _firstText(raw, const <String>[
+      'pricing_mode',
+      'pricingMode',
+      'record.pricing_mode',
+      'record.booking.pricing_mode',
+      'booking.pricing_mode',
+    ]);
+    final occasion = _firstText(raw, const <String>[
+      'occasion',
+      'record.occasion',
+      'record.booking.occasion',
+      'booking.occasion',
+    ]);
+    final requestedDurationMinutes = _firstNum(raw, const <String>[
+      'requested_duration_minutes',
+      'requestedDurationMinutes',
+      'record.requested_duration_minutes',
+      'record.booking.requested_duration_minutes',
+      'booking.requested_duration_minutes',
+    ])?.round();
+    final companyConfirmationRequired = _firstBool(raw, const <String>[
+      'company_confirmation_required',
+      'companyConfirmationRequired',
+      'record.company_confirmation_required',
+      'record.booking.company_confirmation_required',
+      'booking.company_confirmation_required',
+    ]);
+    final companyConfirmedAt = _firstText(raw, const <String>[
+      'company_confirmed_at',
+      'companyConfirmedAt',
+      'record.company_confirmed_at',
+      'record.booking.company_confirmed_at',
+    ]);
+    Map<String, dynamic> pricingSnapshot = const <String, dynamic>{};
+    final snapshotRaw =
+        _path(raw, 'pricing_snapshot') ??
+        _path(raw, 'limousine_accepted_price') ??
+        _path(raw, 'record.booking.limousine_accepted_price') ??
+        _path(raw, 'booking.limousine_accepted_price');
+    if (snapshotRaw is Map) {
+      pricingSnapshot = Map<String, dynamic>.from(snapshotRaw);
+    }
+    final quoteId = _firstText(raw, const <String>[
+      'quote_id',
+      'quoteId',
+      'quote.quote_id',
+      'record.quote_id',
+      'record.quote.quote_id',
+      'booking.quote_id',
+    ]);
+    final passengerCount = _firstNum(raw, const <String>[
+      'pax',
+      'passengers',
+      'booking.pax',
+      'booking.passengers',
+      'record.pax',
+      'record.booking.pax',
+    ])?.round();
+    final bucket = _bucketFromStatus(statusRaw: statusRaw);
+    if (isOperationalLeg) {
+      debugPrint(
+        '[ROUNDTRIP_LEG_UI][COMPANY_FILTER] parent=${_safeBookingRefForDiag(parentBookingId.isEmpty ? bookingId : parentBookingId)} leg=${_safeBookingRefForDiag(legId)} type=${legType.isEmpty ? "-" : legType} status=${_normStatus(statusRaw)} bucket=${bucket.name} parentStatus=${_firstText(raw, const <String>['parent_status', 'parentStatus', 'record.parent_status', 'record.parentStatus']).trim().isEmpty ? "-" : _firstText(raw, const <String>['parent_status', 'parentStatus', 'record.parent_status', 'record.parentStatus'])}',
+      );
+    }
+    return _CompanyBookingOverviewItem(
+      bookingId: bookingId,
+      parentBookingId: parentBookingId.isEmpty ? bookingId : parentBookingId,
+      legId: legId,
+      legType: legType,
+      isOperationalLeg: isOperationalLeg,
+      isRoundtripParent: isRoundtripParent,
+      referenceText: referenceText.isEmpty ? bookingId : referenceText,
+      parentReferenceText: parentRef.isEmpty ? referenceText : parentRef,
+      createdAtIso: createdAtIso,
+      pickupIso: pickupIso,
+      timingAttention: raw['dispatch_timing_attention'] is Map ? Map<String,dynamic>.from(raw['dispatch_timing_attention']) : const {},
+      fromAddress: fromAddress.isEmpty ? '—' : fromAddress,
+      toAddress: toAddress.isEmpty ? '—' : toAddress,
+      customerName: customerName,
+      customerEmail: customerEmail,
+      assignedDriverText: assignedDriver.isEmpty ? '—' : assignedDriver,
+      assignedVehicleText: assignedVehicle.isEmpty ? '—' : assignedVehicle,
+      statusText: _normStatus(statusRaw),
+      paymentStatus: normalizedPaymentStatus,
+      paymentProvider: _normStatus(paymentProvider),
+      creditStatus: _normStatus(creditStatus),
+      refundStatus: _normStatus(refundStatus),
+      refundRequired: refundRequired,
+      creditDecision: _normStatus(creditDecision),
+      creditedAmountCents: creditedAmountRaw?.round(),
+      creditedAt: creditedAt,
+      mollieRefundId: mollieRefundId,
+      mollieRefundStatus: _normStatus(mollieRefundStatus),
+      mollieRefundError: mollieRefundError,
+      refundedAmountCents: refundedAmountRaw?.round(),
+      refundedAt: refundedAt,
+      refundProvider: _normStatus(refundProvider),
+      complianceMollieRefundEmittedAt: complianceMollieRefundEmittedAt,
+      complianceMollieRefundFinalEmittedAt:
+          complianceMollieRefundFinalEmittedAt,
+      isPendingCredit: isPendingCredit,
+      amount: amount,
+      parentAmount: parentAmount,
+      subtotalExVat: subtotalExVat,
+      vatAmount: vatAmount,
+      vatRatePercent: vatRatePercent,
+      currency: currency,
+      isStreetRide: isStreetRide,
+      isCanonicalStreetRide: isCanonicalStreetRide,
+      serviceType: serviceType,
+      pricingMode: pricingMode,
+      occasion: occasion,
+      requestedDurationMinutes: requestedDurationMinutes,
+      companyConfirmationRequired: companyConfirmationRequired,
+      companyConfirmedAt: companyConfirmedAt,
+      pricingSnapshot: pricingSnapshot,
+      quoteId: quoteId,
+      passengerCount: passengerCount,
+      bucket: bucket,
+    );
+  }
+}

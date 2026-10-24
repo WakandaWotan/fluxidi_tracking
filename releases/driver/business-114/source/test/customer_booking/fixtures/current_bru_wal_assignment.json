@@ -1,0 +1,1403 @@
+{
+  "at": "2026-10-15T20:01:49.251Z",
+  "pass": true,
+  "baseManifestSha256": "fef5ebdcdd9a2909c45cdffe74ef1ba1bbe97db7a3d54b4af9ab23b2ffc69015",
+  "textManifestSha256": "7c5287a01411245c533ec7bf8e2daaf52d07156e0eb7f87bd432833590351beb",
+  "source": "Actual immutable official index and text objects; no transformed assignment flags",
+  "textReads": 30,
+  "cases": [
+    {
+      "region": "BE-BRU",
+      "targetId": "https://databrussels.be/id/address/1",
+      "request": {
+        "schema": "fluxidi-official-address-text-v1",
+        "mode": "suggest",
+        "country": "BE",
+        "street": "Rue Pieter",
+        "postcode": "1190",
+        "house_number": "2",
+        "language": "nl",
+        "limit": 20
+      },
+      "response": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "suggestions",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "search_revision": "official-be-nl-text-v1-fef5ebdcdd9a2909c45cdffe-compact-names-v2",
+        "candidates": [
+          {
+            "official_address": {
+              "id": "https://databrussels.be/id/address/1",
+              "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+              "source": "UrbIS Addresses / Paradigm",
+              "source_version": "record-content-sha256:256aa893c64c70b3643741e114f77ccd796837f5de176b7aefa382772c3e80e4"
+            },
+            "canonical_label": "Rue Pieter 2, 1190 Forest BE",
+            "address": {
+              "country": "BE",
+              "street": "Rue Pieter",
+              "houseNumber": "2",
+              "boxNumber": null,
+              "houseLetter": null,
+              "houseNumberAddition": null,
+              "postcode": "1190",
+              "municipality": "Forest",
+              "locality": null
+            },
+            "country": "BE",
+            "postcode": "1190",
+            "municipality": "Forest",
+            "street": "Rue Pieter",
+            "house_number": "2",
+            "house_letter": null,
+            "house_number_addition": null,
+            "box_number": null,
+            "source_record_id": "1",
+            "street_id": "https://databrussels.be/id/streetname/3033",
+            "identity_status": "official_assignment_unknown",
+            "source_status": "current",
+            "officially_assigned": null,
+            "position": {
+              "latitude": 50.80960483,
+              "longitude": 4.31772616
+            },
+            "position_status": "official_source_position",
+            "names": {
+              "street": {
+                "fr": "Rue Pieter",
+                "nl": "Pieterstraat"
+              },
+              "municipality": {
+                "fr": "Forest",
+                "nl": "Vorst"
+              }
+            },
+            "provenance": {
+              "region": "BE-BRU",
+              "datasetVersion": "2026-10-03",
+              "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+              "capturedAt": 1791906674994,
+              "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+              "licenseReview": "source_terms_archived",
+              "originalCRS": "EPSG:31370",
+              "originalPosition": {
+                "x": 146403.64900003717,
+                "y": 166574.29000060074
+              },
+              "axisOrder": "longitude,latitude",
+              "coordinateTransformation": {
+                "sourceCRS": "EPSG:31370",
+                "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+                "axisOrder": "longitude,latitude; point object fields explicit",
+                "pyproj": "3.7.2",
+                "PROJ": "9.5.1",
+                "EPSGDatabaseVersion": "v11.022",
+                "bestAvailable": true,
+                "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+                "accuracyMeters": 1,
+                "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+                "missingGridOperations": []
+              },
+              "positionMethod": "official-address-point",
+              "positionQuality": {
+                "entranceCertified": false
+              },
+              "sourceStatus": "current-only-distribution",
+              "names": {
+                "street": {
+                  "fr": "Rue Pieter",
+                  "nl": "Pieterstraat"
+                },
+                "municipality": {
+                  "fr": "Forest",
+                  "nl": "Vorst"
+                }
+              },
+              "sourceExtra": {
+                "parentId": null,
+                "municipalityId": "https://databrussels.be/id/municipality/21007"
+              }
+            },
+            "routing_access": "not_evaluated",
+            "accessProven": false,
+            "routeProven": false
+          }
+        ],
+        "matched_count": 1,
+        "complete": true,
+        "truncated": false,
+        "metrics": {
+          "object_reads": 8,
+          "compressed_bytes": 192778,
+          "cache_hits": 0
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "selected": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "https://databrussels.be/id/address/1",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "UrbIS Addresses / Paradigm",
+            "source_version": "record-content-sha256:256aa893c64c70b3643741e114f77ccd796837f5de176b7aefa382772c3e80e4"
+          },
+          "canonical_label": "Rue Pieter 2, 1190 Forest BE",
+          "address": {
+            "country": "BE",
+            "street": "Rue Pieter",
+            "houseNumber": "2",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1190",
+            "municipality": "Forest",
+            "locality": null
+          },
+          "country": "BE",
+          "postcode": "1190",
+          "municipality": "Forest",
+          "street": "Rue Pieter",
+          "house_number": "2",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "1",
+          "street_id": "https://databrussels.be/id/streetname/3033",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.80960483,
+            "longitude": 4.31772616
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Rue Pieter",
+              "nl": "Pieterstraat"
+            },
+            "municipality": {
+              "fr": "Forest",
+              "nl": "Vorst"
+            }
+          },
+          "provenance": {
+            "region": "BE-BRU",
+            "datasetVersion": "2026-10-03",
+            "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+            "capturedAt": 1791906674994,
+            "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 146403.64900003717,
+              "y": 166574.29000060074
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "official-address-point",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "current-only-distribution",
+            "names": {
+              "street": {
+                "fr": "Rue Pieter",
+                "nl": "Pieterstraat"
+              },
+              "municipality": {
+                "fr": "Forest",
+                "nl": "Vorst"
+              }
+            },
+            "sourceExtra": {
+              "parentId": null,
+              "municipalityId": "https://databrussels.be/id/municipality/21007"
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "reverified": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "https://databrussels.be/id/address/1",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "UrbIS Addresses / Paradigm",
+            "source_version": "record-content-sha256:256aa893c64c70b3643741e114f77ccd796837f5de176b7aefa382772c3e80e4"
+          },
+          "canonical_label": "Rue Pieter 2, 1190 Forest BE",
+          "address": {
+            "country": "BE",
+            "street": "Rue Pieter",
+            "houseNumber": "2",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1190",
+            "municipality": "Forest",
+            "locality": null
+          },
+          "country": "BE",
+          "postcode": "1190",
+          "municipality": "Forest",
+          "street": "Rue Pieter",
+          "house_number": "2",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "1",
+          "street_id": "https://databrussels.be/id/streetname/3033",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.80960483,
+            "longitude": 4.31772616
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Rue Pieter",
+              "nl": "Pieterstraat"
+            },
+            "municipality": {
+              "fr": "Forest",
+              "nl": "Vorst"
+            }
+          },
+          "provenance": {
+            "region": "BE-BRU",
+            "datasetVersion": "2026-10-03",
+            "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+            "capturedAt": 1791906674994,
+            "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 146403.64900003717,
+              "y": 166574.29000060074
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "official-address-point",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "current-only-distribution",
+            "names": {
+              "street": {
+                "fr": "Rue Pieter",
+                "nl": "Pieterstraat"
+              },
+              "municipality": {
+                "fr": "Forest",
+                "nl": "Vorst"
+              }
+            },
+            "sourceExtra": {
+              "parentId": null,
+              "municipalityId": "https://databrussels.be/id/municipality/21007"
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      }
+    },
+    {
+      "region": "BE-BRU",
+      "targetId": "https://databrussels.be/id/address/10",
+      "request": {
+        "schema": "fluxidi-official-address-text-v1",
+        "mode": "suggest",
+        "country": "BE",
+        "street": "Rue des Poussins",
+        "postcode": "1180",
+        "house_number": "15",
+        "language": "nl",
+        "limit": 20
+      },
+      "response": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "suggestions",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "search_revision": "official-be-nl-text-v1-fef5ebdcdd9a2909c45cdffe-compact-names-v2",
+        "candidates": [
+          {
+            "official_address": {
+              "id": "https://databrussels.be/id/address/10",
+              "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+              "source": "UrbIS Addresses / Paradigm",
+              "source_version": "record-content-sha256:9cca0c2aeb4674a3524caff93626cfa4745df1332590343d8031b931e3d0488a"
+            },
+            "canonical_label": "Rue des Poussins 15, 1180 Uccle BE",
+            "address": {
+              "country": "BE",
+              "street": "Rue des Poussins",
+              "houseNumber": "15",
+              "boxNumber": null,
+              "houseLetter": null,
+              "houseNumberAddition": null,
+              "postcode": "1180",
+              "municipality": "Uccle",
+              "locality": null
+            },
+            "country": "BE",
+            "postcode": "1180",
+            "municipality": "Uccle",
+            "street": "Rue des Poussins",
+            "house_number": "15",
+            "house_letter": null,
+            "house_number_addition": null,
+            "box_number": null,
+            "source_record_id": "10",
+            "street_id": "https://databrussels.be/id/streetname/4394",
+            "identity_status": "official_assignment_unknown",
+            "source_status": "current",
+            "officially_assigned": null,
+            "position": {
+              "latitude": 50.79402211,
+              "longitude": 4.33476545
+            },
+            "position_status": "official_source_position",
+            "names": {
+              "street": {
+                "fr": "Rue des Poussins",
+                "nl": "Kippekensstraat"
+              },
+              "municipality": {
+                "fr": "Uccle",
+                "nl": "Ukkel"
+              }
+            },
+            "provenance": {
+              "region": "BE-BRU",
+              "datasetVersion": "2026-10-03",
+              "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+              "capturedAt": 1791906674994,
+              "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+              "licenseReview": "source_terms_archived",
+              "originalCRS": "EPSG:31370",
+              "originalPosition": {
+                "x": 147603.8250000307,
+                "y": 164840.2020005947
+              },
+              "axisOrder": "longitude,latitude",
+              "coordinateTransformation": {
+                "sourceCRS": "EPSG:31370",
+                "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+                "axisOrder": "longitude,latitude; point object fields explicit",
+                "pyproj": "3.7.2",
+                "PROJ": "9.5.1",
+                "EPSGDatabaseVersion": "v11.022",
+                "bestAvailable": true,
+                "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+                "accuracyMeters": 1,
+                "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+                "missingGridOperations": []
+              },
+              "positionMethod": "official-address-point",
+              "positionQuality": {
+                "entranceCertified": false
+              },
+              "sourceStatus": "current-only-distribution",
+              "names": {
+                "street": {
+                  "fr": "Rue des Poussins",
+                  "nl": "Kippekensstraat"
+                },
+                "municipality": {
+                  "fr": "Uccle",
+                  "nl": "Ukkel"
+                }
+              },
+              "sourceExtra": {
+                "parentId": null,
+                "municipalityId": "https://databrussels.be/id/municipality/21016"
+              }
+            },
+            "routing_access": "not_evaluated",
+            "accessProven": false,
+            "routeProven": false
+          }
+        ],
+        "matched_count": 1,
+        "complete": true,
+        "truncated": false,
+        "metrics": {
+          "object_reads": 8,
+          "compressed_bytes": 132558,
+          "cache_hits": 1
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "selected": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "https://databrussels.be/id/address/10",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "UrbIS Addresses / Paradigm",
+            "source_version": "record-content-sha256:9cca0c2aeb4674a3524caff93626cfa4745df1332590343d8031b931e3d0488a"
+          },
+          "canonical_label": "Rue des Poussins 15, 1180 Uccle BE",
+          "address": {
+            "country": "BE",
+            "street": "Rue des Poussins",
+            "houseNumber": "15",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1180",
+            "municipality": "Uccle",
+            "locality": null
+          },
+          "country": "BE",
+          "postcode": "1180",
+          "municipality": "Uccle",
+          "street": "Rue des Poussins",
+          "house_number": "15",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "10",
+          "street_id": "https://databrussels.be/id/streetname/4394",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.79402211,
+            "longitude": 4.33476545
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Rue des Poussins",
+              "nl": "Kippekensstraat"
+            },
+            "municipality": {
+              "fr": "Uccle",
+              "nl": "Ukkel"
+            }
+          },
+          "provenance": {
+            "region": "BE-BRU",
+            "datasetVersion": "2026-10-03",
+            "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+            "capturedAt": 1791906674994,
+            "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 147603.8250000307,
+              "y": 164840.2020005947
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "official-address-point",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "current-only-distribution",
+            "names": {
+              "street": {
+                "fr": "Rue des Poussins",
+                "nl": "Kippekensstraat"
+              },
+              "municipality": {
+                "fr": "Uccle",
+                "nl": "Ukkel"
+              }
+            },
+            "sourceExtra": {
+              "parentId": null,
+              "municipalityId": "https://databrussels.be/id/municipality/21016"
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "reverified": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "https://databrussels.be/id/address/10",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "UrbIS Addresses / Paradigm",
+            "source_version": "record-content-sha256:9cca0c2aeb4674a3524caff93626cfa4745df1332590343d8031b931e3d0488a"
+          },
+          "canonical_label": "Rue des Poussins 15, 1180 Uccle BE",
+          "address": {
+            "country": "BE",
+            "street": "Rue des Poussins",
+            "houseNumber": "15",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1180",
+            "municipality": "Uccle",
+            "locality": null
+          },
+          "country": "BE",
+          "postcode": "1180",
+          "municipality": "Uccle",
+          "street": "Rue des Poussins",
+          "house_number": "15",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "10",
+          "street_id": "https://databrussels.be/id/streetname/4394",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.79402211,
+            "longitude": 4.33476545
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Rue des Poussins",
+              "nl": "Kippekensstraat"
+            },
+            "municipality": {
+              "fr": "Uccle",
+              "nl": "Ukkel"
+            }
+          },
+          "provenance": {
+            "region": "BE-BRU",
+            "datasetVersion": "2026-10-03",
+            "payloadSha256": "1a71d16af3eb535f45be603e7062051ee1a9cff4ba263487b784a06cbe7b7ed7",
+            "capturedAt": 1791906674994,
+            "license": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 147603.8250000307,
+              "y": 164840.2020005947
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "official-address-point",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "current-only-distribution",
+            "names": {
+              "street": {
+                "fr": "Rue des Poussins",
+                "nl": "Kippekensstraat"
+              },
+              "municipality": {
+                "fr": "Uccle",
+                "nl": "Ukkel"
+              }
+            },
+            "sourceExtra": {
+              "parentId": null,
+              "municipalityId": "https://databrussels.be/id/municipality/21016"
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      }
+    },
+    {
+      "region": "BE-WAL",
+      "targetId": "urn:be:wallonie:icar:address:10",
+      "request": {
+        "schema": "fluxidi-official-address-text-v1",
+        "mode": "suggest",
+        "country": "BE",
+        "street": "Avenue Blücher",
+        "postcode": "1420",
+        "house_number": "6",
+        "language": "nl",
+        "limit": 20
+      },
+      "response": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "suggestions",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "search_revision": "official-be-nl-text-v1-fef5ebdcdd9a2909c45cdffe-compact-names-v2",
+        "candidates": [
+          {
+            "official_address": {
+              "id": "urn:be:wallonie:icar:address:10",
+              "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+              "source": "SPW ICAR",
+              "source_version": "modified:2019-10-02;record-content-sha256:db6d81c78e6e3c4854e7842ae7a1b2a1f72287504fa439b398403e3a3faca9c7"
+            },
+            "canonical_label": "Avenue Blücher 6, 1420 Braine-l'Alleud BE",
+            "address": {
+              "country": "BE",
+              "street": "Avenue Blücher",
+              "houseNumber": "6",
+              "boxNumber": null,
+              "houseLetter": null,
+              "houseNumberAddition": null,
+              "postcode": "1420",
+              "municipality": "Braine-l'Alleud",
+              "locality": "Braine-l'Alleud"
+            },
+            "country": "BE",
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "street": "Avenue Blücher",
+            "house_number": "6",
+            "house_letter": null,
+            "house_number_addition": null,
+            "box_number": null,
+            "source_record_id": "10",
+            "street_id": "urn:be:wallonie:icar:street:7700172",
+            "identity_status": "official_assignment_unknown",
+            "source_status": "current",
+            "officially_assigned": null,
+            "position": {
+              "latitude": 50.68202167,
+              "longitude": 4.39888426
+            },
+            "position_status": "official_source_position",
+            "names": {
+              "street": {
+                "fr": "Avenue Blücher",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "provenance": {
+              "region": "BE-WAL",
+              "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+              "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+              "capturedAt": 1791906668375,
+              "license": "https://creativecommons.org/licenses/by/4.0/",
+              "licenseReview": "source_terms_archived",
+              "originalCRS": "EPSG:31370",
+              "originalPosition": {
+                "x": 152129.677000001,
+                "y": 152381.465999998
+              },
+              "axisOrder": "longitude,latitude",
+              "coordinateTransformation": {
+                "sourceCRS": "EPSG:31370",
+                "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+                "axisOrder": "longitude,latitude; point object fields explicit",
+                "pyproj": "3.7.2",
+                "PROJ": "9.5.1",
+                "EPSGDatabaseVersion": "v11.022",
+                "bestAvailable": true,
+                "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+                "accuracyMeters": 1,
+                "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+                "missingGridOperations": []
+              },
+              "positionMethod": "PICC-building-centroid-or-unspecified",
+              "positionQuality": {
+                "entranceCertified": false
+              },
+              "sourceStatus": "O",
+              "names": {
+                "street": {
+                  "fr": "Avenue Blücher",
+                  "und": ""
+                },
+                "municipality": {
+                  "fr": "Braine-l'Alleud"
+                }
+              },
+              "sourceExtra": {
+                "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+                "municipalityId": "25014",
+                "createdAt": "2016-01-01",
+                "modifiedAt": "2019-10-02",
+                "endedAt": "",
+                "transferredAt": "2019-12-11",
+                "parentId": "",
+                "alternateStreet": "",
+                "alternateMunicipality": ""
+              }
+            },
+            "routing_access": "not_evaluated",
+            "accessProven": false,
+            "routeProven": false
+          }
+        ],
+        "matched_count": 1,
+        "complete": true,
+        "truncated": false,
+        "metrics": {
+          "object_reads": 8,
+          "compressed_bytes": 222990,
+          "cache_hits": 0
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "selected": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "urn:be:wallonie:icar:address:10",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "SPW ICAR",
+            "source_version": "modified:2019-10-02;record-content-sha256:db6d81c78e6e3c4854e7842ae7a1b2a1f72287504fa439b398403e3a3faca9c7"
+          },
+          "canonical_label": "Avenue Blücher 6, 1420 Braine-l'Alleud BE",
+          "address": {
+            "country": "BE",
+            "street": "Avenue Blücher",
+            "houseNumber": "6",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "locality": "Braine-l'Alleud"
+          },
+          "country": "BE",
+          "postcode": "1420",
+          "municipality": "Braine-l'Alleud",
+          "street": "Avenue Blücher",
+          "house_number": "6",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "10",
+          "street_id": "urn:be:wallonie:icar:street:7700172",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.68202167,
+            "longitude": 4.39888426
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Avenue Blücher",
+              "und": ""
+            },
+            "municipality": {
+              "fr": "Braine-l'Alleud"
+            }
+          },
+          "provenance": {
+            "region": "BE-WAL",
+            "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+            "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+            "capturedAt": 1791906668375,
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 152129.677000001,
+              "y": 152381.465999998
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "PICC-building-centroid-or-unspecified",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "O",
+            "names": {
+              "street": {
+                "fr": "Avenue Blücher",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "sourceExtra": {
+              "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+              "municipalityId": "25014",
+              "createdAt": "2016-01-01",
+              "modifiedAt": "2019-10-02",
+              "endedAt": "",
+              "transferredAt": "2019-12-11",
+              "parentId": "",
+              "alternateStreet": "",
+              "alternateMunicipality": ""
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "reverified": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "urn:be:wallonie:icar:address:10",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "SPW ICAR",
+            "source_version": "modified:2019-10-02;record-content-sha256:db6d81c78e6e3c4854e7842ae7a1b2a1f72287504fa439b398403e3a3faca9c7"
+          },
+          "canonical_label": "Avenue Blücher 6, 1420 Braine-l'Alleud BE",
+          "address": {
+            "country": "BE",
+            "street": "Avenue Blücher",
+            "houseNumber": "6",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "locality": "Braine-l'Alleud"
+          },
+          "country": "BE",
+          "postcode": "1420",
+          "municipality": "Braine-l'Alleud",
+          "street": "Avenue Blücher",
+          "house_number": "6",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "10",
+          "street_id": "urn:be:wallonie:icar:street:7700172",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.68202167,
+            "longitude": 4.39888426
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Avenue Blücher",
+              "und": ""
+            },
+            "municipality": {
+              "fr": "Braine-l'Alleud"
+            }
+          },
+          "provenance": {
+            "region": "BE-WAL",
+            "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+            "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+            "capturedAt": 1791906668375,
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 152129.677000001,
+              "y": 152381.465999998
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "PICC-building-centroid-or-unspecified",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "O",
+            "names": {
+              "street": {
+                "fr": "Avenue Blücher",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "sourceExtra": {
+              "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+              "municipalityId": "25014",
+              "createdAt": "2016-01-01",
+              "modifiedAt": "2019-10-02",
+              "endedAt": "",
+              "transferredAt": "2019-12-11",
+              "parentId": "",
+              "alternateStreet": "",
+              "alternateMunicipality": ""
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      }
+    },
+    {
+      "region": "BE-WAL",
+      "targetId": "urn:be:wallonie:icar:address:100",
+      "request": {
+        "schema": "fluxidi-official-address-text-v1",
+        "mode": "suggest",
+        "country": "BE",
+        "street": "Avenue des Grives",
+        "postcode": "1420",
+        "house_number": "24",
+        "language": "nl",
+        "limit": 20
+      },
+      "response": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "suggestions",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "search_revision": "official-be-nl-text-v1-fef5ebdcdd9a2909c45cdffe-compact-names-v2",
+        "candidates": [
+          {
+            "official_address": {
+              "id": "urn:be:wallonie:icar:address:100",
+              "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+              "source": "SPW ICAR",
+              "source_version": "modified:2019-10-09;record-content-sha256:d2e41ff2ff9ef1aa44598544b8cd4e58abd8fef63ae7230f2b0bc91e1852323d"
+            },
+            "canonical_label": "Avenue des Grives 24, 1420 Braine-l'Alleud BE",
+            "address": {
+              "country": "BE",
+              "street": "Avenue des Grives",
+              "houseNumber": "24",
+              "boxNumber": null,
+              "houseLetter": null,
+              "houseNumberAddition": null,
+              "postcode": "1420",
+              "municipality": "Braine-l'Alleud",
+              "locality": "Braine-l'Alleud"
+            },
+            "country": "BE",
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "street": "Avenue des Grives",
+            "house_number": "24",
+            "house_letter": null,
+            "house_number_addition": null,
+            "box_number": null,
+            "source_record_id": "100",
+            "street_id": "urn:be:wallonie:icar:street:7700240",
+            "identity_status": "official_assignment_unknown",
+            "source_status": "current",
+            "officially_assigned": null,
+            "position": {
+              "latitude": 50.71276647,
+              "longitude": 4.35789677
+            },
+            "position_status": "official_source_position",
+            "names": {
+              "street": {
+                "fr": "Avenue des Grives",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "provenance": {
+              "region": "BE-WAL",
+              "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+              "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+              "capturedAt": 1791906668375,
+              "license": "https://creativecommons.org/licenses/by/4.0/",
+              "licenseReview": "source_terms_archived",
+              "originalCRS": "EPSG:31370",
+              "originalPosition": {
+                "x": 149233.454999998,
+                "y": 155801.008000001
+              },
+              "axisOrder": "longitude,latitude",
+              "coordinateTransformation": {
+                "sourceCRS": "EPSG:31370",
+                "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+                "axisOrder": "longitude,latitude; point object fields explicit",
+                "pyproj": "3.7.2",
+                "PROJ": "9.5.1",
+                "EPSGDatabaseVersion": "v11.022",
+                "bestAvailable": true,
+                "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+                "accuracyMeters": 1,
+                "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+                "missingGridOperations": []
+              },
+              "positionMethod": "PICC-building-centroid-or-unspecified",
+              "positionQuality": {
+                "entranceCertified": false
+              },
+              "sourceStatus": "O",
+              "names": {
+                "street": {
+                  "fr": "Avenue des Grives",
+                  "und": ""
+                },
+                "municipality": {
+                  "fr": "Braine-l'Alleud"
+                }
+              },
+              "sourceExtra": {
+                "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+                "municipalityId": "25014",
+                "createdAt": "2016-01-01",
+                "modifiedAt": "2019-10-09",
+                "endedAt": "",
+                "transferredAt": "2019-12-11",
+                "parentId": "",
+                "alternateStreet": "",
+                "alternateMunicipality": ""
+              }
+            },
+            "routing_access": "not_evaluated",
+            "accessProven": false,
+            "routeProven": false
+          }
+        ],
+        "matched_count": 1,
+        "complete": true,
+        "truncated": false,
+        "metrics": {
+          "object_reads": 6,
+          "compressed_bytes": 173735,
+          "cache_hits": 3
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "selected": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "urn:be:wallonie:icar:address:100",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "SPW ICAR",
+            "source_version": "modified:2019-10-09;record-content-sha256:d2e41ff2ff9ef1aa44598544b8cd4e58abd8fef63ae7230f2b0bc91e1852323d"
+          },
+          "canonical_label": "Avenue des Grives 24, 1420 Braine-l'Alleud BE",
+          "address": {
+            "country": "BE",
+            "street": "Avenue des Grives",
+            "houseNumber": "24",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "locality": "Braine-l'Alleud"
+          },
+          "country": "BE",
+          "postcode": "1420",
+          "municipality": "Braine-l'Alleud",
+          "street": "Avenue des Grives",
+          "house_number": "24",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "100",
+          "street_id": "urn:be:wallonie:icar:street:7700240",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.71276647,
+            "longitude": 4.35789677
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Avenue des Grives",
+              "und": ""
+            },
+            "municipality": {
+              "fr": "Braine-l'Alleud"
+            }
+          },
+          "provenance": {
+            "region": "BE-WAL",
+            "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+            "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+            "capturedAt": 1791906668375,
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 149233.454999998,
+              "y": 155801.008000001
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "PICC-building-centroid-or-unspecified",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "O",
+            "names": {
+              "street": {
+                "fr": "Avenue des Grives",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "sourceExtra": {
+              "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+              "municipalityId": "25014",
+              "createdAt": "2016-01-01",
+              "modifiedAt": "2019-10-09",
+              "endedAt": "",
+              "transferredAt": "2019-12-11",
+              "parentId": "",
+              "alternateStreet": "",
+              "alternateMunicipality": ""
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      },
+      "reverified": {
+        "schema": "fluxidi-official-address-text-v1",
+        "ok": true,
+        "status": "official_assignment_unknown",
+        "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+        "candidate": {
+          "official_address": {
+            "id": "urn:be:wallonie:icar:address:100",
+            "index_revision": "official-be-nl-spatial-v2-c2369b3286ce357a669f3ef1",
+            "source": "SPW ICAR",
+            "source_version": "modified:2019-10-09;record-content-sha256:d2e41ff2ff9ef1aa44598544b8cd4e58abd8fef63ae7230f2b0bc91e1852323d"
+          },
+          "canonical_label": "Avenue des Grives 24, 1420 Braine-l'Alleud BE",
+          "address": {
+            "country": "BE",
+            "street": "Avenue des Grives",
+            "houseNumber": "24",
+            "boxNumber": null,
+            "houseLetter": null,
+            "houseNumberAddition": null,
+            "postcode": "1420",
+            "municipality": "Braine-l'Alleud",
+            "locality": "Braine-l'Alleud"
+          },
+          "country": "BE",
+          "postcode": "1420",
+          "municipality": "Braine-l'Alleud",
+          "street": "Avenue des Grives",
+          "house_number": "24",
+          "house_letter": null,
+          "house_number_addition": null,
+          "box_number": null,
+          "source_record_id": "100",
+          "street_id": "urn:be:wallonie:icar:street:7700240",
+          "identity_status": "official_assignment_unknown",
+          "source_status": "current",
+          "officially_assigned": null,
+          "position": {
+            "latitude": 50.71276647,
+            "longitude": 4.35789677
+          },
+          "position_status": "official_source_position",
+          "names": {
+            "street": {
+              "fr": "Avenue des Grives",
+              "und": ""
+            },
+            "municipality": {
+              "fr": "Braine-l'Alleud"
+            }
+          },
+          "provenance": {
+            "region": "BE-WAL",
+            "datasetVersion": "2026-09-11 catalog; exact payload pinned by SHA256",
+            "payloadSha256": "8fdfae8a2dea75b9794249d16c509913ebab4cb127371482672c6ff0db22c25f",
+            "capturedAt": 1791906668375,
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "licenseReview": "source_terms_archived",
+            "originalCRS": "EPSG:31370",
+            "originalPosition": {
+              "x": 149233.454999998,
+              "y": 155801.008000001
+            },
+            "axisOrder": "longitude,latitude",
+            "coordinateTransformation": {
+              "sourceCRS": "EPSG:31370",
+              "targetCRS": "OGC:CRS84 / EPSG:4326 always_xy",
+              "axisOrder": "longitude,latitude; point object fields explicit",
+              "pyproj": "3.7.2",
+              "PROJ": "9.5.1",
+              "EPSGDatabaseVersion": "v11.022",
+              "bestAvailable": true,
+              "operation": "Inverse of Belgian Lambert 72 + BD72 to WGS 84 (3) + axis order change (2D)",
+              "accuracyMeters": 1,
+              "pipeline": "proj=pipeline step inv proj=lcc lat_0=90 lon_0=4.36748666666667 lat_1=51.1666672333333 lat_2=49.8333339 x_0=150000.013 y_0=5400088.438 ellps=intl step proj=push v_3 step proj=cart ellps=intl step proj=helmert x=-106.8686 y=52.2978 z=-103.7239 rx=-0.3366 ry=0.457 rz=-1.8422 s=-1.2747 convention=coordinate_frame step inv proj=cart ellps=WGS84 step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg",
+              "missingGridOperations": []
+            },
+            "positionMethod": "PICC-building-centroid-or-unspecified",
+            "positionQuality": {
+              "entranceCertified": false
+            },
+            "sourceStatus": "O",
+            "names": {
+              "street": {
+                "fr": "Avenue des Grives",
+                "und": ""
+              },
+              "municipality": {
+                "fr": "Braine-l'Alleud"
+              }
+            },
+            "sourceExtra": {
+              "officialIdNamespace": "ADR_ID; URI synthesized as internal namespace, not source URI",
+              "municipalityId": "25014",
+              "createdAt": "2016-01-01",
+              "modifiedAt": "2019-10-09",
+              "endedAt": "",
+              "transferredAt": "2019-12-11",
+              "parentId": "",
+              "alternateStreet": "",
+              "alternateMunicipality": ""
+            }
+          },
+          "routing_access": "not_evaluated",
+          "accessProven": false,
+          "routeProven": false
+        },
+        "accessProven": false,
+        "routeProven": false
+      }
+    }
+  ],
+  "productionRequests": 0,
+  "productionWrites": 0,
+  "paidProviderRequests": 0
+}

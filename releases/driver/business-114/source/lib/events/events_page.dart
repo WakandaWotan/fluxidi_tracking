@@ -1,0 +1,2235 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+
+import 'event_ai_intent_parser.dart';
+import 'event_category_results_page.dart';
+import 'event_data_source.dart';
+import 'event_markets.dart';
+import 'event_models.dart';
+import 'event_taxi_availability.dart';
+import 'saved_events_page.dart';
+
+EventDataSource buildDefaultEventLocatorDataSource({required String baseUrl}) {
+  return RemoteEventDataSource(
+    baseUrl: baseUrl,
+    fallbackDataSource: const EmptyEventDataSource(),
+  );
+}
+
+class EventsPage extends StatefulWidget {
+  const EventsPage({
+    this.onBookEvent,
+    this.onOpenHotels,
+    this.dataSource,
+    this.compactCustomerLayout = false,
+    super.key,
+  });
+
+  final EventBookCallback? onBookEvent;
+  final void Function(EventDetailData event)? onOpenHotels;
+  final EventDataSource? dataSource;
+  final bool compactCustomerLayout;
+
+  @override
+  State<EventsPage> createState() => _EventsPageState();
+}
+
+class _EventsPageState extends State<EventsPage> {
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bgBlack => _themePalette.background;
+  Color get _panelBlack => _themePalette.surface;
+  Color get _gold => _themePalette.gold;
+  Color get _softText => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  Color get _actionOnGold =>
+      _isDarkTheme ? Colors.black : const Color(0xFF1F1706);
+
+  static const List<String> _dateFilterKeys = <String>[
+    EventDateMode.all,
+    EventDateMode.today,
+    EventDateMode.weekend,
+    EventDateMode.month,
+  ];
+  static const List<String> _categoryFilterKeys = <String>[
+    'all',
+    EventCategoryKey.music,
+    EventCategoryKey.sport,
+    EventCategoryKey.theater,
+    EventCategoryKey.comedy,
+    EventCategoryKey.family,
+    EventCategoryKey.culture,
+  ];
+  static const List<String> _landingCategoryKeys = <String>[
+    EventCategoryKey.music,
+    EventCategoryKey.sport,
+    EventCategoryKey.theater,
+    EventCategoryKey.comedy,
+    EventCategoryKey.family,
+    EventCategoryKey.culture,
+  ];
+  static const List<String> _marketKeys = kFluxidiEventMarketKeys;
+  static const List<String> _sortModes = <String>[
+    'default',
+    'soonest',
+    'latest',
+    'popular',
+  ];
+
+  final TextEditingController _searchController = TextEditingController();
+  static const List<String> _eventAiPromptExamples = <String>[
+    'Concerten dit weekend in België',
+    'Sportevents in Spanje',
+    'Comedy in UK',
+    'Familie events in Nederland',
+    'Theater in Frankrijk',
+  ];
+  late final EventDataSource _dataSource;
+  late String _selectedMarketKey;
+  String _selectedDateMode = EventDateMode.all;
+  DateTime? _selectedMonthStartUtc;
+  DateTime? _selectedMonthEndUtc;
+  String _selectedCategoryKey = 'all';
+  String _selectedSortMode = 'default';
+  String? _pressedCategoryKey;
+  bool _didPrecacheCategoryImages = false;
+  final Map<String, ImageProvider<Object>> _categoryImageProviders =
+      <String, ImageProvider<Object>>{};
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (appConfig.currentLanguage) {
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+      case AppLanguage.nl:
+        return nl;
+    case AppLanguage.de:
+      return en;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    customerThemeNotifier.addListener(_onThemeChanged);
+    appLanguageNotifier.addListener(_onThemeChanged);
+    _selectedMarketKey = _marketKeys.first;
+    _dataSource = widget.dataSource ?? const EmptyEventDataSource();
+  }
+
+  void _onThemeChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _precacheCategoryTileImages();
+  }
+
+  @override
+  void dispose() {
+    customerThemeNotifier.removeListener(_onThemeChanged);
+    appLanguageNotifier.removeListener(_onThemeChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _precacheCategoryTileImages() {
+    if (_didPrecacheCategoryImages) return;
+    _didPrecacheCategoryImages = true;
+    for (final key in _categoryFilterKeys) {
+      precacheImage(_categoryImageProvider(key), context).catchError((_) {});
+    }
+  }
+
+  ImageProvider<Object> _categoryImageProvider(String categoryKey) {
+    return _categoryImageProviders.putIfAbsent(
+      categoryKey,
+      () => AssetImage(_categoryTileAssetPath(categoryKey)),
+    );
+  }
+
+  String _marketLabel(String key) {
+    return fluxidiEventMarketLabel(key, appConfig.currentLanguage.name);
+  }
+
+  String _dateFilterLabel(String key) {
+    switch (key) {
+      case EventDateMode.all:
+        return _t(nl: 'Alles', en: 'All', fr: 'Tout', es: 'Todo');
+      case EventDateMode.today:
+        return _t(nl: 'Vandaag', en: 'Today', fr: 'Aujourd’hui', es: 'Hoy');
+      case EventDateMode.weekend:
+        return _t(
+          nl: 'Dit weekend',
+          en: 'This weekend',
+          fr: 'Ce week-end',
+          es: 'Este fin de semana',
+        );
+      case EventDateMode.month:
+        if (_selectedMonthStartUtc == null) {
+          return _t(nl: 'Maand', en: 'Month', fr: 'Mois', es: 'Mes');
+        }
+        final local = _selectedMonthStartUtc!.toLocal();
+        return '${local.month.toString().padLeft(2, '0')}-${local.year}';
+      default:
+        return key;
+    }
+  }
+
+  String _categoryFilterLabel(String key) {
+    switch (key) {
+      case 'all':
+        return _t(
+          nl: 'Alle categorieën',
+          en: 'All categories',
+          fr: 'Toutes catégories',
+          es: 'Todas categorías',
+        );
+      case EventCategoryKey.music:
+        return _t(nl: 'Muziek', en: 'Music', fr: 'Musique', es: 'Música');
+      case EventCategoryKey.sport:
+        return _t(nl: 'Sport', en: 'Sport', fr: 'Sport', es: 'Deporte');
+      case EventCategoryKey.theater:
+        return _t(nl: 'Theater', en: 'Theater', fr: 'Théâtre', es: 'Teatro');
+      case EventCategoryKey.comedy:
+        return _t(nl: 'Comedy', en: 'Comedy', fr: 'Comédie', es: 'Comedia');
+      case EventCategoryKey.family:
+        return _t(nl: 'Familie', en: 'Family', fr: 'Famille', es: 'Familia');
+      case EventCategoryKey.food:
+        return _t(nl: 'Food', en: 'Food', fr: 'Cuisine', es: 'Comida');
+      case EventCategoryKey.business:
+        return _t(
+          nl: 'Zakelijk',
+          en: 'Business',
+          fr: 'Business',
+          es: 'Negocios',
+        );
+      case EventCategoryKey.culture:
+        return _t(nl: 'Cultuur', en: 'Culture', fr: 'Culture', es: 'Cultura');
+      case EventCategoryKey.other:
+        return _t(nl: 'Overig', en: 'Other', fr: 'Autre', es: 'Otro');
+      default:
+        return key;
+    }
+  }
+
+  String _sortModeLabel(String key) {
+    switch (key) {
+      case 'soonest':
+        return _t(
+          nl: 'Eerstkomend',
+          en: 'Soonest first',
+          fr: 'Plus proche',
+          es: 'Mas cercano',
+        );
+      case 'latest':
+        return _t(
+          nl: 'Later/laatst',
+          en: 'Latest first',
+          fr: 'Plus tard',
+          es: 'Mas tarde',
+        );
+      case 'popular':
+        return _t(
+          nl: 'Populair',
+          en: 'Popular',
+          fr: 'Populaire',
+          es: 'Popular',
+        );
+      case 'default':
+      default:
+        return _t(
+          nl: 'Standaard',
+          en: 'Default',
+          fr: 'Defaut',
+          es: 'Predeterminado',
+        );
+    }
+  }
+
+  String _formatMonthLabel(DateTime startUtc) {
+    final local = startUtc.toLocal();
+    return '${local.month.toString().padLeft(2, '0')}-${local.year}';
+  }
+
+  String get _activeFilterSummaryText {
+    final parts = <String>[
+      _marketLabel(_selectedMarketKey),
+      _dateFilterLabel(_selectedDateMode),
+      _sortModeLabel(_selectedSortMode),
+    ];
+    if (_selectedCategoryKey != 'all') {
+      parts.add(_categoryFilterLabel(_selectedCategoryKey));
+    }
+    final joined = parts.join(' · ');
+    return _t(
+      nl: 'Actief: $joined',
+      en: 'Active: $joined',
+      fr: 'Actif : $joined',
+      es: 'Activo: $joined',
+    );
+  }
+
+  List<_MonthFilterOption> _nextTwelveMonthOptions() {
+    final nowLocal = DateTime.now().toLocal();
+    final firstMonthLocal = DateTime(nowLocal.year, nowLocal.month, 1);
+    return List<_MonthFilterOption>.generate(12, (index) {
+      final monthStartLocal = DateTime(
+        firstMonthLocal.year,
+        firstMonthLocal.month + index,
+        1,
+      );
+      final nextMonthStartLocal = DateTime(
+        monthStartLocal.year,
+        monthStartLocal.month + 1,
+        1,
+      );
+      return _MonthFilterOption(
+        startUtc: monthStartLocal.toUtc(),
+        endUtc: nextMonthStartLocal
+            .subtract(const Duration(milliseconds: 1))
+            .toUtc(),
+      );
+    });
+  }
+
+  Future<void> _openMonthPicker() async {
+    final options = _nextTwelveMonthOptions();
+    final selectedStartUtc = _selectedMonthStartUtc;
+    final chosen = await showModalBottomSheet<_MonthFilterOption>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Selecteer maand',
+                    en: 'Select month',
+                    fr: 'Sélectionner le mois',
+                    es: 'Seleccionar mes',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final option = options[index];
+                      final isSelected =
+                          selectedStartUtc != null &&
+                          option.startUtc.isAtSameMomentAs(selectedStartUtc);
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _formatMonthLabel(option.startUtc),
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(option),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || chosen == null) return;
+    setState(() {
+      _selectedDateMode = EventDateMode.month;
+      _selectedMonthStartUtc = chosen.startUtc;
+      _selectedMonthEndUtc = chosen.endUtc;
+    });
+  }
+
+  Future<void> _handleBookEvent(EventDetailData event) async {
+    final EventTaxiDestination dest = eventTaxiDestination(event);
+    final EventTaxiAvailability availability = await checkEventTaxiAvailability(
+      baseUrl: kBookingBaseUrl,
+      destination: dest,
+    );
+    if (!mounted) return;
+    if (!availability.hasBookable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            fluxidiEventNoCarriersLabel(appConfig.currentLanguage.name),
+          ),
+        ),
+      );
+    }
+    widget.onBookEvent?.call(event);
+  }
+
+  Future<void> _openSavedEventsPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<SavedEventsPage>(
+        builder: (_) => SavedEventsPage(onBookEvent: _handleBookEvent),
+      ),
+    );
+  }
+
+  Future<void> _openResultsPage({
+    required String title,
+    required String categoryKey,
+    required String searchQuery,
+    String? marketKey,
+    String? dateMode,
+    DateTime? monthStartUtc,
+    DateTime? monthEndUtc,
+    String? sortMode,
+    bool useProvidedMonthRangeOnly = false,
+  }) async {
+    final targetMarketKey = marketKey ?? _selectedMarketKey;
+    final targetDateMode = dateMode ?? _selectedDateMode;
+    final targetSortMode = sortMode ?? _selectedSortMode;
+    final targetMonthStartUtc = useProvidedMonthRangeOnly
+        ? monthStartUtc
+        : (monthStartUtc ?? _selectedMonthStartUtc);
+    final targetMonthEndUtc = useProvidedMonthRangeOnly
+        ? monthEndUtc
+        : (monthEndUtc ?? _selectedMonthEndUtc);
+    await Navigator.of(context).push(
+      MaterialPageRoute<EventCategoryResultsPage>(
+        builder: (_) => EventCategoryResultsPage(
+          title: title,
+          dataSource: _dataSource,
+          marketKey: targetMarketKey,
+          dateMode: targetDateMode,
+          monthStartUtc: targetMonthStartUtc,
+          monthEndUtc: targetMonthEndUtc,
+          categoryKey: categoryKey,
+          searchQuery: searchQuery.trim(),
+          sortMode: targetSortMode,
+          onBookEvent: _handleBookEvent,
+          onOpenHotels: widget.onOpenHotels,
+          compactCustomerLayout: widget.compactCustomerLayout,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSearchResults() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    await _openResultsPage(
+      title: _t(nl: 'Zoeken', en: 'Search', fr: 'Recherche', es: 'Buscar'),
+      categoryKey: _selectedCategoryKey,
+      searchQuery: query,
+    );
+  }
+
+  String _eventAiDateLabel(String dateSignal) {
+    switch (dateSignal) {
+      case EventDateMode.today:
+        return _t(nl: 'vandaag', en: 'today', fr: 'aujourd’hui', es: 'hoy');
+      case EventDateMode.weekend:
+        return _t(
+          nl: 'dit weekend',
+          en: 'this weekend',
+          fr: 'ce week-end',
+          es: 'este fin de semana',
+        );
+      case EventDateMode.month:
+        return _t(
+          nl: 'deze maand',
+          en: 'this month',
+          fr: 'ce mois',
+          es: 'este mes',
+        );
+      case 'year':
+        return _t(
+          nl: 'dit jaar',
+          en: 'this year',
+          fr: 'cette année',
+          es: 'este año',
+        );
+      default:
+        return '';
+    }
+  }
+
+  String _eventAiExplanation(EventAiIntent intent) {
+    final categoryPart = intent.categoryKey == 'all'
+        ? _t(nl: 'events', en: 'events', fr: 'événements', es: 'eventos')
+        : '${_categoryFilterLabel(intent.categoryKey).toLowerCase()}-events';
+    final locationPart = _marketLabel(intent.marketKey);
+    final datePart = _eventAiDateLabel(intent.dateSignal);
+    final queryPart = intent.searchQuery.isEmpty
+        ? ''
+        : _t(
+            nl: ' Zoekterm: "${intent.searchQuery}".',
+            en: ' Query: "${intent.searchQuery}".',
+            fr: ' Terme: "${intent.searchQuery}".',
+            es: ' Búsqueda: "${intent.searchQuery}".',
+          );
+    if (datePart.isNotEmpty) {
+      return _t(
+            nl: 'Ik zoek $categoryPart in $locationPart voor $datePart.',
+            en: 'I am looking for $categoryPart in $locationPart for $datePart.',
+            fr: 'Je cherche des $categoryPart en $locationPart pour $datePart.',
+            es: 'Busco $categoryPart en $locationPart para $datePart.',
+          ) +
+          queryPart;
+    }
+    return _t(
+          nl: 'Ik zoek $categoryPart in $locationPart.',
+          en: 'I am looking for $categoryPart in $locationPart.',
+          fr: 'Je cherche des $categoryPart en $locationPart.',
+          es: 'Busco $categoryPart en $locationPart.',
+        ) +
+        queryPart;
+  }
+
+  Future<void> _submitEventAiInput({
+    required String rawInput,
+    required void Function(String errorText) showValidation,
+  }) async {
+    final trimmed = rawInput.trim();
+    if (trimmed.isEmpty) {
+      showValidation(
+        _t(
+          nl: 'Voer een vraag in voor Fluxidi AI.',
+          en: 'Enter a request for Fluxidi AI.',
+          fr: 'Saisissez une demande pour Fluxidi AI.',
+          es: 'Introduce una solicitud para Fluxidi AI.',
+        ),
+      );
+      return;
+    }
+    final intent = parseEventAiIntent(
+      input: trimmed,
+      fallbackMarketKey: _selectedMarketKey,
+      fallbackDateMode: _selectedDateMode,
+    );
+    debugPrint('[EVENT_AI] input=$trimmed');
+    debugPrint(
+      '[EVENT_AI] parsed market=${intent.marketKey} category=${intent.categoryKey} date=${intent.dateSignal} query=${intent.searchQuery}',
+    );
+    if (!mounted) return;
+    final aiMarketKey = intent.marketKey;
+    final aiCategoryKey = intent.categoryKey;
+    final aiDateKey = intent.dateMode;
+    final aiSearchQuery = intent.searchQuery;
+    debugPrint(
+      '[EVENT_AI] navigate market=$aiMarketKey category=$aiCategoryKey date=$aiDateKey query=$aiSearchQuery',
+    );
+    debugPrint('[EVENT_AI] state_isolated=true');
+    Navigator.of(context).pop();
+    await _openResultsPage(
+      title: _t(
+        nl: 'Fluxidi AI resultaten',
+        en: 'Fluxidi AI results',
+        fr: 'Résultats Fluxidi AI',
+        es: 'Resultados Fluxidi AI',
+      ),
+      marketKey: aiMarketKey,
+      dateMode: aiDateKey,
+      monthStartUtc: aiDateKey == EventDateMode.month
+          ? _selectedMonthStartUtc
+          : null,
+      monthEndUtc: aiDateKey == EventDateMode.month
+          ? _selectedMonthEndUtc
+          : null,
+      useProvidedMonthRangeOnly: true,
+      categoryKey: aiCategoryKey,
+      searchQuery: aiSearchQuery,
+    );
+  }
+
+  Future<void> _openEventAiAssistant() async {
+    final aiController = TextEditingController(
+      text: _searchController.text.trim(),
+    );
+    String currentInput = aiController.text;
+    String? validationError;
+    bool isListening = false;
+    bool speechAvailable = false;
+    String? voiceErrorMessage;
+    String? voiceStatusMessage;
+    bool voiceAutoSubmitted = false;
+    var sheetIsOpen = true;
+    StateSetter? sheetStateSetter;
+    final speech = stt.SpeechToText();
+
+    void safeSetSheetState(VoidCallback fn) {
+      if (!sheetIsOpen) return;
+      final setter = sheetStateSetter;
+      if (setter == null) return;
+      setter(fn);
+    }
+
+    Future<void> stopListening() async {
+      try {
+        await speech.stop();
+      } catch (_) {}
+      safeSetSheetState(() {
+        isListening = false;
+        voiceStatusMessage = null;
+      });
+    }
+
+    Future<void> autoSubmitVoiceInput() async {
+      if (voiceAutoSubmitted || !sheetIsOpen) return;
+      final voiceText = currentInput.trim();
+      if (voiceText.isEmpty) {
+        safeSetSheetState(() {
+          voiceStatusMessage = null;
+          voiceErrorMessage = _t(
+            nl: 'Geen spraaktekst herkend. Probeer opnieuw.',
+            en: 'No speech recognized. Please try again.',
+            fr: 'Aucun texte vocal reconnu. Réessayez.',
+            es: 'No se reconoció texto de voz. Inténtalo de nuevo.',
+          );
+        });
+        return;
+      }
+      voiceAutoSubmitted = true;
+      if (speech.isListening) {
+        try {
+          await speech.stop();
+        } catch (_) {}
+      }
+      safeSetSheetState(() {
+        isListening = false;
+        validationError = null;
+        voiceErrorMessage = null;
+        voiceStatusMessage = _t(
+          nl: 'Zoeken…',
+          en: 'Searching…',
+          fr: 'Recherche…',
+          es: 'Buscando…',
+        );
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!sheetIsOpen || !mounted) return;
+      await _submitEventAiInput(
+        rawInput: voiceText,
+        showValidation: (message) => safeSetSheetState(() {
+          validationError = message;
+        }),
+      );
+    }
+
+    EventAiIntent currentIntent = parseEventAiIntent(
+      input: currentInput,
+      fallbackMarketKey: _selectedMarketKey,
+      fallbackDateMode: _selectedDateMode,
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            sheetStateSetter = setSheetState;
+
+            Future<void> onMicTap() async {
+              if (isListening || speech.isListening) {
+                await stopListening();
+                return;
+              }
+              voiceAutoSubmitted = false;
+
+              final micPermission = await Permission.microphone.request();
+              if (!micPermission.isGranted) {
+                safeSetSheetState(() {
+                  speechAvailable = false;
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = micPermission.isPermanentlyDenied
+                      ? _t(
+                          nl: 'Microfoon staat uit in instellingen.',
+                          en: 'Microphone access is disabled in settings.',
+                          fr: 'L’accès micro est désactivé dans les réglages.',
+                          es: 'El acceso al micrófono está desactivado en ajustes.',
+                        )
+                      : _t(
+                          nl: 'Microfoon-toegang is nodig voor spraakinvoer.',
+                          en: 'Microphone access is required for voice input.',
+                          fr: 'L’accès micro est nécessaire pour la saisie vocale.',
+                          es: 'Se necesita acceso al micrófono para la entrada por voz.',
+                        );
+                });
+                return;
+              }
+
+              bool available;
+              try {
+                available = await speech.initialize(
+                  onStatus: (status) {
+                    final lowered = status.toLowerCase();
+                    if (lowered.contains('listening')) {
+                      safeSetSheetState(() {
+                        isListening = true;
+                        voiceErrorMessage = null;
+                        voiceStatusMessage = _t(
+                          nl: 'Luisteren…',
+                          en: 'Listening…',
+                          fr: 'Écoute…',
+                          es: 'Escuchando…',
+                        );
+                      });
+                      return;
+                    }
+                    if (lowered.contains('done') ||
+                        lowered.contains('notlistening') ||
+                        lowered.contains('not listening')) {
+                      safeSetSheetState(() {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                      });
+                    }
+                  },
+                  onError: (_) {
+                    safeSetSheetState(() {
+                      isListening = false;
+                      voiceStatusMessage = null;
+                      voiceErrorMessage = _t(
+                        nl: 'Spraakherkenning is tijdelijk niet beschikbaar.',
+                        en: 'Speech recognition is temporarily unavailable.',
+                        fr: 'La reconnaissance vocale est temporairement indisponible.',
+                        es: 'El reconocimiento de voz no está disponible temporalmente.',
+                      );
+                    });
+                  },
+                );
+              } catch (_) {
+                available = false;
+              }
+
+              if (!available) {
+                safeSetSheetState(() {
+                  speechAvailable = false;
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = _t(
+                    nl: 'Spraakherkenning wordt niet ondersteund op dit toestel.',
+                    en: 'Speech recognition is not supported on this device.',
+                    fr: 'La reconnaissance vocale n’est pas prise en charge sur cet appareil.',
+                    es: 'El reconocimiento de voz no es compatible en este dispositivo.',
+                  );
+                });
+                return;
+              }
+
+              safeSetSheetState(() {
+                speechAvailable = true;
+                isListening = true;
+                voiceErrorMessage = null;
+                voiceStatusMessage = _t(
+                  nl: 'Luisteren…',
+                  en: 'Listening…',
+                  fr: 'Écoute…',
+                  es: 'Escuchando…',
+                );
+              });
+
+              try {
+                await speech.listen(
+                  listenMode: stt.ListenMode.search,
+                  partialResults: true,
+                  cancelOnError: true,
+                  onResult: (result) async {
+                    final words = result.recognizedWords.trim();
+                    if (words.isNotEmpty) {
+                      aiController.text = words;
+                      aiController.selection = TextSelection.fromPosition(
+                        TextPosition(offset: aiController.text.length),
+                      );
+                    }
+                    safeSetSheetState(() {
+                      currentInput = aiController.text;
+                      validationError = null;
+                      voiceErrorMessage = null;
+                      if (!speech.isListening) {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                      }
+                      currentIntent = parseEventAiIntent(
+                        input: currentInput,
+                        fallbackMarketKey: _selectedMarketKey,
+                        fallbackDateMode: _selectedDateMode,
+                      );
+                    });
+                    if (!result.finalResult) return;
+                    if (currentInput.trim().isEmpty) {
+                      safeSetSheetState(() {
+                        isListening = false;
+                        voiceStatusMessage = null;
+                        voiceErrorMessage = _t(
+                          nl: 'Geen spraaktekst herkend. Probeer opnieuw.',
+                          en: 'No speech recognized. Please try again.',
+                          fr: 'Aucun texte vocal reconnu. Réessayez.',
+                          es: 'No se reconoció texto de voz. Inténtalo de nuevo.',
+                        );
+                      });
+                      return;
+                    }
+                    await autoSubmitVoiceInput();
+                  },
+                );
+              } catch (_) {
+                safeSetSheetState(() {
+                  isListening = false;
+                  voiceStatusMessage = null;
+                  voiceErrorMessage = _t(
+                    nl: 'Kon spraakherkenning niet starten.',
+                    en: 'Could not start speech recognition.',
+                    fr: 'Impossible de démarrer la reconnaissance vocale.',
+                    es: 'No se pudo iniciar el reconocimiento de voz.',
+                  );
+                });
+              }
+            }
+
+            final hasInput = currentInput.trim().isNotEmpty;
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(14, 10, 14, 16 + bottomInset),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _t(
+                          nl: 'Vraag Fluxidi AI',
+                          en: 'Ask Fluxidi AI',
+                          fr: 'Demander à Fluxidi AI',
+                          es: 'Preguntar a Fluxidi AI',
+                        ),
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16.2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: aiController,
+                        minLines: 1,
+                        maxLines: 3,
+                        textInputAction: TextInputAction.search,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            currentInput = value;
+                            validationError = null;
+                            currentIntent = parseEventAiIntent(
+                              input: value,
+                              fallbackMarketKey: _selectedMarketKey,
+                              fallbackDateMode: _selectedDateMode,
+                            );
+                          });
+                        },
+                        onSubmitted: (_) => _submitEventAiInput(
+                          rawInput: currentInput,
+                          showValidation: (message) => setSheetState(() {
+                            validationError = message;
+                          }),
+                        ),
+                        style: TextStyle(color: _textPrimary),
+                        decoration: InputDecoration(
+                          hintText: _t(
+                            nl: 'Bijv. concerten dit weekend in België',
+                            en: 'E.g. concerts this weekend in Belgium',
+                            fr: 'Ex. concerts ce week-end en Belgique',
+                            es: 'Ej. conciertos este fin de semana en Bélgica',
+                          ),
+                          hintStyle: TextStyle(color: _softText),
+                          filled: true,
+                          fillColor: _panelBlack,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 10,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: _gold.withOpacity(0.24),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: _gold, width: 1.2),
+                          ),
+                          suffixIcon: IconButton(
+                            onPressed: onMicTap,
+                            tooltip: isListening
+                                ? _t(
+                                    nl: 'Stop luisteren',
+                                    en: 'Stop listening',
+                                    fr: 'Arrêter l’écoute',
+                                    es: 'Detener escucha',
+                                  )
+                                : _t(
+                                    nl: 'Gebruik microfoon',
+                                    en: 'Use microphone',
+                                    fr: 'Utiliser le micro',
+                                    es: 'Usar micrófono',
+                                  ),
+                            icon: Icon(
+                              isListening
+                                  ? Icons.graphic_eq_rounded
+                                  : Icons.mic_rounded,
+                              color: _gold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (validationError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          validationError!,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8D8D),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (voiceStatusMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          voiceStatusMessage!,
+                          style: TextStyle(
+                            color: _gold.withOpacity(0.9),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (voiceErrorMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          voiceErrorMessage!,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8D8D),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      if (speechAvailable && !isListening) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _t(
+                            nl: 'Spraak ingevuld. Controleer en tik op Zoeken.',
+                            en: 'Voice input captured. Review and tap Search.',
+                            fr: 'Saisie vocale capturée. Vérifiez puis appuyez sur Rechercher.',
+                            es: 'Entrada de voz capturada. Revisa y pulsa Buscar.',
+                          ),
+                          style: TextStyle(
+                            color: _softText,
+                            fontSize: 11.4,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _eventAiPromptExamples.map((prompt) {
+                          return ActionChip(
+                            label: Text(
+                              prompt,
+                              style: TextStyle(
+                                color: _textPrimary,
+                                fontSize: 11.2,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            backgroundColor: _panelBlack,
+                            side: BorderSide(
+                              color: _border.withOpacity(
+                                _isDarkTheme ? 0.35 : 0.95,
+                              ),
+                            ),
+                            onPressed: () {
+                              aiController.text = prompt;
+                              aiController
+                                  .selection = TextSelection.fromPosition(
+                                TextPosition(offset: aiController.text.length),
+                              );
+                              setSheetState(() {
+                                currentInput = prompt;
+                                validationError = null;
+                                currentIntent = parseEventAiIntent(
+                                  input: prompt,
+                                  fallbackMarketKey: _selectedMarketKey,
+                                  fallbackDateMode: _selectedDateMode,
+                                );
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      if (hasInput) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _gold.withOpacity(0.26)),
+                          ),
+                          child: Text(
+                            _eventAiExplanation(currentIntent),
+                            style: TextStyle(
+                              color: _gold,
+                              fontSize: 11.8,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _submitEventAiInput(
+                            rawInput: currentInput,
+                            showValidation: (message) => setSheetState(() {
+                              validationError = message;
+                            }),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: _actionOnGold,
+                            minimumSize: const Size.fromHeight(42),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                          ),
+                          icon: const Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 17,
+                          ),
+                          label: Text(
+                            _t(
+                              nl: 'Zoeken',
+                              en: 'Search',
+                              fr: 'Rechercher',
+                              es: 'Buscar',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    sheetIsOpen = false;
+    sheetStateSetter = null;
+    if (speech.isListening) {
+      try {
+        await speech.stop();
+      } catch (_) {}
+    }
+    try {
+      await speech.cancel();
+    } catch (_) {}
+    aiController.dispose();
+  }
+
+  Future<void> _openMarketPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies regio',
+                    en: 'Choose region',
+                    fr: 'Choisir la region',
+                    es: 'Elegir region',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _marketKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _marketKeys[index];
+                      final isSelected = key == _selectedMarketKey;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _marketLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null || selected == _selectedMarketKey) return;
+    setState(() => _selectedMarketKey = selected);
+  }
+
+  Future<void> _openDatePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies datumfilter',
+                    en: 'Choose date filter',
+                    fr: 'Choisir le filtre de date',
+                    es: 'Elegir filtro de fecha',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _dateFilterKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _dateFilterKeys[index];
+                      final isSelected = key == _selectedDateMode;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _dateFilterLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    if (selected == EventDateMode.month) {
+      await _openMonthPicker();
+      return;
+    }
+    setState(() => _selectedDateMode = selected);
+  }
+
+  Future<void> _openCategoryPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Kies categorie',
+                    en: 'Choose category',
+                    fr: 'Choisir categorie',
+                    es: 'Elegir categoria',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _categoryFilterKeys.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _categoryFilterKeys[index];
+                      final isSelected = key == _selectedCategoryKey;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _categoryFilterLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _selectedCategoryKey = selected);
+    await _openResultsPage(
+      title: _categoryFilterLabel(selected),
+      categoryKey: selected,
+      searchQuery: _searchController.text,
+    );
+  }
+
+  Future<void> _openSortPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Sorteer events',
+                    en: 'Sort events',
+                    fr: 'Trier evenements',
+                    es: 'Ordenar eventos',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _sortModes.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(color: _gold.withOpacity(0.16), height: 1),
+                    itemBuilder: (context, index) {
+                      final key = _sortModes[index];
+                      final isSelected = key == _selectedSortMode;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
+                        title: Text(
+                          _sortModeLabel(key),
+                          style: TextStyle(
+                            color: isSelected ? _gold : _textPrimary,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_rounded, color: _gold)
+                            : null,
+                        onTap: () => Navigator.of(context).pop(key),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _selectedSortMode = selected);
+  }
+
+  Future<void> _openFiltersSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _panelBlack,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Filters',
+                    en: 'Filters',
+                    fr: 'Filtres',
+                    es: 'Filtros',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.calendar_month_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Datum', en: 'Date', fr: 'Date', es: 'Fecha'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _dateFilterLabel(_selectedDateMode),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openDatePicker();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.grid_view_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(
+                      nl: 'Categorie',
+                      en: 'Category',
+                      fr: 'Categorie',
+                      es: 'Categoria',
+                    ),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _categoryFilterLabel(_selectedCategoryKey),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openCategoryPicker();
+                  },
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  leading: Icon(
+                    Icons.swap_vert_rounded,
+                    color: _gold.withOpacity(0.95),
+                  ),
+                  title: Text(
+                    _t(nl: 'Sorteren', en: 'Sort', fr: 'Trier', es: 'Ordenar'),
+                    style: TextStyle(color: _textPrimary),
+                  ),
+                  subtitle: Text(
+                    _sortModeLabel(_selectedSortMode),
+                    style: TextStyle(color: _softText.withOpacity(0.9)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _openSortPicker();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _resetLandingFilters() {
+    setState(() {
+      _selectedDateMode = EventDateMode.all;
+      _selectedMonthStartUtc = null;
+      _selectedMonthEndUtc = null;
+      _selectedCategoryKey = 'all';
+      _selectedSortMode = 'default';
+      _searchController.clear();
+    });
+  }
+
+  List<Color> _categoryTileGradient(String categoryKey) {
+    switch (categoryKey) {
+      case EventCategoryKey.music:
+        return const <Color>[Color(0xFF1C2144), Color(0xFF11152C)];
+      case EventCategoryKey.sport:
+        return const <Color>[Color(0xFF173228), Color(0xFF0E2019)];
+      case EventCategoryKey.theater:
+        return const <Color>[Color(0xFF3A2244), Color(0xFF1D1327)];
+      case EventCategoryKey.comedy:
+        return const <Color>[Color(0xFF3D2A1B), Color(0xFF1E140E)];
+      case EventCategoryKey.family:
+        return const <Color>[Color(0xFF293F53), Color(0xFF162433)];
+      case EventCategoryKey.food:
+        return const <Color>[Color(0xFF3F2A1A), Color(0xFF21150D)];
+      case EventCategoryKey.business:
+        return const <Color>[Color(0xFF26374A), Color(0xFF172331)];
+      case EventCategoryKey.culture:
+        return const <Color>[Color(0xFF3D2E4F), Color(0xFF1C1630)];
+      case EventCategoryKey.other:
+      case 'all':
+      default:
+        return const <Color>[Color(0xFF2A1B06), Color(0xFF100B04)];
+    }
+  }
+
+  String _categoryTileAssetPath(String categoryKey) {
+    switch (categoryKey) {
+      case 'all':
+        return 'assets/events/categories/all.webp';
+      case EventCategoryKey.music:
+        return 'assets/events/categories/music.webp';
+      case EventCategoryKey.sport:
+        return 'assets/events/categories/sports.webp';
+      case EventCategoryKey.theater:
+        return 'assets/events/categories/theatre.webp';
+      case EventCategoryKey.comedy:
+        return 'assets/events/categories/comedy.webp';
+      case EventCategoryKey.family:
+        return 'assets/events/categories/family.webp';
+      case EventCategoryKey.food:
+        return 'assets/events/categories/food.webp';
+      case EventCategoryKey.business:
+        return 'assets/events/categories/business.webp';
+      case EventCategoryKey.culture:
+        return 'assets/events/categories/culture.webp';
+      case EventCategoryKey.other:
+        return 'assets/events/categories/event_category_other.webp';
+      default:
+        return 'assets/events/categories/all.webp';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bgBlack,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final mediaQuery = MediaQuery.of(context);
+            const horizontalPadding = 14.0;
+            const topPadding = 10.0;
+            const bottomPadding = 12.0;
+            final screenWidth = constraints.maxWidth;
+            final screenHeight = constraints.maxHeight;
+            final shortestSide = mediaQuery.size.shortestSide;
+            final isTabletLayout = shortestSide >= 600 || screenWidth >= 700;
+            final isTabletPortrait =
+                isTabletLayout && screenHeight > screenWidth;
+            final tileSpacing = isTabletLayout ? 14.0 : 14.0;
+            // Phone portrait intentionally uses 2 columns and vertical-space-based card height
+            // so 6 categories render as 2+2+2 while filling the landing area with premium card size.
+            // Tablet portrait uses the same 2-column rhythm (3 rows) with taller tiles.
+            final columns = isTabletPortrait ? 2 : (screenWidth < 700 ? 2 : 3);
+            final headingFontSize = isTabletLayout ? 21.0 : 15.6;
+            final categoryLabelFontSize = isTabletLayout ? 15.8 : 12.4;
+            final categoryTileInset = isTabletLayout ? 11.0 : 8.0;
+            final categoryLabelMaxLines = 1;
+            final categoryLabelSpacing = isTabletLayout ? 5.0 : 3.0;
+            final categoryRows = (_landingCategoryKeys.length / columns).ceil();
+
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(
+                horizontalPadding,
+                topPadding,
+                horizontalPadding,
+                bottomPadding,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  widget.compactCustomerLayout
+                      ? _buildCustomerHeader(context, isTabletLayout: isTabletLayout)
+                      : _buildHeader(context, isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 9 : 8),
+                  _buildSearchField(isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 8 : 7),
+                  _buildCompactDiscoveryControls(isTabletLayout: isTabletLayout),
+                  SizedBox(height: isTabletLayout ? 10 : 9),
+                  Row(
+                    children: [
+                      Text(
+                        _t(
+                          nl: 'Categorieën',
+                          en: 'Categories',
+                          fr: 'Categories',
+                          es: 'Categorias',
+                        ),
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontSize: headingFontSize,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => _openResultsPage(
+                          title: _t(
+                            nl: 'Alle events',
+                            en: 'All events',
+                            fr: 'Tous les événements',
+                            es: 'Todos los eventos',
+                          ),
+                          categoryKey: 'all',
+                          searchQuery: _searchController.text,
+                        ),
+                        style: TextButton.styleFrom(
+                          foregroundColor: _gold,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: Text(
+                          _t(
+                            nl: 'Bekijk alles →',
+                            en: 'View all →',
+                            fr: 'Voir tout →',
+                            es: 'Ver todo →',
+                          ),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: isTabletLayout ? 13.8 : 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: isTabletLayout ? 10 : 8),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, gridConstraints) {
+                        final cardHeight =
+                            ((gridConstraints.maxHeight -
+                                        (tileSpacing *
+                                            (categoryRows - 1))) /
+                                    categoryRows)
+                                .clamp(72.0, gridConstraints.maxHeight);
+                        return GridView.builder(
+                          key: const Key('events_landing_category_grid'),
+                          padding: EdgeInsets.zero,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _landingCategoryKeys.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                crossAxisSpacing: tileSpacing,
+                                mainAxisSpacing: tileSpacing,
+                                mainAxisExtent: cardHeight,
+                              ),
+                          itemBuilder: (context, index) => _buildCategoryTile(
+                            _landingCategoryKeys[index],
+                            isTabletLayout: isTabletLayout,
+                            labelFontSize: categoryLabelFontSize,
+                            labelMaxLines: categoryLabelMaxLines,
+                            contentInset: categoryTileInset,
+                            labelSpacing: categoryLabelSpacing,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCustomerHeader(
+    BuildContext context, {
+    required bool isTabletLayout,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 2),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: Icon(
+              Icons.arrow_back_rounded,
+              size: isTabletLayout ? 26 : 22,
+            ),
+            color: _gold,
+            tooltip: _t(
+              nl: 'Terug',
+              en: 'Back',
+              fr: 'Retour',
+              es: 'Volver',
+            ),
+          ),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Evenementen',
+                en: 'Events',
+                fr: 'Événements',
+                es: 'Eventos',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: isTabletLayout ? 20 : 18,
+              ),
+            ),
+          ),
+          isTabletLayout
+              ? OutlinedButton.icon(
+                  onPressed: _openSavedEventsPage,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _textPrimary,
+                    side: BorderSide(color: _border),
+                  ),
+                  icon: const Icon(Icons.favorite_border_rounded, size: 18),
+                  label: Text(
+                    _t(
+                      nl: 'Opgeslagen',
+                      en: 'Saved',
+                      fr: 'Enregistrés',
+                      es: 'Guardados',
+                    ),
+                  ),
+                )
+              : IconButton(
+                  onPressed: _openSavedEventsPage,
+                  color: _gold,
+                  tooltip: _t(
+                    nl: 'Opgeslagen',
+                    en: 'Saved',
+                    fr: 'Enregistrés',
+                    es: 'Guardados',
+                  ),
+                  icon: const Icon(Icons.favorite_border_rounded),
+                ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, {required bool isTabletLayout}) {
+    final logoAsset = _isDarkTheme
+        ? 'assets/fluxidi/fluxidi_logo_horizontal_gold.png'
+        : 'assets/fluxidi/fluxidi_logo_horizontal_dark.png';
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        isTabletLayout ? 8 : 2,
+        isTabletLayout ? 2 : 0,
+        isTabletLayout ? 8 : 2,
+        2,
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icon(
+                  Icons.arrow_back_rounded,
+                  size: isTabletLayout ? 26 : 22,
+                ),
+                color: _gold,
+                tooltip: _t(
+                  nl: 'Terug',
+                  en: 'Back',
+                  fr: 'Retour',
+                  es: 'Volver',
+                ),
+              ),
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: _openSavedEventsPage,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: _panelBlack,
+                  foregroundColor: _isDarkTheme ? _gold : _textPrimary,
+                  side: BorderSide(
+                    color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.9),
+                  ),
+                  minimumSize: Size(
+                    isTabletLayout ? 40 : 34,
+                    isTabletLayout ? 40 : 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                icon: Icon(
+                  Icons.account_circle_rounded,
+                  size: isTabletLayout ? 22 : 18,
+                ),
+                label: const SizedBox.shrink(),
+              ),
+            ],
+          ),
+          IgnorePointer(
+            child: Opacity(
+              opacity: 0.95,
+              child: Image.asset(
+                logoAsset,
+                height: isTabletLayout ? 35 : 28,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchField({required bool isTabletLayout}) {
+    return TextField(
+      controller: _searchController,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _openSearchResults(),
+      style: TextStyle(
+        color: _textPrimary,
+        fontSize: isTabletLayout ? 15.2 : 13.5,
+      ),
+      decoration: InputDecoration(
+        hintText: _t(
+          nl: 'Zoek evenement of locaties...',
+          en: 'Search event or location',
+          fr: 'Rechercher un evenement ou un lieu',
+          es: 'Buscar evento o ubicación',
+        ),
+        hintStyle: TextStyle(
+          color: _softText,
+          fontSize: isTabletLayout ? 14.2 : 13,
+        ),
+        prefixIcon: Icon(
+          Icons.search_rounded,
+          color: _gold.withOpacity(0.95),
+          size: isTabletLayout ? 22 : 19,
+        ),
+        suffixIcon: Container(
+          width: isTabletLayout ? 34 : 30,
+          height: isTabletLayout ? 34 : 30,
+          margin: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: _gold,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: IconButton(
+            onPressed: _openSearchResults,
+            icon: Icon(
+              Icons.arrow_forward_rounded,
+              color: _actionOnGold,
+              size: isTabletLayout ? 18 : 16,
+            ),
+            splashRadius: isTabletLayout ? 17 : 15,
+            tooltip: _t(
+              nl: 'Zoek',
+              en: 'Search',
+              fr: 'Rechercher',
+              es: 'Buscar',
+            ),
+          ),
+        ),
+        filled: true,
+        fillColor: _panelBlack,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: isTabletLayout ? 13 : 10,
+          vertical: isTabletLayout ? 11 : 8.5,
+        ),
+        isDense: true,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(
+            color: _border.withOpacity(_isDarkTheme ? 0.35 : 0.95),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: _gold, width: 1.2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompactDiscoveryControls({required bool isTabletLayout}) {
+    return Column(
+      children: [
+        Wrap(
+          spacing: isTabletLayout ? 9 : 7,
+          runSpacing: isTabletLayout ? 9 : 7,
+          children: [
+            _buildCompactActionChip(
+              text: _t(
+                nl: 'Filters',
+                en: 'Filters',
+                fr: 'Filtres',
+                es: 'Filtros',
+              ),
+              icon: Icons.tune_rounded,
+              onTap: _openFiltersSheet,
+              isTabletLayout: isTabletLayout,
+            ),
+            _buildCompactActionChip(
+              text: _marketLabel(_selectedMarketKey),
+              icon: Icons.public_rounded,
+              onTap: _openMarketPicker,
+              isTabletLayout: isTabletLayout,
+            ),
+            _buildCompactActionChip(
+              text: _t(
+                nl: 'Vraag Fluxidi AI',
+                en: 'Ask Fluxidi AI',
+                fr: 'Demander Fluxidi AI',
+                es: 'Preguntar Fluxidi AI',
+              ),
+              icon: Icons.auto_awesome_rounded,
+              onTap: _openEventAiAssistant,
+              isTabletLayout: isTabletLayout,
+              emphasizeGold: true,
+            ),
+          ],
+        ),
+        if (!widget.compactCustomerLayout) ...[
+          SizedBox(height: isTabletLayout ? 9 : 8),
+          Text(
+            fluxidiEventCatalogCoverageNote(appConfig.currentLanguage.name),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _softText,
+              fontSize: isTabletLayout ? 12.5 : 11.5,
+              height: 1.35,
+            ),
+          ),
+        ],
+        SizedBox(height: isTabletLayout ? 9 : 8),
+        _buildActiveSummaryBar(isTabletLayout: isTabletLayout),
+      ],
+    );
+  }
+
+  Widget _buildCompactActionChip({
+    required String text,
+    required IconData icon,
+    required VoidCallback onTap,
+    required bool isTabletLayout,
+    bool emphasizeGold = false,
+  }) {
+    final backgroundColor = emphasizeGold ? _gold : _panelBlack;
+    final foregroundColor = emphasizeGold ? _actionOnGold : _textPrimary;
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: isTabletLayout ? 11 : 9,
+            vertical: isTabletLayout ? 8 : 6,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: isTabletLayout ? 16 : 13,
+                color: emphasizeGold ? _actionOnGold : _gold,
+              ),
+              SizedBox(width: isTabletLayout ? 5 : 4),
+              Text(
+                text,
+                style: TextStyle(
+                  color: foregroundColor,
+                  fontSize: isTabletLayout ? 12.8 : 10.8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActiveSummaryBar({required bool isTabletLayout}) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: isTabletLayout ? 12 : 9,
+        vertical: isTabletLayout ? 8 : 6,
+      ),
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _gold.withOpacity(0.26)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _activeFilterSummaryText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _gold,
+                fontSize: isTabletLayout ? 13.2 : 10.8,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _resetLandingFilters,
+            icon: Icon(
+              Icons.close_rounded,
+              size: isTabletLayout ? 16 : 14,
+              color: _gold.withOpacity(0.95),
+            ),
+            splashRadius: isTabletLayout ? 16 : 14,
+            visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+            tooltip: _t(
+              nl: 'Filters wissen',
+              en: 'Clear filters',
+              fr: 'Effacer filtres',
+              es: 'Borrar filtros',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _categoryIconBadge(IconData icon, bool isTabletLayout) {
+    return Container(
+      width: isTabletLayout ? 28 : 22,
+      height: isTabletLayout ? 28 : 22,
+      decoration: BoxDecoration(
+        color: _gold.withOpacity(0.18),
+        shape: BoxShape.circle,
+        border: Border.all(color: _gold.withOpacity(0.9)),
+      ),
+      child: Icon(icon, size: isTabletLayout ? 15 : 12, color: _gold),
+    );
+  }
+
+  Widget _buildCategoryTile(
+    String categoryKey, {
+    required bool isTabletLayout,
+    required double labelFontSize,
+    required int labelMaxLines,
+    required double contentInset,
+    required double labelSpacing,
+  }) {
+    const cardRadius = 18.0;
+    const imageInnerZoom = 1.06;
+    final selected = _selectedCategoryKey == categoryKey;
+    final pressed = _pressedCategoryKey == categoryKey;
+    final icon = categoryKey == 'all'
+        ? Icons.grid_view_rounded
+        : (eventCategoryMetaByKey(categoryKey)?.icon ?? Icons.event_rounded);
+    final imageProvider = _categoryImageProvider(categoryKey);
+    final fallbackGradient = _categoryTileGradient(categoryKey);
+    return GestureDetector(
+      onTapDown: (_) {
+        HapticFeedback.lightImpact();
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = categoryKey);
+      },
+      onTapUp: (_) {
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = null);
+      },
+      onTapCancel: () {
+        if (!mounted) return;
+        setState(() => _pressedCategoryKey = null);
+      },
+      onTap: () async {
+        setState(() {
+          _pressedCategoryKey = null;
+          _selectedCategoryKey = categoryKey;
+        });
+        await _openResultsPage(
+          title: _categoryFilterLabel(categoryKey),
+          categoryKey: categoryKey,
+          searchQuery: _searchController.text,
+        );
+      },
+      child: AnimatedScale(
+        scale: pressed ? 0.975 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(cardRadius),
+            border: Border.all(
+              color: pressed
+                  ? _gold.withOpacity(0.7)
+                  : (selected ? _gold : _gold.withOpacity(0.16)),
+              width: pressed ? 1.8 : (selected ? 1.3 : 0.9),
+            ),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: _gold.withOpacity(pressed ? 0.22 : 0.09),
+                blurRadius: pressed ? 16 : 10,
+                spreadRadius: pressed ? 0.4 : 0,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            color: _panelBlack,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Small inner zoom trims baked-in image frames so the card's
+              // Flutter border remains the only visible premium frame.
+              Transform.scale(
+                scale: imageInnerZoom,
+                child: Image(
+                  image: imageProvider,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: fallbackGradient,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[
+                      Colors.black.withOpacity(isTabletLayout ? 0.04 : 0.025),
+                      Colors.black.withOpacity(isTabletLayout ? 0.2 : 0.17),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: FractionallySizedBox(
+                    heightFactor: isTabletLayout ? 0.58 : 0.54,
+                    widthFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: <Color>[
+                            Colors.black.withOpacity(0.0),
+                            Colors.black.withOpacity(
+                              isTabletLayout ? 0.46 : 0.5,
+                            ),
+                            Colors.black.withOpacity(
+                              isTabletLayout ? 0.82 : 0.86,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: contentInset,
+                right: contentInset,
+                bottom: contentInset,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _categoryIconBadge(icon, isTabletLayout),
+                    SizedBox(height: labelSpacing),
+                    Text(
+                      _categoryFilterLabel(categoryKey),
+                      maxLines: labelMaxLines,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: labelFontSize,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthFilterOption {
+  const _MonthFilterOption({required this.startUtc, required this.endUtc});
+
+  final DateTime startUtc;
+  final DateTime endUtc;
+}

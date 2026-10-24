@@ -1,0 +1,16 @@
+# Fluxidi release/upload signing — TEMPLATE ONLY.
+#
+# Copy this file to android/key.properties and fill in REAL values.
+# android/key.properties, *.jks and *.keystore are gitignored and must never
+# be committed. Do not put real passwords in this template.
+#
+# Generate an upload keystore (once) with, for example:
+#   keytool -genkey -v -keystore upload-keystore.jks -storetype JKS \
+#       -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# storeFile may be absolute or relative to the android/app module directory.
+
+storeFile=/absolute/path/to/upload-keystore.jks
+storePassword=CHANGE_ME
+keyAlias=upload
+keyPassword=CHANGE_ME

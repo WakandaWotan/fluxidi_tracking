@@ -1,0 +1,2434 @@
+{
+  "status": "historical-replay-only-not-current-traffic",
+  "results": [
+    {
+      "run": "route-accident-mv6iwasg",
+      "startedAt": "2026-10-13T10:13:30.863Z",
+      "finishedAt": "2026-10-13T10:13:31.819Z",
+      "action": "warnings",
+      "status": 200,
+      "clientWallMs": 956,
+      "cfRay": "a49d92775b9b097d-BRU",
+      "ok": true,
+      "acceptanceOnly": true,
+      "replay": true,
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "acceptance-existing-router-route-accident-mv6iwasg",
+        "routeGeometrySha256": "45b65cececa59a7234b10fe99f33c63bc89b83637fdc58e1c576ff5fabaaf3ad",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "NDW:NDW06_86e6ce4e-1056-4964-9d91-b15d5fc12d61_1",
+            "sourceRevision": 5,
+            "locationKey": "a9dfde7e19bf5a51b06a8b796fd3628dc3244ab24f65875c087ec913d75be3a8",
+            "kind": "accident",
+            "label": "Ongeval",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.40207621872769844,
+            "endFraction": 0.40207621872769844,
+            "startAlongMeters": 44.21888319389596,
+            "endAlongMeters": 44.21888319389596,
+            "point": true,
+            "observedAt": 1791881461338,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL",
+              "ndw-srti-NL"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "rawRoute": {
+        "origin": {
+          "nodeId": 46200587,
+          "longitude": 4.9046365,
+          "latitude": 52.3303776
+        },
+        "reachable": true,
+        "seconds": 3.959149337450214,
+        "distanceMeters": 109.97637048472816,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "trafficRevision": "static",
+        "edgeSequence": [
+          {
+            "id": 4572171,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    10080,
+                    100
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    10080,
+                    100
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 7368902,
+            "direction": 1,
+            "way": 7368902,
+            "ordinal": 1,
+            "seconds": 3.959149337450214,
+            "distanceMeters": 109.97637048472816
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 4.9046365,
+            "latitude": 52.3303776
+          },
+          {
+            "longitude": 4.9032939,
+            "latitude": 52.3309299
+          }
+        ],
+        "partitions": [
+          "r1233200"
+        ],
+        "estimated": true,
+        "certifiedEta": false
+      },
+      "metrics": {
+        "r2Get": 4,
+        "r2Put": 0,
+        "r2Delete": 0,
+        "r2Head": 0,
+        "r2ReadBytes": 5379224,
+        "r2WriteBytes": 0,
+        "kvGet": 0,
+        "kvPut": 0,
+        "kvReadBytes": 0,
+        "kvWriteBytes": 0,
+        "feedFetches": 0,
+        "feedWireBytes": 0
+      },
+      "candidateSha256": "c0242468ab571d3402fe2780bf0554e0c7a72a34ed7ab7d879d514eb991ae4aa",
+      "workerVersion": "0aa33364-7cb0-486a-bca5-4f95c81795ea",
+      "deviceFixtureOrigin": "original Cloudflare router response; historical replay at original clock"
+    },
+    {
+      "run": "route-roadworks-mv6iwasg",
+      "startedAt": "2026-10-13T10:13:31.821Z",
+      "finishedAt": "2026-10-13T10:13:33.119Z",
+      "action": "warnings",
+      "status": 200,
+      "clientWallMs": 1298,
+      "cfRay": "a49d927d5c33097d-BRU",
+      "ok": true,
+      "acceptanceOnly": true,
+      "replay": true,
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "acceptance-existing-router-route-roadworks-mv6iwasg",
+        "routeGeometrySha256": "c4b478f2bdcb223ed23a62b349e581ae768f4db972e8fd0f2cdc3b9f1f49326b",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "NDW:RWS01_M1186684_CLOSED_LANES_D2_WWA",
+            "sourceRevision": 9,
+            "locationKey": "366ff63f70948f1edf03978d71486ee1d7caa6f18625fa63f624bbdf22ebe833",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.37007522742904847,
+            "endFraction": 1,
+            "startAlongMeters": 69.48573971966358,
+            "endAlongMeters": 187.76112144114137,
+            "point": false,
+            "observedAt": 1791544374000,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:RWS01_M1186684_CLOSED_LANES_D2_WWA",
+            "sourceRevision": 9,
+            "locationKey": "366ff63f70948f1edf03978d71486ee1d7caa6f18625fa63f624bbdf22ebe833",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 187.76112144114137,
+            "endAlongMeters": 254.72119963927054,
+            "point": false,
+            "observedAt": 1791544374000,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:RWS01_M1186684_CLOSED_LANES_D2_WWA",
+            "sourceRevision": 9,
+            "locationKey": "366ff63f70948f1edf03978d71486ee1d7caa6f18625fa63f624bbdf22ebe833",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 254.72119963927054,
+            "endAlongMeters": 615.7208438028518,
+            "point": false,
+            "observedAt": 1791544374000,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:RWS01_M1186684_CLOSED_LANES_D2_WWA",
+            "sourceRevision": 9,
+            "locationKey": "366ff63f70948f1edf03978d71486ee1d7caa6f18625fa63f624bbdf22ebe833",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 615.7208438028518,
+            "endAlongMeters": 980.7660718327852,
+            "point": false,
+            "observedAt": 1791544374000,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:RWS01_M1186684_CLOSED_LANES_D2_WWA",
+            "sourceRevision": 9,
+            "locationKey": "366ff63f70948f1edf03978d71486ee1d7caa6f18625fa63f624bbdf22ebe833",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 4,
+            "endGeometryIndex": 5,
+            "startFraction": 0,
+            "endFraction": 0.9312287728219415,
+            "startAlongMeters": 980.7660718327852,
+            "endAlongMeters": 1662.335340902024,
+            "point": false,
+            "observedAt": 1791544374000,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "rawRoute": {
+        "origin": {
+          "nodeId": 47688286,
+          "longitude": 5.8966354,
+          "latitude": 52.9682385
+        },
+        "reachable": true,
+        "seconds": 61.65609186498756,
+        "distanceMeters": 1712.6692184718768,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "trafficRevision": "static",
+        "edgeSequence": [
+          {
+            "id": 815095,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 6494562,
+            "direction": 1,
+            "way": 6494562,
+            "ordinal": 6,
+            "seconds": 6.759400371881089,
+            "distanceMeters": 187.76112144114137
+          },
+          {
+            "id": 815096,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 6494563,
+            "direction": 1,
+            "way": 6494563,
+            "ordinal": 1,
+            "seconds": 2.4105628151326504,
+            "distanceMeters": 66.96007819812918
+          },
+          {
+            "id": 15498517,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 955926194,
+            "direction": 1,
+            "way": 955926194,
+            "ordinal": 1,
+            "seconds": 12.995987189888927,
+            "distanceMeters": 360.9996441635813
+          },
+          {
+            "id": 820114,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 6495449,
+            "direction": 1,
+            "way": 6495449,
+            "ordinal": 1,
+            "seconds": 13.141628209077602,
+            "distanceMeters": 365.0452280299334
+          },
+          {
+            "id": 820115,
+            "speedProfile": {
+              "schema": "osm-speed-rules-v1",
+              "unknownConditional": [],
+              "source": "OSM_STATIC_RULES_NOT_TRAFFIC",
+              "forward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              },
+              "backward": {
+                "floorKph": 100,
+                "runs": [
+                  [
+                    0,
+                    360,
+                    130
+                  ],
+                  [
+                    360,
+                    1140,
+                    100
+                  ],
+                  [
+                    1140,
+                    1800,
+                    130
+                  ],
+                  [
+                    1800,
+                    2580,
+                    100
+                  ],
+                  [
+                    2580,
+                    3240,
+                    130
+                  ],
+                  [
+                    3240,
+                    4020,
+                    100
+                  ],
+                  [
+                    4020,
+                    4680,
+                    130
+                  ],
+                  [
+                    4680,
+                    5460,
+                    100
+                  ],
+                  [
+                    5460,
+                    6120,
+                    130
+                  ],
+                  [
+                    6120,
+                    6900,
+                    100
+                  ],
+                  [
+                    6900,
+                    7560,
+                    130
+                  ],
+                  [
+                    7560,
+                    8340,
+                    100
+                  ],
+                  [
+                    8340,
+                    9000,
+                    130
+                  ],
+                  [
+                    9000,
+                    9780,
+                    100
+                  ],
+                  [
+                    9780,
+                    10080,
+                    130
+                  ]
+                ]
+              }
+            },
+            "speedProfileKey": 6495449,
+            "direction": 1,
+            "way": 6495449,
+            "ordinal": 2,
+            "seconds": 26.348513279007296,
+            "distanceMeters": 731.9031466390916
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 5.8966354,
+            "latitude": 52.9682385
+          },
+          {
+            "longitude": 5.8939271,
+            "latitude": 52.9678017
+          },
+          {
+            "longitude": 5.8929619,
+            "latitude": 52.9676445
+          },
+          {
+            "longitude": 5.8877538,
+            "latitude": 52.9668071
+          },
+          {
+            "longitude": 5.8824874,
+            "latitude": 52.9659604
+          },
+          {
+            "longitude": 5.87193,
+            "latitude": 52.96426
+          }
+        ],
+        "partitions": [
+          "r3102101",
+          "r3102100"
+        ],
+        "estimated": true,
+        "certifiedEta": false
+      },
+      "metrics": {
+        "r2Get": 7,
+        "r2Put": 0,
+        "r2Delete": 0,
+        "r2Head": 0,
+        "r2ReadBytes": 5796346,
+        "r2WriteBytes": 0,
+        "kvGet": 0,
+        "kvPut": 0,
+        "kvReadBytes": 0,
+        "kvWriteBytes": 0,
+        "feedFetches": 0,
+        "feedWireBytes": 0
+      },
+      "candidateSha256": "c0242468ab571d3402fe2780bf0554e0c7a72a34ed7ab7d879d514eb991ae4aa",
+      "workerVersion": "0aa33364-7cb0-486a-bca5-4f95c81795ea",
+      "deviceFixtureOrigin": "original Cloudflare router response; historical replay at original clock"
+    },
+    {
+      "run": "route-closure-mv6iwasg",
+      "startedAt": "2026-10-13T10:13:33.120Z",
+      "finishedAt": "2026-10-13T10:13:33.619Z",
+      "action": "warnings",
+      "status": 200,
+      "clientWallMs": 499,
+      "cfRay": "a49d9285781f097d-BRU",
+      "ok": true,
+      "acceptanceOnly": true,
+      "replay": true,
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "acceptance-existing-router-route-closure-mv6iwasg",
+        "routeGeometrySha256": "fbf7ea77228eab0bcc24eef9d2002913c5cb6a0223144cb82f0f3e6486ac4781",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.7193606237856413,
+            "endFraction": 1,
+            "startAlongMeters": 23.427381098042748,
+            "endAlongMeters": 32.56694948738779,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.7193606237856413,
+            "endFraction": 1,
+            "startAlongMeters": 23.427381098042748,
+            "endAlongMeters": 32.56694948738779,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 32.56694948738779,
+            "endAlongMeters": 43.86230222928931,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 32.56694948738779,
+            "endAlongMeters": 43.86230222928931,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 43.86230222928931,
+            "endAlongMeters": 142.65788730708562,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 43.86230222928931,
+            "endAlongMeters": 142.65788730708562,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 142.65788730708562,
+            "endAlongMeters": 173.68307766010622,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 142.65788730708562,
+            "endAlongMeters": 173.68307766010622,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 4,
+            "endGeometryIndex": 5,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 173.68307766010622,
+            "endAlongMeters": 244.84130886433732,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 4,
+            "endGeometryIndex": 5,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 173.68307766010622,
+            "endAlongMeters": 244.84130886433732,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 5,
+            "endGeometryIndex": 6,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 244.84130886433732,
+            "endAlongMeters": 261.98638112602265,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 5,
+            "endGeometryIndex": 6,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 244.84130886433732,
+            "endAlongMeters": 261.98638112602265,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 6,
+            "endGeometryIndex": 7,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 261.98638112602265,
+            "endAlongMeters": 324.4902105402635,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 6,
+            "endGeometryIndex": 7,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 261.98638112602265,
+            "endAlongMeters": 324.4902105402635,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 7,
+            "endGeometryIndex": 8,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 324.4902105402635,
+            "endAlongMeters": 351.43873565455505,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 7,
+            "endGeometryIndex": 8,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 324.4902105402635,
+            "endAlongMeters": 351.43873565455505,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 8,
+            "endGeometryIndex": 9,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 351.43873565455505,
+            "endAlongMeters": 376.0365347166871,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 8,
+            "endGeometryIndex": 9,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 351.43873565455505,
+            "endAlongMeters": 376.0365347166871,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_0bbd42f7-58a4-483e-a78c-d82a31185712",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 9,
+            "endGeometryIndex": 10,
+            "startFraction": 0,
+            "endFraction": 0.8500049893460526,
+            "startAlongMeters": 376.0365347166871,
+            "endAlongMeters": 453.73713149621085,
+            "point": false,
+            "observedAt": 1791342014567,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          },
+          {
+            "id": "NDW:NDW18_dffce713-57ab-43fb-ae9c-716aa45a6e22",
+            "sourceRevision": 1,
+            "locationKey": "6b55dd2aa5a87dfc845c69ee56118f65b63d86cd4ed94cb66414c970e91dcf21",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 9,
+            "endGeometryIndex": 10,
+            "startFraction": 0,
+            "endFraction": 0.8500049893460526,
+            "startAlongMeters": 376.0365347166871,
+            "endAlongMeters": 453.73713149621085,
+            "point": false,
+            "observedAt": 1790705417033,
+            "confirmedAt": 1791882000002,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "ndw-NL"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "rawRoute": {
+        "origin": {
+          "nodeId": 45219696,
+          "longitude": 5.1375996,
+          "latitude": 52.0943662
+        },
+        "reachable": true,
+        "seconds": 56.093815793358274,
+        "distanceMeters": 467.4484649446524,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "trafficRevision": "static",
+        "edgeSequence": [
+          {
+            "id": 3338270,
+            "way": 7009741,
+            "ordinal": 1,
+            "direction": 1,
+            "seconds": 3.9080339384865344,
+            "distanceMeters": 32.56694948738779
+          },
+          {
+            "id": 3338271,
+            "way": 7009741,
+            "ordinal": 2,
+            "direction": 1,
+            "seconds": 1.3554423290281825,
+            "distanceMeters": 11.295352741901521
+          },
+          {
+            "id": 3338272,
+            "way": 7009741,
+            "ordinal": 3,
+            "direction": 1,
+            "seconds": 11.855470209335556,
+            "distanceMeters": 98.7955850777963
+          },
+          {
+            "id": 3338273,
+            "way": 7009741,
+            "ordinal": 4,
+            "direction": 1,
+            "seconds": 3.7230228423624716,
+            "distanceMeters": 31.025190353020598
+          },
+          {
+            "id": 3338274,
+            "way": 7009741,
+            "ordinal": 5,
+            "direction": 1,
+            "seconds": 8.53898774450773,
+            "distanceMeters": 71.1582312042311
+          },
+          {
+            "id": 3338275,
+            "way": 7009741,
+            "ordinal": 6,
+            "direction": 1,
+            "seconds": 2.057408671402242,
+            "distanceMeters": 17.14507226168535
+          },
+          {
+            "id": 3338276,
+            "way": 7009741,
+            "ordinal": 7,
+            "direction": 1,
+            "seconds": 7.5004595297089,
+            "distanceMeters": 62.50382941424084
+          },
+          {
+            "id": 3338277,
+            "way": 7009741,
+            "ordinal": 8,
+            "direction": 1,
+            "seconds": 3.2338230137149835,
+            "distanceMeters": 26.94852511429153
+          },
+          {
+            "id": 3338278,
+            "way": 7009741,
+            "ordinal": 9,
+            "direction": 1,
+            "seconds": 2.951735887455843,
+            "distanceMeters": 24.597799062132026
+          },
+          {
+            "id": 3338279,
+            "way": 7009741,
+            "ordinal": 10,
+            "direction": 1,
+            "seconds": 10.969431627355842,
+            "distanceMeters": 91.41193022796536
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 5.1375996,
+            "latitude": 52.0943662
+          },
+          {
+            "longitude": 5.137275,
+            "latitude": 52.0941517
+          },
+          {
+            "longitude": 5.1371626,
+            "latitude": 52.0940772
+          },
+          {
+            "longitude": 5.1361821,
+            "latitude": 52.0934241
+          },
+          {
+            "longitude": 5.1358742,
+            "latitude": 52.093219
+          },
+          {
+            "longitude": 5.135168,
+            "latitude": 52.0927486
+          },
+          {
+            "longitude": 5.1349969,
+            "latitude": 52.0926358
+          },
+          {
+            "longitude": 5.1343775,
+            "latitude": 52.0922221
+          },
+          {
+            "longitude": 5.1341098,
+            "latitude": 52.0920441
+          },
+          {
+            "longitude": 5.1338655,
+            "latitude": 52.0918816
+          },
+          {
+            "longitude": 5.1329543,
+            "latitude": 52.0912796
+          }
+        ],
+        "partitions": [
+          "r12330112"
+        ],
+        "estimated": true,
+        "certifiedEta": false
+      },
+      "metrics": {
+        "r2Get": 4,
+        "r2Put": 0,
+        "r2Delete": 0,
+        "r2Head": 0,
+        "r2ReadBytes": 3253500,
+        "r2WriteBytes": 0,
+        "kvGet": 0,
+        "kvPut": 0,
+        "kvReadBytes": 0,
+        "kvWriteBytes": 0,
+        "feedFetches": 0,
+        "feedWireBytes": 0
+      },
+      "candidateSha256": "c0242468ab571d3402fe2780bf0554e0c7a72a34ed7ab7d879d514eb991ae4aa",
+      "workerVersion": "0aa33364-7cb0-486a-bca5-4f95c81795ea",
+      "deviceFixtureOrigin": "original Cloudflare router response; historical replay at original clock"
+    },
+    {
+      "action": "warnings",
+      "run": "replay-BE-roadworks",
+      "rawRoute": {
+        "reachable": true,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "edgeSequence": [
+          {
+            "id": 11310051,
+            "way": 275302947,
+            "ordinal": 7,
+            "direction": 1
+          },
+          {
+            "id": 11310052,
+            "way": 275302947,
+            "ordinal": 8,
+            "direction": 1
+          },
+          {
+            "id": 11310053,
+            "way": 275302947,
+            "ordinal": 9,
+            "direction": 1
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 4.4060226,
+            "latitude": 50.9120869
+          },
+          {
+            "longitude": 4.406889,
+            "latitude": 50.9122459
+          },
+          {
+            "longitude": 4.4076927,
+            "latitude": 50.9124043
+          },
+          {
+            "longitude": 4.4090546,
+            "latitude": 50.9127011
+          }
+        ]
+      },
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "certified-BE-fragment-roadworks",
+        "routeGeometrySha256": "31a7d614ae2789a098247577153dc78d6ce9b3020d271b46d469121a3e14872a",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "verkeerscentrum-BE:22290741-A-RNL",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.37367172715568603,
+            "endFraction": 1,
+            "startAlongMeters": 23.639844015979925,
+            "endAlongMeters": 63.26366780789561,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22290741-M-RRW",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.37367172715568603,
+            "endFraction": 1,
+            "startAlongMeters": 23.639844015979925,
+            "endAlongMeters": 63.26366780789561,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22290741-A-RNL",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 63.26366780789561,
+            "endAlongMeters": 122.29926855307654,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22290741-M-RRW",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 63.26366780789561,
+            "endAlongMeters": 122.29926855307654,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22290741-A-RNL",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 0.49370836594929735,
+            "startAlongMeters": 122.29926855307654,
+            "endAlongMeters": 172.17577133473753,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22290741-M-RRW",
+            "sourceRevision": 2,
+            "locationKey": "52a4cea73d8ca216287978708f167f6ec063ef8627ebf879cf7dca311e704b3b",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 0.49370836594929735,
+            "startAlongMeters": 122.29926855307654,
+            "endAlongMeters": 172.17577133473753,
+            "point": false,
+            "observedAt": 1781183232342,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "signalId": "verkeerscentrum-BE:22290741-A-RNL",
+      "replay": true,
+      "deviceFixtureOrigin": "real Verkeerscentrum record + certified directed graph fragment; contract fixture, NOT a cloud-computed navigation route"
+    },
+    {
+      "action": "warnings",
+      "run": "replay-BE-closure",
+      "rawRoute": {
+        "reachable": true,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "edgeSequence": [
+          {
+            "id": 11990875,
+            "way": 338861728,
+            "ordinal": 4,
+            "direction": 1
+          },
+          {
+            "id": 11990876,
+            "way": 338861728,
+            "ordinal": 5,
+            "direction": 1
+          },
+          {
+            "id": 11990877,
+            "way": 338861728,
+            "ordinal": 6,
+            "direction": 1
+          },
+          {
+            "id": 11990878,
+            "way": 338861728,
+            "ordinal": 7,
+            "direction": 1
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 3.0976241,
+            "latitude": 50.8149931
+          },
+          {
+            "longitude": 3.0976213,
+            "latitude": 50.8153668
+          },
+          {
+            "longitude": 3.0976025,
+            "latitude": 50.815716
+          },
+          {
+            "longitude": 3.0975829,
+            "latitude": 50.81593
+          },
+          {
+            "longitude": 3.0975572,
+            "latitude": 50.8162448
+          }
+        ]
+      },
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "certified-BE-fragment-closure",
+        "routeGeometrySha256": "ee59381dbc5129ced14f35043bdfc631b47ab5f60007fe6cea51b21867a4971f",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "verkeerscentrum-BE:22392515-M-RCD",
+            "sourceRevision": 1,
+            "locationKey": "ab0cbc82796ef03f247e46d3321feaa44f8f3d6fe2d3967d7e590114590d45e9",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.18066544269658222,
+            "endFraction": 1,
+            "startAlongMeters": 7.507373560667483,
+            "endAlongMeters": 41.5540097132782,
+            "point": false,
+            "observedAt": 1786374123860,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22392515-M-RCD",
+            "sourceRevision": 1,
+            "locationKey": "ab0cbc82796ef03f247e46d3321feaa44f8f3d6fe2d3967d7e590114590d45e9",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 41.5540097132782,
+            "endAlongMeters": 80.40573533567188,
+            "point": false,
+            "observedAt": 1786374123860,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22392515-M-RCD",
+            "sourceRevision": 1,
+            "locationKey": "ab0cbc82796ef03f247e46d3321feaa44f8f3d6fe2d3967d7e590114590d45e9",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 80.40573533567188,
+            "endAlongMeters": 104.24125764715379,
+            "point": false,
+            "observedAt": 1786374123860,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22392515-M-RCD",
+            "sourceRevision": 1,
+            "locationKey": "ab0cbc82796ef03f247e46d3321feaa44f8f3d6fe2d3967d7e590114590d45e9",
+            "kind": "closure",
+            "label": "Weg afgesloten",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 0.7016325212354008,
+            "startAlongMeters": 104.24125764715379,
+            "endAlongMeters": 128.8339667037523,
+            "point": false,
+            "observedAt": 1786374123860,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "signalId": "verkeerscentrum-BE:22392515-M-RCD",
+      "replay": true,
+      "deviceFixtureOrigin": "real Verkeerscentrum record + certified directed graph fragment; contract fixture, NOT a cloud-computed navigation route"
+    },
+    {
+      "action": "warnings",
+      "run": "replay-BE-lane-closure",
+      "rawRoute": {
+        "reachable": true,
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "edgeSequence": [
+          {
+            "id": 7809427,
+            "way": 82223322,
+            "ordinal": 4,
+            "direction": 1
+          },
+          {
+            "id": 7809428,
+            "way": 82223322,
+            "ordinal": 5,
+            "direction": 1
+          },
+          {
+            "id": 7809429,
+            "way": 82223322,
+            "ordinal": 6,
+            "direction": 1
+          },
+          {
+            "id": 7809430,
+            "way": 82223322,
+            "ordinal": 7,
+            "direction": 1
+          },
+          {
+            "id": 7809431,
+            "way": 82223322,
+            "ordinal": 8,
+            "direction": 1
+          }
+        ],
+        "geometry": [
+          {
+            "longitude": 3.1144842,
+            "latitude": 50.9793051
+          },
+          {
+            "longitude": 3.1141107,
+            "latitude": 50.9792231
+          },
+          {
+            "longitude": 3.1137319,
+            "latitude": 50.9791346
+          },
+          {
+            "longitude": 3.1135654,
+            "latitude": 50.9790957
+          },
+          {
+            "longitude": 3.1133061,
+            "latitude": 50.9790319
+          },
+          {
+            "longitude": 3.1129647,
+            "latitude": 50.9789431
+          }
+        ]
+      },
+      "warnings": {
+        "schema": "fluxidi-navigation-traffic-warnings-v1",
+        "mode": "warnings-only",
+        "binding": "exact-directed-route-geometry",
+        "tenant_id": "traffic-acceptance",
+        "company_id": "traffic-acceptance-A",
+        "graphVersion": "offline-national-car-v2-8096d82857a47e7507353f30",
+        "manifestSha256": "95bedf00af15deb48cf7a1e2b00893e65ec9c2d89f2f8c4d5a80640ef856a2fa",
+        "evidenceRevision": "frontage-v1-79740c155aa0f1b862481d44",
+        "routeEvidenceId": "certified-BE-fragment-lane-closure",
+        "routeGeometrySha256": "1e502895aa44aec8c56150f3ba1e9894f4a534bf9642227fe0376a6f24810d21",
+        "generatedAt": 1791882048033,
+        "validUntil": 1791882108033,
+        "warnings": [
+          {
+            "id": "verkeerscentrum-BE:22345095-A-NLS",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "lane-closure",
+            "label": "Rijstrookbeperking",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.11302561380625285,
+            "endFraction": 1,
+            "startAlongMeters": 3.1299418221762414,
+            "endAlongMeters": 27.69232315377247,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-RNL",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 0,
+            "endGeometryIndex": 1,
+            "startFraction": 0.11302561380625285,
+            "endFraction": 1,
+            "startAlongMeters": 3.1299418221762414,
+            "endAlongMeters": 27.69232315377247,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-NLS",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "lane-closure",
+            "label": "Rijstrookbeperking",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 27.69232315377247,
+            "endAlongMeters": 55.97857548748041,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-RNL",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 1,
+            "endGeometryIndex": 2,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 27.69232315377247,
+            "endAlongMeters": 55.97857548748041,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-NLS",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "lane-closure",
+            "label": "Rijstrookbeperking",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 55.97857548748041,
+            "endAlongMeters": 68.41170484517853,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-RNL",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 2,
+            "endGeometryIndex": 3,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 55.97857548748041,
+            "endAlongMeters": 68.41170484517853,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-NLS",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "lane-closure",
+            "label": "Rijstrookbeperking",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 68.41170484517853,
+            "endAlongMeters": 87.9019560322138,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-RNL",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 3,
+            "endGeometryIndex": 4,
+            "startFraction": 0,
+            "endFraction": 1,
+            "startAlongMeters": 68.41170484517853,
+            "endAlongMeters": 87.9019560322138,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-NLS",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "lane-closure",
+            "label": "Rijstrookbeperking",
+            "startGeometryIndex": 4,
+            "endGeometryIndex": 5,
+            "startFraction": 0,
+            "endFraction": 0.9024737588797049,
+            "startAlongMeters": 87.9019560322138,
+            "endAlongMeters": 111.24024899793277,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          },
+          {
+            "id": "verkeerscentrum-BE:22345095-A-RNL",
+            "sourceRevision": 1,
+            "locationKey": "6a6141cd3ed79c92ee1453c753f8e0aa3a64f701707b1dcec1972bf354260048",
+            "kind": "roadworks",
+            "label": "Wegwerkzaamheden",
+            "startGeometryIndex": 4,
+            "endGeometryIndex": 5,
+            "startFraction": 0,
+            "endFraction": 0.9024737588797049,
+            "startAlongMeters": 87.9019560322138,
+            "endAlongMeters": 111.24024899793277,
+            "point": false,
+            "observedAt": 1782910624938,
+            "confirmedAt": 1791882004430,
+            "validUntil": 1791882108033,
+            "sourceIds": [
+              "verkeerscentrum-BE"
+            ]
+          }
+        ],
+        "trafficColors": [],
+        "etaAdjustmentSeconds": null,
+        "routeCostChanges": false,
+        "productionApproved": false
+      },
+      "signalId": "verkeerscentrum-BE:22345095-A-NLS",
+      "replay": true,
+      "deviceFixtureOrigin": "real Verkeerscentrum record + certified directed graph fragment; contract fixture, NOT a cloud-computed navigation route"
+    }
+  ]
+}

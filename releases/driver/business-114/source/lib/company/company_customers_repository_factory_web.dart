@@ -1,0 +1,243 @@
+// COMPANY-CUSTOMER-OPS-P0 — local web demo repository (no dart:io).
+
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/business_theme_store.dart';
+import 'package:fluxidi_tracking/company/company_customer_import_session_core.dart';
+import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_identity.dart';
+import 'package:fluxidi_tracking/company/company_ops_session.dart' as ops_session;
+
+const String kCompanyCustomerOpsLocalDemoBaseUrl = String.fromEnvironment(
+  'BOOKING_BASE_URL',
+  defaultValue: '',
+);
+const String kCompanyCustomerOpsLocalDemoToken = String.fromEnvironment(
+  'COMPANY_SESSION_TOKEN',
+  defaultValue: '',
+);
+const String kCompanyCustomerOpsLocalDemoCompanyId = String.fromEnvironment(
+  'FLUXIDI_DEV_COMPANY_ID',
+  defaultValue: '',
+);
+
+String companyOpsLocalDemoBase() {
+  final raw = kCompanyCustomerOpsLocalDemoBaseUrl.trim();
+  final resolved = raw.isNotEmpty ? raw : kBookingBaseUrl;
+  return resolved.endsWith('/')
+      ? resolved.substring(0, resolved.length - 1)
+      : resolved;
+}
+
+CompanyOpsLocalSession resolveCompanyOpsLocalSession() {
+  return ops_session.resolveCompanyOpsLocalSession();
+}
+
+Future<Map<String, String>> _demoHeaders() async {
+  final session = resolveCompanyOpsLocalSession();
+  return <String, String>{
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ${session.sessionToken}',
+  };
+}
+
+Map<String, String> _demoScope() {
+  final id = resolveCompanyOpsLocalSession().companyId.trim();
+  return <String, String>{
+    'tenant_id': id,
+    'company_id': id,
+    'tenantId': id,
+    'companyId': id,
+  };
+}
+
+Map<String, dynamic> _decode(List<int> bytes) {
+  final decoded = jsonDecode(utf8.decode(bytes));
+  if (decoded is! Map) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  return Map<String, dynamic>.from(decoded);
+}
+
+CompanyCustomersRepository createCompanyCustomersRepository() {
+  return CompanyCustomersRepository(
+    headers: _demoHeaders,
+    scopeResolver: _demoScope,
+    listTransport: ({
+      required path,
+      required query,
+      required headers,
+    }) async {
+      final uri = Uri.parse('${companyOpsLocalDemoBase()}$path').replace(
+        queryParameters: query,
+      );
+      final res = await http.get(uri, headers: await headers());
+      final decoded = _decode(res.bodyBytes);
+      if (res.statusCode != 200) {
+        throw CompanyCustomerException(
+          decoded['error']?.toString() ?? 'http_${res.statusCode}',
+        );
+      }
+      return decoded;
+    },
+    sendTransport: ({
+      required method,
+      required path,
+      required query,
+      required body,
+      required headers,
+      idempotencyKey,
+    }) async {
+      final uri = Uri.parse('${companyOpsLocalDemoBase()}$path').replace(
+        queryParameters: query,
+      );
+      final resolved = Map<String, String>.from(await headers());
+      if ((idempotencyKey ?? '').trim().isNotEmpty) {
+        resolved['Idempotency-Key'] = idempotencyKey!.trim();
+      }
+      final encoded = jsonEncode(body);
+      final res = method == 'PATCH'
+          ? await http.patch(uri, headers: resolved, body: encoded)
+          : await http.post(uri, headers: resolved, body: encoded);
+      final decoded = _decode(res.bodyBytes);
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        throw CompanyCustomerException(
+          decoded['error']?.toString() ?? 'http_${res.statusCode}',
+        );
+      }
+      return decoded;
+    },
+  );
+}
+
+CompanyCustomerImportSessionStore createCompanyCustomerImportSessionStore() {
+  return MemoryCompanyCustomerImportSessionStore();
+}
+
+Future<List<Map<String, dynamic>>> fetchCompanyLocalBookings() async {
+  final uri = Uri.parse('${companyOpsLocalDemoBase()}/bookings').replace(
+    queryParameters: <String, String>{
+      ..._demoScope(),
+      'limit': '50',
+    },
+  );
+  final res = await http.get(uri, headers: await _demoHeaders());
+  final decoded = _decode(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'bookings_list_failed',
+    );
+  }
+  final items = decoded['items'];
+  if (items is! List) return const <Map<String, dynamic>>[];
+  return [
+    for (final item in items)
+      if (item is Map) Map<String, dynamic>.from(item),
+  ];
+}
+
+Future<Map<String, dynamic>> fetchCompanyLocalBooking(String bookingId) async {
+  final id = bookingId.trim();
+  if (id.isEmpty) {
+    throw const CompanyCustomerException('booking_id_required');
+  }
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/bookings/${Uri.encodeComponent(id)}',
+  ).replace(queryParameters: _demoScope());
+  final res = await http.get(uri, headers: await _demoHeaders());
+  final decoded = _decode(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'booking_not_found',
+    );
+  }
+  return decoded;
+}
+
+Future<Map<String, dynamic>> fetchCompanyOpsBusinessProfile() async {
+  final uri = Uri.parse(
+    '${companyOpsLocalDemoBase()}/admin/business/profile',
+  ).replace(queryParameters: _demoScope());
+  final res = await http.get(uri, headers: await _demoHeaders());
+  final decoded = _decode(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'business_profile_failed',
+    );
+  }
+  final map = mergeCompanyOpsProfilePublicCodes(decoded);
+  final companyId = resolveCompanyOpsLocalSession().companyId.trim();
+  if (companyId.isNotEmpty) {
+    await hydrateBusinessThemeFromCompanyProfile(
+      companyId: companyId,
+      profile: map,
+    );
+  }
+  return map;
+}
+
+Map<String, dynamic> mergeCompanyOpsProfilePublicCodes(
+  Map<String, dynamic> decoded,
+) {
+  final profile = decoded['business_profile'];
+  final map = profile is Map
+      ? Map<String, dynamic>.from(profile)
+      : Map<String, dynamic>.from(decoded);
+  // Older /admin/business/profile responses put scope in the canonical
+  // scoped storage key rather than in business_profile. Preserve that identity
+  // evidence for the shared resolver; never infer it from a code or name.
+  final scope = RegExp(
+    r'^tenant:([a-zA-Z0-9_-]{1,80}):company:([a-zA-Z0-9_-]{1,80}):business_profile:v1$',
+  ).firstMatch(decoded['key']?.toString() ?? '');
+  if (scope != null) {
+    map.putIfAbsent('tenant_id', () => scope.group(1)!);
+    map.putIfAbsent('company_id', () => scope.group(2)!);
+  }
+  for (final key in const <String>[
+    'public_company_code',
+    'publicCompanyCode',
+    'company_code',
+    'companyCode',
+    'public_company_slug',
+    'publicCompanySlug',
+    'tenant_id',
+    'tenantId',
+    'company_id',
+    'companyId',
+    'public_display_code',
+    'publicDisplayCode',
+  ]) {
+    final value = decoded[key]?.toString().trim() ?? '';
+    if (value.isEmpty) continue;
+    final existing = map[key]?.toString().trim() ?? '';
+    if (existing.isEmpty) map[key] = value;
+  }
+  return map;
+}
+
+Future<List<CompanyOpsDirectoryEntry>> fetchCompanyOpsLocalDirectory() async {
+  final uri = Uri.parse('${companyOpsLocalDemoBase()}/local/companies');
+  final res = await http.get(uri, headers: await _demoHeaders());
+  final decoded = _decode(res.bodyBytes);
+  if (res.statusCode != 200 || decoded['ok'] != true) {
+    throw CompanyCustomerException(
+      decoded['error']?.toString() ?? 'company_directory_failed',
+    );
+  }
+  final items = decoded['items'];
+  if (items is! List) return const <CompanyOpsDirectoryEntry>[];
+  return [
+    for (final item in items)
+      if (item is Map)
+        CompanyOpsDirectoryEntry(
+          companyId: item['company_id']?.toString().trim() ?? '',
+          sessionToken: item['session_token']?.toString().trim() ?? '',
+          companyName: item['company_name']?.toString().trim() ?? '',
+          publicLogoUrl: item['public_logo_url']?.toString().trim() ?? '',
+        ),
+  ].where((entry) => entry.companyId.isNotEmpty).toList();
+}

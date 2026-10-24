@@ -1,0 +1,4343 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_config.dart';
+import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
+import 'package:fluxidi_tracking/airport/airport_catalog_repository.dart';
+import 'package:fluxidi_tracking/airport/airport_return_address_pin.dart';
+import 'package:fluxidi_tracking/airport/airport_selector.dart';
+import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
+import 'package:fluxidi_tracking/nearby/public_partner_identity.dart';
+import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
+import 'package:fluxidi_tracking/hotels/hotel_model.dart';
+import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
+import 'package:fluxidi_tracking/hotels/hotels_page.dart';
+import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
+import 'package:fluxidi_tracking/customer_theme_palette.dart';
+import 'package:fluxidi_tracking/customer_theme_store.dart';
+import 'package:geolocator/geolocator.dart' as geo;
+import 'package:http/http.dart' as http;
+
+enum _TransferMode { toAirport, fromAirport }
+
+typedef AirportPartnerSelectionCallback =
+    Future<Map<String, String>?> Function(BuildContext context);
+
+typedef _AirportOption = AirportCatalogAirport;
+
+class _AirportAddressSuggestion {
+  const _AirportAddressSuggestion({
+    required this.label,
+    required this.latitude,
+    required this.longitude,
+    this.postcode,
+    this.city,
+    this.country,
+  });
+
+  final String label;
+  final double latitude;
+  final double longitude;
+  final String? postcode;
+  final String? city;
+  final String? country;
+}
+
+class AirportPage extends StatefulWidget {
+  const AirportPage({
+    super.key,
+    required this.bookingBaseUrl,
+    this.selectedTenantId,
+    this.selectedCompanyId,
+    this.selectedCompanyCode,
+    this.selectedCompanyName,
+    this.selectedPartnerId,
+    this.initialPickupAddress,
+    this.initialPickupLabel,
+    this.initialPickupLatitude,
+    this.initialPickupLongitude,
+    this.initialAirportIata,
+    this.initialToAirport,
+    this.initialDestinationAddress,
+    this.allowPartnerChange = false,
+    this.onChangePartnerRequested,
+    this.allowAdminScopeFallback = false,
+  });
+
+  final String bookingBaseUrl;
+  final String? selectedTenantId;
+  final String? selectedCompanyId;
+  final String? selectedCompanyCode;
+  final String? selectedCompanyName;
+  final String? selectedPartnerId;
+  final String? initialPickupAddress;
+  final String? initialPickupLabel;
+  final double? initialPickupLatitude;
+  final double? initialPickupLongitude;
+  final String? initialAirportIata;
+  final bool? initialToAirport;
+  final String? initialDestinationAddress;
+  final bool allowPartnerChange;
+  final AirportPartnerSelectionCallback? onChangePartnerRequested;
+  final bool allowAdminScopeFallback;
+
+  @override
+  State<AirportPage> createState() => _AirportPageState();
+}
+
+class _AirportPageState extends State<AirportPage> {
+  CustomerThemePalette get _themePalette =>
+      paletteForCustomerTheme(customerThemeNotifier.value);
+  bool get _isDarkTheme => _themePalette.isDark;
+  Color get _bg => _themePalette.background;
+  Color get _panel => _themePalette.surface;
+  Color get _panelAlt => _themePalette.surfaceAlt;
+  Color get _gold => _themePalette.gold;
+  Color get _bronze => _themePalette.bronze;
+  Color get _soft => _themePalette.textMuted;
+  Color get _textPrimary => _themePalette.textPrimary;
+  Color get _textMuted => _themePalette.textMuted;
+  Color get _border => _themePalette.border;
+  Color get _shadow => _themePalette.shadow;
+  static const String _mapboxToken = String.fromEnvironment('MAPBOX_TOKEN');
+  static const Set<String> _supportedCountryCodes = kSupportedAirportCountryCodes;
+  static const Set<String> _requiredAirportIata = kRequiredAirportIata;
+
+  static final List<_AirportOption> _catalogAirports = publishedAirportCatalog();
+
+
+  _TransferMode _selectedMode = _TransferMode.toAirport;
+  String _selectedCountryCode = _catalogAirports.first.countryCode;
+  String _selectedAirportId = _catalogAirports.first.id;
+  int _passengers = 1;
+  int _bags = 0;
+  bool _meetAndGreet = false;
+  bool _roundtripEnabled = false;
+  bool _isResolvingPickupLocation = false;
+  bool _isResolvingDestinationLocation = false;
+  bool _isRequestingQuote = false;
+  Timer? _pickupAddressDebounce;
+  Timer? _destinationAddressDebounce;
+  int _pickupAddressRequestId = 0;
+  int _destinationAddressRequestId = 0;
+  List<_AirportAddressSuggestion> _pickupAddressSuggestions =
+      const <_AirportAddressSuggestion>[];
+  List<_AirportAddressSuggestion> _destinationAddressSuggestions =
+      const <_AirportAddressSuggestion>[];
+  double? _pickupLatitude;
+  double? _pickupLongitude;
+  double? _destinationLatitude;
+  double? _destinationLongitude;
+  double? _returnLatitude;
+  double? _returnLongitude;
+  String? _pickupPostcode;
+  String? _destinationPostcode;
+  String? _returnPostcode;
+  /// Address text the return coordinates were resolved for. Editing the text
+  /// keeps those coordinates while it still names the same place, so a
+  /// reformatted return address does not lose its pin and drop the fixed fare.
+  String? _returnCoordinateAnchor;
+  Map<String, dynamic>? _airportQuote;
+  String? _airportQuoteError;
+
+  String get _lang => appConfig.currentLanguage.name.toLowerCase();
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (_lang) {
+      case 'en':
+        return en;
+      case 'fr':
+        return fr;
+      case 'es':
+        return es;
+      case 'nl':
+      default:
+        return nl;
+    }
+  }
+
+  String get _nearbyStaysLabel {
+    return _t(
+      nl: 'Verblijven in de buurt',
+      en: 'Nearby stays',
+      fr: 'Hebergements a proximite',
+      es: 'Alojamientos cercanos',
+    );
+  }
+
+  String get _nearbyStaysMissingLabel {
+    return _t(
+      nl: 'Geen lokale verblijven gevonden bij deze luchthaven.',
+      en: 'No local stays found near this airport.',
+      fr: 'Aucun hebergement local trouve pres de cet aeroport.',
+      es: 'No se encontraron alojamientos locales cerca de este aeropuerto.',
+    );
+  }
+
+  bool get _hasNearbyStaysContext {
+    final airport = _selectedAirport;
+    return normalizeDiscoveryText(airport.city).isNotEmpty &&
+        normalizeDiscoveryText(airport.countryCode).isNotEmpty;
+  }
+
+  Set<String> _airportCountryMatchValues(_AirportOption airport) {
+    final aliases = <String>{airport.countryCode, airport.countryName};
+    switch (airport.countryCode.toUpperCase()) {
+      case 'BE':
+        aliases.addAll(<String>{'Belgium', 'Belgie', 'Belgique'});
+        break;
+      case 'NL':
+        aliases.addAll(<String>{'Netherlands', 'Nederland'});
+        break;
+      case 'FR':
+        aliases.addAll(<String>{'France', 'Frankrijk'});
+        break;
+      case 'DE':
+        aliases.addAll(<String>{'Germany', 'Duitsland'});
+        break;
+      case 'LU':
+        aliases.addAll(<String>{'Luxembourg', 'Luxemburg'});
+        break;
+      case 'ES':
+        aliases.addAll(<String>{'Spain', 'Spanje'});
+        break;
+      case 'GB':
+        aliases.addAll(<String>{
+          'United Kingdom',
+          'Verenigd Koninkrijk',
+          'UK',
+          'Great Britain',
+        });
+        break;
+    }
+    return normalizedDiscoveryTextSet(aliases);
+  }
+
+  Set<String> _airportCityMatchValues(_AirportOption airport) {
+    final normalizedCity = normalizeDiscoveryText(airport.city);
+    if (normalizedCity.isEmpty) return const <String>{};
+    final separators = RegExp(r'[/,\-]');
+    final parts = airport.city
+        .split(separators)
+        .map((part) => normalizeDiscoveryText(part))
+        .where((part) => part.isNotEmpty)
+        .toSet();
+    parts.add(normalizedCity);
+    return parts;
+  }
+
+  List<HotelStay> _nearbyStaysForSelectedAirport() {
+    final airport = _selectedAirport;
+    final countryValues = _airportCountryMatchValues(airport);
+    final cityValues = _airportCityMatchValues(airport);
+    if (countryValues.isEmpty || cityValues.isEmpty) return const <HotelStay>[];
+    return kBelgiumHotelSeedData
+        .where((stay) {
+          final stayCountry = normalizeDiscoveryText(stay.country);
+          if (!countryValues.contains(stayCountry)) return false;
+          final stayCity = normalizeDiscoveryText(stay.city);
+          if (stayCity.isEmpty) return false;
+          if (cityValues.contains(stayCity)) return true;
+          for (final city in cityValues) {
+            if (stayCity.contains(city) || city.contains(stayCity)) {
+              return true;
+            }
+          }
+          return false;
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _openNearbyStaysFromAirport() async {
+    final stays = _nearbyStaysForSelectedAirport();
+    if (stays.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_nearbyStaysMissingLabel)));
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HotelsPage(
+          stays: stays,
+          onTaxiToStay: (stay) {
+            final destinationAddress = stay.address.trim();
+            final destinationName = stay.name.trim();
+            final destinationText = destinationAddress.isNotEmpty
+                ? destinationAddress
+                : (destinationName.isNotEmpty
+                      ? destinationName
+                      : '${stay.city}, ${stay.country}');
+            final destinationLat = stay.latitude ?? stay.lat;
+            final destinationLng = stay.longitude ?? stay.lng;
+            final hasDestinationCoordinates = _hasValidCoordinates(
+              destinationLat,
+              destinationLng,
+            );
+            setState(() {
+              _selectedMode = _TransferMode.fromAirport;
+              _destinationAddressController.text = destinationText;
+              _destinationLatitude = hasDestinationCoordinates
+                  ? destinationLat
+                  : null;
+              _destinationLongitude = hasDestinationCoordinates
+                  ? destinationLng
+                  : null;
+              _destinationPostcode = _extractLikelyPostcode(destinationText);
+              _airportQuote = null;
+              _airportQuoteError = null;
+            });
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+  }
+
+  List<String> get _availableCountryCodes {
+    final unique = <String>{};
+    final codes = <String>[];
+    for (final airport in _catalogAirports) {
+      if (unique.add(airport.countryCode)) {
+        codes.add(airport.countryCode);
+      }
+    }
+    return codes;
+  }
+
+  List<_AirportOption> get _filteredAirports => _catalogAirports
+      .where((airport) => airport.countryCode == _selectedCountryCode)
+      .toList(growable: false);
+
+  _AirportOption get _selectedAirport {
+    final filtered = _filteredAirports;
+    if (filtered.isEmpty) {
+      return _catalogAirports.first;
+    }
+    return filtered.firstWhere(
+      (airport) => airport.id == _selectedAirportId,
+      orElse: () => filtered.first,
+    );
+  }
+
+  String _countryLabelForCode(String countryCode) {
+    switch (countryCode) {
+      case 'BE':
+        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
+      case 'NL':
+        return _t(
+          nl: 'Nederland',
+          en: 'Netherlands',
+          fr: 'Pays-Bas',
+          es: 'Países Bajos',
+        );
+      case 'FR':
+        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
+      case 'DE':
+        return _t(
+          nl: 'Duitsland',
+          en: 'Germany',
+          fr: 'Allemagne',
+          es: 'Alemania',
+        );
+      case 'LU':
+        return _t(
+          nl: 'Luxemburg',
+          en: 'Luxembourg',
+          fr: 'Luxembourg',
+          es: 'Luxemburgo',
+        );
+      case 'ES':
+        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
+      case 'GB':
+        return _t(
+          nl: 'Verenigd Koninkrijk',
+          en: 'United Kingdom',
+          fr: 'Royaume-Uni',
+          es: 'Reino Unido',
+        );
+      default:
+        final fallback = _catalogAirports
+            .where((airport) => airport.countryCode == countryCode)
+            .map((airport) => airport.countryName)
+            .firstWhere((_) => true, orElse: () => countryCode);
+        final separator = fallback.indexOf('/');
+        if (separator >= 0 && separator < fallback.length - 1) {
+          return fallback.substring(separator + 1);
+        }
+        return fallback;
+    }
+  }
+
+  void _setCountry(String countryCode) {
+    final firstAirport = _catalogAirports.firstWhere(
+      (airport) => airport.countryCode == countryCode,
+      orElse: () => _catalogAirports.first,
+    );
+    _clearAirportQuote();
+    setState(() {
+      _selectedCountryCode = countryCode;
+      _selectedAirportId = firstAirport.id;
+    });
+  }
+
+  void _setAirport(String airportId) {
+    _clearAirportQuote();
+    setState(() {
+      _selectedAirportId = airportId;
+    });
+  }
+
+  Widget _buildCountryDropdown() {
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        label: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+        prefixIcon: Icons.public_rounded,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedCountryCode,
+          isDense: true,
+          isExpanded: true,
+          dropdownColor: _panelAlt,
+          iconEnabledColor: _gold,
+          style: TextStyle(color: _textPrimary, fontSize: 13),
+          items: _availableCountryCodes
+              .map(
+                (countryCode) => DropdownMenuItem<String>(
+                  value: countryCode,
+                  child: Text(_countryLabelForCode(countryCode)),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: (value) {
+            if (value == null || value == _selectedCountryCode) {
+              return;
+            }
+            _setCountry(value);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAirportOnlyDropdown() {
+    final filteredAirports = _filteredAirports;
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        label: _t(
+          nl: 'Luchthaven',
+          en: 'Airport',
+          fr: 'Aéroport',
+          es: 'Aeropuerto',
+        ),
+        prefixIcon: Icons.flight_rounded,
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedAirport.id,
+          isDense: true,
+          isExpanded: true,
+          dropdownColor: _panelAlt,
+          iconEnabledColor: _gold,
+          style: TextStyle(color: _textPrimary, fontSize: 13),
+          selectedItemBuilder: (context) => filteredAirports
+              .map(
+                (airport) => Text(
+                  airport.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )
+              .toList(growable: false),
+          items: filteredAirports
+              .map(
+                (airport) => DropdownMenuItem<String>(
+                  value: airport.id,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          airport.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        airport.iata,
+                        style: TextStyle(
+                          color: _gold.withOpacity(0.95),
+                          fontSize: 11.6,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            _setAirport(value);
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedTenantId = _safeText(widget.selectedTenantId);
+    _selectedCompanyId = _safeText(widget.selectedCompanyId);
+    _selectedCompanyCode = _safeText(widget.selectedCompanyCode);
+    _selectedCompanyName = _safeText(widget.selectedCompanyName);
+    _selectedPartnerId = _safeText(widget.selectedPartnerId);
+    final requestedIata = _safeText(widget.initialAirportIata).toUpperCase();
+    if (requestedIata.isNotEmpty) {
+      for (final airport in _catalogAirports) {
+        if (airport.iata.trim().toUpperCase() != requestedIata) continue;
+        _selectedCountryCode = airport.countryCode;
+        _selectedAirportId = airport.id;
+        break;
+      }
+    }
+    if (_filteredAirports.every(
+      (airport) => airport.id != _selectedAirportId,
+    )) {
+      _selectedAirportId = _filteredAirports.first.id;
+    }
+    final pickupAddress = _safeText(widget.initialPickupAddress);
+    final pickupLabel = _safeText(widget.initialPickupLabel);
+    final effectivePickupText = pickupAddress.isNotEmpty
+        ? pickupAddress
+        : pickupLabel;
+    if (effectivePickupText.isNotEmpty) {
+      _selectedMode = _TransferMode.toAirport;
+      _pickupAddressController.text = effectivePickupText;
+      final prefillLatitude = widget.initialPickupLatitude;
+      final prefillLongitude = widget.initialPickupLongitude;
+      if (_hasValidCoordinates(prefillLatitude, prefillLongitude)) {
+        _pickupLatitude = prefillLatitude;
+        _pickupLongitude = prefillLongitude;
+      }
+      _pickupPostcode = _extractLikelyPostcode(effectivePickupText);
+    }
+    final requestedToAirport = widget.initialToAirport;
+    if (requestedToAirport != null) {
+      _selectedMode = requestedToAirport
+          ? _TransferMode.toAirport
+          : _TransferMode.fromAirport;
+    }
+    final destinationPrefill = _safeText(widget.initialDestinationAddress);
+    if (destinationPrefill.isNotEmpty) {
+      _destinationAddressController.text = destinationPrefill;
+      _destinationPostcode = _extractLikelyPostcode(destinationPrefill);
+    }
+    _pickupAddressController.addListener(_handleSummaryInputChanged);
+    _destinationAddressController.addListener(_handleSummaryInputChanged);
+    _pickupDateTimeController.addListener(_handleSummaryInputChanged);
+    _landingDateTimeController.addListener(_handleSummaryInputChanged);
+    _flightNumberController.addListener(_handleSummaryInputChanged);
+    _flightDepartDateTimeController.addListener(_handleSummaryInputChanged);
+    _fromAirportPickupDateTimeController.addListener(
+      _handleSummaryInputChanged,
+    );
+    _returnFlightNumberController.addListener(_handleSummaryInputChanged);
+    _returnFlightDateTimeController.addListener(_handleSummaryInputChanged);
+    _noteController.addListener(_handleSummaryInputChanged);
+    _nameBoardController.addListener(_handleSummaryInputChanged);
+  }
+
+  final TextEditingController _pickupAddressController =
+      TextEditingController();
+  final TextEditingController _destinationAddressController =
+      TextEditingController();
+  final TextEditingController _pickupDateTimeController =
+      TextEditingController();
+  final TextEditingController _landingDateTimeController =
+      TextEditingController();
+  final TextEditingController _returnDateTimeController =
+      TextEditingController();
+  final TextEditingController _returnAddressController =
+      TextEditingController();
+  final TextEditingController _flightNumberController = TextEditingController();
+  final TextEditingController _flightDepartDateTimeController =
+      TextEditingController();
+  final TextEditingController _fromAirportPickupDateTimeController =
+      TextEditingController();
+  final TextEditingController _returnFlightNumberController =
+      TextEditingController();
+  final TextEditingController _returnFlightDateTimeController =
+      TextEditingController();
+  String _pickupArrangement = 'scheduled';
+  final TextEditingController _noteController = TextEditingController();
+  final TextEditingController _nameBoardController = TextEditingController();
+  late String _selectedTenantId;
+  late String _selectedCompanyId;
+  late String _selectedCompanyCode;
+  late String _selectedCompanyName;
+  late String _selectedPartnerId;
+
+  String _safeText(String? value) => (value ?? '').trim();
+
+  bool get _hasSelectedPartnerScope =>
+      _selectedTenantId.isNotEmpty && _selectedCompanyId.isNotEmpty;
+
+  String get _selectedCompanyLabel {
+    if (_selectedCompanyName.isNotEmpty) return _selectedCompanyName;
+    if (_selectedCompanyCode.isNotEmpty) return _selectedCompanyCode;
+    if (_selectedPartnerId.isNotEmpty) return _selectedPartnerId;
+    return _selectedCompanyId;
+  }
+
+  @override
+  void dispose() {
+    _pickupAddressDebounce?.cancel();
+    _destinationAddressDebounce?.cancel();
+    _pickupAddressController.removeListener(_handleSummaryInputChanged);
+    _destinationAddressController.removeListener(_handleSummaryInputChanged);
+    _pickupDateTimeController.removeListener(_handleSummaryInputChanged);
+    _landingDateTimeController.removeListener(_handleSummaryInputChanged);
+    _flightNumberController.removeListener(_handleSummaryInputChanged);
+    _flightDepartDateTimeController.removeListener(_handleSummaryInputChanged);
+    _fromAirportPickupDateTimeController.removeListener(
+      _handleSummaryInputChanged,
+    );
+    _returnFlightNumberController.removeListener(_handleSummaryInputChanged);
+    _returnFlightDateTimeController.removeListener(_handleSummaryInputChanged);
+    _noteController.removeListener(_handleSummaryInputChanged);
+    _nameBoardController.removeListener(_handleSummaryInputChanged);
+    _pickupAddressController.dispose();
+    _destinationAddressController.dispose();
+    _pickupDateTimeController.dispose();
+    _landingDateTimeController.dispose();
+    _returnDateTimeController.dispose();
+    _returnAddressController.dispose();
+    _flightNumberController.dispose();
+    _flightDepartDateTimeController.dispose();
+    _fromAirportPickupDateTimeController.dispose();
+    _returnFlightNumberController.dispose();
+    _returnFlightDateTimeController.dispose();
+    _noteController.dispose();
+    _nameBoardController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _changePartner() async {
+    final callback = widget.onChangePartnerRequested;
+    if (callback == null) return;
+    final selected = await callback(context);
+    if (!mounted || selected == null) return;
+    final tenantId = (selected['tenant_id'] ?? '').trim();
+    final companyId = (selected['company_id'] ?? '').trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return;
+    setState(() {
+      _selectedTenantId = tenantId;
+      _selectedCompanyId = companyId;
+      _selectedCompanyCode = (selected['company_code'] ?? '').trim();
+      _selectedCompanyName = (selected['company_name'] ?? '').trim();
+      _selectedPartnerId = (selected['partner_id'] ?? '').trim();
+      _airportQuote = null;
+      _airportQuoteError = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = width < 360 ? 12.0 : 14.0;
+    final compactHero = width < 430;
+
+    return ValueListenableBuilder<CustomerThemeVariant>(
+      valueListenable: customerThemeNotifier,
+      builder: (context, themeVariant, __) {
+        final palette = paletteForCustomerTheme(themeVariant);
+        return Scaffold(
+          backgroundColor: palette.background,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(context),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      8,
+                      horizontalPadding,
+                      16,
+                    ),
+                    children: [
+                      _buildHero(compact: compactHero),
+                      const SizedBox(height: 10),
+                      _buildDirectionActions(),
+                      const SizedBox(height: 10),
+                      _buildRoundtripToggleCard(),
+                      if (_roundtripEnabled) ...[
+                        const SizedBox(height: 10),
+                        _buildReturnLegSection(),
+                      ],
+                      const SizedBox(height: 10),
+                      _buildIntakePanel(),
+                      const SizedBox(height: 10),
+                      _buildRideSummaryCard(),
+                      if (_airportQuote != null ||
+                          _airportQuoteError != null) ...[
+                        const SizedBox(height: 10),
+                        _buildAirportQuoteCard(),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildCtaButton(context),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final compactHeader = width < 380;
+    final selectedCompanyDisplay = sanitizePublicPartnerBrandName(
+      _selectedCompanyLabel,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded),
+            color: _gold,
+            tooltip: _t(nl: 'Terug', en: 'Back', fr: 'Retour', es: 'Volver'),
+          ),
+          const SizedBox(width: 2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Luchthavenvervoer',
+                    en: 'Airport transfers',
+                    fr: 'Transferts aéroport',
+                    es: 'Traslados al aeropuerto',
+                  ),
+                  maxLines: compactHeader ? 2 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: compactHeader ? 18.5 : 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  _t(
+                    nl: 'Naar en van de luchthaven',
+                    en: 'To and from the airport',
+                    fr: 'Vers et depuis l aeroport',
+                    es: 'Hacia y desde el aeropuerto',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: _soft, fontSize: 11.5, height: 1.2),
+                ),
+                if (_hasSelectedPartnerScope &&
+                    selectedCompanyDisplay.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _gold.withOpacity(0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: _gold.withOpacity(0.52)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.verified_user_rounded,
+                                size: 13.5,
+                                color: _gold.withOpacity(0.94),
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  selectedCompanyDisplay,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                  style: TextStyle(
+                                    color: _gold.withOpacity(0.96),
+                                    fontSize: 11.1,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (widget.allowPartnerChange &&
+                          widget.onChangePartnerRequested != null) ...[
+                        const SizedBox(width: 6),
+                        TextButton.icon(
+                          onPressed: _changePartner,
+                          style: TextButton.styleFrom(
+                            foregroundColor: _gold.withOpacity(0.96),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 6,
+                            ),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            minimumSize: const Size(0, 0),
+                          ),
+                          icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+                          label: Text(
+                            _t(
+                              nl: 'Wijzig',
+                              en: 'Change',
+                              fr: 'Changer',
+                              es: 'Cambiar',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHero({required bool compact}) {
+    if (compact) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _isDarkTheme ? _gold.withOpacity(0.26) : _border,
+          ),
+          color: _panelAlt,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.local_taxi_rounded,
+              color: _gold.withOpacity(0.96),
+              size: 16,
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Luchthavenritten',
+                  en: 'Airport rides',
+                  fr: 'Trajets aeroport',
+                  es: 'Traslados aeropuerto',
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _textPrimary,
+                  fontSize: 12.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
+      padding: EdgeInsets.all(compact ? 12 : 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.28) : _border,
+        ),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[_panelAlt, _bg],
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: compact ? 48 : 54,
+            height: compact ? 48 : 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: _gold.withOpacity(0.45)),
+              color: _gold.withOpacity(0.14),
+            ),
+            child: Icon(
+              Icons.local_taxi_rounded,
+              color: _gold,
+              size: compact ? 26 : 30,
+            ),
+          ),
+          SizedBox(width: compact ? 8 : 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Zakelijk en privé luchthavenvervoer',
+                    en: 'Business and private airport transfers',
+                    fr: 'Transferts aéroport professionnels et privés',
+                    es: 'Traslados al aeropuerto para empresas y particulares',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: compact ? 13.6 : 14.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: compact ? 3 : 4),
+                Text(
+                  _t(
+                    nl: 'Plan binnenkort direct uw transfer met heldere serviceopties en betrouwbare chauffeurs.',
+                    en: 'Plan your transfer soon with clear service options and reliable drivers.',
+                    fr: 'Planifiez bientôt votre transfert avec des options claires et des chauffeurs fiables.',
+                    es: 'Planifica pronto tu traslado con opciones claras y conductores fiables.',
+                  ),
+                  style: TextStyle(
+                    color: _soft,
+                    fontSize: compact ? 11.3 : 11.8,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirectionActions() {
+    const cardGap = 10.0;
+    const minCardWidth = 230.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final first = _actionCard(
+          title: _t(
+            nl: 'Naar de luchthaven',
+            en: 'To the airport',
+            fr: "Vers l'aéroport",
+            es: 'Al aeropuerto',
+          ),
+          subtitle: _t(
+            nl: 'Vertrek naar uw vlucht',
+            en: 'Departure to your flight',
+            fr: 'Départ vers votre vol',
+            es: 'Salida hacia tu vuelo',
+          ),
+          icon: Icons.flight_takeoff_rounded,
+          mode: _TransferMode.toAirport,
+        );
+        final second = _actionCard(
+          title: _t(
+            nl: 'Van de luchthaven',
+            en: 'From the airport',
+            fr: "Depuis l'aéroport",
+            es: 'Desde el aeropuerto',
+          ),
+          subtitle: _t(
+            nl: 'Aankomst op de luchthaven',
+            en: 'Arrival at the airport',
+            fr: "Arrivée à l'aéroport",
+            es: 'Llegada al aeropuerto',
+          ),
+          icon: Icons.flight_land_rounded,
+          mode: _TransferMode.fromAirport,
+        );
+        final canShowSideBySide =
+            constraints.maxWidth >= (minCardWidth * 2) + cardGap;
+        if (!canShowSideBySide) {
+          return Column(
+            children: [
+              first,
+              const SizedBox(height: cardGap),
+              second,
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: first),
+            const SizedBox(width: cardGap),
+            Expanded(child: second),
+          ],
+        );
+      },
+    );
+  }
+
+  void _setRoundtripEnabled(bool enabled) {
+    _clearAirportQuote();
+    setState(() {
+      _roundtripEnabled = enabled;
+      if (!enabled) {
+        _returnDateTimeController.clear();
+        _returnAddressController.clear();
+        _returnLatitude = null;
+        _returnLongitude = null;
+        _returnPostcode = null;
+        _returnCoordinateAnchor = null;
+      } else {
+        _returnDateTimeController.clear();
+        _prefillRoundtripReturnAddressFromOutbound();
+      }
+    });
+  }
+
+  void _prefillRoundtripReturnAddressFromOutbound() {
+    if (!_roundtripEnabled) {
+      return;
+    }
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final sourceText = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final sourceLatitude = isToAirport ? _pickupLatitude : _destinationLatitude;
+    final sourceLongitude = isToAirport
+        ? _pickupLongitude
+        : _destinationLongitude;
+    final sourcePostcodeRaw = isToAirport
+        ? _pickupPostcode
+        : _destinationPostcode;
+    final sourcePostcode = (sourcePostcodeRaw ?? '').trim().isNotEmpty
+        ? sourcePostcodeRaw!.trim()
+        : _extractLikelyPostcode(sourceText);
+    if (sourceText.isEmpty) {
+      _returnAddressController.clear();
+      _returnLatitude = null;
+      _returnLongitude = null;
+      _returnPostcode = null;
+      _returnCoordinateAnchor = null;
+      return;
+    }
+    _returnAddressController.text = sourceText;
+    if (_hasValidCoordinates(sourceLatitude, sourceLongitude)) {
+      _returnLatitude = sourceLatitude;
+      _returnLongitude = sourceLongitude;
+      _returnCoordinateAnchor = sourceText;
+    } else {
+      _returnLatitude = null;
+      _returnLongitude = null;
+      _returnCoordinateAnchor = null;
+    }
+    _returnPostcode = sourcePostcode.isEmpty ? null : sourcePostcode;
+  }
+
+  Widget _buildRoundtripToggleCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.22) : _border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.sync_alt_rounded,
+            color: _gold.withOpacity(0.96),
+            size: 17,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Heen-en-terug',
+                en: 'Roundtrip',
+                fr: 'Aller-retour',
+                es: 'Ida y vuelta',
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontSize: 13.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Switch.adaptive(
+            value: _roundtripEnabled,
+            activeColor: _gold,
+            onChanged: _setRoundtripEnabled,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReturnLegSection() {
+    return _sectionCard(
+      title: _t(
+        nl: 'Terugrit',
+        en: 'Return leg',
+        fr: 'Trajet retour',
+        es: 'Trayecto de vuelta',
+      ),
+      icon: Icons.keyboard_return_rounded,
+      subtitle: _t(
+        nl: 'Deze gegevens worden meegenomen in prijs en boeking.',
+        en: 'These details are included in pricing and booking.',
+        fr: 'Ces détails sont inclus dans le tarif et la réservation.',
+        es: 'Estos datos se incluyen en el precio y la reserva.',
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTextField(
+            label: _t(
+              nl: 'Retouradres',
+              en: 'Return address',
+              fr: 'Adresse de retour',
+              es: 'Dirección de regreso',
+            ),
+            controller: _returnAddressController,
+            hint: _t(
+              nl: 'Straat, nummer, postcode, stad',
+              en: 'Street, number, postal code, city',
+              fr: 'Rue, numéro, code postal, ville',
+              es: 'Calle, número, código postal, ciudad',
+            ),
+            icon: Icons.pin_drop_outlined,
+            onChanged: (value) {
+              setState(() {
+                if (!_returnEditKeepsCoordinates(value)) {
+                  _returnLatitude = null;
+                  _returnLongitude = null;
+                  _returnCoordinateAnchor = null;
+                }
+                _returnPostcode = _extractLikelyPostcode(value);
+              });
+            },
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourdatum en tijd',
+              en: 'Return date and time',
+              fr: 'Date et heure du retour',
+              es: 'Fecha y hora de regreso',
+            ),
+            controller: _returnDateTimeController,
+            hint: _t(
+              nl: 'Bijv. 24/06/2026 21:15',
+              en: 'E.g. 24/06/2026 21:15',
+              fr: 'Ex. 24/06/2026 21:15',
+              es: 'Ej. 24/06/2026 21:15',
+            ),
+            icon: Icons.schedule_rounded,
+            readOnly: true,
+            onTap: () => _pickAirportDateTime(_returnDateTimeController),
+            suffixIcon: IconButton(
+              onPressed: () => _pickAirportDateTime(_returnDateTimeController),
+              tooltip: _t(
+                nl: 'Datum en tijd kiezen',
+                en: 'Choose date and time',
+                fr: "Choisir la date et l'heure",
+                es: 'Elegir fecha y hora',
+              ),
+              icon: Icon(
+                Icons.calendar_month_rounded,
+                color: _gold.withOpacity(0.92),
+                size: 18,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourvluchtnummer (optioneel)',
+              en: 'Return flight number (optional)',
+              fr: 'Numéro de vol retour (optionnel)',
+              es: 'Número de vuelo de regreso (opcional)',
+            ),
+            controller: _returnFlightNumberController,
+            hint: _t(
+              nl: 'Bijv. SN205',
+              en: 'E.g. SN205',
+              fr: 'Ex. SN205',
+              es: 'Ej. SN205',
+            ),
+            icon: Icons.confirmation_number_outlined,
+          ),
+          const SizedBox(height: 10),
+          _buildTextField(
+            label: _t(
+              nl: 'Retourvlucht datum en tijd',
+              en: 'Return flight date and time',
+              fr: 'Date et heure du vol retour',
+              es: 'Fecha y hora del vuelo de regreso',
+            ),
+            controller: _returnFlightDateTimeController,
+            hint: _t(
+              nl: 'Bijv. 24/06/2026 - 20:40',
+              en: 'E.g. 24/06/2026 - 20:40',
+              fr: 'Ex. 24/06/2026 - 20:40',
+              es: 'Ej. 24/06/2026 - 20:40',
+            ),
+            icon: Icons.flight_land_rounded,
+            readOnly: true,
+            onTap: () => _pickAirportDateTime(_returnFlightDateTimeController),
+            suffixIcon: IconButton(
+              onPressed: () =>
+                  _pickAirportDateTime(_returnFlightDateTimeController),
+              tooltip: _t(
+                nl: 'Datum en tijd kiezen',
+                en: 'Choose date and time',
+                fr: "Choisir la date et l'heure",
+                es: 'Elegir fecha y hora',
+              ),
+              icon: Icon(
+                Icons.calendar_month_rounded,
+                color: _gold.withOpacity(0.92),
+                size: 18,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required _TransferMode mode,
+  }) {
+    final isSelected = _selectedMode == mode;
+    return Container(
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isSelected
+              ? (_isDarkTheme ? _gold : _bronze)
+              : (_isDarkTheme ? _gold.withOpacity(0.26) : _border),
+          width: isSelected ? 1.6 : 1,
+        ),
+        boxShadow: isSelected
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: _shadow.withOpacity(_isDarkTheme ? 0.28 : 0.14),
+                  blurRadius: 14,
+                  spreadRadius: 0.2,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            _clearAirportQuote();
+            setState(() {
+              _selectedMode = mode;
+              if (_roundtripEnabled) {
+                _prefillRoundtripReturnAddressFromOutbound();
+              }
+            });
+          },
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected
+                            ? _gold.withOpacity(0.22)
+                            : _gold.withOpacity(0.14),
+                        border: Border.all(
+                          color: isSelected
+                              ? _gold.withOpacity(0.72)
+                              : _gold.withOpacity(0.4),
+                        ),
+                      ),
+                      child: Icon(icon, color: _gold, size: 18),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        style: TextStyle(
+                          color: isSelected
+                              ? (_isDarkTheme ? _gold : _bronze)
+                              : _textPrimary,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w800,
+                          height: 1.15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  style: TextStyle(color: _soft, fontSize: 11.2, height: 1.2),
+                ),
+                if (isSelected) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _gold.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: _gold.withOpacity(0.7)),
+                    ),
+                    child: Text(
+                      _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                      style: TextStyle(
+                        color: _gold,
+                        fontSize: 10.6,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    String? subtitle,
+    Widget? child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.22) : _border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: _gold.withOpacity(0.96), size: 17),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: TextStyle(color: _soft, fontSize: 11.7, height: 1.25),
+            ),
+          ],
+          if (child != null) ...[const SizedBox(height: 8), child],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIntakePanel() {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    return _sectionCard(
+      title: isToAirport
+          ? _t(
+              nl: 'Intake: naar de luchthaven',
+              en: 'Intake: to the airport',
+              fr: "Saisie : vers l'aéroport",
+              es: 'Datos: al aeropuerto',
+            )
+          : _t(
+              nl: 'Intake: van de luchthaven',
+              en: 'Intake: from the airport',
+              fr: "Saisie : depuis l'aéroport",
+              es: 'Datos: desde el aeropuerto',
+            ),
+      icon: isToAirport
+          ? Icons.directions_car_filled_rounded
+          : Icons.local_taxi_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isToAirport) ...[
+            _buildTextField(
+              label: _t(
+                nl: 'Ophaaladres',
+                en: 'Pickup address',
+                fr: 'Adresse de prise en charge',
+                es: 'Dirección de recogida',
+              ),
+              controller: _pickupAddressController,
+              hint: _t(
+                nl: 'Straat, nummer, postcode, stad',
+                en: 'Street, number, postal code, city',
+                fr: 'Rue, numéro, code postal, ville',
+                es: 'Calle, número, código postal, ciudad',
+              ),
+              icon: Icons.pin_drop_outlined,
+              onChanged: _onPickupAddressChanged,
+              suffixIcon: IconButton(
+                onPressed: _isResolvingPickupLocation
+                    ? null
+                    : _useCurrentPickupLocation,
+                tooltip: _t(
+                  nl: 'Huidige locatie gebruiken',
+                  en: 'Use current location',
+                  fr: 'Utiliser la position actuelle',
+                  es: 'Usar ubicación actual',
+                ),
+                icon: _isResolvingPickupLocation
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _gold.withOpacity(0.96),
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.my_location_rounded,
+                        color: _gold.withOpacity(0.92),
+                        size: 18,
+                      ),
+              ),
+            ),
+            _buildAddressSuggestions(
+              suggestions: _pickupAddressSuggestions,
+              onSelect: _applyPickupSuggestion,
+            ),
+            const SizedBox(height: 10),
+            _buildAirportDropdown(),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Ophaaldatum en tijd',
+                en: 'Pickup date and time',
+                fr: 'Date et heure de prise en charge',
+                es: 'Fecha y hora de recogida',
+              ),
+              controller: _pickupDateTimeController,
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 05:45',
+                en: 'E.g. 21/06/2026 - 05:45',
+                fr: 'Ex. 21/06/2026 - 05:45',
+                es: 'Ej. 21/06/2026 - 05:45',
+              ),
+              icon: Icons.schedule_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_pickupDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_pickupDateTimeController),
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Vluchtnummer (optioneel)',
+                en: 'Flight number (optional)',
+                fr: 'Numéro de vol (optionnel)',
+                es: 'Número de vuelo (opcional)',
+              ),
+              controller: _flightNumberController,
+              hint: _t(
+                nl: 'Bijv. SN204',
+                en: 'E.g. SN204',
+                fr: 'Ex. SN204',
+                es: 'Ej. SN204',
+              ),
+              icon: Icons.confirmation_number_outlined,
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Vertrekdatum en tijd van de vlucht',
+                en: 'Flight departure date and time',
+                fr: 'Date et heure de départ du vol',
+                es: 'Fecha y hora de salida del vuelo',
+              ),
+              controller: _flightDepartDateTimeController,
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 08:40',
+                en: 'E.g. 21/06/2026 - 08:40',
+                fr: 'Ex. 21/06/2026 - 08:40',
+                es: 'Ej. 21/06/2026 - 08:40',
+              ),
+              icon: Icons.flight_takeoff_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_flightDepartDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_flightDepartDateTimeController),
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Lokale tijd Europe/Brussels. Een vlucht kan op een andere kalenderdag aankomen. Landingstijd is geen ophaaltijd.',
+                en: 'Local time Europe/Brussels. A flight may arrive on another calendar day. Landing time is not pickup time.',
+                fr: 'Heure locale Europe/Brussels. Un vol peut arriver un autre jour. L’heure d’atterrissage n’est pas l’heure de prise en charge.',
+                es: 'Hora local Europe/Brussels. Un vuelo puede llegar otro día. La hora de aterrizaje no es la hora de recogida.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildStepperRow(
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
+              value: _passengers,
+              min: 1,
+              max: 8,
+              icon: Icons.groups_2_outlined,
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _passengers = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            _buildStepperRow(
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
+              value: _bags,
+              min: 0,
+              max: 12,
+              icon: Icons.luggage_outlined,
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _bags = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Opmerking (optioneel)',
+                en: 'Note (optional)',
+                fr: 'Remarque (optionnel)',
+                es: 'Nota (opcional)',
+              ),
+              controller: _noteController,
+              hint: _t(
+                nl: 'Extra info voor de chauffeur',
+                en: 'Extra information for the driver',
+                fr: 'Informations supplémentaires pour le chauffeur',
+                es: 'Información adicional para el conductor',
+              ),
+              icon: Icons.edit_note_rounded,
+              minLines: 2,
+              maxLines: 3,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Prijsberekening en boeking worden in een volgende stap gekoppeld.',
+                en: 'Price calculation and booking are connected in the next step.',
+                fr: 'Le calcul du prix et la réservation seront reliés à l’étape suivante.',
+                es: 'El cálculo del precio y la reserva se conectarán en el siguiente paso.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+          ] else ...[
+            _buildAirportDropdown(),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Bestemmingsadres',
+                en: 'Destination address',
+                fr: 'Adresse de destination',
+                es: 'Dirección de destino',
+              ),
+              controller: _destinationAddressController,
+              hint: _t(
+                nl: 'Straat, nummer, postcode, stad',
+                en: 'Street, number, postal code, city',
+                fr: 'Rue, numéro, code postal, ville',
+                es: 'Calle, número, código postal, ciudad',
+              ),
+              icon: Icons.location_on_outlined,
+              onChanged: _onDestinationAddressChanged,
+              suffixIcon: IconButton(
+                onPressed: _isResolvingDestinationLocation
+                    ? null
+                    : _useCurrentDestinationLocation,
+                tooltip: _t(
+                  nl: 'Huidige locatie gebruiken',
+                  en: 'Use current location',
+                  fr: 'Utiliser la position actuelle',
+                  es: 'Usar ubicación actual',
+                ),
+                icon: _isResolvingDestinationLocation
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _gold.withOpacity(0.96),
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        Icons.my_location_rounded,
+                        color: _gold.withOpacity(0.92),
+                        size: 18,
+                      ),
+              ),
+            ),
+            _buildAddressSuggestions(
+              suggestions: _destinationAddressSuggestions,
+              onSelect: _applyDestinationSuggestion,
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Vluchtnummer (optioneel)',
+                en: 'Flight number (optional)',
+                fr: 'Numéro de vol (optionnel)',
+                es: 'Número de vuelo (opcional)',
+              ),
+              controller: _flightNumberController,
+              hint: _t(
+                nl: 'Bijv. SN204',
+                en: 'E.g. SN204',
+                fr: 'Ex. SN204',
+                es: 'Ej. SN204',
+              ),
+              icon: Icons.confirmation_number_outlined,
+            ),
+            const SizedBox(height: 10),
+            _buildTextField(
+              label: _t(
+                nl: 'Landingsdatum en tijd',
+                en: 'Landing date and time',
+                fr: "Date et heure d'atterrissage",
+                es: 'Fecha y hora de aterrizaje',
+              ),
+              controller: _landingDateTimeController,
+              hint: _t(
+                nl: 'Bijv. 21/06/2026 - 18:20',
+                en: 'E.g. 21/06/2026 - 18:20',
+                fr: 'Ex. 21/06/2026 - 18:20',
+                es: 'Ej. 21/06/2026 - 18:20',
+              ),
+              icon: Icons.schedule_rounded,
+              readOnly: true,
+              onTap: () => _pickAirportDateTime(_landingDateTimeController),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    _pickAirportDateTime(_landingDateTimeController),
+                tooltip: _t(
+                  nl: 'Datum en tijd kiezen',
+                  en: 'Choose date and time',
+                  fr: "Choisir la date et l'heure",
+                  es: 'Elegir fecha y hora',
+                ),
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: _gold.withOpacity(0.92),
+                  size: 18,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Lokale tijd Europe/Brussels. Landingstijd is geen ophaaltijd.',
+                en: 'Local time Europe/Brussels. Landing time is not pickup time.',
+                fr: 'Heure locale Europe/Brussels. L’heure d’atterrissage n’est pas l’heure de prise en charge.',
+                es: 'Hora local Europe/Brussels. La hora de aterrizaje no es la hora de recogida.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _pickupArrangement,
+              decoration: InputDecoration(
+                labelText: _t(
+                  nl: 'Ophaalregeling',
+                  en: 'Pickup arrangement',
+                  fr: 'Modalité de prise en charge',
+                  es: 'Acuerdo de recogida',
+                ),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'scheduled',
+                  child: Text(
+                    _t(
+                      nl: 'Aparte ophaaltijd',
+                      en: 'Separate pickup time',
+                      fr: 'Heure de prise en charge séparée',
+                      es: 'Hora de recogida aparte',
+                    ),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'after_landing',
+                  child: Text(
+                    _t(
+                      nl: 'Na landing (volgens bedrijfsregeling)',
+                      en: 'After landing (company arrangement)',
+                      fr: 'Après l’atterrissage (selon l’entreprise)',
+                      es: 'Tras el aterrizaje (según la empresa)',
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (next) {
+                _clearAirportQuote();
+                setState(() => _pickupArrangement = next ?? 'scheduled');
+              },
+            ),
+            if (_pickupArrangement == 'scheduled') ...[
+              const SizedBox(height: 10),
+              _buildTextField(
+                label: _t(
+                  nl: 'Ophaaldatum en tijd',
+                  en: 'Pickup date and time',
+                  fr: 'Date et heure de prise en charge',
+                  es: 'Fecha y hora de recogida',
+                ),
+                controller: _fromAirportPickupDateTimeController,
+                hint: _t(
+                  nl: 'Bijv. 21/06/2026 - 19:10',
+                  en: 'E.g. 21/06/2026 - 19:10',
+                  fr: 'Ex. 21/06/2026 - 19:10',
+                  es: 'Ej. 21/06/2026 - 19:10',
+                ),
+                icon: Icons.schedule_rounded,
+                readOnly: true,
+                onTap: () =>
+                    _pickAirportDateTime(_fromAirportPickupDateTimeController),
+                suffixIcon: IconButton(
+                  onPressed: () => _pickAirportDateTime(
+                    _fromAirportPickupDateTimeController,
+                  ),
+                  tooltip: _t(
+                    nl: 'Datum en tijd kiezen',
+                    en: 'Choose date and time',
+                    fr: "Choisir la date et l'heure",
+                    es: 'Elegir fecha y hora',
+                  ),
+                  icon: Icon(
+                    Icons.calendar_month_rounded,
+                    color: _gold.withOpacity(0.92),
+                    size: 18,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            _buildMeetAndGreetToggle(),
+            if (_meetAndGreet) ...[
+              const SizedBox(height: 10),
+              _buildTextField(
+                label: _t(
+                  nl: 'Naam op bordje',
+                  en: 'Name on sign',
+                  fr: 'Nom sur pancarte',
+                  es: 'Nombre en cartel',
+                ),
+                controller: _nameBoardController,
+                hint: _t(
+                  nl: 'Bijv. Mevr. Van Dijk',
+                  en: 'E.g. Mrs. Smith',
+                  fr: 'Ex. Mme Dupont',
+                  es: 'Ej. Sra. García',
+                ),
+                icon: Icons.badge_outlined,
+              ),
+            ],
+            const SizedBox(height: 10),
+            _buildStepperRow(
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
+              value: _passengers,
+              min: 1,
+              max: 8,
+              icon: Icons.groups_2_outlined,
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _passengers = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            _buildStepperRow(
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
+              value: _bags,
+              min: 0,
+              max: 12,
+              icon: Icons.luggage_outlined,
+              onChanged: (value) {
+                _clearAirportQuote();
+                setState(() => _bags = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _t(
+                nl: 'Vluchttracking en boeking worden in een volgende stap gekoppeld.',
+                en: 'Flight tracking and booking are connected in the next step.',
+                fr: 'Le suivi de vol et la réservation seront reliés à l’étape suivante.',
+                es: 'El seguimiento de vuelo y la reserva se conectarán en el siguiente paso.',
+              ),
+              style: TextStyle(
+                color: _soft.withOpacity(0.95),
+                fontSize: 11.4,
+                height: 1.25,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAirportDropdown() {
+    return AirportCountryAirportSelector(
+      language: appConfig.currentLanguage,
+      countryCode: _selectedCountryCode,
+      airportIata: _selectedAirport.iata,
+      airports: _catalogAirports,
+      onCountryChanged: _setCountry,
+      onAirportChanged: (airport) => _setAirport(airport.id),
+      fillColor: _panel,
+      dropdownColor: _panelAlt,
+      iconColor: _gold,
+      textColor: _textPrimary,
+    );
+  }
+
+  Widget _buildTextField({
+    required String label,
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    Widget? suffixIcon,
+    bool readOnly = false,
+    VoidCallback? onTap,
+    ValueChanged<String>? onChanged,
+    int maxLines = 1,
+    int minLines = 1,
+  }) {
+    return TextField(
+      controller: controller,
+      readOnly: readOnly,
+      onTap: onTap,
+      onChanged: onChanged,
+      maxLines: maxLines,
+      minLines: minLines,
+      style: TextStyle(color: _textPrimary, fontSize: 13),
+      decoration: _fieldDecoration(
+        label: label,
+        hintText: hint,
+        prefixIcon: icon,
+        suffixIcon: suffixIcon,
+      ),
+    );
+  }
+
+  DateTime? _parseAirportDateTime(String value) {
+    final input = value.trim();
+    if (input.isEmpty) {
+      return null;
+    }
+    final split = input.split(' ');
+    if (split.length != 2) {
+      return null;
+    }
+    final dateParts = split.first.split('/');
+    final timeParts = split.last.split(':');
+    if (dateParts.length != 3 || timeParts.length != 2) {
+      return null;
+    }
+    final day = int.tryParse(dateParts[0]);
+    final month = int.tryParse(dateParts[1]);
+    final year = int.tryParse(dateParts[2]);
+    final hour = int.tryParse(timeParts[0]);
+    final minute = int.tryParse(timeParts[1]);
+    if (day == null ||
+        month == null ||
+        year == null ||
+        hour == null ||
+        minute == null) {
+      return null;
+    }
+    try {
+      final parsed = DateTime(year, month, day, hour, minute);
+      if (parsed.year != year ||
+          parsed.month != month ||
+          parsed.day != day ||
+          parsed.hour != hour ||
+          parsed.minute != minute) {
+        return null;
+      }
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _pickAirportDateTime(TextEditingController controller) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final parsed = _parseAirportDateTime(controller.text);
+    final initialDate = parsed != null && !parsed.isBefore(today)
+        ? DateTime(parsed.year, parsed.month, parsed.day)
+        : today;
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+    );
+    if (selectedDate == null || !mounted) {
+      return;
+    }
+
+    final initialTime = parsed != null
+        ? TimeOfDay(hour: parsed.hour, minute: parsed.minute)
+        : TimeOfDay.fromDateTime(now);
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+    );
+    if (selectedTime == null || !mounted) {
+      return;
+    }
+
+    final dd = selectedDate.day.toString().padLeft(2, '0');
+    final mm = selectedDate.month.toString().padLeft(2, '0');
+    final yyyy = selectedDate.year.toString();
+    final hh = selectedTime.hour.toString().padLeft(2, '0');
+    final min = selectedTime.minute.toString().padLeft(2, '0');
+    controller.text = '$dd/$mm/$yyyy $hh:$min';
+    setState(() {});
+  }
+
+  Widget _buildStepperRow({
+    required String label,
+    required int value,
+    required int min,
+    required int max,
+    required IconData icon,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _panelAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.32) : _border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: _gold, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: _textPrimary,
+                fontSize: 12.8,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          _stepButton(
+            icon: Icons.remove_rounded,
+            enabled: value > min,
+            onTap: () => onChanged(value - 1),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              '$value',
+              style: TextStyle(
+                color: _gold,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          _stepButton(
+            icon: Icons.add_rounded,
+            enabled: value < max,
+            onTap: () => onChanged(value + 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepButton({
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: enabled ? _gold.withOpacity(0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: enabled ? _gold.withOpacity(0.72) : _soft.withOpacity(0.3),
+            ),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: enabled ? _gold : _soft.withOpacity(0.55),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMeetAndGreetToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _panelAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _meetAndGreet
+              ? _gold.withOpacity(0.7)
+              : (_isDarkTheme ? _gold.withOpacity(0.3) : _border),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.support_agent_rounded,
+            color: _meetAndGreet ? _gold : _soft,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _t(
+                nl: 'Meet & greet',
+                en: 'Meet & greet',
+                fr: 'Accueil personnalisé',
+                es: 'Recepción personalizada',
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontSize: 12.8,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Switch(
+            value: _meetAndGreet,
+            activeColor: _gold,
+            inactiveThumbColor: _soft,
+            inactiveTrackColor: const Color(0xFF2E2E2E),
+            onChanged: (value) {
+              _clearAirportQuote();
+              setState(() {
+                _meetAndGreet = value;
+                if (!value) {
+                  _nameBoardController.clear();
+                }
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _useCurrentPickupLocation() async {
+    if (_isResolvingPickupLocation) {
+      return;
+    }
+    setState(() {
+      _isResolvingPickupLocation = true;
+    });
+    try {
+      final enabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatieservices staan uit op dit toestel.',
+                en: 'Location services are turned off on this device.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      var permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied) {
+        permission = await geo.Geolocator.requestPermission();
+      }
+      if (permission == geo.LocationPermission.denied) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang geweigerd.',
+                en: 'Location access denied.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (permission == geo.LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+                en: 'Location access is permanently denied. Adjust this in settings.',
+                fr: 'L’accès à la localisation est refusé de façon permanente. Modifiez cela dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Ajústalo en la configuración.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      );
+
+      if (!mounted) return;
+      final lat = pos.latitude;
+      final lng = pos.longitude;
+      final resolvedAddress = await _reverseGeocodePickup(lat, lng);
+      if (!mounted) return;
+      final fallbackAddress =
+          '${_t(nl: "Huidige locatie", en: "Current location", fr: "Position actuelle", es: "Ubicación actual")} (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+      setState(() {
+        _pickupLatitude = lat;
+        _pickupLongitude = lng;
+        _pickupPostcode = _extractLikelyPostcode(resolvedAddress ?? '');
+        _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
+        _pickupAddressController.text =
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+            ? resolvedAddress
+            : fallbackAddress;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+                ? _t(
+                    nl: 'Huidig adres ingevuld.',
+                    en: 'Current address filled in.',
+                    fr: 'Adresse actuelle renseignée.',
+                    es: 'Dirección actual completada.',
+                  )
+                : _t(
+                    nl: 'Huidige locatie ingevuld.',
+                    en: 'Current location filled in.',
+                    fr: 'Position actuelle renseignée.',
+                    es: 'Ubicación actual completada.',
+                  ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Huidige locatie kon niet worden opgehaald.',
+              en: 'Could not fetch current location.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResolvingPickupLocation = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _reverseGeocodePickup(double lat, double lng) async {
+    if (_mapboxToken.trim().isEmpty) {
+      return null;
+    }
+    final url = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${lng.toStringAsFixed(6)},${lat.toStringAsFixed(6)}.json'
+      '?access_token=${Uri.encodeComponent(_mapboxToken)}'
+      '&language=${Uri.encodeComponent(_lang)}'
+      '&limit=1',
+    );
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        return null;
+      }
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) {
+        return null;
+      }
+      final features = data['features'];
+      if (features is! List || features.isEmpty) {
+        return null;
+      }
+      final first = features.first;
+      if (first is! Map<String, dynamic>) {
+        return null;
+      }
+      final placeName = first['place_name'];
+      if (placeName is! String) {
+        return null;
+      }
+      final trimmed = placeName.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _looksBelgianPostcode(String input) {
+    return RegExp(r'^[1-9]\d{3}$').hasMatch(input.trim());
+  }
+
+  String _forwardGeocodeQuery(String rawInput) {
+    final compact = rawInput.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (compact.isEmpty) return '';
+    if (_looksBelgianPostcode(compact)) {
+      return '$compact Belgium';
+    }
+    return compact;
+  }
+
+  String? _featureContextValueByPrefix(dynamic feature, String prefix) {
+    if (feature is! Map<String, dynamic>) return null;
+    final context = feature['context'];
+    if (context is! List) return null;
+    for (final item in context) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = (item['id'] ?? '').toString().toLowerCase();
+      if (!id.startsWith(prefix)) continue;
+      final text = (item['text'] ?? item['short_code'] ?? '').toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
+  }
+
+  _AirportAddressSuggestion? _parseAirportAddressSuggestion(
+    dynamic rawFeature,
+  ) {
+    if (rawFeature is! Map<String, dynamic>) return null;
+    final placeName = (rawFeature['place_name'] ?? '').toString().trim();
+    final center = rawFeature['center'];
+    if (placeName.isEmpty || center is! List || center.length < 2) return null;
+    final lngRaw = center[0];
+    final latRaw = center[1];
+    final lng = lngRaw is num ? lngRaw.toDouble() : double.tryParse('$lngRaw');
+    final lat = latRaw is num ? latRaw.toDouble() : double.tryParse('$latRaw');
+    if (lat == null ||
+        lng == null ||
+        !lat.isFinite ||
+        !lng.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180) {
+      return null;
+    }
+    final postcode = _featureContextValueByPrefix(rawFeature, 'postcode.');
+    final city =
+        _featureContextValueByPrefix(rawFeature, 'place.') ??
+        _featureContextValueByPrefix(rawFeature, 'locality.') ??
+        _featureContextValueByPrefix(rawFeature, 'district.');
+    final country =
+        _featureContextValueByPrefix(rawFeature, 'country.') ??
+        (rawFeature['properties'] is Map
+            ? ((rawFeature['properties'] as Map)['short_code'] ?? '')
+                  .toString()
+                  .trim()
+            : '');
+    return _AirportAddressSuggestion(
+      label: placeName,
+      latitude: lat,
+      longitude: lng,
+      postcode: postcode == null || postcode.isEmpty ? null : postcode,
+      city: city == null || city.isEmpty ? null : city,
+      country: country.isEmpty ? null : country,
+    );
+  }
+
+  Future<List<_AirportAddressSuggestion>> _searchAirportAddressSuggestions(
+    String rawInput,
+  ) async {
+    final token = _mapboxToken.trim();
+    if (token.isEmpty) return const <_AirportAddressSuggestion>[];
+    final query = _forwardGeocodeQuery(rawInput);
+    if (query.isEmpty) return const <_AirportAddressSuggestion>[];
+    final uri = Uri.parse(
+      'https://api.mapbox.com/geocoding/v5/mapbox.places/${Uri.encodeComponent(query)}.json'
+      '?access_token=${Uri.encodeComponent(token)}'
+      '&autocomplete=true'
+      '&country=be,nl,fr,de,lu'
+      '&language=${Uri.encodeComponent(_lang)}'
+      '&types=address,postcode,place,locality,district,neighborhood'
+      '&limit=6',
+    );
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200)
+        return const <_AirportAddressSuggestion>[];
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return const <_AirportAddressSuggestion>[];
+      }
+      final features = decoded['features'];
+      if (features is! List || features.isEmpty) {
+        return const <_AirportAddressSuggestion>[];
+      }
+      final out = <_AirportAddressSuggestion>[];
+      for (final feature in features) {
+        final parsed = _parseAirportAddressSuggestion(feature);
+        if (parsed != null) out.add(parsed);
+      }
+      return out;
+    } catch (_) {
+      return const <_AirportAddressSuggestion>[];
+    }
+  }
+
+  void _applyPickupSuggestion(_AirportAddressSuggestion suggestion) {
+    _clearAirportQuote();
+    setState(() {
+      _pickupAddressController.text = suggestion.label;
+      _pickupLatitude = suggestion.latitude;
+      _pickupLongitude = suggestion.longitude;
+      _pickupPostcode = suggestion.postcode;
+      _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
+    });
+  }
+
+  void _applyDestinationSuggestion(_AirportAddressSuggestion suggestion) {
+    _clearAirportQuote();
+    setState(() {
+      _destinationAddressController.text = suggestion.label;
+      _destinationLatitude = suggestion.latitude;
+      _destinationLongitude = suggestion.longitude;
+      _destinationPostcode = suggestion.postcode;
+      _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
+    });
+  }
+
+  void _onPickupAddressChanged(String value) {
+    _pickupAddressDebounce?.cancel();
+    final query = value.trim();
+    _clearAirportQuote();
+    setState(() {
+      _pickupLatitude = null;
+      _pickupLongitude = null;
+      _pickupPostcode = null;
+      if (query.isEmpty) {
+        _pickupAddressSuggestions = const <_AirportAddressSuggestion>[];
+      }
+    });
+    if (query.isEmpty || _mapboxToken.trim().isEmpty) return;
+    final requestId = ++_pickupAddressRequestId;
+    _pickupAddressDebounce = Timer(const Duration(milliseconds: 260), () async {
+      final results = await _searchAirportAddressSuggestions(query);
+      if (!mounted) return;
+      if (requestId != _pickupAddressRequestId) return;
+      if (_pickupAddressController.text.trim() != query) return;
+      setState(() {
+        _pickupAddressSuggestions = results;
+      });
+    });
+  }
+
+  void _onDestinationAddressChanged(String value) {
+    _destinationAddressDebounce?.cancel();
+    final query = value.trim();
+    _clearAirportQuote();
+    setState(() {
+      _destinationLatitude = null;
+      _destinationLongitude = null;
+      _destinationPostcode = null;
+      if (query.isEmpty) {
+        _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
+      }
+    });
+    if (query.isEmpty || _mapboxToken.trim().isEmpty) return;
+    final requestId = ++_destinationAddressRequestId;
+    _destinationAddressDebounce = Timer(
+      const Duration(milliseconds: 260),
+      () async {
+        final results = await _searchAirportAddressSuggestions(query);
+        if (!mounted) return;
+        if (requestId != _destinationAddressRequestId) return;
+        if (_destinationAddressController.text.trim() != query) return;
+        setState(() {
+          _destinationAddressSuggestions = results;
+        });
+      },
+    );
+  }
+
+  Future<bool> _resolveUserSideAddressBeforeQuote() async {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final address = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final hasUserCoords = isToAirport
+        ? _hasValidCoordinates(_pickupLatitude, _pickupLongitude)
+        : _hasValidCoordinates(_destinationLatitude, _destinationLongitude);
+    if (address.isEmpty || hasUserCoords) return true;
+    FocusScope.of(context).unfocus();
+    if (isToAirport) {
+      setState(() => _isResolvingPickupLocation = true);
+    } else {
+      setState(() => _isResolvingDestinationLocation = true);
+    }
+    final resolved = await _searchAirportAddressSuggestions(address);
+    if (!mounted) return false;
+    if (isToAirport) {
+      setState(() => _isResolvingPickupLocation = false);
+    } else {
+      setState(() => _isResolvingDestinationLocation = false);
+    }
+    if (resolved.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Adres of postcode niet gevonden. Kies een suggestie of gebruik huidige locatie.',
+              en: 'Address or postcode not found. Pick a suggestion or use current location.',
+              fr: 'Adresse ou code postal introuvable. Choisissez une suggestion ou utilisez la position actuelle.',
+              es: 'Dirección o código postal no encontrado. Elige una sugerencia o usa la ubicación actual.',
+            ),
+          ),
+        ),
+      );
+      return false;
+    }
+    final match = resolved.first;
+    if (isToAirport) {
+      _applyPickupSuggestion(match);
+    } else {
+      _applyDestinationSuggestion(match);
+    }
+    return true;
+  }
+
+  Widget _buildAddressSuggestions({
+    required List<_AirportAddressSuggestion> suggestions,
+    required ValueChanged<_AirportAddressSuggestion> onSelect,
+  }) {
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: _panelAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.28) : _border,
+        ),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: suggestions.length,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: _gold.withOpacity(0.12)),
+        itemBuilder: (context, index) {
+          final suggestion = suggestions[index];
+          return ListTile(
+            dense: true,
+            minLeadingWidth: 0,
+            leading: Icon(
+              Icons.location_on_outlined,
+              color: _gold.withOpacity(0.9),
+              size: 17,
+            ),
+            title: Text(
+              suggestion.label,
+              style: TextStyle(color: _textPrimary, fontSize: 12.7),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => onSelect(suggestion),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _useCurrentDestinationLocation() async {
+    if (_isResolvingDestinationLocation) {
+      return;
+    }
+    setState(() {
+      _isResolvingDestinationLocation = true;
+    });
+    try {
+      final enabled = await geo.Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatieservices staan uit op dit toestel.',
+                en: 'Location services are turned off on this device.',
+                fr: 'Les services de localisation sont désactivés sur cet appareil.',
+                es: 'Los servicios de ubicación están desactivados en este dispositivo.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      var permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied) {
+        permission = await geo.Geolocator.requestPermission();
+      }
+      if (permission == geo.LocationPermission.denied) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang geweigerd.',
+                en: 'Location access denied.',
+                fr: 'Accès à la localisation refusé.',
+                es: 'Acceso a la ubicación denegado.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (permission == geo.LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Locatietoegang is permanent geweigerd. Pas dit aan in instellingen.',
+                en: 'Location access is permanently denied. Adjust this in settings.',
+                fr: 'L’accès à la localisation est refusé de façon permanente. Modifiez cela dans les paramètres.',
+                es: 'El acceso a la ubicación está denegado permanentemente. Ajústalo en la configuración.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
+      final pos = await geo.Geolocator.getCurrentPosition(
+        desiredAccuracy: geo.LocationAccuracy.best,
+      );
+
+      if (!mounted) return;
+      final lat = pos.latitude;
+      final lng = pos.longitude;
+      final resolvedAddress = await _reverseGeocodePickup(lat, lng);
+      if (!mounted) return;
+      final fallbackAddress =
+          '${_t(nl: "Huidige locatie", en: "Current location", fr: "Position actuelle", es: "Ubicación actual")} (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})';
+      setState(() {
+        _destinationLatitude = lat;
+        _destinationLongitude = lng;
+        _destinationPostcode = _extractLikelyPostcode(resolvedAddress ?? '');
+        _destinationAddressSuggestions = const <_AirportAddressSuggestion>[];
+        _destinationAddressController.text =
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+            ? resolvedAddress
+            : fallbackAddress;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            (resolvedAddress != null && resolvedAddress.trim().isNotEmpty)
+                ? _t(
+                    nl: 'Huidig adres ingevuld.',
+                    en: 'Current address filled in.',
+                    fr: 'Adresse actuelle renseignée.',
+                    es: 'Dirección actual completada.',
+                  )
+                : _t(
+                    nl: 'Huidige locatie ingevuld.',
+                    en: 'Current location filled in.',
+                    fr: 'Position actuelle renseignée.',
+                    es: 'Ubicación actual completada.',
+                  ),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Huidige locatie kon niet worden opgehaald.',
+              en: 'Could not fetch current location.',
+              fr: 'Impossible de récupérer la position actuelle.',
+              es: 'No se pudo obtener la ubicación actual.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResolvingDestinationLocation = false;
+        });
+      }
+    }
+  }
+
+  void _clearAirportQuote() {
+    if (!mounted) {
+      return;
+    }
+    if (_airportQuote == null && _airportQuoteError == null) {
+      return;
+    }
+    setState(() {
+      _airportQuote = null;
+      _airportQuoteError = null;
+    });
+  }
+
+  void _handleSummaryInputChanged() {
+    if (!mounted) {
+      return;
+    }
+    _clearAirportQuote();
+    setState(() {});
+  }
+
+  String _valueOrFallback(
+    TextEditingController controller, {
+    String? fallback,
+  }) {
+    final effectiveFallback =
+        fallback ??
+        _t(
+          nl: 'Nog niet ingevuld',
+          en: 'Not filled in yet',
+          fr: 'Pas encore renseigné',
+          es: 'Aún no completado',
+        );
+    final text = controller.text.trim();
+    return text.isEmpty ? effectiveFallback : text;
+  }
+
+  Widget _buildSummaryRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    int maxLines = 2,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: _gold.withOpacity(0.92), size: 16),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: _soft.withOpacity(0.92),
+                  fontSize: 10.8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                maxLines: maxLines,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _textPrimary,
+                  fontSize: 12.4,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRideSummaryCard() {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final selectedAirport = _selectedAirport;
+    final flightNumber = _flightNumberController.text.trim();
+    final note = _noteController.text.trim();
+    final nameBoard = _nameBoardController.text.trim();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.26) : _border,
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: _shadow.withOpacity(_isDarkTheme ? 0.12 : 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, color: _gold, size: 17),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Ritoverzicht',
+                    en: 'Ride overview',
+                    fr: 'Aperçu du trajet',
+                    es: 'Resumen del viaje',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: _gold.withOpacity(0.58)),
+                ),
+                child: Text(
+                  _t(nl: 'Lokaal', en: 'Local', fr: 'Local', es: 'Local'),
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: 10.4,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          _buildSummaryRow(
+            icon: Icons.swap_horiz_rounded,
+            label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+            value: isToAirport
+                ? _t(
+                    nl: 'Naar de luchthaven',
+                    en: 'To the airport',
+                    fr: "Vers l'aéroport",
+                    es: 'Al aeropuerto',
+                  )
+                : _t(
+                    nl: 'Van de luchthaven',
+                    en: 'From the airport',
+                    fr: "Depuis l'aéroport",
+                    es: 'Desde el aeropuerto',
+                  ),
+          ),
+          const SizedBox(height: 8),
+          _buildSummaryRow(
+            icon: Icons.public_rounded,
+            label: _t(nl: 'Land', en: 'Country', fr: 'Pays', es: 'País'),
+            value: selectedAirport.countryName,
+          ),
+          const SizedBox(height: 8),
+          _buildSummaryRow(
+            icon: Icons.flight_rounded,
+            label: _t(
+              nl: 'Luchthaven',
+              en: 'Airport',
+              fr: 'Aéroport',
+              es: 'Aeropuerto',
+            ),
+            value: '${selectedAirport.name} (${selectedAirport.iata})',
+          ),
+          const SizedBox(height: 8),
+          if (isToAirport) ...[
+            _buildSummaryRow(
+              icon: Icons.pin_drop_outlined,
+              label: _t(
+                nl: 'Ophaaladres',
+                en: 'Pickup address',
+                fr: 'Adresse de prise en charge',
+                es: 'Dirección de recogida',
+              ),
+              value: _valueOrFallback(_pickupAddressController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.schedule_rounded,
+              label: _t(
+                nl: 'Ophaaldatum/tijd',
+                en: 'Pickup date and time',
+                fr: 'Date et heure de prise en charge',
+                es: 'Fecha y hora de recogida',
+              ),
+              value: _valueOrFallback(_pickupDateTimeController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.groups_2_outlined,
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
+              value: '$_passengers',
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.luggage_outlined,
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
+              value: '$_bags',
+              maxLines: 1,
+            ),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildSummaryRow(
+                icon: Icons.edit_note_rounded,
+                label: _t(
+                  nl: 'Opmerking',
+                  en: 'Note',
+                  fr: 'Remarque',
+                  es: 'Nota',
+                ),
+                value: note,
+              ),
+            ],
+          ] else ...[
+            _buildSummaryRow(
+              icon: Icons.location_on_outlined,
+              label: _t(
+                nl: 'Bestemming',
+                en: 'Destination',
+                fr: 'Destination',
+                es: 'Destino',
+              ),
+              value: _valueOrFallback(_destinationAddressController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.confirmation_number_outlined,
+              label: _t(
+                nl: 'Vluchtnummer',
+                en: 'Flight number',
+                fr: 'Numéro de vol',
+                es: 'Número de vuelo',
+              ),
+              value: flightNumber.isEmpty
+                  ? _t(
+                      nl: 'Optioneel',
+                      en: 'Optional',
+                      fr: 'Optionnel',
+                      es: 'Opcional',
+                    )
+                  : flightNumber,
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.schedule_rounded,
+              label: _t(
+                nl: 'Landingsdatum/tijd',
+                en: 'Landing date and time',
+                fr: "Date et heure d'atterrissage",
+                es: 'Fecha y hora de aterrizaje',
+              ),
+              value: _valueOrFallback(_landingDateTimeController),
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.support_agent_rounded,
+              label: _t(
+                nl: 'Meet & greet',
+                en: 'Meet & greet',
+                fr: 'Accueil personnalisé',
+                es: 'Recepción personalizada',
+              ),
+              value: _meetAndGreet
+                  ? _t(nl: 'Ja', en: 'Yes', fr: 'Oui', es: 'Sí')
+                  : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+              maxLines: 1,
+            ),
+            if (_meetAndGreet) ...[
+              const SizedBox(height: 8),
+              _buildSummaryRow(
+                icon: Icons.badge_outlined,
+                label: _t(
+                  nl: 'Naam bordje',
+                  en: 'Name on sign',
+                  fr: 'Nom sur pancarte',
+                  es: 'Nombre en cartel',
+                ),
+                value: nameBoard.isEmpty
+                    ? _valueOrFallback(_nameBoardController)
+                    : nameBoard,
+              ),
+            ],
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.groups_2_outlined,
+              label: _t(
+                nl: 'Passagiers',
+                en: 'Passengers',
+                fr: 'Passagers',
+                es: 'Pasajeros',
+              ),
+              value: '$_passengers',
+              maxLines: 1,
+            ),
+            const SizedBox(height: 8),
+            _buildSummaryRow(
+              icon: Icons.luggage_outlined,
+              label: _t(
+                nl: 'Bagage',
+                en: 'Luggage',
+                fr: 'Bagages',
+                es: 'Equipaje',
+              ),
+              value: '$_bags',
+              maxLines: 1,
+            ),
+          ],
+          if (_roundtripEnabled) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: _panelAlt,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: _isDarkTheme ? _gold.withOpacity(0.38) : _border,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.keyboard_return_rounded,
+                        color: _gold.withOpacity(0.96),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        _t(
+                          nl: 'Terugrit',
+                          en: 'Return leg',
+                          fr: 'Trajet retour',
+                          es: 'Trayecto de vuelta',
+                        ),
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontSize: 12.6,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.swap_horiz_rounded,
+                    label: _t(nl: 'Type', en: 'Type', fr: 'Type', es: 'Tipo'),
+                    value: isToAirport
+                        ? _t(
+                            nl: 'Van de luchthaven',
+                            en: 'From the airport',
+                            fr: "Depuis l'aéroport",
+                            es: 'Desde el aeropuerto',
+                          )
+                        : _t(
+                            nl: 'Naar de luchthaven',
+                            en: 'To the airport',
+                            fr: "Vers l'aéroport",
+                            es: 'Hacia el aeropuerto',
+                          ),
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.pin_drop_outlined,
+                    label: _t(
+                      nl: 'Retouradres',
+                      en: 'Return address',
+                      fr: 'Adresse de retour',
+                      es: 'Dirección de regreso',
+                    ),
+                    value: _valueOrFallback(_returnAddressController),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    icon: Icons.schedule_rounded,
+                    label: _t(
+                      nl: 'Retourdatum en tijd',
+                      en: 'Return date and time',
+                      fr: 'Date et heure du retour',
+                      es: 'Fecha y hora de regreso',
+                    ),
+                    value: _valueOrFallback(_returnDateTimeController),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _t(
+                      nl: 'Retourrit wordt mee opgenomen in prijs en boeking.',
+                      en: 'Return leg is included in pricing and booking.',
+                      fr: 'Le trajet retour est inclus dans le tarif et la réservation.',
+                      es: 'El trayecto de regreso está incluido en el precio y la reserva.',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.9),
+                      fontSize: 10.8,
+                      height: 1.22,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _gold.withOpacity(0.5)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.verified_rounded, color: _gold, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _t(
+                      nl: 'Status: Klaar voor prijsberekening',
+                      en: 'Status: Ready for price calculation',
+                      fr: 'Statut : prêt pour le calcul du prix',
+                      es: 'Estado: listo para calcular el precio',
+                    ),
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_hasNearbyStaysContext) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openNearbyStaysFromAirport,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: _panelAlt,
+                  foregroundColor: _textPrimary.withOpacity(0.94),
+                  side: BorderSide(
+                    color: _isDarkTheme ? _gold.withOpacity(0.35) : _border,
+                  ),
+                  minimumSize: const Size.fromHeight(42),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                ),
+                icon: Icon(
+                  Icons.hotel_rounded,
+                  size: 16,
+                  color: _gold.withOpacity(0.93),
+                ),
+                label: Text(
+                  _nearbyStaysLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCtaButton(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: _isDarkTheme ? _gold : _bronze,
+          foregroundColor: _isDarkTheme ? Colors.black : Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        onPressed: _isRequestingQuote ? null : _prepareAirportBookingDetails,
+        child: Text(
+          _isRequestingQuote
+              ? _t(
+                  nl: 'Prijs berekenen...',
+                  en: 'Calculating price...',
+                  fr: 'Calcul du prix...',
+                  es: 'Calculando precio...',
+                )
+              : _t(
+                  nl: 'Ritgegevens voorbereiden',
+                  en: 'Prepare ride details',
+                  fr: 'Préparer les détails du trajet',
+                  es: 'Preparar detalles del viaje',
+                ),
+        ),
+      ),
+    );
+  }
+
+  String? _validatePrepareRideDetailsMessage() {
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    if (isToAirport) {
+      if (_pickupAddressController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Vul eerst het ophaaladres in.',
+          en: 'Enter the pickup address first.',
+          fr: "Saisissez d'abord l'adresse de prise en charge.",
+          es: 'Primero introduce la dirección de recogida.',
+        );
+      }
+      if (_pickupDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies eerst de ophaaldatum en tijd.',
+          en: 'Select pickup date and time first.',
+          fr: "Choisissez d'abord la date et l'heure de prise en charge.",
+          es: 'Primero selecciona la fecha y hora de recogida.',
+        );
+      }
+      if (_filteredAirports.isEmpty) {
+        return _t(
+          nl: 'Kies eerst een luchthaven.',
+          en: 'Select an airport first.',
+          fr: "Choisissez d'abord un aéroport.",
+          es: 'Primero selecciona un aeropuerto.',
+        );
+      }
+      if (_passengers < 1) {
+        return _t(
+          nl: 'Kies minstens 1 passagier.',
+          en: 'Select at least 1 passenger.',
+          fr: 'Sélectionnez au moins 1 passager.',
+          es: 'Selecciona al menos 1 pasajero.',
+        );
+      }
+    } else {
+      if (_destinationAddressController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Vul eerst de bestemming in.',
+          en: 'Enter the destination first.',
+          fr: "Saisissez d'abord la destination.",
+          es: 'Primero introduce el destino.',
+        );
+      }
+      if (_landingDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies eerst de landingsdatum en tijd.',
+          en: 'Select landing date and time first.',
+          fr: "Choisissez d'abord la date et l'heure d'atterrissage.",
+          es: 'Primero selecciona la fecha y hora de aterrizaje.',
+        );
+      }
+      if (_pickupArrangement == 'scheduled' &&
+          _fromAirportPickupDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies een aparte ophaaldatum en tijd. Landingstijd is geen ophaaltijd.',
+          en: 'Choose a separate pickup date and time. Landing time is not pickup time.',
+          fr: 'Choisissez une date et une heure de prise en charge séparées. L’atterrissage n’est pas la prise en charge.',
+          es: 'Elige una fecha y hora de recogida aparte. El aterrizaje no es la recogida.',
+        );
+      }
+      if (_filteredAirports.isEmpty) {
+        return _t(
+          nl: 'Kies eerst een luchthaven.',
+          en: 'Select an airport first.',
+          fr: "Choisissez d'abord un aéroport.",
+          es: 'Primero selecciona un aeropuerto.',
+        );
+      }
+      if (_passengers < 1) {
+        return _t(
+          nl: 'Kies minstens 1 passagier.',
+          en: 'Select at least 1 passenger.',
+          fr: 'Sélectionnez au moins 1 passager.',
+          es: 'Selecciona al menos 1 pasajero.',
+        );
+      }
+      if (_meetAndGreet && _nameBoardController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Vul de naam voor het bordje in.',
+          en: 'Enter the name for the sign.',
+          fr: 'Saisissez le nom pour la pancarte.',
+          es: 'Introduce el nombre para el cartel.',
+        );
+      }
+    }
+    if (_roundtripEnabled) {
+      if (_returnAddressController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Vul eerst het retouradres in.',
+          en: 'Enter the return address first.',
+          fr: "Saisissez d'abord l'adresse de retour.",
+          es: 'Primero introduce la dirección de regreso.',
+        );
+      }
+      if (_returnDateTimeController.text.trim().isEmpty) {
+        return _t(
+          nl: 'Kies eerst de retourdatum en tijd.',
+          en: 'Select return date and time first.',
+          fr: "Choisissez d'abord la date et l'heure du retour.",
+          es: 'Primero selecciona la fecha y hora de regreso.',
+        );
+      }
+      if (_parseAirportDateTime(_returnDateTimeController.text) == null) {
+        return _t(
+          nl: 'Gebruik een geldige retourdatum en tijd.',
+          en: 'Use a valid return date and time.',
+          fr: "Utilisez une date et une heure de retour valides.",
+          es: 'Usa una fecha y hora de regreso válidas.',
+        );
+      }
+    }
+    return null;
+  }
+
+  void _handlePrepareRideDetails() {
+    final errorMessage = _validatePrepareRideDetailsMessage();
+    final snackBarMessage =
+        errorMessage ??
+        _t(
+          nl: 'Ritgegevens voorbereid. Prijsberekening wordt in de volgende stap gekoppeld.',
+          en: 'Ride details prepared. Price calculation is connected in the next step.',
+          fr: 'Détails du trajet préparés. Le calcul du prix est relié à l’étape suivante.',
+          es: 'Detalles del viaje preparados. El cálculo del precio se conectará en el siguiente paso.',
+        );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(snackBarMessage)));
+  }
+
+  String _fmtDateYmd(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+
+  String _fmtTimeHm(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  String _isoLikeLocal(DateTime dt) =>
+      '${_fmtDateYmd(dt)}T${_fmtTimeHm(dt)}:00';
+
+  bool _hasValidCoordinates(double? latitude, double? longitude) {
+    if (latitude == null || longitude == null) {
+      return false;
+    }
+    if (!latitude.isFinite || !longitude.isFinite) {
+      return false;
+    }
+    if (latitude < -90 || latitude > 90) {
+      return false;
+    }
+    if (longitude < -180 || longitude > 180) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Whether an edited return address still names the place the current return
+  /// coordinates belong to, so the pin and the fixed fare survive a rewrite.
+  bool _returnEditKeepsCoordinates(String edited) {
+    if (!_hasValidCoordinates(_returnLatitude, _returnLongitude)) return false;
+    return airportReturnEditKeepsPin(
+      anchor: _returnCoordinateAnchor ?? '',
+      edited: edited,
+    );
+  }
+
+  String _extractLikelyPostcode(String rawAddress) {
+    final text = rawAddress.trim();
+    if (text.isEmpty) return '';
+    final match = RegExp(
+      r'(?:^|[,\s])([1-9]\d{3})(?:\s?[A-Za-z]{2})?(?=$|[,\s])',
+    ).firstMatch(text);
+    return (match?.group(1) ?? '').trim();
+  }
+
+  Map<String, dynamic>? _buildAirportQuotePayload() {
+    final selectedAirport = _selectedAirport;
+    final isToAirport = _selectedMode == _TransferMode.toAirport;
+    final dateSource = isToAirport
+        ? _pickupDateTimeController.text
+        : (_pickupArrangement == 'scheduled' &&
+                _fromAirportPickupDateTimeController.text.trim().isNotEmpty
+            ? _fromAirportPickupDateTimeController.text
+            : _landingDateTimeController.text);
+    final parsedDate = _parseAirportDateTime(dateSource);
+    if (parsedDate == null) {
+      return null;
+    }
+    final isRoundtrip = _roundtripEnabled;
+    final returnAddress = _returnAddressController.text.trim();
+    final parsedReturnDate = isRoundtrip
+        ? _parseAirportDateTime(_returnDateTimeController.text)
+        : null;
+    if (isRoundtrip && (returnAddress.isEmpty || parsedReturnDate == null)) {
+      return null;
+    }
+    String tenantId = _selectedTenantId;
+    String companyId = _selectedCompanyId;
+    if ((tenantId.isEmpty || companyId.isEmpty) &&
+        widget.allowAdminScopeFallback) {
+      final effectiveScope = resolveEffectiveTenantCompanyScope(
+        allowDriverFallback: true,
+      );
+      tenantId = effectiveScope.tenantId;
+      companyId = effectiveScope.companyId;
+    }
+    if (tenantId.isEmpty || companyId.isEmpty) {
+      return null;
+    }
+    final fromText = isToAirport
+        ? _pickupAddressController.text.trim()
+        : '${selectedAirport.name}, ${selectedAirport.countryName}';
+    final toText = isToAirport
+        ? '${selectedAirport.name}, ${selectedAirport.countryName}'
+        : _destinationAddressController.text.trim();
+    if (fromText.isEmpty || toText.isEmpty) {
+      return null;
+    }
+    final note = _noteController.text.trim();
+    final flightNumber = _flightNumberController.text.trim();
+    final flightAtSource = isToAirport
+        ? _flightDepartDateTimeController.text
+        : _landingDateTimeController.text;
+    final parsedFlightAt = _parseAirportDateTime(flightAtSource);
+    final returnFlightNumber = _returnFlightNumberController.text.trim();
+    final parsedReturnFlightAt = _parseAirportDateTime(
+      _returnFlightDateTimeController.text,
+    );
+    final nameBoard = _nameBoardController.text.trim();
+    const fixedFareTier = 'comfort';
+    final direction = isToAirport ? 'to_airport' : 'from_airport';
+    final userZoneAddress = isToAirport
+        ? _pickupAddressController.text.trim()
+        : _destinationAddressController.text.trim();
+    final derivedPostcode =
+        (isToAirport ? _pickupPostcode : _destinationPostcode)?.trim() ??
+        _extractLikelyPostcode(userZoneAddress);
+    final hasDerivedZone = derivedPostcode.isNotEmpty;
+    final hasPickupCoordinates = _hasValidCoordinates(
+      _pickupLatitude,
+      _pickupLongitude,
+    );
+    final hasDestinationCoordinates = _hasValidCoordinates(
+      _destinationLatitude,
+      _destinationLongitude,
+    );
+    final hasUserCoordinates = isToAirport
+        ? hasPickupCoordinates
+        : hasDestinationCoordinates;
+    final hasAirportCoordinates = _hasValidCoordinates(
+      selectedAirport.latitude,
+      selectedAirport.longitude,
+    );
+    final hasReturnCoordinates = _hasValidCoordinates(
+      _returnLatitude,
+      _returnLongitude,
+    );
+    final returnPostcode = (_returnPostcode ?? '').trim().isNotEmpty
+        ? _returnPostcode!.trim()
+        : _extractLikelyPostcode(returnAddress);
+    final returnDirection = isToAirport ? 'from_airport' : 'to_airport';
+    final returnFromText = isToAirport
+        ? '${selectedAirport.name}, ${selectedAirport.countryName}'
+        : returnAddress;
+    final returnToText = isToAirport
+        ? returnAddress
+        : '${selectedAirport.name}, ${selectedAirport.countryName}';
+    debugPrint(
+      '[AIRPORT_QUOTE] airport=${selectedAirport.id}/${selectedAirport.iata} '
+      'direction=$direction '
+      'postcode=${hasDerivedZone ? derivedPostcode : "none"} '
+      'tier=$fixedFareTier '
+      'user_coords=$hasUserCoordinates '
+      'pickup_coords=$hasPickupCoordinates '
+      'destination_coords=$hasDestinationCoordinates '
+      'scope=$tenantId/$companyId '
+      'airport_coords=$hasAirportCoordinates',
+    );
+    return <String, dynamic>{
+      'from': fromText,
+      'to': toText,
+      'date': _fmtDateYmd(parsedDate),
+      'time': _fmtTimeHm(parsedDate),
+      'pickup_iso': _isoLikeLocal(parsedDate),
+      'tier': fixedFareTier,
+      'tier_id': fixedFareTier,
+      'tierId': fixedFareTier,
+      'service': 'AIRPORT',
+      'pax': _passengers,
+      'bags': _bags,
+      'tenant_id': tenantId,
+      'company_id': companyId,
+      'tenantId': tenantId,
+      'companyId': companyId,
+      if (_selectedCompanyCode.isNotEmpty) ...{
+        'company_code': _selectedCompanyCode,
+        'companyCode': _selectedCompanyCode,
+      },
+      if (_selectedCompanyName.isNotEmpty) ...{
+        'public_partner_name': _selectedCompanyName,
+        'publicPartnerName': _selectedCompanyName,
+      },
+      if (_selectedPartnerId.isNotEmpty) ...{
+        'public_partner_id': _selectedPartnerId,
+        'publicPartnerId': _selectedPartnerId,
+        'partner_id': _selectedPartnerId,
+        'partnerId': _selectedPartnerId,
+      },
+      'airport_direction': direction,
+      'direction': direction,
+      'airport_id': selectedAirport.id,
+      'airport_iata': selectedAirport.iata,
+      'airport_name': selectedAirport.name,
+      'airport_country': selectedAirport.countryName,
+      if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
+      if (parsedFlightAt != null) 'flight_at': _isoLikeLocal(parsedFlightAt),
+      'flight_timezone': 'Europe/Brussels',
+      'pickup_arrangement': isToAirport ? 'scheduled' : _pickupArrangement,
+      if (hasDerivedZone) ...{
+        'fixed_fare_zone_type': 'postcode',
+        'fixedFareZoneType': 'postcode',
+        'fixed_fare_zone_value': derivedPostcode,
+        'fixedFareZoneValue': derivedPostcode,
+        'zone_type': 'postcode',
+        'zoneType': 'postcode',
+        'zone_value': derivedPostcode,
+        'zoneValue': derivedPostcode,
+        'postcode': derivedPostcode,
+        'postal_code': derivedPostcode,
+        'postalCode': derivedPostcode,
+      },
+      if (note.isNotEmpty) 'note': note,
+      if (hasAirportCoordinates && isToAirport) ...{
+        'to_lat': selectedAirport.latitude,
+        'to_lng': selectedAirport.longitude,
+      },
+      if (hasAirportCoordinates && !isToAirport) ...{
+        'from_lat': selectedAirport.latitude,
+        'from_lng': selectedAirport.longitude,
+      },
+      if (isToAirport) ...{
+        if (_pickupLatitude != null) ...{
+          'pickup_lat': _pickupLatitude,
+          'pickupLat': _pickupLatitude,
+          'from_lat': _pickupLatitude,
+          'fromLat': _pickupLatitude,
+        },
+        if (_pickupLongitude != null) ...{
+          'pickup_lng': _pickupLongitude,
+          'pickupLng': _pickupLongitude,
+          'from_lng': _pickupLongitude,
+          'fromLng': _pickupLongitude,
+        },
+        if (hasDerivedZone) ...{
+          'pickup_postcode': derivedPostcode,
+          'pickupPostcode': derivedPostcode,
+          'from_postcode': derivedPostcode,
+          'fromPostcode': derivedPostcode,
+        },
+      } else ...{
+        if (_destinationLatitude != null) ...{
+          'destination_lat': _destinationLatitude,
+          'destinationLat': _destinationLatitude,
+          'to_lat': _destinationLatitude,
+          'toLat': _destinationLatitude,
+        },
+        if (_destinationLongitude != null) ...{
+          'destination_lng': _destinationLongitude,
+          'destinationLng': _destinationLongitude,
+          'to_lng': _destinationLongitude,
+          'toLng': _destinationLongitude,
+        },
+        if (hasDerivedZone) ...{
+          'destination_postcode': derivedPostcode,
+          'destinationPostcode': derivedPostcode,
+          'destination_postal_code': derivedPostcode,
+          'to_postcode': derivedPostcode,
+          'toPostcode': derivedPostcode,
+        },
+        if (flightNumber.isNotEmpty) 'flight_number': flightNumber,
+        if (parsedFlightAt != null) 'flight_at': _isoLikeLocal(parsedFlightAt),
+        'flight_timezone': 'Europe/Brussels',
+        'pickup_arrangement': isToAirport ? 'scheduled' : _pickupArrangement,
+        'meet_and_greet': _meetAndGreet,
+        if (nameBoard.isNotEmpty) 'name_board': nameBoard,
+      },
+      if (isRoundtrip) ...{
+        'return_enabled': true,
+        'returnEnabled': true,
+        'return_direction': returnDirection,
+        'returnDirection': returnDirection,
+        'return_from': returnFromText,
+        'returnFrom': returnFromText,
+        'return_to': returnToText,
+        'returnTo': returnToText,
+        'return_date': _fmtDateYmd(parsedReturnDate!),
+        'returnDate': _fmtDateYmd(parsedReturnDate),
+        'return_time': _fmtTimeHm(parsedReturnDate),
+        'returnTime': _fmtTimeHm(parsedReturnDate),
+        'return_pickup_iso': _isoLikeLocal(parsedReturnDate),
+        'returnPickupIso': _isoLikeLocal(parsedReturnDate),
+        if (returnFlightNumber.isNotEmpty)
+          'return_flight_number': returnFlightNumber,
+        if (parsedReturnFlightAt != null)
+          'return_flight_at': _isoLikeLocal(parsedReturnFlightAt),
+        'return_airport_iata': selectedAirport.iata,
+        if (returnPostcode.isNotEmpty) ...{
+          'return_postcode': returnPostcode,
+          'returnPostcode': returnPostcode,
+          'return_postal_code': returnPostcode,
+          'returnPostalCode': returnPostcode,
+        },
+        if (hasReturnCoordinates && isToAirport) ...{
+          'return_to_lat': _returnLatitude,
+          'returnToLat': _returnLatitude,
+          'return_to_lng': _returnLongitude,
+          'returnToLng': _returnLongitude,
+          'return_destination_lat': _returnLatitude,
+          'returnDestinationLat': _returnLatitude,
+          'return_destination_lng': _returnLongitude,
+          'returnDestinationLng': _returnLongitude,
+        },
+        if (hasReturnCoordinates && !isToAirport) ...{
+          'return_from_lat': _returnLatitude,
+          'returnFromLat': _returnLatitude,
+          'return_from_lng': _returnLongitude,
+          'returnFromLng': _returnLongitude,
+          'return_pickup_lat': _returnLatitude,
+          'returnPickupLat': _returnLatitude,
+          'return_pickup_lng': _returnLongitude,
+          'returnPickupLng': _returnLongitude,
+        },
+      },
+    };
+  }
+
+  /// Curated server message for a return leg that could not be priced. Only
+  /// the two known codes are shown, so no arbitrary backend text reaches the
+  /// customer.
+  static String? _returnLegQuoteMessage(Map<String, dynamic>? data) {
+    if (data == null) return null;
+    const shown = <String>{
+      'return_fixed_fare_unresolved',
+      'return_quote_failed',
+    };
+    final code = (data['error_code'] ?? data['error'] ?? '').toString().trim();
+    if (!shown.contains(code)) return null;
+    final message = (data['message'] ?? '').toString().trim();
+    return message.isEmpty ? null : message;
+  }
+
+  Future<Map<String, dynamic>?> _requestAirportQuoteForReview({
+    required bool showSuccessSnackbar,
+  }) async {
+    if (_isRequestingQuote) {
+      return _airportQuote;
+    }
+    final validationError = _validatePrepareRideDetailsMessage();
+    if (validationError != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(validationError)));
+      return null;
+    }
+    final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
+    if (!resolvedUserSide || !mounted) {
+      return null;
+    }
+    final payload = _buildAirportQuotePayload();
+    if (payload == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Kies eerst een taxipartner voor luchthavenvervoer.',
+              en: 'Select a taxi partner first for airport rides.',
+              fr: "Choisissez d'abord un partenaire taxi pour les transferts aéroport.",
+              es: 'Selecciona primero un socio de taxi para traslados al aeropuerto.',
+            ),
+          ),
+        ),
+      );
+      return null;
+    }
+    setState(() {
+      _isRequestingQuote = true;
+      _airportQuoteError = null;
+    });
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${widget.bookingBaseUrl}/quote'),
+            headers: const <String, String>{'content-type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 15));
+      final dynamic decoded = jsonDecode(response.body);
+      final data = decoded is Map<String, dynamic> ? decoded : null;
+      final isOk =
+          response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          data?['ok'] == true;
+      if (!mounted) {
+        return null;
+      }
+      if (isOk && data != null) {
+        setState(() {
+          _airportQuote = data;
+          _airportQuoteError = null;
+        });
+        if (showSuccessSnackbar) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _t(
+                  nl: 'Prijsberekening opgehaald.',
+                  en: 'Price calculation retrieved.',
+                  fr: 'Calcul du prix récupéré.',
+                  es: 'Cálculo del precio obtenido.',
+                ),
+              ),
+            ),
+          );
+        }
+        return data;
+      }
+      final entitlementMsg = friendlyEntitlementUserMessage(
+        rawError: response.body,
+        languageCode: Localizations.localeOf(context).languageCode,
+        isPublicCustomer: true,
+        httpStatus: response.statusCode,
+      );
+      // A return leg that cannot be priced answers with its own curated
+      // message. Showing it beats a generic failure, and no quote is kept so
+      // the ride cannot be requested.
+      final returnLegMessage = _returnLegQuoteMessage(data);
+      setState(() {
+        _airportQuote = null;
+        _airportQuoteError =
+            returnLegMessage ??
+            entitlementMsg ??
+            _t(
+              nl: 'Prijsberekening kon niet worden opgehaald.',
+              en: 'Price calculation could not be retrieved.',
+              fr: "Le calcul du prix n'a pas pu être récupéré.",
+              es: 'No se pudo obtener el cálculo del precio.',
+            );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportQuoteError!)));
+      return null;
+    } catch (_) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _airportQuote = null;
+        _airportQuoteError = _t(
+          nl: 'Prijsberekening kon niet worden opgehaald.',
+          en: 'Price calculation could not be retrieved.',
+          fr: "Le calcul du prix n'a pas pu être récupéré.",
+          es: 'No se pudo obtener el cálculo del precio.',
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_airportQuoteError!)));
+      return null;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRequestingQuote = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _prepareAirportBookingDetails() async {
+    final resolvedUserSide = await _resolveUserSideAddressBeforeQuote();
+    if (!resolvedUserSide || !mounted) {
+      return;
+    }
+    final payload = _buildAirportQuotePayload();
+    if (payload == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Ritgegevens zijn nog niet volledig ingevuld.',
+              en: 'Ride details are not complete yet.',
+              fr: 'Les détails du trajet ne sont pas encore complets.',
+              es: 'Los datos del viaje aún no están completos.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    var quote = _airportQuote;
+    quote ??= await _requestAirportQuoteForReview(showSuccessSnackbar: false);
+    if (quote == null || !mounted) {
+      return;
+    }
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => AirportBookingReviewPage(
+          bookingBaseUrl: widget.bookingBaseUrl,
+          quote: Map<String, dynamic>.from(quote!),
+          payload: Map<String, dynamic>.from(payload),
+          languageCode: appConfig.currentLanguage.name,
+          currencySymbol: '€',
+        ),
+      ),
+    );
+    if (result == true && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _requestAirportQuote() async {
+    await _requestAirportQuoteForReview(showSuccessSnackbar: true);
+  }
+
+  double? _quoteNum(dynamic value) {
+    if (value is num) {
+      final n = value.toDouble();
+      return n.isFinite ? n : null;
+    }
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) {
+      return null;
+    }
+    return double.tryParse(text.replaceAll(',', '.'));
+  }
+
+  bool _isFixedAirportFareQuote(Map<String, dynamic> quote) {
+    bool asBool(dynamic value) {
+      if (value is bool) {
+        return value;
+      }
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    String asText(dynamic value) {
+      return value?.toString().trim().toLowerCase() ?? '';
+    }
+
+    if (asBool(quote['fixed_fare_applied'])) {
+      return true;
+    }
+    if (asBool(quote['fixed_fare_applied_main']) ||
+        asBool(quote['fixed_fare_applied_return'])) {
+      return true;
+    }
+    if (asText(quote['pricing_source']) == 'airport_fixed_fare') {
+      return true;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      final breakdown = Map<String, dynamic>.from(breakdownRaw);
+      if (asText(breakdown['kind']) == 'airport_fixed_fare') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String? _fixedFareRuleIdFromQuote(Map<String, dynamic> quote) {
+    String? nonEmpty(dynamic value) {
+      final text = value?.toString().trim() ?? '';
+      return text.isEmpty ? null : text;
+    }
+
+    final topLevel = nonEmpty(quote['fixed_fare_rule_id']);
+    if (topLevel != null) {
+      return topLevel;
+    }
+    final breakdownRaw = quote['breakdown'];
+    if (breakdownRaw is Map) {
+      return nonEmpty(breakdownRaw['fixed_fare_rule_id']);
+    }
+    return null;
+  }
+
+  Widget _buildAirportQuoteCard() {
+    final quote = _airportQuote;
+    final error = _airportQuoteError;
+    final isRoundtrip = _roundtripEnabled && quote != null;
+    final mainIncl =
+        _quoteNum(quote?['price_incl_vat_main']) ??
+        _quoteNum(quote?['price_incl_vat']);
+    final returnMap = quote?['return'];
+    final returnIncl =
+        _quoteNum(quote?['price_incl_vat_return']) ??
+        (returnMap is Map ? _quoteNum(returnMap['price_incl_vat']) : null);
+    final totalIncl =
+        _quoteNum(quote?['total_price_incl_vat']) ??
+        (mainIncl != null && returnIncl != null
+            ? mainIncl + returnIncl
+            : mainIncl);
+    final displayPrice = isRoundtrip ? totalIncl : (mainIncl ?? totalIncl);
+    final distance = _quoteNum(quote?['distance_km']);
+    final duration = _quoteNum(quote?['duration_min']);
+    final hasFixedFare =
+        quote != null &&
+        _isFixedAirportFareQuote(Map<String, dynamic>.from(quote));
+    bool quoteBool(dynamic value) {
+      if (value is bool) return value;
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    final fixedMain =
+        quoteBool(quote?['fixed_fare_applied_main']) ||
+        quoteBool(quote?['fixed_fare_applied']);
+    final fixedReturn = quoteBool(quote?['fixed_fare_applied_return']);
+    final fixedFareRuleId = quote == null
+        ? null
+        : _fixedFareRuleIdFromQuote(Map<String, dynamic>.from(quote));
+    final fixedFareRuleIdMainRaw = quote?['fixed_fare_rule_id_main'];
+    final fixedFareRuleIdMainText =
+        fixedFareRuleIdMainRaw?.toString().trim() ?? '';
+    final fixedFareRuleIdMain = fixedFareRuleIdMainText.isNotEmpty
+        ? fixedFareRuleIdMainText
+        : fixedFareRuleId;
+    final fixedFareRuleIdReturnRaw = quote?['fixed_fare_rule_id_return'];
+    final fixedFareRuleIdReturnText =
+        fixedFareRuleIdReturnRaw?.toString().trim() ?? '';
+    final fixedFareRuleIdReturn = fixedFareRuleIdReturnText.isNotEmpty
+        ? fixedFareRuleIdReturnText
+        : null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _isDarkTheme ? _gold.withOpacity(0.24) : _border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.calculate_rounded, color: _gold, size: 17),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: isRoundtrip
+                        ? 'Heen-en-terug prijsindicatie'
+                        : 'Prijsindicatie',
+                    en: isRoundtrip
+                        ? 'Roundtrip fare estimate'
+                        : 'Price indication',
+                    fr: isRoundtrip
+                        ? 'Estimation aller-retour'
+                        : 'Indication de prix',
+                    es: isRoundtrip
+                        ? 'Estimación ida y vuelta'
+                        : 'Indicación de precio',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (error != null)
+            Text(error, style: TextStyle(color: _soft, fontSize: 12))
+          else if (quote != null) ...[
+            if (isRoundtrip) ...[
+              Row(
+                children: [
+                  Text(
+                    _t(nl: 'Heenrit', en: 'Outbound', fr: 'Aller', es: 'Ida'),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    mainIncl != null ? '€ ${mainIncl.toStringAsFixed(2)}' : '—',
+                    style: TextStyle(
+                      color: _textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Terugrit',
+                      en: 'Return',
+                      fr: 'Retour',
+                      es: 'Regreso',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    returnIncl != null
+                        ? '€ ${returnIncl.toStringAsFixed(2)}'
+                        : '—',
+                    style: TextStyle(
+                      color: _textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: _gold.withOpacity(0.46)),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Totaal heen-en-terug',
+                        en: 'Roundtrip total',
+                        fr: 'Total aller-retour',
+                        es: 'Total ida y vuelta',
+                      ),
+                      style: TextStyle(
+                        color: _gold,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      displayPrice != null
+                          ? '€ ${displayPrice.toStringAsFixed(2)}'
+                          : '—',
+                      style: TextStyle(
+                        color: _gold,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else
+              Row(
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Geschatte prijs',
+                      en: 'Estimated price',
+                      fr: 'Prix estimé',
+                      es: 'Precio estimado',
+                    ),
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.95),
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    displayPrice != null
+                        ? '€ ${displayPrice.toStringAsFixed(2)}'
+                        : '—',
+                    style: TextStyle(
+                      color: _gold,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 6),
+            if (hasFixedFare) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: _gold.withOpacity(0.48)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.workspace_premium_rounded,
+                      color: _gold.withOpacity(0.96),
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _t(
+                          nl: isRoundtrip
+                              ? 'Vast tarief per rit volgens bedrijfsregel'
+                              : 'Vast tarief volgens bedrijfsregel',
+                          en: isRoundtrip
+                              ? 'Fixed fare per leg by company rule'
+                              : 'Fixed fare by company rule',
+                          fr: isRoundtrip
+                              ? "Tarif fixe par trajet selon la règle d’entreprise"
+                              : 'Tarif fixe selon la règle d’entreprise',
+                          es: isRoundtrip
+                              ? 'Tarifa fija por trayecto según regla de empresa'
+                              : 'Tarifa fija según regla de empresa',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _gold,
+                          fontSize: 11.1,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _t(
+                  nl: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Heen- en terugrit volgen beide de ingestelde luchthavenregels van het bedrijf.'
+                            : 'Vaste tariefregels zijn toegepast waar beschikbaar; overige delen volgen routeberekening.')
+                      : 'Deze prijs komt uit de ingestelde luchthavenregels van het bedrijf.',
+                  en: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Both outbound and return legs follow the company’s configured airport rules.'
+                            : 'Fixed-fare rules are applied where available; remaining parts use route pricing.')
+                      : 'This price comes from the company’s configured airport rules.',
+                  fr: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? "L’aller et le retour suivent les règles aéroport configurées par l’entreprise."
+                            : "Les règles de tarif fixe sont appliquées quand possible; le reste suit le calcul d’itinéraire.")
+                      : 'Ce prix provient des règles aéroport configurées par l’entreprise.',
+                  es: isRoundtrip
+                      ? (fixedMain && fixedReturn
+                            ? 'Tanto ida como regreso siguen las reglas de aeropuerto configuradas por la empresa.'
+                            : 'Las reglas de tarifa fija se aplican donde estén disponibles; el resto usa cálculo por ruta.')
+                      : 'Este precio proviene de las reglas de aeropuerto configuradas por la empresa.',
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _soft.withOpacity(0.9),
+                  fontSize: 10.8,
+                  height: 1.2,
+                ),
+              ),
+              if (fixedFareRuleId != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  '${_t(nl: "Tariefregel", en: "Fare rule", fr: "Règle tarifaire", es: "Regla de tarifa")}: $fixedFareRuleId',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _soft.withOpacity(0.93),
+                    fontSize: 10.7,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (isRoundtrip &&
+                    fixedFareRuleIdMain != null &&
+                    fixedFareRuleIdReturn != null &&
+                    fixedFareRuleIdMain != fixedFareRuleIdReturn) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_t(nl: "Heenrit", en: "Outbound", fr: "Aller", es: "Ida")}: $fixedFareRuleIdMain',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.88),
+                      fontSize: 10.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '${_t(nl: "Terugrit", en: "Return", fr: "Retour", es: "Regreso")}: $fixedFareRuleIdReturn',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _soft.withOpacity(0.88),
+                      fontSize: 10.4,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 6),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    distance != null
+                        ? '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: ${distance.toStringAsFixed(1)} km'
+                        : '${_t(nl: "Afstand", en: "Distance", fr: "Distance", es: "Distancia")}: —',
+                    style: TextStyle(
+                      color: _textMuted.withOpacity(0.92),
+                      fontSize: 11.6,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    duration != null
+                        ? '${_t(nl: "Duur", en: "Duration", fr: "Durée", es: "Duración")}: ${duration.toStringAsFixed(0)} min'
+                        : '${_t(nl: "Duur", en: "Duration", fr: "Durée", es: "Duración")}: —',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: _textMuted.withOpacity(0.92),
+                      fontSize: 11.6,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _fieldDecoration({
+    required String label,
+    String? hintText,
+    required IconData prefixIcon,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hintText,
+      labelStyle: TextStyle(color: _soft.withOpacity(0.95), fontSize: 12.2),
+      hintStyle: TextStyle(color: _soft.withOpacity(0.55), fontSize: 12),
+      prefixIcon: Icon(prefixIcon, color: _gold.withOpacity(0.92), size: 18),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: _panelAlt,
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(
+          color: _isDarkTheme ? _gold.withOpacity(0.32) : _border,
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: _gold, width: 1.2),
+      ),
+    );
+  }
+}

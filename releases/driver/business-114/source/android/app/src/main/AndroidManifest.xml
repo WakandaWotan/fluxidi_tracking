@@ -1,0 +1,130 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ===== Fluxidi Tracking: required permissions ===== -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+      GOOGLE-PLAY-MEDIA-PERMISSIONS-P0:
+      open_filex merges broad photo/video/audio library permissions, but Fluxidi
+      does not need them. Image/logo selection uses image_picker (Android Photo
+      Picker / scoped picker). OpenFilex is only used to open app-local files
+      (driver docs / help manuals). Strip the merged permissions so Play does
+      not classify Fluxidi as requiring broad media-library access.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
+
+    <!--
+      GOOGLE-PLAY-PRIVACY-READINESS-P0:
+      ACCESS_BACKGROUND_LOCATION intentionally NOT declared.
+
+      Task-bound Geolocator foreground location starts while Fluxidi is visible,
+      before external navigation. No Permission.locationAlways request.
+      Legal disclosure/Data Safety review is required before a Play release.
+    -->
+
+    <!-- Existing Geolocator location FGS owns its notification and partial
+         wakelock; cancellation releases both. No second service is registered. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <application
+        android:label="${appLabel}"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:enableOnBackInvokedCallback="true">
+
+        <service android:name=".DriverDutyService" android:exported="false"
+            android:foregroundServiceType="location" android:stopWithTask="false" />
+
+
+        <!-- Compatibility DTOs must never initialize a second paid map runtime. -->
+        <!-- Keep other AndroidX startup components; suppress only the unused Mapbox runtime. -->
+        <provider android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup" tools:node="merge">
+            <meta-data android:name="com.mapbox.common.MapboxSDKCommonInitializer" tools:node="remove" />
+        </provider>
+        <receiver android:name="com.mapbox.common.location.LocationUpdatesReceiver" tools:node="remove" />
+        <service android:name="com.mapbox.common.LifecycleService" tools:node="remove" />
+        <meta-data android:name="com.fluxidi.maplibre_only" android:value="true" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Fluxidi payment return deep link: fluxidi://pay/return?... -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fluxidi" android:host="pay" />
+            </intent-filter>
+        </activity>
+
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <!-- GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1: targeted package visibility only. -->
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
+</manifest>
+

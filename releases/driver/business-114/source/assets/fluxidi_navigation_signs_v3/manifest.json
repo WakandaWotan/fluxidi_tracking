@@ -1,0 +1,580 @@
+{
+  "package": "Fluxidi Navigation Signs",
+  "version": "3.0.0",
+  "format": "PNG RGBA",
+  "dimensions": {
+    "width": 1024,
+    "height": 1024
+  },
+  "languages": {
+    "nl": "Nederlands",
+    "en": "English",
+    "fr": "Français",
+    "es": "Español"
+  },
+  "language_rule": "Load only the directory matching the active customer language. Never render multiple language variants simultaneously.",
+  "roundabout_mapping": {
+    "roundabout_exit_1": {
+      "exit": 1,
+      "direction": "right"
+    },
+    "roundabout_exit_2": {
+      "exit": 2,
+      "direction": "straight"
+    },
+    "roundabout_exit_3": {
+      "exit": 3,
+      "direction": "left"
+    },
+    "roundabout_exit_4": {
+      "exit": 4,
+      "direction": "turn_around"
+    }
+  },
+  "assets": [
+    {
+      "maneuver_id": "straight",
+      "labels": {
+        "nl": "Rechtdoor",
+        "en": "Continue straight",
+        "fr": "Tout droit",
+        "es": "Siga recto"
+      },
+      "files": {
+        "nl": "png/nl/straight.png",
+        "en": "png/en/straight.png",
+        "fr": "png/fr/straight.png",
+        "es": "png/es/straight.png"
+      },
+      "base_svg": "svg/base/straight.svg"
+    },
+    {
+      "maneuver_id": "follow_route",
+      "labels": {
+        "nl": "Volg de route",
+        "en": "Follow the route",
+        "fr": "Suivez l’itinéraire",
+        "es": "Siga la ruta"
+      },
+      "files": {
+        "nl": "png/nl/follow_route.png",
+        "en": "png/en/follow_route.png",
+        "fr": "png/fr/follow_route.png",
+        "es": "png/es/follow_route.png"
+      },
+      "base_svg": "svg/base/follow_route.svg"
+    },
+    {
+      "maneuver_id": "slight_left",
+      "labels": {
+        "nl": "Licht links",
+        "en": "Slight left",
+        "fr": "Légèrement à gauche",
+        "es": "Leve a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/slight_left.png",
+        "en": "png/en/slight_left.png",
+        "fr": "png/fr/slight_left.png",
+        "es": "png/es/slight_left.png"
+      },
+      "base_svg": "svg/base/slight_left.svg"
+    },
+    {
+      "maneuver_id": "slight_right",
+      "labels": {
+        "nl": "Licht rechts",
+        "en": "Slight right",
+        "fr": "Légèrement à droite",
+        "es": "Leve a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/slight_right.png",
+        "en": "png/en/slight_right.png",
+        "fr": "png/fr/slight_right.png",
+        "es": "png/es/slight_right.png"
+      },
+      "base_svg": "svg/base/slight_right.svg"
+    },
+    {
+      "maneuver_id": "turn_left",
+      "labels": {
+        "nl": "Linksaf",
+        "en": "Turn left",
+        "fr": "Tournez à gauche",
+        "es": "Gire a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/turn_left.png",
+        "en": "png/en/turn_left.png",
+        "fr": "png/fr/turn_left.png",
+        "es": "png/es/turn_left.png"
+      },
+      "base_svg": "svg/base/turn_left.svg"
+    },
+    {
+      "maneuver_id": "turn_right",
+      "labels": {
+        "nl": "Rechtsaf",
+        "en": "Turn right",
+        "fr": "Tournez à droite",
+        "es": "Gire a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/turn_right.png",
+        "en": "png/en/turn_right.png",
+        "fr": "png/fr/turn_right.png",
+        "es": "png/es/turn_right.png"
+      },
+      "base_svg": "svg/base/turn_right.svg"
+    },
+    {
+      "maneuver_id": "sharp_left",
+      "labels": {
+        "nl": "Scherp links",
+        "en": "Sharp left",
+        "fr": "Virage serré à gauche",
+        "es": "Giro cerrado a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/sharp_left.png",
+        "en": "png/en/sharp_left.png",
+        "fr": "png/fr/sharp_left.png",
+        "es": "png/es/sharp_left.png"
+      },
+      "base_svg": "svg/base/sharp_left.svg"
+    },
+    {
+      "maneuver_id": "sharp_right",
+      "labels": {
+        "nl": "Scherp rechts",
+        "en": "Sharp right",
+        "fr": "Virage serré à droite",
+        "es": "Giro cerrado a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/sharp_right.png",
+        "en": "png/en/sharp_right.png",
+        "fr": "png/fr/sharp_right.png",
+        "es": "png/es/sharp_right.png"
+      },
+      "base_svg": "svg/base/sharp_right.svg"
+    },
+    {
+      "maneuver_id": "uturn_left",
+      "labels": {
+        "nl": "U-turn links",
+        "en": "U-turn left",
+        "fr": "Demi-tour à gauche",
+        "es": "Cambio de sentido a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/uturn_left.png",
+        "en": "png/en/uturn_left.png",
+        "fr": "png/fr/uturn_left.png",
+        "es": "png/es/uturn_left.png"
+      },
+      "base_svg": "svg/base/uturn_left.svg"
+    },
+    {
+      "maneuver_id": "uturn_right",
+      "labels": {
+        "nl": "U-turn rechts",
+        "en": "U-turn right",
+        "fr": "Demi-tour à droite",
+        "es": "Cambio de sentido a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/uturn_right.png",
+        "en": "png/en/uturn_right.png",
+        "fr": "png/fr/uturn_right.png",
+        "es": "png/es/uturn_right.png"
+      },
+      "base_svg": "svg/base/uturn_right.svg"
+    },
+    {
+      "maneuver_id": "roundabout",
+      "labels": {
+        "nl": "Rotonde",
+        "en": "Roundabout",
+        "fr": "Rond-point",
+        "es": "Rotonda"
+      },
+      "files": {
+        "nl": "png/nl/roundabout.png",
+        "en": "png/en/roundabout.png",
+        "fr": "png/fr/roundabout.png",
+        "es": "png/es/roundabout.png"
+      },
+      "base_svg": "svg/base/roundabout.svg"
+    },
+    {
+      "maneuver_id": "roundabout_exit_1",
+      "labels": {
+        "nl": "Neem de 1e afslag",
+        "en": "Take the 1st exit",
+        "fr": "Prenez la 1re sortie",
+        "es": "Tome la 1.ª salida"
+      },
+      "files": {
+        "nl": "png/nl/roundabout_exit_1.png",
+        "en": "png/en/roundabout_exit_1.png",
+        "fr": "png/fr/roundabout_exit_1.png",
+        "es": "png/es/roundabout_exit_1.png"
+      },
+      "base_svg": "svg/base/roundabout_exit_1.svg"
+    },
+    {
+      "maneuver_id": "roundabout_exit_2",
+      "labels": {
+        "nl": "Neem de 2e afslag",
+        "en": "Take the 2nd exit",
+        "fr": "Prenez la 2e sortie",
+        "es": "Tome la 2.ª salida"
+      },
+      "files": {
+        "nl": "png/nl/roundabout_exit_2.png",
+        "en": "png/en/roundabout_exit_2.png",
+        "fr": "png/fr/roundabout_exit_2.png",
+        "es": "png/es/roundabout_exit_2.png"
+      },
+      "base_svg": "svg/base/roundabout_exit_2.svg"
+    },
+    {
+      "maneuver_id": "roundabout_exit_3",
+      "labels": {
+        "nl": "Neem de 3e afslag",
+        "en": "Take the 3rd exit",
+        "fr": "Prenez la 3e sortie",
+        "es": "Tome la 3.ª salida"
+      },
+      "files": {
+        "nl": "png/nl/roundabout_exit_3.png",
+        "en": "png/en/roundabout_exit_3.png",
+        "fr": "png/fr/roundabout_exit_3.png",
+        "es": "png/es/roundabout_exit_3.png"
+      },
+      "base_svg": "svg/base/roundabout_exit_3.svg"
+    },
+    {
+      "maneuver_id": "roundabout_exit_4",
+      "labels": {
+        "nl": "Neem de 4e afslag (keer om)",
+        "en": "Take the 4th exit (turn around)",
+        "fr": "Prenez la 4e sortie (faites demi-tour)",
+        "es": "Tome la 4.ª salida (dé la vuelta)"
+      },
+      "files": {
+        "nl": "png/nl/roundabout_exit_4.png",
+        "en": "png/en/roundabout_exit_4.png",
+        "fr": "png/fr/roundabout_exit_4.png",
+        "es": "png/es/roundabout_exit_4.png"
+      },
+      "base_svg": "svg/base/roundabout_exit_4.svg"
+    },
+    {
+      "maneuver_id": "fork_left",
+      "labels": {
+        "nl": "Splitsing links",
+        "en": "Fork left",
+        "fr": "Bifurcation à gauche",
+        "es": "Bifurcación izquierda"
+      },
+      "files": {
+        "nl": "png/nl/fork_left.png",
+        "en": "png/en/fork_left.png",
+        "fr": "png/fr/fork_left.png",
+        "es": "png/es/fork_left.png"
+      },
+      "base_svg": "svg/base/fork_left.svg"
+    },
+    {
+      "maneuver_id": "fork_straight",
+      "labels": {
+        "nl": "Rechtdoor",
+        "en": "Continue straight",
+        "fr": "Tout droit",
+        "es": "Siga recto"
+      },
+      "files": {
+        "nl": "png/nl/fork_straight.png",
+        "en": "png/en/fork_straight.png",
+        "fr": "png/fr/fork_straight.png",
+        "es": "png/es/fork_straight.png"
+      },
+      "base_svg": "svg/base/fork_straight.svg"
+    },
+    {
+      "maneuver_id": "fork_right",
+      "labels": {
+        "nl": "Splitsing rechts",
+        "en": "Fork right",
+        "fr": "Bifurcation à droite",
+        "es": "Bifurcación derecha"
+      },
+      "files": {
+        "nl": "png/nl/fork_right.png",
+        "en": "png/en/fork_right.png",
+        "fr": "png/fr/fork_right.png",
+        "es": "png/es/fork_right.png"
+      },
+      "base_svg": "svg/base/fork_right.svg"
+    },
+    {
+      "maneuver_id": "t_left",
+      "labels": {
+        "nl": "Linksaf",
+        "en": "Turn left",
+        "fr": "Tournez à gauche",
+        "es": "Gire a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/t_left.png",
+        "en": "png/en/t_left.png",
+        "fr": "png/fr/t_left.png",
+        "es": "png/es/t_left.png"
+      },
+      "base_svg": "svg/base/t_left.svg"
+    },
+    {
+      "maneuver_id": "t_straight",
+      "labels": {
+        "nl": "Rechtdoor",
+        "en": "Continue straight",
+        "fr": "Tout droit",
+        "es": "Siga recto"
+      },
+      "files": {
+        "nl": "png/nl/t_straight.png",
+        "en": "png/en/t_straight.png",
+        "fr": "png/fr/t_straight.png",
+        "es": "png/es/t_straight.png"
+      },
+      "base_svg": "svg/base/t_straight.svg"
+    },
+    {
+      "maneuver_id": "t_right",
+      "labels": {
+        "nl": "Rechtsaf",
+        "en": "Turn right",
+        "fr": "Tournez à droite",
+        "es": "Gire a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/t_right.png",
+        "en": "png/en/t_right.png",
+        "fr": "png/fr/t_right.png",
+        "es": "png/es/t_right.png"
+      },
+      "base_svg": "svg/base/t_right.svg"
+    },
+    {
+      "maneuver_id": "merge_left",
+      "labels": {
+        "nl": "Voeg links in",
+        "en": "Merge left",
+        "fr": "Insérez-vous à gauche",
+        "es": "Incorpórese a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/merge_left.png",
+        "en": "png/en/merge_left.png",
+        "fr": "png/fr/merge_left.png",
+        "es": "png/es/merge_left.png"
+      },
+      "base_svg": "svg/base/merge_left.svg"
+    },
+    {
+      "maneuver_id": "merge_straight",
+      "labels": {
+        "nl": "Voeg rechtdoor in",
+        "en": "Continue through merge",
+        "fr": "Continuez dans l’insertion",
+        "es": "Siga recto al incorporarse"
+      },
+      "files": {
+        "nl": "png/nl/merge_straight.png",
+        "en": "png/en/merge_straight.png",
+        "fr": "png/fr/merge_straight.png",
+        "es": "png/es/merge_straight.png"
+      },
+      "base_svg": "svg/base/merge_straight.svg"
+    },
+    {
+      "maneuver_id": "merge_right",
+      "labels": {
+        "nl": "Voeg rechts in",
+        "en": "Merge right",
+        "fr": "Insérez-vous à droite",
+        "es": "Incorpórese a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/merge_right.png",
+        "en": "png/en/merge_right.png",
+        "fr": "png/fr/merge_right.png",
+        "es": "png/es/merge_right.png"
+      },
+      "base_svg": "svg/base/merge_right.svg"
+    },
+    {
+      "maneuver_id": "ramp_left",
+      "labels": {
+        "nl": "Oprit links",
+        "en": "Ramp left",
+        "fr": "Bretelle à gauche",
+        "es": "Acceso a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/ramp_left.png",
+        "en": "png/en/ramp_left.png",
+        "fr": "png/fr/ramp_left.png",
+        "es": "png/es/ramp_left.png"
+      },
+      "base_svg": "svg/base/ramp_left.svg"
+    },
+    {
+      "maneuver_id": "ramp_right",
+      "labels": {
+        "nl": "Oprit rechts",
+        "en": "Ramp right",
+        "fr": "Bretelle à droite",
+        "es": "Acceso a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/ramp_right.png",
+        "en": "png/en/ramp_right.png",
+        "fr": "png/fr/ramp_right.png",
+        "es": "png/es/ramp_right.png"
+      },
+      "base_svg": "svg/base/ramp_right.svg"
+    },
+    {
+      "maneuver_id": "exit_left",
+      "labels": {
+        "nl": "Afrit links",
+        "en": "Exit left",
+        "fr": "Sortie à gauche",
+        "es": "Salida a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/exit_left.png",
+        "en": "png/en/exit_left.png",
+        "fr": "png/fr/exit_left.png",
+        "es": "png/es/exit_left.png"
+      },
+      "base_svg": "svg/base/exit_left.svg"
+    },
+    {
+      "maneuver_id": "exit_right",
+      "labels": {
+        "nl": "Afrit rechts",
+        "en": "Exit right",
+        "fr": "Sortie à droite",
+        "es": "Salida a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/exit_right.png",
+        "en": "png/en/exit_right.png",
+        "fr": "png/fr/exit_right.png",
+        "es": "png/es/exit_right.png"
+      },
+      "base_svg": "svg/base/exit_right.svg"
+    },
+    {
+      "maneuver_id": "keep_left",
+      "labels": {
+        "nl": "Blijf links",
+        "en": "Keep left",
+        "fr": "Restez à gauche",
+        "es": "Manténgase a la izquierda"
+      },
+      "files": {
+        "nl": "png/nl/keep_left.png",
+        "en": "png/en/keep_left.png",
+        "fr": "png/fr/keep_left.png",
+        "es": "png/es/keep_left.png"
+      },
+      "base_svg": "svg/base/keep_left.svg"
+    },
+    {
+      "maneuver_id": "keep_right",
+      "labels": {
+        "nl": "Blijf rechts",
+        "en": "Keep right",
+        "fr": "Restez à droite",
+        "es": "Manténgase a la derecha"
+      },
+      "files": {
+        "nl": "png/nl/keep_right.png",
+        "en": "png/en/keep_right.png",
+        "fr": "png/fr/keep_right.png",
+        "es": "png/es/keep_right.png"
+      },
+      "base_svg": "svg/base/keep_right.svg"
+    },
+    {
+      "maneuver_id": "road_end",
+      "labels": {
+        "nl": "Einde weg",
+        "en": "End of road",
+        "fr": "Fin de route",
+        "es": "Fin de la carretera"
+      },
+      "files": {
+        "nl": "png/nl/road_end.png",
+        "en": "png/en/road_end.png",
+        "fr": "png/fr/road_end.png",
+        "es": "png/es/road_end.png"
+      },
+      "base_svg": "svg/base/road_end.svg"
+    },
+    {
+      "maneuver_id": "destination_ahead",
+      "labels": {
+        "nl": "Aankomst bestemming",
+        "en": "Destination ahead",
+        "fr": "Destination devant",
+        "es": "Destino más adelante"
+      },
+      "files": {
+        "nl": "png/nl/destination_ahead.png",
+        "en": "png/en/destination_ahead.png",
+        "fr": "png/fr/destination_ahead.png",
+        "es": "png/es/destination_ahead.png"
+      },
+      "base_svg": "svg/base/destination_ahead.svg"
+    },
+    {
+      "maneuver_id": "destination_reached",
+      "labels": {
+        "nl": "Bestemming bereikt",
+        "en": "Destination reached",
+        "fr": "Destination atteinte",
+        "es": "Destino alcanzado"
+      },
+      "files": {
+        "nl": "png/nl/destination_reached.png",
+        "en": "png/en/destination_reached.png",
+        "fr": "png/fr/destination_reached.png",
+        "es": "png/es/destination_reached.png"
+      },
+      "base_svg": "svg/base/destination_reached.svg"
+    },
+    {
+      "maneuver_id": "departure",
+      "labels": {
+        "nl": "Vertrek",
+        "en": "Departure",
+        "fr": "Départ",
+        "es": "Salida"
+      },
+      "files": {
+        "nl": "png/nl/departure.png",
+        "en": "png/en/departure.png",
+        "fr": "png/fr/departure.png",
+        "es": "png/es/departure.png"
+      },
+      "base_svg": "svg/base/departure.svg"
+    }
+  ]
+}

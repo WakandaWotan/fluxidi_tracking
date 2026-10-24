@@ -1,0 +1,73 @@
+Fluxidi — Google Play Console “App access” instructions (English)
+
+Package: com.fluxidi.tracking
+Build: Google Play Internal testing (consumption-only company SaaS)
+
+--------------------------------------------------
+REQUIRED DEMO ACCESS (create outside source control)
+--------------------------------------------------
+
+Create durable, non-expiring demo credentials (no SMS/OTP mailbox access).
+Store the review access code only in Play Console App access / a secure
+password manager — never in git, APK config, logs, or source.
+
+1) Company admin via review access (required)
+   Company code: FLX-00020
+   Company name: Fluxidi Google Review
+   Access path: Business → Recover / Access with code
+   Access code: <FILL_IN_PLAY_CONSOLE_ONLY>
+   Purpose: business home, bookings, drivers/vehicles, subscription STATUS
+            page (read-only entitlements; no in-app SaaS purchase on Play),
+            Chiron/compliance surfaces as available for the demo tenant.
+   Note: After a fresh install the app asks the reviewer to CREATE A NEW
+         local PIN. That PIN is device-local and is NOT the access code.
+
+2) Driver (required)
+   Role: driver linked to the demo company
+   Purpose: active trip / navigation / metering / ride payment surfaces
+            (Mollie online, QR, cash, Tap to Pay, invoice where configured).
+
+3) Customer (recommended if customer booking UI is reviewed)
+   Role: customer account able to open a booking with the demo company
+   Purpose: customer booking + tracking views.
+
+Do NOT require one-time email OTP codes from info@fluxidi.com.
+Ordinary company email recovery remains available for non-review tenants.
+
+--------------------------------------------------
+PLAY CONSOLE PASTE TEXT (fill credentials in Console only)
+--------------------------------------------------
+
+All core features are behind sign-in.
+
+Company admin (Google Play review tenant)
+- Company code: FLX-00020
+- Access code: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps:
+  1. Open app → Business
+  2. Tap “Access with code” (secondary option under company restore)
+  3. Enter company code FLX-00020 and the access code above
+  4. Create a NEW local PIN when prompted (fresh install)
+  5. Open Bookings and Subscription & billing
+  Subscription status is visible; purchasing Fluxidi SaaS plans inside the
+  Play app is disabled by design. Manage subscriptions outside the
+  Play-distributed app.
+
+Driver
+- Email / username / driver id: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Password / PIN: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps: Open app → Driver sign-in → accept location while using the app →
+  open an assigned/demo ride → navigation and ride payment (physical
+  transport payments via Mollie/QR/cash/Tap/invoice).
+
+Customer (optional)
+- Email / username: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Password: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps: Open app → Customer sign-in → open bookings.
+
+Notes for reviewers:
+- Location permission is foreground / while-in-use for active trips.
+- The app does not request background (“Always”) location.
+- Privacy policy: https://fluxidi.com/pages/privacybeleid?lang=en
+- Account deletion (web, no reinstall): https://fluxidi.com/pages/account-en-gegevens-verwijderen
+- Support: info@fluxidi.com

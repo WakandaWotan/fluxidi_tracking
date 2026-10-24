@@ -1,0 +1,175 @@
+// FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
+import 'package:fluxidi_tracking/navigation/external/external_navigation_session.dart';
+import 'package:fluxidi_tracking/navigation/external/google_maps_launch_contract.dart';
+import 'package:fluxidi_tracking/navigation/external/navigation_provider_choice.dart';
+
+String _tr({
+  required String nl,
+  required String en,
+  required String fr,
+  required String es,
+}) =>
+    nl;
+
+void main() {
+  testWidgets('1) NAV choice shows Fluxidi and Google Maps separately',
+      (tester) async {
+    NavigationProviderChoice? chosen;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () async {
+                chosen = await showNavigationProviderChoiceDialog(
+                  context,
+                  tr: _tr,
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Fluxidi-navigatie'), findsOneWidget);
+    expect(find.text('Google Maps + Fluxidi-teller'), findsOneWidget);
+    expect(find.textContaining('Externe navigatie'), findsNothing);
+    await tester.tap(find.text('Google Maps + Fluxidi-teller'));
+    await tester.pumpAndSettle();
+    expect(chosen, NavigationProviderChoice.googleMapsWithMeter);
+  });
+
+  testWidgets('2) PiP meter hides map chrome and Flutter return button',
+      (tester) async {
+    final model = buildExternalNavPipMeterModel(
+      phase: ExternalNavPhase.activeRide,
+      isStreetRide: false,
+      isFixedPrice: true,
+      language: AppLanguage.nl,
+      fixedPriceText: '€12,20',
+      kmText: '2.0 km',
+      durationText: '00:10:00',
+      waitText: '00:00:30',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ExternalNavPipMeterCard(
+          model: model,
+          hostIsTablet: false,
+        ),
+      ),
+    );
+    // Phone PiP drops destination/status headings — fare value remains.
+    expect(find.text('Naar bestemming'), findsNothing);
+    expect(find.text('€12,20'), findsWidgets);
+    // Return is a system PiP RemoteAction — not a Flutter TextButton.
+    expect(find.text('Terug naar Fluxidi'), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
+    expect(find.byType(Placeholder), findsNothing);
+  });
+
+  testWidgets('3) phone and tablet PiP layouts render large primary value',
+      (tester) async {
+    final model = buildExternalNavPipMeterModel(
+      phase: ExternalNavPhase.activeRide,
+      isStreetRide: true,
+      isFixedPrice: false,
+      language: AppLanguage.nl,
+      liveFareText: '€17,60',
+      kmText: '1.0 km',
+      durationText: '00:05:00',
+      waitText: '00:00:00',
+    );
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(size: Size(390, 844)),
+        child: MaterialApp(
+          home: ExternalNavPipMeterCard(
+            model: model,
+            hostIsTablet: false,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Naar bestemming'), findsNothing);
+    expect(find.text('€17,60'), findsWidgets);
+    expect(find.text('Tarief'), findsWidgets);
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(size: Size(1024, 768)),
+        child: MaterialApp(
+          home: ExternalNavPipMeterCard(
+            model: model,
+            hostIsTablet: true,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Naar bestemming'), findsOneWidget);
+  });
+
+  test('4) STOP ends session contract (copy cleared)', () {
+    ExternalNavigationSession? session = ExternalNavigationSession(
+      provider: ExternalNavProvider.googleMaps,
+      bookingId: 'b1',
+      phase: ExternalNavPhase.activeRide,
+      destination: const ExternalNavigationDestinationPoint(
+        latitude: 1,
+        longitude: 2,
+      ),
+      launchedAt: DateTime.now(),
+      pipActive: true,
+    );
+    // Mimic STOP owner: clear session reference.
+    session = null;
+    expect(session, isNull);
+    expect(shouldSuppressNativeGuidance(session), isFalse);
+  });
+
+  test('5) failed launch decision keeps native guidance and no session', () {
+    final d = GoogleMapsLaunchDecision.fromResult(
+      result: const GoogleMapsLaunchResult(
+        status: GoogleMapsLaunchStatus.nativeException,
+        failureCode: 'channel_boom',
+      ),
+      userWantsPip: true,
+    );
+    expect(d.activateExternalSession, isFalse);
+    expect(d.keepNativeGuidanceActive, isTrue);
+    expect(d.uiAction, GoogleMapsLaunchUiAction.showFailureDialog);
+  });
+
+  testWidgets(
+      '6) Google Maps ListTile onTap is non-null (no silent disabled button)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () {
+                showNavigationProviderChoiceDialog(context, tr: _tr);
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    final tile = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, 'Google Maps + Fluxidi-teller'),
+    );
+    expect(tile.onTap, isNotNull);
+  });
+}

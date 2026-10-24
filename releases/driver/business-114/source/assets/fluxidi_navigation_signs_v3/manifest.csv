@@ -1,0 +1,137 @@
+﻿maneuver_id,language,label,file
+straight,nl,Rechtdoor,png/nl/straight.png
+follow_route,nl,Volg de route,png/nl/follow_route.png
+slight_left,nl,Licht links,png/nl/slight_left.png
+slight_right,nl,Licht rechts,png/nl/slight_right.png
+turn_left,nl,Linksaf,png/nl/turn_left.png
+turn_right,nl,Rechtsaf,png/nl/turn_right.png
+sharp_left,nl,Scherp links,png/nl/sharp_left.png
+sharp_right,nl,Scherp rechts,png/nl/sharp_right.png
+uturn_left,nl,U-turn links,png/nl/uturn_left.png
+uturn_right,nl,U-turn rechts,png/nl/uturn_right.png
+roundabout,nl,Rotonde,png/nl/roundabout.png
+roundabout_exit_1,nl,Neem de 1e afslag,png/nl/roundabout_exit_1.png
+roundabout_exit_2,nl,Neem de 2e afslag,png/nl/roundabout_exit_2.png
+roundabout_exit_3,nl,Neem de 3e afslag,png/nl/roundabout_exit_3.png
+roundabout_exit_4,nl,Neem de 4e afslag / (keer om),png/nl/roundabout_exit_4.png
+fork_left,nl,Splitsing links,png/nl/fork_left.png
+fork_straight,nl,Rechtdoor,png/nl/fork_straight.png
+fork_right,nl,Splitsing rechts,png/nl/fork_right.png
+t_left,nl,Linksaf,png/nl/t_left.png
+t_straight,nl,Rechtdoor,png/nl/t_straight.png
+t_right,nl,Rechtsaf,png/nl/t_right.png
+merge_left,nl,Voeg links in,png/nl/merge_left.png
+merge_straight,nl,Voeg rechtdoor in,png/nl/merge_straight.png
+merge_right,nl,Voeg rechts in,png/nl/merge_right.png
+ramp_left,nl,Oprit links,png/nl/ramp_left.png
+ramp_right,nl,Oprit rechts,png/nl/ramp_right.png
+exit_left,nl,Afrit links,png/nl/exit_left.png
+exit_right,nl,Afrit rechts,png/nl/exit_right.png
+keep_left,nl,Blijf links,png/nl/keep_left.png
+keep_right,nl,Blijf rechts,png/nl/keep_right.png
+road_end,nl,Einde weg,png/nl/road_end.png
+destination_ahead,nl,Aankomst bestemming,png/nl/destination_ahead.png
+destination_reached,nl,Bestemming bereikt,png/nl/destination_reached.png
+departure,nl,Vertrek,png/nl/departure.png
+straight,en,Continue straight,png/en/straight.png
+follow_route,en,Follow the route,png/en/follow_route.png
+slight_left,en,Slight left,png/en/slight_left.png
+slight_right,en,Slight right,png/en/slight_right.png
+turn_left,en,Turn left,png/en/turn_left.png
+turn_right,en,Turn right,png/en/turn_right.png
+sharp_left,en,Sharp left,png/en/sharp_left.png
+sharp_right,en,Sharp right,png/en/sharp_right.png
+uturn_left,en,U-turn left,png/en/uturn_left.png
+uturn_right,en,U-turn right,png/en/uturn_right.png
+roundabout,en,Roundabout,png/en/roundabout.png
+roundabout_exit_1,en,Take the 1st exit,png/en/roundabout_exit_1.png
+roundabout_exit_2,en,Take the 2nd exit,png/en/roundabout_exit_2.png
+roundabout_exit_3,en,Take the 3rd exit,png/en/roundabout_exit_3.png
+roundabout_exit_4,en,Take the 4th exit / (turn around),png/en/roundabout_exit_4.png
+fork_left,en,Fork left,png/en/fork_left.png
+fork_straight,en,Continue straight,png/en/fork_straight.png
+fork_right,en,Fork right,png/en/fork_right.png
+t_left,en,Turn left,png/en/t_left.png
+t_straight,en,Continue straight,png/en/t_straight.png
+t_right,en,Turn right,png/en/t_right.png
+merge_left,en,Merge left,png/en/merge_left.png
+merge_straight,en,Continue through merge,png/en/merge_straight.png
+merge_right,en,Merge right,png/en/merge_right.png
+ramp_left,en,Ramp left,png/en/ramp_left.png
+ramp_right,en,Ramp right,png/en/ramp_right.png
+exit_left,en,Exit left,png/en/exit_left.png
+exit_right,en,Exit right,png/en/exit_right.png
+keep_left,en,Keep left,png/en/keep_left.png
+keep_right,en,Keep right,png/en/keep_right.png
+road_end,en,End of road,png/en/road_end.png
+destination_ahead,en,Destination ahead,png/en/destination_ahead.png
+destination_reached,en,Destination reached,png/en/destination_reached.png
+departure,en,Departure,png/en/departure.png
+straight,fr,Tout droit,png/fr/straight.png
+follow_route,fr,Suivez l’itinéraire,png/fr/follow_route.png
+slight_left,fr,Légèrement à gauche,png/fr/slight_left.png
+slight_right,fr,Légèrement à droite,png/fr/slight_right.png
+turn_left,fr,Tournez à gauche,png/fr/turn_left.png
+turn_right,fr,Tournez à droite,png/fr/turn_right.png
+sharp_left,fr,Virage serré à gauche,png/fr/sharp_left.png
+sharp_right,fr,Virage serré à droite,png/fr/sharp_right.png
+uturn_left,fr,Demi-tour à gauche,png/fr/uturn_left.png
+uturn_right,fr,Demi-tour à droite,png/fr/uturn_right.png
+roundabout,fr,Rond-point,png/fr/roundabout.png
+roundabout_exit_1,fr,Prenez la 1re sortie,png/fr/roundabout_exit_1.png
+roundabout_exit_2,fr,Prenez la 2e sortie,png/fr/roundabout_exit_2.png
+roundabout_exit_3,fr,Prenez la 3e sortie,png/fr/roundabout_exit_3.png
+roundabout_exit_4,fr,Prenez la 4e sortie / (faites demi-tour),png/fr/roundabout_exit_4.png
+fork_left,fr,Bifurcation à gauche,png/fr/fork_left.png
+fork_straight,fr,Tout droit,png/fr/fork_straight.png
+fork_right,fr,Bifurcation à droite,png/fr/fork_right.png
+t_left,fr,Tournez à gauche,png/fr/t_left.png
+t_straight,fr,Tout droit,png/fr/t_straight.png
+t_right,fr,Tournez à droite,png/fr/t_right.png
+merge_left,fr,Insérez-vous à gauche,png/fr/merge_left.png
+merge_straight,fr,Continuez dans l’insertion,png/fr/merge_straight.png
+merge_right,fr,Insérez-vous à droite,png/fr/merge_right.png
+ramp_left,fr,Bretelle à gauche,png/fr/ramp_left.png
+ramp_right,fr,Bretelle à droite,png/fr/ramp_right.png
+exit_left,fr,Sortie à gauche,png/fr/exit_left.png
+exit_right,fr,Sortie à droite,png/fr/exit_right.png
+keep_left,fr,Restez à gauche,png/fr/keep_left.png
+keep_right,fr,Restez à droite,png/fr/keep_right.png
+road_end,fr,Fin de route,png/fr/road_end.png
+destination_ahead,fr,Destination devant,png/fr/destination_ahead.png
+destination_reached,fr,Destination atteinte,png/fr/destination_reached.png
+departure,fr,Départ,png/fr/departure.png
+straight,es,Siga recto,png/es/straight.png
+follow_route,es,Siga la ruta,png/es/follow_route.png
+slight_left,es,Leve a la izquierda,png/es/slight_left.png
+slight_right,es,Leve a la derecha,png/es/slight_right.png
+turn_left,es,Gire a la izquierda,png/es/turn_left.png
+turn_right,es,Gire a la derecha,png/es/turn_right.png
+sharp_left,es,Giro cerrado a la izquierda,png/es/sharp_left.png
+sharp_right,es,Giro cerrado a la derecha,png/es/sharp_right.png
+uturn_left,es,Cambio de sentido a la izquierda,png/es/uturn_left.png
+uturn_right,es,Cambio de sentido a la derecha,png/es/uturn_right.png
+roundabout,es,Rotonda,png/es/roundabout.png
+roundabout_exit_1,es,Tome la 1.ª salida,png/es/roundabout_exit_1.png
+roundabout_exit_2,es,Tome la 2.ª salida,png/es/roundabout_exit_2.png
+roundabout_exit_3,es,Tome la 3.ª salida,png/es/roundabout_exit_3.png
+roundabout_exit_4,es,Tome la 4.ª salida / (dé la vuelta),png/es/roundabout_exit_4.png
+fork_left,es,Bifurcación izquierda,png/es/fork_left.png
+fork_straight,es,Siga recto,png/es/fork_straight.png
+fork_right,es,Bifurcación derecha,png/es/fork_right.png
+t_left,es,Gire a la izquierda,png/es/t_left.png
+t_straight,es,Siga recto,png/es/t_straight.png
+t_right,es,Gire a la derecha,png/es/t_right.png
+merge_left,es,Incorpórese a la izquierda,png/es/merge_left.png
+merge_straight,es,Siga recto al incorporarse,png/es/merge_straight.png
+merge_right,es,Incorpórese a la derecha,png/es/merge_right.png
+ramp_left,es,Acceso a la izquierda,png/es/ramp_left.png
+ramp_right,es,Acceso a la derecha,png/es/ramp_right.png
+exit_left,es,Salida a la izquierda,png/es/exit_left.png
+exit_right,es,Salida a la derecha,png/es/exit_right.png
+keep_left,es,Manténgase a la izquierda,png/es/keep_left.png
+keep_right,es,Manténgase a la derecha,png/es/keep_right.png
+road_end,es,Fin de la carretera,png/es/road_end.png
+destination_ahead,es,Destino más adelante,png/es/destination_ahead.png
+destination_reached,es,Destino alcanzado,png/es/destination_reached.png
+departure,es,Salida,png/es/departure.png

@@ -1,0 +1,39 @@
+{
+  "sidebarMethodEqual": true,
+  "qrFiles": [
+    {
+      "path": "lib/company/active_company_booking_link_view.dart",
+      "sha256": "a709edb95fad8f9c8c7a2d56e5ae0d16da0b2f3efa9d6ded43e471440a976a1e"
+    },
+    {
+      "path": "lib/company/driver_booking_link_trace.dart",
+      "sha256": "9d73b7e59809a71caf7c1b7a90ff9b5f78184df421cd6426097bc3ebabdea059"
+    },
+    {
+      "path": "lib/company/driver_public_booking_link.dart",
+      "sha256": "3086cebe89734e813dcdab212a7d63f7277095a461682c5c5bc64643e9066cfb"
+    }
+  ],
+  "nativeFiles": [
+    {
+      "path": "android\\app\\src\\main\\kotlin\\com\\fluxidi\\tracking\\DriverDutyService.kt",
+      "sha256": "696fc7f315863791e7eca6d96d5469d621719b86e10476a8cf22e3a9df9d2969"
+    },
+    {
+      "path": "android\\app\\src\\main\\kotlin\\com\\fluxidi\\tracking\\DriverRideNotifications.kt",
+      "sha256": "16a9a5530c2f280e9161df84c0f03f50124aa71e6bd2906e207e9ba00045733e"
+    },
+    {
+      "path": "android\\app\\src\\main\\kotlin\\com\\fluxidi\\tracking\\MainActivity.kt",
+      "sha256": "bc56119cee244841f7eda5005f6b1e424e535f7b7ec10501da032a896e202bb4"
+    },
+    {
+      "path": "android\\app\\src\\main\\kotlin\\com\\fluxidi\\tracking\\VehicleRideAlert.kt",
+      "sha256": "873f7500a49a1873bee005594a305494564d6a9e3545ed624564450b0fa256e0"
+    },
+    {
+      "path": "android\\app\\src\\main\\res\\raw\\fluxidi_ride_chime.wav",
+      "sha256": "102eaf093ee0b36e8adb1ffde160d8e691d35c66d040cc86407961bce546d385"
+    }
+  ]
+}

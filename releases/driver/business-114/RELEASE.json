@@ -1,0 +1,17 @@
+{
+  "package": "com.fluxidi.tracking",
+  "versionCode": 114,
+  "versionName": "1.0.7",
+  "sourceClosure": "7a51418448ed3952bbb15d4e205e356623ff2ed0b22a6323c6ca72e51954d9e2",
+  "baseAabSha256": "1c1e0a6143f7f1cf63e5da489f612b1f6efb03d85d99448d39251c0a795f3e27",
+  "backendCommit": "9e7b3e469d606ac9480030ad87ef6154760fae87",
+  "productionDefinesSha256": "79920a0afdc37450da2531b53688ad8bd67beff6d14eac5a6967678a32c4e600",
+  "expectedUploadCertificateSha256": "b8479589dce57c16b2a2e2528d52196d2701deb7ad046af2e735d58afe0a33fe",
+  "physicalAcceptance": false,
+  "finalReleaseTag": false,
+  "openBackendIssues": [
+    "assignment_driver_no_vehicle",
+    "physical navigation failure cause",
+    "9.8s booking processing"
+  ]
+}

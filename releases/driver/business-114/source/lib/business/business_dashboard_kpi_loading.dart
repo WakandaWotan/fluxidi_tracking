@@ -1,0 +1,1078 @@
+// BUSINESS-DASHBOARD-KPI-LOADING-UX-1
+//
+// Pure presentation/cache ownership for Business dashboard KPI cards.
+// Does not change server KPI definitions or fare/street-ride lifecycle.
+
+/// Default health for a clean, displayable snapshot (older callers/tests).
+const BusinessDashboardKpiWorkerHealth kBusinessDashboardKpiCleanHealth =
+    BusinessDashboardKpiWorkerHealth(
+      dataPending: false,
+      degraded: false,
+      stale: false,
+      projectionHealth: 'ok',
+      countsAreAuthoritative: true,
+    );
+
+/// One successful, complete KPI response for a single tenant/company scope.
+class BusinessDashboardKpiSnapshot {
+  const BusinessDashboardKpiSnapshot({
+    required this.tenantId,
+    required this.companyId,
+    required this.openBookingsCount,
+    required this.completedRidesCount,
+    required this.unpaidCompletedRidesCount,
+    required this.monthlyIncomeCents,
+    required this.currency,
+    required this.responseGeneration,
+    this.health = kBusinessDashboardKpiCleanHealth,
+  });
+
+  final String tenantId;
+  final String companyId;
+  final int openBookingsCount;
+  final int completedRidesCount;
+  final int unpaidCompletedRidesCount;
+  final int monthlyIncomeCents;
+  final String currency;
+
+  /// Monotonic generation stamped when the response was accepted. All four
+  /// card values always belong to the same generation.
+  final int responseGeneration;
+
+  /// Worker health for this snapshot. Degraded last-known numbers stay
+  /// visible but are never marked healthy/authoritative.
+  final BusinessDashboardKpiWorkerHealth health;
+
+  bool get isAuthoritative => health.isAuthoritative;
+
+  bool get isDegradedDisplayable =>
+      !health.dataPending &&
+      !health.isAuthoritative &&
+      (health.degraded ||
+          health.stale ||
+          health.countsAreAuthoritative == false ||
+          health.projectionHealth.trim().toLowerCase() == 'dirty');
+
+  bool matchesScope({required String tenantId, required String companyId}) {
+    return this.tenantId == tenantId && this.companyId == companyId;
+  }
+}
+
+/// UI phase for the four KPI cards.
+enum BusinessDashboardKpiPhase {
+  /// No successful snapshot yet; request in flight or about to start.
+  initialLoading,
+
+  /// Authoritative snapshot is on screen; no request in flight.
+  ready,
+
+  /// Authoritative snapshot stays on screen while a refresh runs.
+  refreshing,
+
+  /// No snapshot and the latest request failed (or scope has no data yet).
+  unavailable,
+}
+
+/// Resolved view for the KPI strip.
+class BusinessDashboardKpiView {
+  const BusinessDashboardKpiView({
+    required this.phase,
+    required this.snapshot,
+    required this.showRefreshIndicator,
+    required this.showRetry,
+    this.projectionPending = false,
+  });
+
+  final BusinessDashboardKpiPhase phase;
+
+  /// Displayable values to render. Null ⇒ unavailable/loading (never show
+  /// numeric zero as authoritative). Degraded snapshots keep last-known
+  /// numbers without flipping [hasAuthoritativeValues].
+  final BusinessDashboardKpiSnapshot? snapshot;
+
+  final bool showRefreshIndicator;
+  final bool showRetry;
+
+  /// Latest cycle reported `data_pending` / missing projection.
+  final bool projectionPending;
+
+  /// True when on-screen numbers come from a clean authoritative projection.
+  bool get hasAuthoritativeValues =>
+      snapshot != null && snapshot!.isAuthoritative;
+
+  /// Last-known numbers are shown but must not be treated as a fresh healthy
+  /// zero / clean projection.
+  bool get showDegradedNotice =>
+      snapshot != null && snapshot!.isDegradedDisplayable;
+
+  /// Smallest pending/degraded treatment: "gegevens worden bijgewerkt".
+  bool get showUpdatingNotice => showDegradedNotice || projectionPending;
+}
+
+/// Scoped in-memory cache of last successful KPI snapshots.
+///
+/// Keyed by `tenantId|companyId`. Never returns a snapshot for another scope.
+class BusinessDashboardKpiCache {
+  final Map<String, BusinessDashboardKpiSnapshot> _byScope =
+      <String, BusinessDashboardKpiSnapshot>{};
+
+  static String scopeKey(String tenantId, String companyId) =>
+      '${tenantId.trim()}|${companyId.trim()}';
+
+  BusinessDashboardKpiSnapshot? get({
+    required String tenantId,
+    required String companyId,
+  }) {
+    final t = tenantId.trim();
+    final c = companyId.trim();
+    if (t.isEmpty || c.isEmpty) return null;
+    final snap = _byScope[scopeKey(t, c)];
+    if (snap == null) return null;
+    if (!snap.matchesScope(tenantId: t, companyId: c)) return null;
+    return snap;
+  }
+
+  void put(BusinessDashboardKpiSnapshot snapshot) {
+    final t = snapshot.tenantId.trim();
+    final c = snapshot.companyId.trim();
+    if (t.isEmpty || c.isEmpty) return;
+    _byScope[scopeKey(t, c)] = snapshot;
+  }
+
+  void clearScope({required String tenantId, required String companyId}) {
+    _byScope.remove(scopeKey(tenantId.trim(), companyId.trim()));
+  }
+
+  void clearAll() => _byScope.clear();
+
+  int get length => _byScope.length;
+}
+
+/// Process-wide cache so re-entering the dashboard can show the last scoped
+/// snapshot immediately while a background refresh runs.
+final BusinessDashboardKpiCache businessDashboardKpiCache =
+    BusinessDashboardKpiCache();
+
+/// Resolves what the four cards should show.
+BusinessDashboardKpiView resolveBusinessDashboardKpiView({
+  required BusinessDashboardKpiSnapshot? lastSuccessfulForActiveScope,
+  required bool requestInFlight,
+  required bool lastRequestFailed,
+  bool projectionPending = false,
+}) {
+  final snap = lastSuccessfulForActiveScope;
+  if (snap != null) {
+    if (requestInFlight) {
+      return BusinessDashboardKpiView(
+        phase: BusinessDashboardKpiPhase.refreshing,
+        snapshot: snap,
+        showRefreshIndicator: true,
+        showRetry: false,
+        projectionPending: projectionPending,
+      );
+    }
+    return BusinessDashboardKpiView(
+      phase: BusinessDashboardKpiPhase.ready,
+      snapshot: snap,
+      showRefreshIndicator: false,
+      showRetry: lastRequestFailed,
+      projectionPending: projectionPending,
+    );
+  }
+  if (requestInFlight) {
+    return BusinessDashboardKpiView(
+      phase: BusinessDashboardKpiPhase.initialLoading,
+      snapshot: null,
+      showRefreshIndicator: true,
+      showRetry: false,
+      projectionPending: projectionPending,
+    );
+  }
+  return BusinessDashboardKpiView(
+    phase: BusinessDashboardKpiPhase.unavailable,
+    snapshot: null,
+    showRefreshIndicator: false,
+    showRetry: lastRequestFailed,
+    projectionPending: projectionPending,
+  );
+}
+
+/// Count display: never render a bare `0` as authoritative before a snapshot.
+String businessDashboardKpiCountText({
+  required BusinessDashboardKpiSnapshot? snapshot,
+  required int Function(BusinessDashboardKpiSnapshot snap) select,
+}) {
+  if (snapshot == null) return '—';
+  return select(snapshot).toString();
+}
+
+/// Income display helper (currency formatting stays at the call site).
+int? businessDashboardKpiIncomeCents(BusinessDashboardKpiSnapshot? snapshot) {
+  return snapshot?.monthlyIncomeCents;
+}
+
+/// Whether a fetch result may replace the displayed snapshot.
+///
+/// Both bookings and trip KPI legs must succeed so all four cards update from
+/// one complete response generation. Partial/failed results never invent zeros.
+bool businessDashboardKpiResponseIsComplete({
+  required bool bookingsOk,
+  required bool tripKpisOk,
+}) {
+  return bookingsOk && tripKpisOk;
+}
+
+/// Whether a completed response may be applied to the active scope.
+bool businessDashboardKpiMayApplyResponse({
+  required int requestGeneration,
+  required int currentGeneration,
+  required String requestTenantId,
+  required String requestCompanyId,
+  required String? activeTenantId,
+  required String? activeCompanyId,
+}) {
+  if (requestGeneration != currentGeneration) return false;
+  final t = (activeTenantId ?? '').trim();
+  final c = (activeCompanyId ?? '').trim();
+  if (t.isEmpty || c.isEmpty) return false;
+  return requestTenantId.trim() == t && requestCompanyId.trim() == c;
+}
+
+/// Coarse PII-free duration bucket for `[BUSINESS_KPI_LOAD]` diagnostics.
+String businessKpiDurationBucket(int durationMs) {
+  final ms = durationMs < 0 ? 0 : durationMs;
+  if (ms < 250) return 'lt_250';
+  if (ms < 500) return '250_499';
+  if (ms < 1000) return '500_999';
+  if (ms < 2000) return '1000_1999';
+  if (ms < 5000) return '2000_4999';
+  return 'gte_5000';
+}
+
+/// Bounded diagnostic event names (values are never PII).
+abstract final class BusinessKpiLoadEvent {
+  static const cacheHit = 'cache_hit';
+  static const requestStarted = 'request_started';
+  static const requestCompleted = 'request_completed';
+  static const requestFailed = 'request_failed';
+  static const snapshotApplied = 'snapshot_applied';
+  static const manualRefresh = 'manual_refresh';
+}
+
+// BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1
+//
+// Pure coordinator helpers for the Business dashboard KPI single-flight
+// loader. These helpers are Flutter-free and testable in isolation. The
+// state code in `_BusinessHomePageState` composes them; presentation rules
+// (atomic snapshot, never invent zeros, last-successful cache) are
+// unchanged.
+
+/// Bounded outcome for a single KPI leg attempt.
+///
+/// Used by the coordinator to decide whether to schedule exactly one bounded
+/// automatic retry, and to emit a bounded PII-free diagnostic line.
+enum BusinessKpiLegOutcome {
+  success,
+  http400,
+  http401,
+  http403,
+  http429,
+  http5xx,
+  httpOther,
+  timeout,
+  network,
+  invalidPayload,
+}
+
+/// Classifies an HTTP response outcome for a single KPI leg.
+///
+/// * `statusCode == 200` with `decodedOk == true` → [BusinessKpiLegOutcome.success].
+/// * `statusCode == 200` with `decodedOk == false` → [BusinessKpiLegOutcome.invalidPayload].
+/// * `statusCode == 400` → [BusinessKpiLegOutcome.http400].
+/// * `statusCode == 401` → [BusinessKpiLegOutcome.http401].
+/// * `statusCode == 403` → [BusinessKpiLegOutcome.http403].
+/// * `statusCode == 429` → [BusinessKpiLegOutcome.http429].
+/// * `500 <= statusCode <= 599` → [BusinessKpiLegOutcome.http5xx].
+/// * Any other status → [BusinessKpiLegOutcome.httpOther].
+BusinessKpiLegOutcome classifyBusinessKpiLegHttpOutcome({
+  required int statusCode,
+  required bool decodedOk,
+}) {
+  if (statusCode == 200) {
+    return decodedOk
+        ? BusinessKpiLegOutcome.success
+        : BusinessKpiLegOutcome.invalidPayload;
+  }
+  if (statusCode == 400) return BusinessKpiLegOutcome.http400;
+  if (statusCode == 401) return BusinessKpiLegOutcome.http401;
+  if (statusCode == 403) return BusinessKpiLegOutcome.http403;
+  if (statusCode == 429) return BusinessKpiLegOutcome.http429;
+  if (statusCode >= 500 && statusCode <= 599) {
+    return BusinessKpiLegOutcome.http5xx;
+  }
+  return BusinessKpiLegOutcome.httpOther;
+}
+
+/// Classifies a thrown error into a bounded leg outcome.
+///
+/// The coordinator passes the runtime type name (e.g. `"TimeoutException"`)
+/// so the classifier remains pure and dependency-free.
+BusinessKpiLegOutcome classifyBusinessKpiLegExceptionOutcome({
+  required String errorRuntimeType,
+}) {
+  final t = errorRuntimeType.trim().toLowerCase();
+  if (t.contains('timeout')) return BusinessKpiLegOutcome.timeout;
+  return BusinessKpiLegOutcome.network;
+}
+
+/// True if a leg outcome is transient and warrants exactly one bounded
+/// automatic retry.
+bool businessKpiLegOutcomeIsTransient(BusinessKpiLegOutcome o) {
+  switch (o) {
+    case BusinessKpiLegOutcome.timeout:
+    case BusinessKpiLegOutcome.network:
+    case BusinessKpiLegOutcome.http429:
+    case BusinessKpiLegOutcome.http5xx:
+      return true;
+    case BusinessKpiLegOutcome.success:
+    case BusinessKpiLegOutcome.http400:
+    case BusinessKpiLegOutcome.http401:
+    case BusinessKpiLegOutcome.http403:
+    case BusinessKpiLegOutcome.httpOther:
+    case BusinessKpiLegOutcome.invalidPayload:
+      return false;
+  }
+}
+
+/// True if a leg outcome is a permanent user-facing failure that must NOT
+/// be automatically retried (auth, scope, or malformed payload).
+bool businessKpiLegOutcomeIsPermanentFailure(BusinessKpiLegOutcome o) {
+  switch (o) {
+    case BusinessKpiLegOutcome.http400:
+    case BusinessKpiLegOutcome.http401:
+    case BusinessKpiLegOutcome.http403:
+    case BusinessKpiLegOutcome.httpOther:
+    case BusinessKpiLegOutcome.invalidPayload:
+      return true;
+    case BusinessKpiLegOutcome.success:
+    case BusinessKpiLegOutcome.timeout:
+    case BusinessKpiLegOutcome.network:
+    case BusinessKpiLegOutcome.http429:
+    case BusinessKpiLegOutcome.http5xx:
+      return false;
+  }
+}
+
+/// Bounded PII-free label for [BusinessKpiLegOutcome] used in
+/// `[BUSINESS_KPI_LOAD]` diagnostics.
+String businessKpiLegOutcomeStatusLabel(BusinessKpiLegOutcome o) {
+  switch (o) {
+    case BusinessKpiLegOutcome.success:
+      return 'success';
+    case BusinessKpiLegOutcome.http400:
+      return '400';
+    case BusinessKpiLegOutcome.http401:
+      return '401';
+    case BusinessKpiLegOutcome.http403:
+      return '403';
+    case BusinessKpiLegOutcome.http429:
+      return '429';
+    case BusinessKpiLegOutcome.http5xx:
+      return '5xx';
+    case BusinessKpiLegOutcome.httpOther:
+      return 'http_other';
+    case BusinessKpiLegOutcome.timeout:
+      return 'timeout';
+    case BusinessKpiLegOutcome.network:
+      return 'network';
+    case BusinessKpiLegOutcome.invalidPayload:
+      return 'invalid_payload';
+  }
+}
+
+/// Bounded retry decision for one KPI cycle.
+enum BusinessKpiRetryDecision {
+  /// All required legs succeeded — no retry.
+  noRetryAllOk,
+
+  /// At least one leg outcome is a permanent user-facing failure (auth,
+  /// scope, malformed payload). Show the manual Retry control instead.
+  noRetryTerminalFailure,
+
+  /// Cycle failed only due to transient outcomes and the coordinator may
+  /// schedule exactly one bounded automatic retry.
+  autoRetryTransient,
+
+  /// Cycle failed with transient outcomes but the automatic attempt was
+  /// already used. Show the manual Retry control.
+  noRetryAttemptsExhausted,
+}
+
+/// The single bounded automatic retry uses a short delay of ~500 ms.
+/// This range (400–800 ms) is chosen so a transient worker/KV warm-up
+/// completes without producing a visible failure state.
+const int kBusinessKpiAutoRetryDelayMs = 500;
+
+/// The initial attempt plus at most one automatic retry.
+const int kBusinessKpiMaxAutomaticAttempts = 2;
+
+/// Decides whether the coordinator may schedule exactly one bounded
+/// automatic retry after the current cycle finished. Pure.
+///
+/// Rules:
+/// * If any required leg is a permanent failure ([businessKpiLegOutcomeIsPermanentFailure])
+///   → [BusinessKpiRetryDecision.noRetryTerminalFailure]. Manual Retry is the
+///   only recovery.
+/// * Otherwise, if all required legs succeeded → [BusinessKpiRetryDecision.noRetryAllOk].
+/// * Otherwise, at least one leg is transient. If `attempt` is still below
+///   [kBusinessKpiMaxAutomaticAttempts] → [BusinessKpiRetryDecision.autoRetryTransient].
+///   Otherwise → [BusinessKpiRetryDecision.noRetryAttemptsExhausted].
+///
+/// [bookingsOutcome] and [tripOutcome] are the two required legs; the
+/// bookings fallback outcome is folded into [bookingsOutcome] by the caller
+/// before invoking this helper.
+BusinessKpiRetryDecision resolveBusinessKpiRetryDecision({
+  required BusinessKpiLegOutcome bookingsOutcome,
+  required BusinessKpiLegOutcome tripOutcome,
+  required int attempt,
+  int maxAutomaticAttempts = kBusinessKpiMaxAutomaticAttempts,
+}) {
+  final bookingsPermanent = businessKpiLegOutcomeIsPermanentFailure(
+    bookingsOutcome,
+  );
+  final tripPermanent = businessKpiLegOutcomeIsPermanentFailure(tripOutcome);
+  if (bookingsPermanent || tripPermanent) {
+    return BusinessKpiRetryDecision.noRetryTerminalFailure;
+  }
+  final bookingsOk = bookingsOutcome == BusinessKpiLegOutcome.success;
+  final tripOk = tripOutcome == BusinessKpiLegOutcome.success;
+  if (bookingsOk && tripOk) {
+    return BusinessKpiRetryDecision.noRetryAllOk;
+  }
+  if (attempt < maxAutomaticAttempts) {
+    return BusinessKpiRetryDecision.autoRetryTransient;
+  }
+  return BusinessKpiRetryDecision.noRetryAttemptsExhausted;
+}
+
+/// Bounded canonical reason token for a KPI cycle. Never contains PII.
+///
+/// The coordinator maps its internal reason strings onto this bounded set
+/// before emitting diagnostics.
+abstract final class BusinessKpiCycleReason {
+  /// Initial load triggered by BusinessHomePage `initState`.
+  static const init = 'init';
+
+  /// Scope became ready after `initState` (session/profile hydrated) so the
+  /// coordinator triggered the first load.
+  static const scopeReady = 'scope_ready';
+
+  /// Coordinator scheduled the single bounded automatic retry.
+  static const autoRetry = 'auto_retry';
+
+  /// User pressed the Retry button.
+  static const manualRetry = 'manual_retry';
+
+  /// User requested a dashboard KPI refresh (distinct from auto-retry).
+  static const manualRefresh = 'manual_refresh';
+
+  /// App resumed from background.
+  static const resume = 'resume';
+
+  /// User returned to BusinessHomePage from another route.
+  static const routeReturn = 'route_return';
+
+  /// Coordinator rescheduled a fresh cycle after a stale/scope-changed
+  /// response was rejected.
+  static const scopeChangedRerun = 'scope_changed_rerun';
+}
+
+/// Bounded canonical leg label used in `[BUSINESS_KPI_LOAD]` diagnostics.
+abstract final class BusinessKpiLegLabel {
+  static const bookings = 'bookings';
+  static const bookingsFallback = 'bookings_fallback';
+  static const trip = 'trip';
+  static const combined = 'combined';
+}
+
+/// Bounded canonical status token for combined-cycle log lines.
+abstract final class BusinessKpiCombinedStatus {
+  static const success = 'success';
+  static const transientWillRetry = 'transient_will_retry';
+  static const terminal = 'terminal';
+  static const stale = 'stale';
+  static const skippedScopeNotReady = 'skipped_scope_not_ready';
+  static const coalesced = 'coalesced';
+  static const skippedFresh = 'skipped_fresh';
+  static const degraded = 'degraded';
+}
+
+/// Bounded PII-free auth-mode label. Mirrors `CompanyOwnerAuthMode` values
+/// but is safe to use in the pure module (which cannot import Flutter).
+String businessKpiAuthModeLabel({
+  required bool hasAdminToken,
+  required bool hasCompanySession,
+}) {
+  if (hasAdminToken) return 'admin';
+  if (hasCompanySession) return 'company_session';
+  return 'none';
+}
+
+/// Renders one bounded `[BUSINESS_KPI_LOAD]` diagnostic line.
+///
+/// Never contains company IDs, tenant IDs, tokens, URLs with query
+/// parameters, booking IDs or customer data. Callers are responsible for
+/// clamping raw runtime values (elapsed ms, HTTP status) before passing
+/// them in.
+String formatBusinessKpiLoadDiagnostic({
+  required int cycleGeneration,
+  required String reason,
+  required String leg,
+  required int attempt,
+  required String status,
+  required int elapsedMs,
+  required bool scopeReady,
+  required String authMode,
+}) {
+  final safeCycle = cycleGeneration < 0 ? 0 : cycleGeneration;
+  final safeAttempt = attempt < 1 ? 1 : attempt;
+  final safeElapsed = elapsedMs < 0 ? 0 : elapsedMs;
+  return '[BUSINESS_KPI_LOAD] '
+      'cycle=$safeCycle '
+      'reason=$reason '
+      'leg=$leg '
+      'attempt=$safeAttempt '
+      'status=$status '
+      'elapsed_ms=$safeElapsed '
+      'scope_ready=$scopeReady '
+      'auth_mode=$authMode';
+}
+
+/// Pure scope-ready gate.
+///
+/// Returns true only when every required current context is available and
+/// mutually consistent:
+///
+/// * a company profile is present with a non-empty `companyId`;
+/// * an active company session is present with a non-empty `companyId`;
+/// * the session's `companyId` matches the profile's `companyId`;
+/// * the resolved scope's `tenantId` and `companyId` match the authoritative
+///   company id (i.e. no silent fallback to `fluxidi` while an authenticated
+///   session belongs to another company).
+///
+/// The `hasAdminAuthShortcut` parameter allows dev/ops builds with a
+/// compile-time admin token to bypass session/profile requirements while
+/// still requiring a non-empty scope.
+bool businessDashboardKpiScopeIsReady({
+  required String? profileCompanyId,
+  required String? sessionCompanyId,
+  required String? scopeTenantId,
+  required String? scopeCompanyId,
+  required bool hasAdminAuthShortcut,
+}) {
+  final scopeTenant = (scopeTenantId ?? '').trim();
+  final scopeCompany = (scopeCompanyId ?? '').trim();
+  if (scopeTenant.isEmpty || scopeCompany.isEmpty) return false;
+  if (hasAdminAuthShortcut) return true;
+  final profile = (profileCompanyId ?? '').trim();
+  final session = (sessionCompanyId ?? '').trim();
+  if (profile.isEmpty || session.isEmpty) return false;
+  if (profile != session) return false;
+  // Fail-closed against a silent tenant/company `fluxidi` fallback while a
+  // company-session bearer belongs to another company.
+  if (scopeTenant != profile) return false;
+  if (scopeCompany != profile) return false;
+  return true;
+}
+
+// FLUTTER-REQUEST-DEDUPE-P0
+//
+// Scope-aware dashboard KPI refresh policy. Extends the existing process-wide
+// [businessDashboardKpiCache] pattern: one coordinator, keyed by
+// tenant_id|company_id, no extra global singleton family.
+//
+// Freshness window: 120 seconds. Manual refresh and a real tenant/company
+// change bypass it. Route-return and State recreation reuse this process-wide
+// timestamp so disposing BusinessHomePageState cannot restart a cycle.
+
+/// Opportunistic dashboard KPI freshness window (init / listener / resume /
+/// route-return / State recreation). Manual refresh and a real tenant/company
+/// change bypass it.
+const Duration kBusinessDashboardKpiFreshness = Duration(seconds: 120);
+
+/// Additive Worker KPI health fields. Missing keys are treated as absent so
+/// older payloads keep working. A pending or non-authoritative projection
+/// must never be applied as healthy zeros.
+class BusinessDashboardKpiWorkerHealth {
+  const BusinessDashboardKpiWorkerHealth({
+    required this.dataPending,
+    required this.degraded,
+    required this.stale,
+    required this.projectionHealth,
+    required this.countsAreAuthoritative,
+  });
+
+  final bool dataPending;
+  final bool degraded;
+  final bool stale;
+  final String projectionHealth;
+  final bool? countsAreAuthoritative;
+
+  /// True only for a clean, authoritative projection. Dirty / degraded /
+  /// non-authoritative / pending payloads are structurally separate.
+  bool get isAuthoritative {
+    if (dataPending) return false;
+    if (countsAreAuthoritative == false) return false;
+    if (degraded || stale) return false;
+    final health = projectionHealth.trim().toLowerCase();
+    if (health == 'pending' ||
+        health == 'data_pending' ||
+        health == 'missing' ||
+        health == 'dirty') {
+      return false;
+    }
+    return true;
+  }
+}
+
+/// Dashboard KPI reconstruction must never call bookings-list/history.
+bool businessDashboardKpiAllowsAutomaticBookingsListFallback() => false;
+
+/// Structural vs health classification for one KPI HTTP body.
+///
+/// A Worker payload with `ok:true`, numeric counts, `projection_health:dirty`
+/// and `counts_are_authoritative:false` is [degraded], not [malformed].
+enum BusinessDashboardKpiPayloadKind {
+  /// Structurally valid, clean, authoritative projection.
+  clean,
+
+  /// Structurally valid last-known projection that is dirty/stale/degraded
+  /// or explicitly non-authoritative. Displayable; never a healthy zero.
+  degraded,
+
+  /// `data_pending` or missing projection. Keep the prior snapshot.
+  pending,
+
+  /// HTTP/JSON/schema failure. Not a dirty projection.
+  malformed,
+}
+
+/// Whether [kind] may supply on-screen numbers (clean or last-known degraded).
+bool businessDashboardKpiKindIsUsable(BusinessDashboardKpiPayloadKind kind) {
+  return kind == BusinessDashboardKpiPayloadKind.clean ||
+      kind == BusinessDashboardKpiPayloadKind.degraded;
+}
+
+int? businessDashboardKpiReadInt(Object? raw) {
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  return int.tryParse(raw?.toString().trim() ?? '');
+}
+
+double? businessDashboardKpiReadDouble(Object? raw) {
+  if (raw is double) return raw;
+  if (raw is num) return raw.toDouble();
+  return double.tryParse(raw?.toString().trim() ?? '');
+}
+
+int? parseBusinessDashboardKpiTripIncomeCents(Map<dynamic, dynamic> decoded) {
+  final netCents = businessDashboardKpiReadInt(
+    decoded['net_monthly_income_cents'],
+  );
+  final cents =
+      netCents ?? businessDashboardKpiReadInt(decoded['monthly_income_cents']);
+  if (cents != null) return cents;
+  final netEur = businessDashboardKpiReadDouble(
+    decoded['net_monthly_income_eur'],
+  );
+  if (netEur != null) return (netEur * 100).round();
+  final eur = businessDashboardKpiReadDouble(decoded['monthly_income_eur']);
+  if (eur == null) return null;
+  return (eur * 100).round();
+}
+
+/// Classifies a decoded KPI map. Does not treat non-authoritative counts as
+/// a malformed payload.
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiPayloadKind(
+  Map<dynamic, dynamic> decoded, {
+  required bool Function(Map<dynamic, dynamic> decoded) hasRequiredNumbers,
+}) {
+  if (decoded['ok'] != true) return BusinessDashboardKpiPayloadKind.malformed;
+  if (!hasRequiredNumbers(decoded)) {
+    return BusinessDashboardKpiPayloadKind.malformed;
+  }
+  final health = parseBusinessDashboardKpiWorkerHealth(decoded);
+  if (health.dataPending) return BusinessDashboardKpiPayloadKind.pending;
+  final projection = health.projectionHealth.trim().toLowerCase();
+  if (projection == 'pending' ||
+      projection == 'data_pending' ||
+      projection == 'missing') {
+    return BusinessDashboardKpiPayloadKind.pending;
+  }
+  final source = (decoded['source'] ?? '').toString().trim().toLowerCase();
+  final dirty =
+      health.countsAreAuthoritative == false ||
+      health.degraded ||
+      health.stale ||
+      projection == 'dirty' ||
+      source == 'projection_degraded';
+  if (dirty) return BusinessDashboardKpiPayloadKind.degraded;
+  return BusinessDashboardKpiPayloadKind.clean;
+}
+
+bool businessDashboardKpiBookingsHasRequiredNumbers(
+  Map<dynamic, dynamic> decoded,
+) {
+  return businessDashboardKpiReadInt(decoded['open_bookings_count']) != null;
+}
+
+bool businessDashboardKpiTripHasRequiredNumbers(Map<dynamic, dynamic> decoded) {
+  return businessDashboardKpiReadInt(decoded['completed_rides_count']) !=
+          null &&
+      businessDashboardKpiReadInt(decoded['unpaid_completed_rides_count']) !=
+          null &&
+      parseBusinessDashboardKpiTripIncomeCents(decoded) != null;
+}
+
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiBookingsPayload(
+  Map<dynamic, dynamic> decoded,
+) {
+  return classifyBusinessDashboardKpiPayloadKind(
+    decoded,
+    hasRequiredNumbers: businessDashboardKpiBookingsHasRequiredNumbers,
+  );
+}
+
+BusinessDashboardKpiPayloadKind classifyBusinessDashboardKpiTripPayload(
+  Map<dynamic, dynamic> decoded,
+) {
+  return classifyBusinessDashboardKpiPayloadKind(
+    decoded,
+    hasRequiredNumbers: businessDashboardKpiTripHasRequiredNumbers,
+  );
+}
+
+/// Apply decision after both legs have been classified. Never implies a
+/// bookings-list fallback.
+enum BusinessDashboardKpiApplyAction {
+  apply,
+  keepPrevious,
+  unavailable,
+}
+
+BusinessDashboardKpiApplyAction resolveBusinessDashboardKpiApplyAction({
+  required BusinessDashboardKpiPayloadKind bookingsKind,
+  required BusinessDashboardKpiPayloadKind tripKind,
+  required bool hasPreviousSnapshot,
+}) {
+  if (businessDashboardKpiKindIsUsable(bookingsKind) &&
+      businessDashboardKpiKindIsUsable(tripKind)) {
+    return BusinessDashboardKpiApplyAction.apply;
+  }
+  if (hasPreviousSnapshot) return BusinessDashboardKpiApplyAction.keepPrevious;
+  return BusinessDashboardKpiApplyAction.unavailable;
+}
+
+/// What a finished KPI cycle may paint.
+///
+/// A usable bookings leg keeps its count when the trip projection is missing.
+/// That missing projection is not an empty success: the trip cards stay blank
+/// and the caller shows a retry. Zeros from a `data_pending` body are not
+/// applied. A previous snapshot stays on screen while a later cycle is only
+/// pending.
+class BusinessDashboardKpiCycleDisplay {
+  const BusinessDashboardKpiCycleDisplay({
+    required this.applyOpenBookings,
+    required this.applyTrip,
+    required this.showRetry,
+    required this.treatPendingAsUpdating,
+  });
+
+  final bool applyOpenBookings;
+  final bool applyTrip;
+  final bool showRetry;
+  final bool treatPendingAsUpdating;
+}
+
+BusinessDashboardKpiCycleDisplay resolveBusinessDashboardKpiCycleDisplay({
+  required BusinessDashboardKpiPayloadKind bookingsKind,
+  required BusinessDashboardKpiPayloadKind tripKind,
+  required bool hasPreviousSnapshot,
+}) {
+  final bookingsUsable = businessDashboardKpiKindIsUsable(bookingsKind);
+  final tripUsable = businessDashboardKpiKindIsUsable(tripKind);
+  if (bookingsUsable && tripUsable) {
+    return const BusinessDashboardKpiCycleDisplay(
+      applyOpenBookings: true,
+      applyTrip: true,
+      showRetry: false,
+      treatPendingAsUpdating: false,
+    );
+  }
+  if (hasPreviousSnapshot) {
+    final pending =
+        bookingsKind == BusinessDashboardKpiPayloadKind.pending ||
+        tripKind == BusinessDashboardKpiPayloadKind.pending;
+    return BusinessDashboardKpiCycleDisplay(
+      applyOpenBookings: false,
+      applyTrip: false,
+      showRetry: !pending,
+      treatPendingAsUpdating: pending,
+    );
+  }
+  return BusinessDashboardKpiCycleDisplay(
+    applyOpenBookings: bookingsUsable,
+    applyTrip: tripUsable,
+    showRetry: true,
+    treatPendingAsUpdating: false,
+  );
+}
+
+/// Parses additive Worker KPI fields without requiring them.
+BusinessDashboardKpiWorkerHealth parseBusinessDashboardKpiWorkerHealth(
+  Map<dynamic, dynamic> decoded,
+) {
+  bool flag(Object? raw) {
+    if (raw == true) return true;
+    if (raw == false) return false;
+    final text = raw?.toString().trim().toLowerCase() ?? '';
+    return text == 'true' || text == '1';
+  }
+
+  bool? optionalFlag(Object? raw) {
+    if (raw == null) return null;
+    if (raw == true) return true;
+    if (raw == false) return false;
+    final text = raw.toString().trim().toLowerCase();
+    if (text.isEmpty) return null;
+    if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
+    return null;
+  }
+
+  return BusinessDashboardKpiWorkerHealth(
+    dataPending: flag(decoded['data_pending']),
+    degraded: flag(decoded['degraded']),
+    stale: flag(decoded['stale']),
+    projectionHealth: (decoded['projection_health'] ?? '').toString(),
+    countsAreAuthoritative: optionalFlag(decoded['counts_are_authoritative']),
+  );
+}
+
+/// True when an `ok:true` KPI map is safe to apply as a complete leg.
+bool businessDashboardKpiPayloadIsAuthoritative(Map<dynamic, dynamic> decoded) {
+  if (decoded['ok'] != true) return false;
+  return parseBusinessDashboardKpiWorkerHealth(decoded).isAuthoritative;
+}
+
+/// Whether [reason] is an opportunistic trigger that must not start a second
+/// cycle for a still-fresh successful scope.
+bool businessDashboardKpiReasonIsOpportunistic(String reason) {
+  return reason == BusinessKpiCycleReason.init ||
+      reason == BusinessKpiCycleReason.scopeReady ||
+      reason == BusinessKpiCycleReason.resume ||
+      reason == BusinessKpiCycleReason.routeReturn;
+}
+
+/// Whether [reason] must start a cycle even when the scope is still fresh.
+bool businessDashboardKpiReasonForcesRefresh(String reason) {
+  return reason == BusinessKpiCycleReason.manualRetry ||
+      reason == BusinessKpiCycleReason.manualRefresh ||
+      reason == BusinessKpiCycleReason.autoRetry;
+}
+
+/// Distinct sanitized marker for a user-requested KPI refresh.
+bool businessDashboardKpiReasonIsManualRefresh(String reason) {
+  return reason == BusinessKpiCycleReason.manualRetry ||
+      reason == BusinessKpiCycleReason.manualRefresh;
+}
+
+/// Combines both KPI legs into one snapshot health record.
+BusinessDashboardKpiWorkerHealth combineBusinessDashboardKpiWorkerHealth({
+  required BusinessDashboardKpiWorkerHealth bookings,
+  required BusinessDashboardKpiWorkerHealth trip,
+  required BusinessDashboardKpiPayloadKind bookingsKind,
+  required BusinessDashboardKpiPayloadKind tripKind,
+}) {
+  final degraded =
+      bookingsKind == BusinessDashboardKpiPayloadKind.degraded ||
+      tripKind == BusinessDashboardKpiPayloadKind.degraded;
+  return BusinessDashboardKpiWorkerHealth(
+    dataPending: false,
+    degraded: degraded || bookings.degraded || trip.degraded,
+    stale: bookings.stale || trip.stale,
+    projectionHealth: degraded ? 'dirty' : 'ok',
+    countsAreAuthoritative:
+        bookings.isAuthoritative && trip.isAuthoritative && !degraded,
+  );
+}
+
+/// Decision for one dashboard KPI refresh attempt.
+enum BusinessDashboardKpiRefreshDecision {
+  /// Run a new bookings+trip cycle.
+  start,
+
+  /// Await the in-flight cycle for this exact scope.
+  shareInFlight,
+
+  /// Same scope completed successfully inside the freshness window.
+  skipFresh,
+}
+
+/// Process-wide coordinator: one in-flight Future per scope, short freshness,
+/// and explicit invalidation. Never shares across tenant/company.
+class BusinessDashboardKpiRefreshCoordinator {
+  BusinessDashboardKpiRefreshCoordinator({
+    this.freshness = kBusinessDashboardKpiFreshness,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  final Duration freshness;
+  final DateTime Function() _clock;
+
+  final Map<String, Future<void>> _inFlight = <String, Future<void>>{};
+  final Map<String, DateTime> _lastSuccessAt = <String, DateTime>{};
+  final Set<String> _invalidated = <String>{};
+
+  static String scopeKey(String tenantId, String companyId) =>
+      BusinessDashboardKpiCache.scopeKey(tenantId, companyId);
+
+  DateTime now() => _clock();
+
+  bool isInFlight({required String tenantId, required String companyId}) {
+    return _inFlight.containsKey(scopeKey(tenantId, companyId));
+  }
+
+  Future<void>? inFlightFuture({
+    required String tenantId,
+    required String companyId,
+  }) {
+    return _inFlight[scopeKey(tenantId, companyId)];
+  }
+
+  void attachInFlight({
+    required String tenantId,
+    required String companyId,
+    required Future<void> future,
+  }) {
+    _inFlight[scopeKey(tenantId, companyId)] = future;
+  }
+
+  void detachInFlight({
+    required String tenantId,
+    required String companyId,
+    required Future<void> future,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (identical(_inFlight[key], future)) {
+      _inFlight.remove(key);
+    }
+  }
+
+  bool isFresh({
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|' || tenantId.trim().isEmpty || companyId.trim().isEmpty) {
+      return false;
+    }
+    if (_invalidated.contains(key)) return false;
+    final at = _lastSuccessAt[key];
+    if (at == null) return false;
+    return (now ?? this.now()).difference(at) < freshness;
+  }
+
+  BusinessDashboardKpiRefreshDecision decide({
+    required String reason,
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|' || tenantId.trim().isEmpty || companyId.trim().isEmpty) {
+      return BusinessDashboardKpiRefreshDecision.start;
+    }
+    if (_inFlight.containsKey(key)) {
+      return BusinessDashboardKpiRefreshDecision.shareInFlight;
+    }
+    if (businessDashboardKpiReasonForcesRefresh(reason)) {
+      return BusinessDashboardKpiRefreshDecision.start;
+    }
+    if (isFresh(tenantId: tenantId, companyId: companyId, now: now) &&
+        businessDashboardKpiReasonIsOpportunistic(reason)) {
+      return BusinessDashboardKpiRefreshDecision.skipFresh;
+    }
+    return BusinessDashboardKpiRefreshDecision.start;
+  }
+
+  /// Shares one [cycle] Future across concurrent callers for [tenantId] +
+  /// [companyId]. Sequential opportunistic calls after success reuse freshness.
+  Future<void> runOrShare({
+    required String reason,
+    required String tenantId,
+    required String companyId,
+    required Future<void> Function() cycle,
+    DateTime? now,
+  }) async {
+    final key = scopeKey(tenantId, companyId);
+    final decision = decide(
+      reason: reason,
+      tenantId: tenantId,
+      companyId: companyId,
+      now: now,
+    );
+    if (decision == BusinessDashboardKpiRefreshDecision.skipFresh) {
+      return;
+    }
+    final existing = _inFlight[key];
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    late final Future<void> future;
+    future = Future<void>(() async {
+      try {
+        await cycle();
+      } finally {
+        if (identical(_inFlight[key], future)) {
+          _inFlight.remove(key);
+        }
+      }
+    });
+    _inFlight[key] = future;
+    await future;
+  }
+
+  void markSuccess({
+    required String tenantId,
+    required String companyId,
+    DateTime? now,
+  }) {
+    final key = scopeKey(tenantId, companyId);
+    if (key == '|') return;
+    _lastSuccessAt[key] = now ?? this.now();
+    _invalidated.remove(key);
+  }
+
+  void invalidate({required String tenantId, required String companyId}) {
+    final key = scopeKey(tenantId, companyId);
+    _lastSuccessAt.remove(key);
+    _invalidated.add(key);
+  }
+
+  void invalidateAll() {
+    _lastSuccessAt.clear();
+    _invalidated.clear();
+    _inFlight.clear();
+  }
+
+  void resetForTest() => invalidateAll();
+}
+
+/// Process-wide dashboard KPI refresh coordinator (same lifetime as
+/// [businessDashboardKpiCache]).
+final BusinessDashboardKpiRefreshCoordinator
+businessDashboardKpiRefreshCoordinator =
+    BusinessDashboardKpiRefreshCoordinator();

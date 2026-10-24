@@ -7,3 +7,6 @@ The complete exact Booking/Tracking source closure and preserved national Naviga
 The 224 local checks are backend/native/published-client contract evidence, not physical trip acceptance. OPEN: ride 487 lower assignment exclusion, exact physical navigation error and about 9.8 seconds of booking processing. The next Driver integration remains Agent 1's work; it must be committed before its AAB build and must not infer canonical assignment from dispatch-decision HTTP 200 or the Room committed flag alone. Human offers carry explicit owner_id; real leg_id must come from the authorized driver booking row.
 
 This Git snapshot was recorded after the limited, separately owner-authorized backend production activation. It does not claim that the already-deployed artifacts were first built from this new commit. No shared working tree, staged index, secret/configuration or device state is included or overwritten.
+
+
+Driver 114 integrated candidate: releases/driver/business-114. Full B113 source + approved QR/sidebar/alarm/canonical-refresh corrections. Backend parent 9e7b3e469d606ac9480030ad87ef6154760fae87. 366 Flutter, 189 sidebar, 26 native unit checks PASS. Physical acceptance/final tag remain OPEN. No signing/config secrets in release snapshot.

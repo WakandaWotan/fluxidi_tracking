@@ -1,0 +1,9 @@
+# START camera alignment repair — 2026-10-04
+
+Authoritative Business root D:/Projecten/_flutter_work/fluxidi_business_internal47. START previously forced follow before the passenger route had been fetched. The full route reset also retained _lastSmoothedCameraBearing; the stationary camera lock could therefore hold a bearing from the pickup leg or from the interim no-route camera update.
+
+A full leg boundary now clears that applied bearing and arms a one-time initial bearing update. The first accepted non-reroute route seeds the applied bearing once; same-leg route replacement, reroute, progress reset and stationary traffic-light hold keep their existing policy. Planned START waits for accepted destination-route readiness and rechecks the captured navigation operation owner before forcing follow. Failed or superseded route work does not issue the delayed forced camera call. User view level, selected pitch/zoom/style, GPS frequency and single-writer ownership remain unchanged.
+
+49 focused tests PASS across the actual state-method await-boundary regression, dashboard selector, stationary bearing, cockpit lock and preview ownership. The new fixture executes the actual production route-alignment method and full-clear branch with controlled completions: no follow before route completion, exactly one follow after current accepted route, no follow on failed/stale completion, no old pickup bearing after leg clear, and same-leg progress reset preserves the established bearing. Existing actual bearing-gate/lock tests retain parked/moving guarantees. This does not prove actual handset visual alignment. Scoped analysis0errors/0warnings; one existing async BuildContext info at statepart25809 outside the edited paths.
+
+Test/log: test/driver/started_leg_camera_regression_test.dart; TEMP/fluxidi-business61-start-camera-regression-20261004.log. Source repair is pending the ordinary61 AAB/Internal/real-device gate; Business60 on tablet does not contain it.

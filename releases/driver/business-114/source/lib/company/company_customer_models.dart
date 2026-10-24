@@ -1,0 +1,727 @@
+// COMPANY-CUSTOMER-OPS-P0A
+//
+// Fail-closed parsing of the Worker company-customer contract. Never invents
+// cursors and never treats a failed write as a local success.
+
+const int kCompanyCustomerHttpListLimit = 50;
+const String kCompanyCustomersPath = '/company/customers';
+
+class CompanyCustomerException implements Exception {
+  const CompanyCustomerException(
+    this.code, {
+    this.fields = const <String, String>{},
+    this.revision,
+    this.offline = false,
+  });
+
+  final String code;
+  final Map<String, String> fields;
+  final int? revision;
+  final bool offline;
+
+  @override
+  String toString() => 'CompanyCustomerException($code)';
+}
+
+class CompanyCustomerAddress {
+  const CompanyCustomerAddress({
+    this.addressId = '',
+    this.type = 'other',
+    this.label = '',
+    this.line1 = '',
+    this.line2 = '',
+    this.city = '',
+    this.postalCode = '',
+    this.countryCode = '',
+    this.notes = '',
+    this.lat,
+    this.lon,
+  });
+
+  final String addressId;
+  final String type;
+  final String label;
+  final String line1;
+  final String line2;
+  final String city;
+  final String postalCode;
+  final String countryCode;
+  final String notes;
+  final double? lat;
+  final double? lon;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      if (addressId.trim().isNotEmpty) 'address_id': addressId.trim(),
+      'type': type.trim().isEmpty ? 'other' : type.trim(),
+      if (label.trim().isNotEmpty) 'label': label.trim(),
+      if (line1.trim().isNotEmpty) 'line1': line1.trim(),
+      if (line2.trim().isNotEmpty) 'line2': line2.trim(),
+      if (city.trim().isNotEmpty) 'city': city.trim(),
+      if (postalCode.trim().isNotEmpty) 'postal_code': postalCode.trim(),
+      if (countryCode.trim().isNotEmpty) 'country_code': countryCode.trim(),
+      if (notes.trim().isNotEmpty) 'notes': notes.trim(),
+      if (lat != null && lat!.isFinite) 'lat': lat,
+      if (lon != null && lon!.isFinite) 'lon': lon,
+    };
+  }
+}
+
+class CompanyCustomerPreferences {
+  const CompanyCustomerPreferences({
+    this.version = 1,
+    this.preferredLocale = '',
+    this.invoiceFrequency = 'per_ride',
+  });
+
+  final int version;
+  final String preferredLocale;
+  final String invoiceFrequency;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'version': version,
+      if (invoiceFrequency != 'per_ride') 'invoice_frequency': invoiceFrequency,
+      if (preferredLocale.trim().isNotEmpty)
+        'preferred_locale': preferredLocale.trim(),
+    };
+  }
+}
+
+class CompanyCustomerListItem {
+  const CompanyCustomerListItem({
+    required this.customerId,
+    required this.displayName,
+    required this.companyName,
+    required this.phoneMasked,
+    required this.emailMasked,
+    required this.status,
+    required this.updatedAt,
+  });
+
+  final String customerId;
+  final String displayName;
+  final String companyName;
+  final String phoneMasked;
+  final String emailMasked;
+  final String status;
+  final String updatedAt;
+
+  bool get isArchived => status == 'archived';
+}
+
+class CompanyCustomer {
+  const CompanyCustomer({
+    required this.customerId,
+    required this.tenantId,
+    required this.companyId,
+    required this.displayName,
+    required this.firstName,
+    required this.lastName,
+    required this.phone,
+    required this.phoneNormalized,
+    required this.countryCallingCode,
+    required this.email,
+    required this.locale,
+    required this.companyName,
+    required this.vatNumber,
+    required this.addresses,
+    required this.internalNotes,
+    required this.preferences,
+    required this.source,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.archivedAt,
+    required this.revision,
+  });
+
+  /// Placeholder for a ride draft whose customer has not been picked yet.
+  ///
+  /// Lets the planner open on an empty, searchable customer field instead of
+  /// refusing, without ever standing in for a real customer: [isChosen] is
+  /// false and saving is blocked until a real one is selected.
+  const CompanyCustomer.unchosen()
+    : customerId = '',
+      tenantId = '',
+      companyId = '',
+      displayName = '',
+      firstName = '',
+      lastName = '',
+      phone = '',
+      phoneNormalized = '',
+      countryCallingCode = '',
+      email = '',
+      locale = '',
+      companyName = '',
+      vatNumber = '',
+      addresses = const <CompanyCustomerAddress>[],
+      internalNotes = '',
+      preferences = const CompanyCustomerPreferences(),
+      source = '',
+      status = '',
+      createdAt = '',
+      updatedAt = '',
+      archivedAt = '',
+      revision = 0;
+
+  /// False only for [CompanyCustomer.unchosen].
+  bool get isChosen => customerId.trim().isNotEmpty;
+
+  final String customerId;
+  final String tenantId;
+  final String companyId;
+  final String displayName;
+  final String firstName;
+  final String lastName;
+  final String phone;
+  final String phoneNormalized;
+  final String countryCallingCode;
+  final String email;
+  final String locale;
+  final String companyName;
+  final String vatNumber;
+  final List<CompanyCustomerAddress> addresses;
+  final String internalNotes;
+  final CompanyCustomerPreferences preferences;
+  final String source;
+  final String status;
+  final String createdAt;
+  final String updatedAt;
+  final String? archivedAt;
+  final int revision;
+
+  bool get isArchived => status == 'archived';
+}
+
+class CompanyCustomerDuplicateMatch {
+  const CompanyCustomerDuplicateMatch({
+    required this.customerId,
+    required this.field,
+  });
+
+  final String customerId;
+  final String field;
+}
+
+class CompanyCustomerMutationResult {
+  const CompanyCustomerMutationResult({
+    required this.customer,
+    this.duplicateMatches = const <CompanyCustomerDuplicateMatch>[],
+    this.idempotent = false,
+  });
+
+  final CompanyCustomer customer;
+  final List<CompanyCustomerDuplicateMatch> duplicateMatches;
+  final bool idempotent;
+}
+
+class CompanyCustomerListPage {
+  const CompanyCustomerListPage({
+    required this.items,
+    required this.hasMore,
+    required this.nextCursor,
+    required this.totalCount,
+  });
+
+  final List<CompanyCustomerListItem> items;
+  final bool hasMore;
+  final String? nextCursor;
+  final int? totalCount;
+}
+
+class CompanyCustomerWrite {
+  const CompanyCustomerWrite({
+    this.displayName = '',
+    this.firstName = '',
+    this.lastName = '',
+    this.phone = '',
+    this.countryCallingCode = '',
+    this.email = '',
+    this.locale = '',
+    this.companyName = '',
+    this.vatNumber = '',
+    this.addresses = const <CompanyCustomerAddress>[],
+    this.internalNotes = '',
+    this.preferences = const CompanyCustomerPreferences(),
+  });
+
+  final String displayName;
+  final String firstName;
+  final String lastName;
+  final String phone;
+  final String countryCallingCode;
+  final String email;
+  final String locale;
+  final String companyName;
+  final String vatNumber;
+  final List<CompanyCustomerAddress> addresses;
+  final String internalNotes;
+  final CompanyCustomerPreferences preferences;
+
+  Map<String, dynamic> toJson({int? revision}) {
+    return <String, dynamic>{
+      if (displayName.trim().isNotEmpty) 'display_name': displayName.trim(),
+      if (firstName.trim().isNotEmpty) 'first_name': firstName.trim(),
+      if (lastName.trim().isNotEmpty) 'last_name': lastName.trim(),
+      if (phone.trim().isNotEmpty) 'phone': phone.trim(),
+      if (countryCallingCode.trim().isNotEmpty)
+        'country_calling_code': countryCallingCode.trim(),
+      if (email.trim().isNotEmpty) 'email': email.trim(),
+      if (locale.trim().isNotEmpty) 'locale': locale.trim(),
+      if (companyName.trim().isNotEmpty) 'company_name': companyName.trim(),
+      if (vatNumber.trim().isNotEmpty) 'vat_number': vatNumber.trim(),
+      'addresses': [
+        for (final address in addresses) address.toJson(),
+      ],
+      if (internalNotes.trim().isNotEmpty)
+        'internal_notes': internalNotes.trim(),
+      'preferences': preferences.toJson(),
+      if (revision != null) 'revision': revision,
+    };
+  }
+}
+
+final _emailAt = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+String composeCompanyCustomerDisplayName({
+  required String displayName,
+  required String firstName,
+  required String lastName,
+}) {
+  final display = displayName.trim();
+  if (display.isNotEmpty) return display;
+  return suggestedCompanyCustomerDisplayName(
+    firstName: firstName,
+    lastName: lastName,
+  );
+}
+
+String suggestedCompanyCustomerDisplayName({
+  required String firstName,
+  required String lastName,
+}) {
+  return '${firstName.trim()} ${lastName.trim()}'.replaceAll(
+    RegExp(r'\s+'),
+    ' ',
+  ).trim();
+}
+
+bool shouldReplaceSuggestedCompanyCustomerDisplayName({
+  required String currentDisplayName,
+  required String previousSuggestion,
+}) {
+  final current = currentDisplayName.trim();
+  return current.isEmpty || current == previousSuggestion.trim();
+}
+
+String normalizeCompanyCustomerEmail(String raw) => raw.trim().toLowerCase();
+
+({String normalized, String e164, String countryCallingCode})
+normalizeCompanyCustomerPhone(String raw, String countryCallingCode) {
+  final text = raw.trim();
+  final cc = countryCallingCode.replaceAll(RegExp(r'[^0-9]'), '');
+  if (text.isEmpty) {
+    return (normalized: '', e164: '', countryCallingCode: cc);
+  }
+  var digits = text.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.isEmpty) {
+    return (normalized: '', e164: '', countryCallingCode: cc);
+  }
+  final explicitPlus = text.startsWith('+');
+  final explicitIntl = explicitPlus || text.startsWith('00');
+  if (!explicitPlus && digits.startsWith('00')) {
+    digits = digits.substring(2);
+  }
+  var e164 = '';
+  if (explicitIntl && digits.length >= 8 && digits.length <= 15) {
+    e164 = '+$digits';
+  } else if (cc.isNotEmpty && digits.length >= 4 && digits.length <= 15) {
+    var national = digits;
+    if (national.startsWith(cc)) {
+      national = national.substring(cc.length);
+    } else if (national.startsWith('0')) {
+      national = national.substring(1);
+    }
+    final combined = '$cc$national';
+    if (combined.length >= 8 && combined.length <= 15) {
+      e164 = '+$combined';
+    }
+  }
+  final normalized = e164.isNotEmpty
+      ? e164
+      : (explicitPlus ? '+$digits' : digits);
+  return (normalized: normalized, e164: e164, countryCallingCode: cc);
+}
+
+String companyCustomerInternationalPhone(CompanyCustomer customer) {
+  final stored = customer.phoneNormalized.trim();
+  if (stored.startsWith('+') &&
+      isUsableCompanyCustomerPhone(stored) &&
+      !stored.startsWith('+00')) {
+    return stored;
+  }
+  final parsed = normalizeCompanyCustomerPhone(
+    stored.isNotEmpty ? stored : customer.phone,
+    customer.countryCallingCode,
+  );
+  if (parsed.e164.isNotEmpty) return parsed.e164;
+  return parsed.normalized;
+}
+
+bool isUsableCompanyCustomerEmail(String raw) {
+  final email = normalizeCompanyCustomerEmail(raw);
+  if (email.isEmpty || email.length > 320) return false;
+  if (email.startsWith('.') || email.endsWith('.')) return false;
+  return _emailAt.hasMatch(email);
+}
+
+bool isUsableCompanyCustomerPhone(String normalized) {
+  final digits = normalized.replaceAll(RegExp(r'[^0-9]'), '');
+  return digits.length >= 8 && digits.length <= 15;
+}
+
+/// Optional VAT / enterprise number. Empty is allowed. A filled value must
+/// look like a country-prefixed VAT or a 8–12 digit company number. Leading
+/// zeros are kept; no silent rewrite.
+bool isUsableCompanyCustomerVatNumber(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return true;
+  final compact = text.replaceAll(RegExp(r'[\s.\-/]'), '');
+  if (RegExp(r'^[A-Za-z]{2}[A-Za-z0-9]{8,12}$').hasMatch(compact)) {
+    return true;
+  }
+  return RegExp(r'^\d{8,12}$').hasMatch(compact);
+}
+
+Map<String, String> validateCompanyCustomerWrite(CompanyCustomerWrite write) {
+  final fields = <String, String>{};
+  final name = composeCompanyCustomerDisplayName(
+    displayName: write.displayName,
+    firstName: write.firstName,
+    lastName: write.lastName,
+  );
+  if (name.isEmpty) fields['display_name'] = 'required';
+  final emailOk =
+      write.email.trim().isEmpty || isUsableCompanyCustomerEmail(write.email);
+  if (write.email.trim().isNotEmpty && !emailOk) {
+    fields['email'] = 'invalid';
+  }
+  final phone = normalizeCompanyCustomerPhone(
+    write.phone,
+    write.countryCallingCode,
+  );
+  if (write.phone.trim().isNotEmpty &&
+      !isUsableCompanyCustomerPhone(phone.normalized)) {
+    fields['phone'] = 'invalid';
+  }
+  final hasContact =
+      isUsableCompanyCustomerEmail(write.email) ||
+      isUsableCompanyCustomerPhone(phone.normalized);
+  if (!hasContact) fields['contact'] = 'required';
+  if (write.vatNumber.trim().isNotEmpty &&
+      !isUsableCompanyCustomerVatNumber(write.vatNumber)) {
+    fields['vat_number'] = 'invalid';
+  }
+  return fields;
+}
+
+int? _parseExactCount(Object? raw) {
+  if (raw == null || raw is bool) return null;
+  if (raw is int) return raw < 0 ? null : raw;
+  if (raw is num) {
+    final parsed = raw.toInt();
+    if (raw != parsed || parsed < 0) return null;
+    return parsed;
+  }
+  if (raw is String) {
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null || parsed < 0) return null;
+    return parsed;
+  }
+  return null;
+}
+
+String _requireText(Map<dynamic, dynamic> map, String key) {
+  final value = map[key]?.toString().trim() ?? '';
+  if (value.isEmpty) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  return value;
+}
+
+String _optionalText(Map<dynamic, dynamic> map, String key) {
+  return map[key]?.toString().trim() ?? '';
+}
+
+String _firstOptionalText(Map<dynamic, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final text = _optionalText(map, key);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+String _composeStreetAndHouseNumber(Map<dynamic, dynamic> raw) {
+  final street = _firstOptionalText(raw, const <String>[
+    'line1',
+    'street',
+    'address_line1',
+    'addressLine1',
+    'line_1',
+    'streetAddress',
+    'street_address',
+    'formatted',
+    'formatted_address',
+    'full_address',
+    'address',
+  ]);
+  final house = _firstOptionalText(raw, const <String>[
+    'house_number',
+    'houseNumber',
+    'huisnummer',
+  ]);
+  if (house.isEmpty) return street;
+  if (street.isEmpty) return house;
+  final streetNorm = street.toLowerCase();
+  final houseNorm = house.toLowerCase();
+  if (streetNorm.endsWith(houseNorm) || streetNorm.contains(' $houseNorm')) {
+    return street;
+  }
+  return '$street $house';
+}
+
+double? _optionalCoord(Map<dynamic, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final raw = map[key];
+    if (raw is num && raw.isFinite) return raw.toDouble();
+    if (raw is String) {
+      final parsed = num.tryParse(raw.trim())?.toDouble();
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+  }
+  return null;
+}
+
+CompanyCustomerAddress parseCompanyCustomerAddress(Map<dynamic, dynamic> raw) {
+  final type = _optionalText(raw, 'type').toLowerCase();
+  const allowed = <String>{'home', 'work', 'pickup', 'billing', 'other'};
+  return CompanyCustomerAddress(
+    addressId: _optionalText(raw, 'address_id'),
+    type: allowed.contains(type) ? type : 'other',
+    label: _optionalText(raw, 'label'),
+    // Records written by other surfaces name the street differently. Reading
+    // only `line1` silently turned a full address into a bare locality.
+    line1: () {
+      final composed = _composeStreetAndHouseNumber(raw);
+      if (composed.isNotEmpty) return composed;
+      final label = _optionalText(raw, 'label');
+      if (RegExp(r'\d').hasMatch(label) &&
+          RegExp(r'[A-Za-zÀ-ÿ]{3,}').hasMatch(label)) {
+        return label;
+      }
+      return '';
+    }(),
+    line2: _optionalText(raw, 'line2'),
+    city: _optionalText(raw, 'city'),
+    postalCode: _firstOptionalText(raw, const [
+      'postal_code',
+      'postalCode',
+      'postcode',
+    ]),
+    countryCode: _firstOptionalText(raw, const [
+      'country_code',
+      'countryCode',
+      'country',
+    ]),
+    notes: _optionalText(raw, 'notes'),
+    lat: _optionalCoord(raw, const ['lat', 'latitude', 'pickup_lat']),
+    lon: _optionalCoord(raw, const ['lon', 'lng', 'longitude', 'pickup_lon']),
+  );
+}
+
+CompanyCustomerPreferences parseCompanyCustomerPreferences(Object? raw) {
+  if (raw == null) return const CompanyCustomerPreferences();
+  if (raw is! Map) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final map = Map<dynamic, dynamic>.from(raw);
+  final version = _parseExactCount(map['version']) ?? 1;
+  final frequency = map['invoice_frequency'] ?? 'per_ride';
+  if (frequency != 'per_ride' && frequency != 'monthly') {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  if (version < 1) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  return CompanyCustomerPreferences(
+    version: version,
+    preferredLocale: _optionalText(map, 'preferred_locale'),
+    invoiceFrequency: frequency as String,
+  );
+}
+
+CompanyCustomerListItem parseCompanyCustomerListItem(Map<dynamic, dynamic> raw) {
+  final status = _requireText(raw, 'status');
+  if (status != 'active' && status != 'archived') {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  return CompanyCustomerListItem(
+    customerId: _requireText(raw, 'customer_id'),
+    displayName: _optionalText(raw, 'display_name'),
+    companyName: _optionalText(raw, 'company_name'),
+    phoneMasked: _optionalText(raw, 'phone_masked'),
+    emailMasked: _optionalText(raw, 'email_masked'),
+    status: status,
+    updatedAt: _optionalText(raw, 'updated_at'),
+  );
+}
+
+CompanyCustomer parseCompanyCustomer(Map<dynamic, dynamic> raw) {
+  final status = _requireText(raw, 'status');
+  if (status != 'active' && status != 'archived') {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final revision = _parseExactCount(raw['revision']);
+  if (revision == null || revision < 1) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final addressesRaw = raw['addresses'];
+  if (addressesRaw != null && addressesRaw is! List) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final addresses = <CompanyCustomerAddress>[
+    for (final item in (addressesRaw as List<dynamic>? ?? const <dynamic>[]))
+      if (item is Map) parseCompanyCustomerAddress(item),
+  ];
+  final archivedAt = _optionalText(raw, 'archived_at');
+  return CompanyCustomer(
+    customerId: _requireText(raw, 'customer_id'),
+    tenantId: _optionalText(raw, 'tenant_id'),
+    companyId: _optionalText(raw, 'company_id'),
+    displayName: _requireText(raw, 'display_name'),
+    firstName: _optionalText(raw, 'first_name'),
+    lastName: _optionalText(raw, 'last_name'),
+    phone: _optionalText(raw, 'phone'),
+    phoneNormalized: _optionalText(raw, 'phone_normalized'),
+    countryCallingCode: _optionalText(raw, 'country_calling_code'),
+    email: _optionalText(raw, 'email'),
+    locale: _optionalText(raw, 'locale'),
+    companyName: _optionalText(raw, 'company_name'),
+    vatNumber: _optionalText(raw, 'vat_number'),
+    addresses: addresses,
+    internalNotes: _optionalText(raw, 'internal_notes'),
+    preferences: parseCompanyCustomerPreferences(raw['preferences']),
+    source: _optionalText(raw, 'source').isEmpty
+        ? 'manual'
+        : _optionalText(raw, 'source'),
+    status: status,
+    createdAt: _optionalText(raw, 'created_at'),
+    updatedAt: _optionalText(raw, 'updated_at'),
+    archivedAt: archivedAt.isEmpty ? null : archivedAt,
+    revision: revision,
+  );
+}
+
+CompanyCustomerListPage parseCompanyCustomerListPage(Map<dynamic, dynamic> raw) {
+  if (raw['ok'] != true) {
+    final error = raw['error']?.toString().trim();
+    throw CompanyCustomerException(
+      (error == null || error.isEmpty) ? 'customers_not_ok' : error,
+    );
+  }
+  final itemsRaw = raw['items'];
+  if (itemsRaw is! List) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final items = <CompanyCustomerListItem>[
+    for (final item in itemsRaw)
+      if (item is Map) parseCompanyCustomerListItem(item),
+  ];
+  if (items.length != itemsRaw.whereType<Map>().length &&
+      itemsRaw.any((item) => item is! Map)) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  final hasMoreFlag = raw['has_more'] == true;
+  final cursor = raw['next_cursor']?.toString().trim() ?? '';
+  final hasMore = hasMoreFlag && cursor.isNotEmpty;
+  return CompanyCustomerListPage(
+    items: items,
+    hasMore: hasMore,
+    nextCursor: hasMore ? cursor : null,
+    totalCount: _parseExactCount(raw['total_count']),
+  );
+}
+
+CompanyCustomer parseCompanyCustomerEnvelope(Map<dynamic, dynamic> raw) {
+  if (raw['ok'] != true) {
+    final error = raw['error']?.toString().trim();
+    throw CompanyCustomerException(
+      (error == null || error.isEmpty) ? 'customers_not_ok' : error,
+      fields: _parseFields(raw['fields']),
+      revision: _parseExactCount(raw['revision']),
+    );
+  }
+  final customerRaw = raw['customer'];
+  if (customerRaw is! Map) {
+    throw const CompanyCustomerException('invalid_payload');
+  }
+  return parseCompanyCustomer(customerRaw);
+}
+
+CompanyCustomerMutationResult parseCompanyCustomerMutation(
+  Map<dynamic, dynamic> raw,
+) {
+  final customer = parseCompanyCustomerEnvelope(raw);
+  final warning = raw['duplicate_warning'];
+  final matches = <CompanyCustomerDuplicateMatch>[];
+  if (warning is Map) {
+    final list = warning['matches'];
+    if (list is List) {
+      for (final item in list) {
+        if (item is! Map) continue;
+        final id = item['customer_id']?.toString().trim() ?? '';
+        final field = item['field']?.toString().trim() ?? '';
+        if (id.isEmpty || field.isEmpty) {
+          throw const CompanyCustomerException('invalid_payload');
+        }
+        matches.add(CompanyCustomerDuplicateMatch(customerId: id, field: field));
+      }
+    }
+  }
+  return CompanyCustomerMutationResult(
+    customer: customer,
+    duplicateMatches: matches,
+    idempotent: raw['idempotent'] == true,
+  );
+}
+
+Map<String, String> _parseFields(Object? raw) {
+  if (raw is! Map) return const <String, String>{};
+  final fields = <String, String>{};
+  raw.forEach((key, value) {
+    final name = key.toString().trim();
+    final code = value?.toString().trim() ?? '';
+    if (name.isNotEmpty && code.isNotEmpty) fields[name] = code;
+  });
+  return fields;
+}
+
+Map<String, String> buildCompanyCustomerListQuery({
+  required Map<String, String> scopeQuery,
+  required String status,
+  required String query,
+  required String cursor,
+  int limit = kCompanyCustomerHttpListLimit,
+}) {
+  final params = <String, String>{
+    ...scopeQuery,
+    'status': status,
+    'limit': '$limit',
+  };
+  final q = query.trim();
+  if (q.isNotEmpty) params['q'] = q;
+  final next = cursor.trim();
+  if (next.isNotEmpty) params['cursor'] = next;
+  return params;
+}

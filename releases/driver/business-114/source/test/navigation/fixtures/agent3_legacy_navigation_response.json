@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "service": "fluxidi-navigation-core",
+  "version": "cloud-nav-1-signal-p0a",
+  "cache": "miss",
+  "country": "BE",
+  "profile": "driving",
+  "route_hash": "7e9d31f8a1a9c95b4535d5c350dcced1",
+  "distance_m": 1000,
+  "duration_s": 120,
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [
+        4,
+        51
+      ],
+      [
+        4.1,
+        51.1
+      ]
+    ]
+  },
+  "legs": [],
+  "maneuvers": [],
+  "country_profile": {
+    "code": "BE",
+    "defaultLanguage": "nl",
+    "drivingProfile": "driving",
+    "maxCacheTtlSeconds": 300,
+    "offlineCorridorBufferMeters": 800,
+    "maneuverLanguageHint": "nl",
+    "futureFlags": {
+      "low_emission_zones": true,
+      "airport_mode": true,
+      "toll_awareness": false
+    }
+  },
+  "endpoint": "route"
+}

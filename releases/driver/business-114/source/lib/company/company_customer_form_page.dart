@@ -1,0 +1,717 @@
+// COMPANY-CUSTOMER-OPS-P0A
+
+import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_customer_labels.dart';
+import 'package:fluxidi_tracking/company/company_customer_locale_options.dart';
+import 'package:fluxidi_tracking/company/company_customer_models.dart';
+import 'package:fluxidi_tracking/company/company_customers_repository.dart';
+import 'package:fluxidi_tracking/company/company_ops_theme.dart';
+
+const Key kCompanyCustomersSaveButtonKey = Key('company_customers_save');
+const Key kCompanyCustomerFormPageKey = Key('company_customer_form_page');
+const Key kCompanyCustomerFormNameKey = Key('company_customer_form_name');
+const Key kCompanyCustomerFormEmailKey = Key('company_customer_form_email');
+const Key kCompanyCustomerFormFirstNameKey = Key(
+  'company_customer_form_first_name',
+);
+const Key kCompanyCustomerFormLastNameKey = Key(
+  'company_customer_form_last_name',
+);
+const Key kCompanyCustomerFormPhoneKey = Key('company_customer_form_phone');
+const Key kCompanyCustomerFormCallingCodeKey = Key(
+  'company_customer_form_calling_code',
+);
+const Key kCompanyCustomerFormLocaleKey = Key('company_customer_form_locale');
+const Key kCompanyCustomerFormRequiredHintKey = Key(
+  'company_customer_form_required_hint',
+);
+
+class CompanyCustomerFormPage extends StatefulWidget {
+  const CompanyCustomerFormPage({
+    super.key,
+    required this.repository,
+    this.existing,
+    this.language,
+  });
+
+  final CompanyCustomersRepository repository;
+  final CompanyCustomer? existing;
+  final AppLanguage? language;
+
+  @override
+  State<CompanyCustomerFormPage> createState() => _CompanyCustomerFormPageState();
+}
+
+class _CompanyCustomerFormPageState extends State<CompanyCustomerFormPage> {
+  late final TextEditingController _displayName;
+  late final TextEditingController _firstName;
+  late final TextEditingController _lastName;
+  late final TextEditingController _email;
+  late final TextEditingController _phone;
+  late final TextEditingController _callingCode;
+  late final TextEditingController _locale;
+  late final TextEditingController _companyName;
+  late final TextEditingController _vat;
+  late final TextEditingController _notes;
+  late String _invoiceFrequency;
+  final List<_AddressDraft> _addresses = <_AddressDraft>[];
+  bool _saving = false;
+  String? _formError;
+  Map<String, String> _fieldErrors = const <String, String>{};
+  late String _displayNameSuggestion;
+
+  AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    _invoiceFrequency = existing?.preferences.invoiceFrequency ?? 'per_ride';
+    _displayName = TextEditingController(text: existing?.displayName ?? '');
+    _firstName = TextEditingController(text: existing?.firstName ?? '');
+    _lastName = TextEditingController(text: existing?.lastName ?? '');
+    _email = TextEditingController(text: existing?.email ?? '');
+    _phone = TextEditingController(text: existing?.phone ?? '');
+    _callingCode = TextEditingController(
+      text: existing?.countryCallingCode ?? '',
+    );
+    _locale = TextEditingController(text: existing?.locale ?? '');
+    _companyName = TextEditingController(text: existing?.companyName ?? '');
+    _vat = TextEditingController(text: existing?.vatNumber ?? '');
+    _notes = TextEditingController(text: existing?.internalNotes ?? '');
+    if (existing != null) {
+      for (final address in existing.addresses) {
+        _addresses.add(_AddressDraft.fromAddress(address));
+      }
+    }
+    _displayNameSuggestion = suggestedCompanyCustomerDisplayName(
+      firstName: _firstName.text,
+      lastName: _lastName.text,
+    );
+    if (_displayName.text.trim().isEmpty &&
+        _displayNameSuggestion.isNotEmpty) {
+      _displayName.text = _displayNameSuggestion;
+    }
+  }
+
+  void _suggestDisplayName() {
+    final next = suggestedCompanyCustomerDisplayName(
+      firstName: _firstName.text,
+      lastName: _lastName.text,
+    );
+    if (shouldReplaceSuggestedCompanyCustomerDisplayName(
+      currentDisplayName: _displayName.text,
+      previousSuggestion: _displayNameSuggestion,
+    )) {
+      _displayName.text = next;
+    }
+    _displayNameSuggestion = next;
+  }
+
+  @override
+  void dispose() {
+    _displayName.dispose();
+    _firstName.dispose();
+    _lastName.dispose();
+    _email.dispose();
+    _phone.dispose();
+    _callingCode.dispose();
+    _locale.dispose();
+    _companyName.dispose();
+    _vat.dispose();
+    _notes.dispose();
+    for (final address in _addresses) {
+      address.dispose();
+    }
+    super.dispose();
+  }
+
+  CompanyCustomerWrite _write() {
+    return CompanyCustomerWrite(
+      displayName: _displayName.text,
+      firstName: _firstName.text,
+      lastName: _lastName.text,
+      email: _email.text,
+      phone: _phone.text,
+      countryCallingCode: _callingCode.text,
+      locale: _locale.text,
+      companyName: _companyName.text,
+      vatNumber: _vat.text,
+      internalNotes: _notes.text,
+      addresses: [
+        for (final address in _addresses) address.toAddress(),
+      ],
+      preferences: CompanyCustomerPreferences(
+        version: widget.existing?.preferences.version ?? 1,
+        preferredLocale: _locale.text,
+        invoiceFrequency: _invoiceFrequency,
+      ),
+    );
+  }
+
+  bool get _canSave {
+    if (_saving) return false;
+    return validateCompanyCustomerWrite(_write()).isEmpty;
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final write = _write();
+    final fields = validateCompanyCustomerWrite(write);
+    if (fields.isNotEmpty) {
+      setState(() {
+        _fieldErrors = fields;
+        _formError = fields.containsKey('contact') ||
+                fields.containsKey('display_name')
+            ? kCompanyCustomersContactRequired.of(_lang)
+            : fields.containsKey('email')
+            ? kCompanyCustomersInvalidEmail.of(_lang)
+            : fields.containsKey('phone')
+            ? kCompanyCustomersInvalidPhone.of(_lang)
+            : fields.containsKey('vat_number')
+            ? kCompanyCustomersInvalidVat.of(_lang)
+            : kCompanyCustomersSaveFailed.of(_lang);
+      });
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _formError = null;
+      _fieldErrors = const <String, String>{};
+    });
+    try {
+      if (widget.existing == null) {
+        final result = await widget.repository.create(write);
+        if (!mounted) return;
+        Navigator.of(context).pop(result);
+        return;
+      }
+      final updated = await widget.repository.update(
+        widget.existing!.customerId,
+        write,
+        revision: widget.existing!.revision,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(updated);
+    } on CompanyCustomerException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _fieldErrors = error.fields;
+        _formError = error.code == 'revision_conflict'
+            ? kCompanyCustomersConflict.of(_lang)
+            : error.offline
+            ? kCompanyCustomersOffline.of(_lang)
+            : kCompanyCustomersSaveFailed.of(_lang);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _formError = kCompanyCustomersSaveFailed.of(_lang);
+      });
+    }
+  }
+
+  String _requiredLabel(LocalizedText label) =>
+      '${label.of(_lang)} *';
+
+  String? _callingCodeValue() {
+    final code = normalizeCompanyCustomerCallingCode(_callingCode.text);
+    if (code.isEmpty) return '';
+    for (final option in kCompanyCustomerCallingCodeOptions) {
+      if (option.callingCode == code) return code;
+    }
+    return '';
+  }
+
+  String? _localeValue() {
+    final code = _locale.text.trim();
+    if (code.isEmpty) return '';
+    for (final option in kCompanyCustomerLocaleOptions) {
+      if (option.code == code) return code;
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.existing == null
+        ? kCompanyCustomersAddLabel.of(_lang)
+        : kCompanyCustomersEdit.of(_lang);
+    return CompanyOpsThemedSurface(
+      child: Scaffold(
+        key: kCompanyCustomerFormPageKey,
+        appBar: AppBar(title: Text(title)),
+        body: SafeArea(
+          child: CompanyOpsBoundedForm(
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    children: [
+                      Text(
+                        kCompanyCustomersIdentityGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: kCompanyCustomerFormNameKey,
+                        controller: _displayName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: _requiredLabel(
+                            kCompanyCustomersDisplayName,
+                          ),
+                          helperText: kCompanyCustomersRequiredMark.of(_lang),
+                          errorText: _fieldErrors['display_name'] == null
+                              ? null
+                              : kCompanyCustomersContactRequired.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormFirstNameKey,
+                        controller: _firstName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersFirstName.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {
+                          _suggestDisplayName();
+                        }),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormLastNameKey,
+                        controller: _lastName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersLastName.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {
+                          _suggestDisplayName();
+                        }),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        kCompanyCustomersContactGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        kCompanyCustomersContactRequired.of(_lang),
+                        key: kCompanyCustomerFormRequiredHintKey,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        key: kCompanyCustomerFormEmailKey,
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: '${kCompanyCustomersEmail.of(_lang)} *',
+                          helperText: kCompanyCustomersEmailOrPhoneHint.of(
+                            _lang,
+                          ),
+                          errorText: _fieldErrors['email'] == null
+                              ? null
+                              : kCompanyCustomersInvalidEmail.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        key: kCompanyCustomerFormCallingCodeKey,
+                        isExpanded: true,
+                        initialValue: _callingCodeValue(),
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersCallingCode.of(_lang),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child: Text('—'),
+                          ),
+                          for (final option
+                              in kCompanyCustomerCallingCodeOptions)
+                            DropdownMenuItem<String>(
+                              value: option.callingCode,
+                              child: Text(option.label.of(_lang)),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _callingCode.text = value ?? '';
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: kCompanyCustomerFormPhoneKey,
+                        controller: _phone,
+                        keyboardType: TextInputType.phone,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: '${kCompanyCustomersPhone.of(_lang)} *',
+                          helperText: kCompanyCustomersEmailOrPhoneHint.of(
+                            _lang,
+                          ),
+                          errorText: _fieldErrors['phone'] == null
+                              ? null
+                              : kCompanyCustomersInvalidPhone.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        key: kCompanyCustomerFormLocaleKey,
+                        isExpanded: true,
+                        initialValue: _localeValue(),
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersLocale.of(_lang),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child: Text('—'),
+                          ),
+                          for (final option in kCompanyCustomerLocaleOptions)
+                            DropdownMenuItem<String>(
+                              value: option.code,
+                              child: Text(option.label.of(_lang)),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          setState(() => _locale.text = value ?? '');
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      if (const bool.fromEnvironment(
+                        'COMPANY_MONTHLY_INVOICING_UI',
+                      )) ...[
+                        DropdownButtonFormField<String>(
+                          key: const Key('company_customer_invoice_frequency'),
+                          initialValue: _invoiceFrequency,
+                          decoration: InputDecoration(
+                            labelText: kCompanyCustomersInvoiceFrequency.of(
+                              _lang,
+                            ),
+                            helperText: kCompanyCustomersInvoiceFrequencyHint
+                                .of(_lang),
+                          ),
+                          items: [
+                            DropdownMenuItem(
+                              value: 'per_ride',
+                              child: Text(
+                                kCompanyCustomersInvoicePerRide.of(_lang),
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: 'monthly',
+                              child: Text(
+                                kCompanyCustomersInvoiceMonthly.of(_lang),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null)
+                              setState(() => _invoiceFrequency = value);
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      Text(
+                        kCompanyCustomersCompanyGroup.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _companyName,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersCompanyName.of(_lang),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _vat,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersVat.of(_lang),
+                          errorText: _fieldErrors['vat_number'] == null
+                              ? null
+                              : kCompanyCustomersInvalidVat.of(_lang),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        kCompanyCustomersAddresses.of(_lang),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      for (var i = 0; i < _addresses.length; i += 1)
+                        _AddressEditor(
+                          draft: _addresses[i],
+                          language: _lang,
+                          onRemove: () {
+                            setState(() {
+                              _addresses.removeAt(i).dispose();
+                            });
+                          },
+                        ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            setState(() => _addresses.add(_AddressDraft()));
+                          },
+                          icon: const Icon(Icons.add),
+                          label: Text(kCompanyCustomersAddAddress.of(_lang)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _notes,
+                        minLines: 3,
+                        maxLines: 6,
+                        decoration: InputDecoration(
+                          labelText: kCompanyCustomersInternalNotes.of(_lang),
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                      if (_formError != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _formError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      key: kCompanyCustomersSaveButtonKey,
+                      onPressed: _canSave ? _save : null,
+                      child: Text(kCompanyCustomersSave.of(_lang)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddressDraft {
+  _AddressDraft({
+    this.addressId = '',
+    this.type = 'other',
+    String label = '',
+    String line1 = '',
+    String line2 = '',
+    String city = '',
+    String postalCode = '',
+    String countryCode = '',
+    String notes = '',
+  }) : label = TextEditingController(text: label),
+       line1 = TextEditingController(text: line1),
+       line2 = TextEditingController(text: line2),
+       city = TextEditingController(text: city),
+       postalCode = TextEditingController(text: postalCode),
+       countryCode = TextEditingController(text: countryCode),
+       notes = TextEditingController(text: notes);
+
+  factory _AddressDraft.fromAddress(CompanyCustomerAddress address) {
+    return _AddressDraft(
+      addressId: address.addressId,
+      type: address.type,
+      label: address.label,
+      line1: address.line1,
+      line2: address.line2,
+      city: address.city,
+      postalCode: address.postalCode,
+      countryCode: address.countryCode,
+      notes: address.notes,
+    );
+  }
+
+  final String addressId;
+  String type;
+  final TextEditingController label;
+  final TextEditingController line1;
+  final TextEditingController line2;
+  final TextEditingController city;
+  final TextEditingController postalCode;
+  final TextEditingController countryCode;
+  final TextEditingController notes;
+
+  CompanyCustomerAddress toAddress() {
+    return CompanyCustomerAddress(
+      addressId: addressId,
+      type: type,
+      label: label.text,
+      line1: line1.text,
+      line2: line2.text,
+      city: city.text,
+      postalCode: postalCode.text,
+      countryCode: countryCode.text,
+      notes: notes.text,
+    );
+  }
+
+  void dispose() {
+    label.dispose();
+    line1.dispose();
+    line2.dispose();
+    city.dispose();
+    postalCode.dispose();
+    countryCode.dispose();
+    notes.dispose();
+  }
+}
+
+class _AddressEditor extends StatelessWidget {
+  const _AddressEditor({
+    required this.draft,
+    required this.language,
+    required this.onRemove,
+  });
+
+  final _AddressDraft draft;
+  final AppLanguage language;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: draft.type,
+                    decoration: InputDecoration(
+                      labelText: kCompanyCustomersAddressType.of(language),
+                    ),
+                    items: [
+                      for (final type in const [
+                        'home',
+                        'work',
+                        'pickup',
+                        'billing',
+                        'other',
+                      ])
+                        DropdownMenuItem(
+                          value: type,
+                          child: Text(
+                            companyCustomerAddressTypeLabel(type, language),
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) draft.type = value;
+                    },
+                  ),
+                ),
+                IconButton(
+                  onPressed: onRemove,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.label,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLabel.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.line1,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLine1.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.line2,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressLine2.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.city,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressCity.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.postalCode,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressPostal.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: draft.notes,
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressNotes.of(language),
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: () {
+                final code = draft.countryCode.text.trim().toUpperCase();
+                if (code.isEmpty) return '';
+                for (final option in kCompanyCustomerCallingCodeOptions) {
+                  if (option.countryCode == code) return code;
+                }
+                return '';
+              }(),
+              decoration: InputDecoration(
+                labelText: kCompanyCustomersAddressCountry.of(language),
+              ),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: '',
+                  child: Text('—'),
+                ),
+                for (final option in kCompanyCustomerCallingCodeOptions)
+                  DropdownMenuItem<String>(
+                    value: option.countryCode,
+                    child: Text(option.label.of(language)),
+                  ),
+              ],
+              onChanged: (value) {
+                draft.countryCode.text = value ?? '';
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

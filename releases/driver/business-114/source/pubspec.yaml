@@ -1,0 +1,128 @@
+name: fluxidi_tracking
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.7+114
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # GLOBAL-APP-WASHOUT-OVERLAY-REGRESSION-P0-2: MaterialApp pins the Fluxidi
+  # app language via `locale:`, so Material/Widgets/Cupertino localizations must
+  # exist for nl/fr/es/de too. MaterialApp's built-in delegates only cover
+  # English, so without these every MaterialLocalizations.of(context) call threw
+  # under nl/fr/es/de, which release builds paint as a translucent grey
+  # ErrorWidget.
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # === Fluxidi tracking dependencies ===
+  geolocator: ^12.0.0
+  http: ^1.2.2
+  http_parser: ^4.1.2
+  permission_handler: ^11.3.1
+
+  # === Mapbox (official) ===
+  mapbox_maps_flutter: ^2.5.0
+  maplibre_gl: 0.27.1
+  image_picker: ^1.1.2
+  path_provider: ^2.1.4
+  qr_flutter: ^4.1.0
+  mobile_scanner:
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  share_plus: ^10.0.2
+  url_launcher: ^6.3.2
+  # Recovered original management UI, embedded in the existing app session.
+  webview_flutter: 4.13.0
+  webview_flutter_android: 4.12.0
+  wakelock_plus: ^1.4.0
+  app_links: ^6.4.1
+  flutter_email_sender: ^6.0.3
+  file_picker: ^11.0.2
+  excel: ^4.0.6
+  archive: ^3.6.1
+  open_filex: ^4.7.0
+  flutter_secure_storage: ^10.1.0
+  local_auth: ^2.3.0
+  crypto: ^3.0.7
+  speech_to_text: ^7.4.0
+  # Used by the orientation flow to render the Card 1 tablet portrait
+  # MP4 hero background silently and looped, with a same-aspect PNG
+  # poster as fallback. Not used anywhere else in the app yet.
+  video_player: ^2.9.1
+  internet_connection_checker_plus: ^3.1.1
+
+dev_dependencies:
+  image: 4.3.0
+  # Already cached AST tool for source-contract regressions.
+  analyzer: 7.7.1
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  webview_flutter_platform_interface: 2.15.1
+  # FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: typed Dart <-> Kotlin
+  # HostApi for the native FollowPuck bridge. Runtime code depends only on
+  # the generated file.
+  pigeon: ^22.7.0
+
+# FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: pinned local vendor of
+# mapbox_maps_flutter 2.18.0 with a two-line MapView lifecycle exposure
+# patch (see third_party/mapbox_maps_flutter/PATCHES.md). Reversible by
+# removing this block.
+dependency_overrides:
+  # Same reviewed compatibility pin as Customer: preserve archive3/Excel.
+  image: 4.3.0
+  mapbox_maps_flutter:
+    path: third_party/mapbox_maps_flutter
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/fluxidi_maplibre/styles/
+    - assets/fluxidi_maplibre/offline_areas.json
+    # NAV-VEHICLE-MODE-CAR-ARROW-1: experimental 3D vehicle GLBs retired.
+    # assets/navigation/ still ships the 2D car marker (driver_taxi_top.png)
+    # and other navigation assets; the assets/navigation/vehicles/ folder
+    # (classic_flying_taxi.glb) is no longer bundled.
+    - assets/navigation/
+    # NAV-SIGNAGE-VISUAL-RELEASE-GATE: Fluxidi navigation signs v3. Flutter
+    # asset directories are NOT recursive, so every language directory is
+    # listed explicitly. Only png/<language>/ is bundled - the editable SVG
+    # masters, contact-sheet previews and manifests stay out of the app.
+    # Runtime HUD uses BLACK-CONTOUR-V3 under png/<lang>/ only.
+    # Legacy png_captioned/ stays on disk for inventory but is not packaged.
+    - assets/fluxidi_navigation_signs_v3/png/nl/
+    - assets/fluxidi_navigation_signs_v3/png/en/
+    - assets/fluxidi_navigation_signs_v3/png/fr/
+    - assets/fluxidi_navigation_signs_v3/png/es/
+    - assets/fluxidi/
+    - assets/fluxidi/onboarding/
+    - assets/fluxidi/brochures/
+    - assets/fluxidi/manuals/
+    - assets_card5_themes/
+    - assets/Midday Gold Chauffeur/
+    - assets/Midnight Bleu Chauffeur/
+    - assets/Light Emerald Chauffeur/
+    - assets/Corporate BLEU Compagny/
+    - assets/Clean & Professional Compagny/
+    - assets/Emerald_Ivory_Company/
+    - assets/🥇 Fluxidi Neon Rush/
+    - assets/business_themes/brand_signature_gold/
+    - assets/events/categories/
+    - assets/payment/png/
+    - assets/payment/logos/
+    - assets/payment/badges/
+    - assets/payment/providers/
+    - assets/vehicles/fallback/v1/
+    - assets/booking/modes/v1/
+    - assets/booking/airports/v1/

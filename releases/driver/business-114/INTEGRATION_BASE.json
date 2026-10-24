@@ -1,0 +1,98 @@
+{
+  "base": "B113",
+  "base_files": 2776,
+  "base_closure": "6f438135c3f2bed38c90984900c70521fd2772deaae1bc76d54a1e0f0e039e50",
+  "changes": [
+    {
+      "path": "lib/main_parts/driver_home_page_state.dart",
+      "before": "a5676603b6f76259f4f69a2e3e6215791163f0a38ea5e67670b1257aacf122a7",
+      "after": "e0a45261cc216e6d9f418c477614f1776b719db3b31e5f10887413952ca8249a",
+      "patch": "driver_phone_sidebar_20261024"
+    },
+    {
+      "patch": "driver_phone_sidebar_20261024",
+      "patch_sha256": "00cf74dfedea5807bcabd36151653e39b10f2b48016cd7079f37ddfedf0b8c94"
+    },
+    {
+      "path": "lib/company/active_company_booking_link_view.dart",
+      "before": "5a67631332357f9cfb87cfe3d0c2473d5d18da3d536bf05b89b00dedd1c90ce5",
+      "after": "a709edb95fad8f9c8c7a2d56e5ae0d16da0b2f3efa9d6ded43e471440a976a1e",
+      "patch": "driver_public_link_step_diagnostics_20261024"
+    },
+    {
+      "path": "lib/company/driver_public_booking_link.dart",
+      "before": "7f376308e75b7b2eb17d1c296f935b11a84665e5ff286779cc3f7b1c5b19ed30",
+      "after": "3086cebe89734e813dcdab212a7d63f7277095a461682c5c5bc64643e9066cfb",
+      "patch": "driver_public_link_step_diagnostics_20261024"
+    },
+    {
+      "path": "lib/company/driver_booking_link_trace.dart",
+      "before": null,
+      "after": "9d73b7e59809a71caf7c1b7a90ff9b5f78184df421cd6426097bc3ebabdea059",
+      "patch": "driver_public_link_step_diagnostics_20261024"
+    },
+    {
+      "patch": "driver_public_link_step_diagnostics_20261024",
+      "patch_sha256": "a3a18e1b8441ea458b9da8b572c11641a9c91c4f0c7e0da325c2b4d07c79fd36"
+    },
+    {
+      "path": "lib/driver/driver_ride_alert.dart",
+      "before": "d2b226b961d58be43209448ae8d2c987885d6e502c633c0a1b933ebdb67ae386",
+      "after": "e734b661adec98e423288598e8567f321d9c74a96ec20e29e6a1eace0bacbce6",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "lib/driver/driver_ride_alert_controller.dart",
+      "before": "6ac14ac0c6b8edc68c516174eba3cfc8cb24216e790db1cc9846a388667848cc",
+      "after": "169c3d85e104ecc29045626e705d4a97e939d9569203c36bb60bd2e545c4ad3b",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "lib/driver/driver_ride_offer_host.dart",
+      "before": "78e4618c5a350eaf69c4b25dc022d80b9079a82fe419a829a638892e578382b8",
+      "after": "246ba151d730c30bff988b61a73789cb60e7e183641c313817c57b1958162f89",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "lib/driver/driver_ride_frame_border.dart",
+      "before": "c1b09e8054fedcda5626c35050864de4860e199370379bed2f62bbf1693d62ca",
+      "after": "12e1438cc2bebede1a645d8d49a54d6fb229a083f20fc07949e86d3d3c781047",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/fluxidi/tracking/DriverRideNotifications.kt",
+      "before": "ce1d00b1b60a3f8244ec17364b661e010550ed8f75f68721c418acd9d22f22ed",
+      "after": "16a9a5530c2f280e9161df84c0f03f50124aa71e6bd2906e207e9ba00045733e",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/fluxidi/tracking/VehicleRideAlert.kt",
+      "before": "feb46f4c466384e65927beea256ed949602322faf0b04b083e149a9a37d7dd58",
+      "after": "873f7500a49a1873bee005594a305494564d6a9e3545ed624564450b0fa256e0",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/fluxidi/tracking/DriverDutyService.kt",
+      "before": "b033626259a57e81d127e4c97650e034156a0732786655764c794448584f880a",
+      "after": "696fc7f315863791e7eca6d96d5469d621719b86e10476a8cf22e3a9df9d2969",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "android/app/src/main/kotlin/com/fluxidi/tracking/MainActivity.kt",
+      "before": "2dc34623d04dcafaf14e0587bca4050de246c919a8bf1c902ee215650f93a363",
+      "after": "bc56119cee244841f7eda5005f6b1e424e535f7b7ec10501da032a896e202bb4",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "path": "android/app/src/main/res/raw/fluxidi_ride_chime.wav",
+      "before": "e2e46c18973893363785e07b61323de173c50c7e103b82fa995bc966beb677bc",
+      "after": "102eaf093ee0b36e8adb1ffde160d8e691d35c66d040cc86407961bce546d385",
+      "patch": "driver_ride_alarm_repair_20261024"
+    },
+    {
+      "patch": "driver_ride_alarm_repair_20261024",
+      "patch_sha256": "7594c9f8c7e016c8b04d3b2571ece06178be1963af7f4b1c5889f1f0c68388f9"
+    }
+  ],
+  "shared_worktree_writes": false
+}
